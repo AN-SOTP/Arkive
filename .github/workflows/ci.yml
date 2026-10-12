@@ -1,0 +1,23 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build native Crunch bridge
+        shell: pwsh
+        run: ./tools/Build-CrunchNative.ps1 -PlatformToolset v143
+      - name: Restore, build, and run smoke tests
+        shell: pwsh
+        run: ./eng/Verify-Arkive.ps1 -Configuration Release

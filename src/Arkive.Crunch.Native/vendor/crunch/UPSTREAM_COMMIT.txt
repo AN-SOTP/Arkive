@@ -1,0 +1,5 @@
+Unity-Technologies/crunch unity branch
+8708900eca8ec609d279270e72936258f81ddfb7
+Arkive local modification: crnd_mem_error uses a neutral diagnostic filename
+so compiled releases do not embed private source-checkout paths.
+Decoder logic is unchanged.

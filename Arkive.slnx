@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="src/Arkive.Core/Arkive.Core.csproj" />
+  <Project Path="src/Arkive.Cli/Arkive.Cli.csproj" />
+  <Project Path="src/Arkive.App/Arkive.App.csproj" />
+  <Project Path="src/Arkive.Updater/Arkive.Updater.csproj" />
+  <Project Path="tests/Arkive.SmokeTests/Arkive.SmokeTests.csproj" />
+  <Project Path="tests/Arkive.UiSmokeTests/Arkive.UiSmokeTests.csproj" />
+</Solution>

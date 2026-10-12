@@ -1,0 +1,41 @@
+# Lost Ark LPK database payload dumper for QuickBMS.
+#
+# Archive parsing and constants are based on lpk_extract_v5.bms by spiritovod,
+# with credits there to Brouznouf for the key derivation algorithm.  This helper
+# deliberately leaves database payloads encrypted so that the 0x400-byte CBC IV
+# reset can be handled efficiently by tools/decrypt_lost_ark_databases.py.
+
+string KEY = "83657ea6ffa1e671375c689a2e99a598"  # Steam/global version
+
+math ENTRY = 528
+
+get FILES long
+encryption blowfish KEY
+xmath TABLE_SIZE "ENTRY * FILES"
+log MEMORY_FILE 4 TABLE_SIZE
+encryption "" ""
+math MEM = -1
+
+xmath OFFSET "TABLE_SIZE + 8"
+for i = 0 < FILES
+	get NAMEZ long MEM
+	getdstring NAME NAMEZ MEM
+	padding ENTRY MEM
+	goto -16 MEM SEEK_CUR
+	get DUMMY_OFFSET long MEM
+	get SIZE long MEM
+	get ENSIZE long MEM
+	get ZSIZE long MEM
+
+	# Database entries are the uncompressed/AES branch in data2.lpk. Include the
+	# plaintext size in a private suffix so the postprocessor can remove padding.
+	if ZSIZE == 0
+		string OUT_NAME = NAME
+		string OUT_NAME + ".__arkive_size_"
+		string OUT_NAME + SIZE
+		string OUT_NAME + ".encrypted"
+		log OUT_NAME OFFSET ENSIZE
+	endif
+
+	math OFFSET + ENSIZE
+next i

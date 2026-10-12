@@ -1,0 +1,13 @@
+Arkive - Copyright (c) 2026 Arkive contributors. All rights reserved.
+
+This private preview is provided for authorized testing and development.
+No public redistribution license for Arkive's original code is granted at
+this stage. A public-release license must be chosen before public distribution.
+
+Third-party components retain their respective licenses, reproduced in
+THIRD-PARTY-NOTICES.txt and the vendored source. Lost Ark artwork and the
+application icon remain the property of their respective rights holders.
+
+This software is provided as-is, without warranty. Modding a live-service
+game can cause crashes, client repair requirements, or account sanctions.
+This project is not affiliated with or endorsed by Smilegate or Amazon Games.
