@@ -1,0 +1,60 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: arkive-release
+  cancel-in-progress: false
+
+jobs:
+  installer:
+    if: github.ref_name != 'v0.1.0'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Read release version
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.Substring(1)
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid release tag.' }
+          [xml]$properties = Get-Content Directory.Build.props
+          if ($properties.Project.PropertyGroup.Version -ne $version) { throw 'Tag and source version disagree.' }
+          "ARKIVE_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Fetch pinned tool pack
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.1.0 --repo '${{ github.repository }}' --pattern Arkive-Tools-win-x64.zip --dir $env:RUNNER_TEMP
+          ./eng/Get-ExternalTools.ps1 -Archive "$env:RUNNER_TEMP/Arkive-Tools-win-x64.zip"
+      - name: Build native bridge
+        shell: pwsh
+        run: ./tools/Build-CrunchNative.ps1 -PlatformToolset v143
+      - name: Install compiler
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe' -OutFile $setup
+          $signature = Get-AuthenticodeSignature $setup
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys') { throw 'Untrusted installer compiler.' }
+          $process = Start-Process $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$env:RUNNER_TEMP\inno`"", '/NOICONS') -PassThru -WindowStyle Hidden
+          $process.WaitForExit()
+          if ($process.ExitCode -ne 0) { throw 'Compiler installation failed.' }
+      - name: Verify and build installer
+        shell: pwsh
+        run: ./eng/Build-Installer.ps1 -Version $env:ARKIVE_VERSION -IsccPath "$env:RUNNER_TEMP/inno/ISCC.exe"
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' ./dist/releases/*.exe ./dist/releases/*.sha256 --repo '${{ github.repository }}' --verify-tag --draft --title "Arkive $env:ARKIVE_VERSION" --notes 'Private preview. Review the installer and checksums before publishing this stable release. Application data is preserved. See README for installation, update access, workflow and limitations.'

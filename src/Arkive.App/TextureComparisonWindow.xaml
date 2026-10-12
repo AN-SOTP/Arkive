@@ -1,0 +1,45 @@
+<Window x:Class="Arkive.App.TextureComparisonWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Arkive texture comparison"
+        Width="1280"
+        Height="760"
+        MinWidth="900"
+        MinHeight="560"
+        Background="{DynamicResource AppBackgroundBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="10">
+        <Border DockPanel.Dock="Top" Padding="9" Margin="0,0,0,8"
+                Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+            <TextBlock x:Name="SummaryText" TextWrapping="Wrap" />
+        </Border>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <GroupBox Header="Original export" Padding="4">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                    <Image x:Name="OriginalImage" Stretch="Uniform" />
+                </ScrollViewer>
+            </GroupBox>
+            <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" />
+            <GroupBox Grid.Column="2" Header="Current edit" Padding="4">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                    <Image x:Name="EditedImage" Stretch="Uniform" />
+                </ScrollViewer>
+            </GroupBox>
+            <GridSplitter Grid.Column="3" Width="8" HorizontalAlignment="Stretch" />
+            <GroupBox Grid.Column="4" Header="Amplified difference" Padding="4">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                    <Image x:Name="DifferenceImage" Stretch="Uniform" />
+                </ScrollViewer>
+            </GroupBox>
+        </Grid>
+    </DockPanel>
+</Window>

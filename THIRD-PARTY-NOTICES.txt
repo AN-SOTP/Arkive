@@ -1,0 +1,96 @@
+Arkive dependency and application-artwork notices
+
+UE Viewer (UModel)
+Upstream: https://github.com/gildor2/UEViewer
+Lost Ark-specific build maintained by spiritovod:
+https://www.gildor.org/smf/index.php?topic=3055.0
+The installer includes the exact tested umodel_lostark_v7.exe, not an
+arbitrary latest upstream UModel. Arkive does not claim authorship of it.
+
+The MIT License (MIT)
+
+Copyright 2022, Konstantin Nosov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Crunch/crnlib
+https://github.com/Unity-Technologies/crunch
+The unity branch encoder is pinned to commit
+8708900eca8ec609d279270e72936258f81ddfb7. Arkive's native bridge wraps
+the vendored decoder; it is not the upstream encoder implementation.
+
+Copyright (c) 2010-2016 Richard Geldreich, Jr. and Binomial LLC
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+SDL 2
+https://github.com/libsdl-org/SDL
+Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+.NET
+https://github.com/dotnet/runtime
+https://github.com/dotnet/wpf
+Microsoft .NET runtime components are included in self-contained releases.
+Their licenses and third-party notices are included as DOTNET-LICENSE.txt
+and DOTNET-THIRD-PARTY-NOTICES.txt in the installer payload.
+
+Inno Setup
+https://jrsoftware.org/
+The build uses Inno Setup's installer engine; the compiler is not bundled
+in Arkive. Its licensing terms apply to the installer engine and compiler.
+https://github.com/jrsoftware/issrc/blob/main/license.txt
+
+Lost Ark application artwork and icon
+Lost Ark is a trademark of Smilegate RPG. Artwork and the icon belong to
+their respective rights holders, including Smilegate and Amazon Games.
+Application artwork is retained for this private preview at the project
+owner's request; no ownership or unrestricted redistribution permission
+is claimed. Source-page credits are recorded in BannerArtworkManager.cs.
+Extracted game packages, meshes, textures, databases and mods are not
+included in the repository or release.

@@ -1,0 +1,8 @@
+{
+  "files": [
+    { "name": "umodel_lostark_v7.exe", "sha256": "B9573CDCBB7E9D26DBF60A0E3AF47FB5AF8543140873DA8483C26D58CF40B249", "source": "https://www.gildor.org/smf/index.php?topic=3055.msg105409#msg105409" },
+    { "name": "crunch_x64.exe", "sha256": "8AE949BFC3E3E4A1717DCA8845CE8ED480638DE68CBF1D7CBE912E99E35CE06F", "source": "https://github.com/Unity-Technologies/crunch/tree/8708900eca8ec609d279270e72936258f81ddfb7" },
+    { "name": "SDL2_64.dll", "sha256": "5D66BD7C48A61FF952475EC3492FCAD67A81E626D849F00824D2B6442ADF8D2F", "source": "https://www.gildor.org/en/projects/umodel" },
+    { "name": "SDL2.dll", "sha256": "5D66BD7C48A61FF952475EC3492FCAD67A81E626D849F00824D2B6442ADF8D2F", "source": "https://www.gildor.org/en/projects/umodel" }
+  ]
+}

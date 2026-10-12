@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets/Arkive.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Arkive.Core/Arkive.Core.csproj" />
+    <Resource Include="Assets/Banners/*.jpg" />
+    <Resource Include="Assets/Arkive.ico" />
+    <None Include="../Arkive.Core/runtimes/win-x64/native/Arkive.Crunch.Native.dll"
+          Link="Arkive.Crunch.Native.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
