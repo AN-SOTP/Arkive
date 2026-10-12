@@ -179,17 +179,11 @@ Normal exit codes: `0` success, `1` failed/refused or a blocking audit finding, 
 
 ## How it works
 
-### Packages and key
+### Packages and protection
 
 The verified profile uses UE3-derived UPK `FileVersion 868`, `LicenseeVersion 16`, Lost Ark flags `0x44`, extended tables, AES-256-ECB-protected chunk prefixes and LZ4. Arkive reads a logical image, preserves unrelated serialized data, rewrites supported exports/offsets and reconstructs physical chunks/protection. No-op/decode-back and unrelated-export proofs bind outputs to clean source bytes.
 
-The built-in Western/global interoperability key is intentionally included:
-
-```text
-NCMZPFB5R74EGAUWE191UTCLBJV2N6GX
-```
-
-`ChunkProtectionProviderFactory` identifies it as `western-global-steam-v1`. It is not a user credential, nor proof of support for other regions/future protection. LPK/database scripts contain separate profile constants; their keys are not interchangeable.
+The built-in Western/global protection profile is `western-global-steam-v1`. It does not imply support for other regions or future protection layouts. LPK/database archives use a separate protection profile.
 
 ### Textures and materials
 
