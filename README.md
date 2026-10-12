@@ -4,9 +4,33 @@
 
 Arkive finds game assets, exports editable working files, validates changes, rebuilds protected Unreal Engine 3 packages, and applies or restores mods with hash-verified backups. Mods are shared as portable `.arkive` files. The project includes a WPF desktop application, a command-line interface and a reusable core library.
 
-This repository and its releases are **private previews**, beginning with **0.1.0**. It contains current source, tests, build infrastructure, dependency notices and application artwork/icon. No game packages, exported game assets, databases, mods, personal settings, credentials or historical development commits are distributed.
+Arkive is an **AGPL-3.0-only public preview**, currently released as **0.1.1**. This repository contains current source, tests, build infrastructure, dependency notices, GUI screenshots and application artwork/icon. No game packages, exported game assets, databases, mods, personal settings, credentials or historical development checkouts are distributed.
 
-Arkive operates on files **while the game, launcher and anti-cheat are closed**. It does not inject code, attach to the game process, disable anti-cheat or provide runtime hot-swapping. Modding is not officially supported; there is no guarantee against crashes, client repairs, incompatibility or account sanctions. Use a client you are authorized to access and keep independent backups.
+**Using Arkive always carries inherent risk. Creating, sharing or using mods may result in account suspension or a permanent ban.** There is no guarantee against crashes, client repairs, incompatibility, data loss or account sanctions. Use a client you are authorized to access and keep independent backups.
+
+Arkive operates on files **while the game, launcher and anti-cheat are closed**. It does not inject code, attach to the game process, disable anti-cheat or provide runtime hot-swapping. Closing those processes and passing Arkive's validation do not eliminate the risks above.
+
+## Screenshots
+
+The actual desktop GUI, shown with fictional demonstration data. These examples are not installable mods and contain no extracted game assets or personal library data.
+
+### Asset library
+
+Search technical filenames and in-game names, then inspect an asset or its relationships.
+
+![Arkive asset library with demonstration search results](docs/screenshots/asset-library.png)
+
+### Edit mods
+
+Keep a named draft, edit its working assets and add individual assets or a mesh's complete dependency kit.
+
+![Arkive mod editor with demonstration working assets and asset search](docs/screenshots/edit-mods.png)
+
+### Mod library
+
+Enable mods, set priorities and review the effective asset selection before applying changes.
+
+![Arkive mod library with demonstration priorities and asset details](docs/screenshots/mod-library.png)
 
 ## Contents
 
@@ -40,7 +64,7 @@ The per-user installer normally needs no administrator access. Its default desti
 
 Dependencies are installed privately alongside Arkive, not as machine-wide prerequisites. The installer does not need to detect or download existing global runtimes: the tested versions are always provided, including on an offline machine. Upgrades replace the application's own dependency files and preserve its separate data folder. Building from source still requires the developer tools listed under **Build and release**.
 
-The private preview installer is **not Authenticode-signed**. Windows may show an unknown-publisher/SmartScreen warning. Verify trusted source and hashes; hashes are not publisher signatures.
+The preview installer is **not Authenticode-signed**. Windows may show an unknown-publisher/SmartScreen warning. Verify trusted source and hashes; hashes are not publisher signatures.
 
 ### Data and existing libraries
 
@@ -222,7 +246,7 @@ When enabled in Settings, startup checks GitHub's latest stable release and show
 
 The download is bound to the exact versioned installer, API size and SHA-256. Arkive saves its draft/settings, closes, then a separately staged helper verifies again, runs the per-user installer and reopens the same data root. Source/portable builds are not automatically overwritten. Failure is reported; install logs remain beside the download. Mods/backups are outside application replacement.
 
-For private releases, use your **own** fine-grained GitHub token scoped to Arkive with **Contents: read-only**, from an account already granted repository access. Save it in Settings. It stays in Windows Credential Manager, not settings/logs/installer/source. **Forget token** removes it. Tokens do not grant access your account lacks. Public releases can be checked without a token when visibility changes later.
+Public releases can be checked and downloaded **without a GitHub token**. If you configured a token during private testing, **Settings → Forget token** removes it. Private forks/releases can still use an account's own fine-grained token with **Contents: read-only** access; it stays in Windows Credential Manager, not settings/logs/installer/source. Tokens do not grant access the account lacks.
 
 Tokens go only to GitHub API requests, not approved asset redirects. Untrusted/HTTP hosts, missing/wrong hashes, oversized files and downgrades are refused. A compromised authorized repository can still publish a malicious correctly hashed installer; code-signing/release review remain recommended.
 
@@ -239,7 +263,7 @@ winget install --id Microsoft.DotNet.SDK.10 -e
 # Install the C++ workload through Visual Studio Installer / Build Tools.
 winget install --id JRSoftware.InnoSetup.7 -e -s winget -i
 
-# Download Arkive-Tools-win-x64.zip from the private v0.1.0 release:
+# Download Arkive-Tools-win-x64.zip from the v0.1.0 release:
 .\eng\Get-ExternalTools.ps1 -Archive 'E:\Downloads\Arkive-Tools-win-x64.zip'
 .\tools\Build-CrunchNative.ps1
 # VS2022: .\tools\Build-CrunchNative.ps1 -PlatformToolset v143
@@ -271,7 +295,7 @@ git push origin main
 git push origin v0.1.1
 ```
 
-Run release jobs on reviewed repository-owned tags, not untrusted PR code with write credentials. The updater ignores drafts/prereleases. Repository visibility controls release visibility; this project stays private until its owner explicitly changes that.
+Run release jobs on reviewed repository-owned tags, not untrusted PR code with write credentials. The updater ignores drafts/prereleases. Published installers and source are available from the public repository's Releases page.
 
 `eng/Export-Source.ps1 -Destination NEW_FOLDER` creates an allowlisted fresh snapshot without history, generated binaries, user data or extra Markdown documents. It is an initial-publication aid, not the normal push process. Audit new dependency/artwork additions.
 
@@ -287,7 +311,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 - Old projects can lack current oracle/approval evidence, or retain stale installed state after reinstall. Rebuild/reconcile against verified clean bytes; unknown identity can intentionally block deletion/restore.
 - Priority resolves target ownership, not semantic compatibility of all dependencies.
 - CLI authoring requires explicit manifest chaining; the GUI is the recommended named-mod editor.
-- The installer/updater is an unsigned first private preview. Private access needs per-tester setup; uninstall preserves data and does not restore the game.
+- The installer/updater is an unsigned preview; uninstall preserves data and does not restore the game.
 - Not every bug is known. Report version, operation, asset identity, failure code and a sanitized diagnostic excerpt. Review paths/names before sharing logs; never submit credentials or whole game packages casually.
 
 ## Privacy, security and licensing
@@ -300,17 +324,6 @@ Bounded parsing, safe paths, exact source/backup hashes and explicit deployment 
 
 Arkive's original code, tests, build scripts and documentation are licensed **AGPL-3.0-only**. See `LICENSE.txt` for the complete unmodified GNU licence and `COPYRIGHT.txt` for its scope. Distributed derivatives must provide corresponding source under the licence; modified versions offered for remote network interaction must offer source to their users. Recipients can redistribute it. Private modifications do not automatically require publication, and copyright licensing does not control independent implementations merely inspired by Arkive's ideas. See the [GNU licence FAQ](https://www.gnu.org/licenses/gpl-faq.html#GPLRequireSourcePostedPublic) and [AGPL section 13](https://www.gnu.org/licenses/agpl-3.0.html#section13).
 
-The repository remains private during testing; this is an access setting, not an additional licence restriction. Anyone receiving an installer must also have access to its exact corresponding source and build instructions. Third-party components retain their licences; Lost Ark artwork/trademarks and user/game assets are not relicensed as Arkive code. This project is not affiliated with Smilegate, Amazon Games or UE Viewer.
-
-### Before public release
-
-- Resolve redistribution rights and exact source provenance for the Lost Ark-specific UModel fork and all bundled components. Verify retained licence/attribution obligations; do not assume upstream permissions automatically cover an undocumented fork.
-- Obtain permission for the banner artwork/icon or replace them with artwork you can distribute. Review game terms, extraction/decryption and mod-distribution implications with qualified counsel; the code licence does not settle those rights.
-- Sign installers/updaters and verify publisher signatures during updates, in addition to hashes. Protect signing material outside the repo and review release jobs before granting write access.
-- Test a clean Windows installation, offline installation, database building, file associations, upgrades, recovery and uninstall. Include update checks without a token when public; never publish tester tokens.
-- Enable branch protection, required CI/review, dependency/security alerts and an appropriate private vulnerability-reporting channel. Pin workflow actions by reviewed immutable commits and audit release dependencies/provenance.
-- Review current source, Git history and every release attachment for credentials, personal paths and game data. Publish release notes, reproducible source/dependency instructions and a dependency inventory; keep known limitations prominent.
-
-Do not change repository visibility until these checks are complete. Public access and AGPL licensing are not guarantees of game compatibility, security or redistribution clearance.
+Anyone receiving an installer must also have access to its exact corresponding source and build instructions. Third-party components retain their licences; Lost Ark artwork/trademarks and user/game assets are not relicensed as Arkive code. This project is not affiliated with Smilegate, Amazon Games or UE Viewer.
 
 Primary references: [Lost Ark UModel fork](https://www.gildor.org/smf/index.php?topic=3055.0), [UE Viewer source/license](https://github.com/gildor2/UEViewer), [pinned Crunch source](https://github.com/Unity-Technologies/crunch/tree/8708900eca8ec609d279270e72936258f81ddfb7), [GitHub release API](https://docs.github.com/en/rest/releases/releases), [Inno Setup](https://jrsoftware.org/isdl.php).

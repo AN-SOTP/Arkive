@@ -25,8 +25,13 @@ internal static class Program
         {
             try
             {
-                await RunAsync(root, args.FirstOrDefault());
-                Console.WriteLine("All Arkive authoring UI smoke tests passed.");
+                if (args is ["--public-screenshots", var destination])
+                    await PublicScreenshotCapture.RunAsync(root, destination);
+                else
+                    await RunAsync(root, args.FirstOrDefault());
+                Console.WriteLine(args is ["--public-screenshots", _]
+                    ? "Arkive public GUI screenshots rendered with fictional data."
+                    : "All Arkive authoring UI smoke tests passed.");
                 app.Shutdown(0);
             }
             catch (Exception exception)
