@@ -13,6 +13,7 @@ internal static class DatabaseSmokeTests
         new("rejects malformed game database archives without replacing mappings", TestFailures),
         new("cancels game database builds and cleans temporary databases", TestCancellation),
         new("selects canonical game database tables instead of alternate namespaces", TestNamespaces),
+        new("builds game databases with deeply nested mapping destinations", TestLongPaths),
     ];
 
     private static void TestBuild() => InWorkspace(root =>
@@ -89,6 +90,15 @@ internal static class DatabaseSmokeTests
         Assert(Build(archive, Path.Combine(root, "mapping.json")).DatabaseCount == 5, "an alternate namespace shadowed the main tables");
         var duplicate = CreateArchive(root, duplicate: true);
         Refuses(() => Build(duplicate, Path.Combine(root, "mapping.json")));
+    });
+
+    private static void TestLongPaths() => InWorkspace(root =>
+    {
+        var archive = CreateArchive(root);
+        var output = Path.Combine(root, new string('a', 80), new string('b', 80), new string('c', 80), "mapping.json");
+        Assert(Build(archive, output).AssociationCount == 3 && GameAssetMetadataIndex.Load(output).EntityCount == 2,
+            "the database builder relied on native SQLite supporting long output paths");
+        Assert(!Directory.EnumerateFiles(Path.GetDirectoryName(output)!, ".arkive-database-*").Any(), "database candidate was retained");
     });
 
     private static GameDatabaseBuildResult Build(string archive, string output, IProgress<GameDatabaseBuildProgress>? progress = null) =>
@@ -187,7 +197,16 @@ internal static class DatabaseSmokeTests
     {
         var root = Path.Combine(fixtureDirectory, "database-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        try { test(root); } finally { Directory.Delete(root, recursive: true); }
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "Arkive");
+        var before = Directory.Exists(temporaryRoot)
+            ? Directory.GetDirectories(temporaryRoot, "database-build-*").ToHashSet(StringComparer.OrdinalIgnoreCase) : [];
+        try
+        {
+            test(root);
+            Assert(!Directory.Exists(temporaryRoot) || Directory.GetDirectories(temporaryRoot, "database-build-*").All(before.Contains),
+                "database build retained a decrypted working directory");
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static void Refuses(Action action)
