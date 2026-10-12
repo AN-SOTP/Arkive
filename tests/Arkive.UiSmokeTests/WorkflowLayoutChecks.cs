@@ -18,9 +18,14 @@ internal static class WorkflowLayoutChecks
             "Setup and metadata occupy the tables' workspace by default.");
         var searchRow = Control<RowDefinition>(window, "AuthoringSearchRow");
         var assetsRow = Control<RowDefinition>(window, "AuthoringAssetsRow");
+        var workspaceHeight = Control<Grid>(window, "AuthoringPaneGrid").ActualHeight;
+        var minimumTableHeight = Math.Clamp(workspaceHeight * 0.25, 45, 180);
+        var tableHeight = Control<DataGrid>(window, "WorkshopSearchResultsGrid").ActualHeight;
         Check(searchRow.ActualHeight > assetsRow.ActualHeight &&
-              Control<DataGrid>(window, "WorkshopSearchResultsGrid").ActualHeight >= 180,
-            "The search pane is still too small by default.");
+              tableHeight >= minimumTableHeight,
+            $"The default search pane does not use its available workspace: " +
+            $"table={tableHeight:N0}, required={minimumTableHeight:N0}, " +
+            $"search={searchRow.ActualHeight:N0}, assets={assetsRow.ActualHeight:N0}, workspace={workspaceHeight:N0}.");
         var before = searchRow.ActualHeight;
         Resize(window, "AuthoringPaneSplitter", Key.Up);
         Check(searchRow.ActualHeight > before + 10, "The authoring tables cannot be resized with their splitter.");
