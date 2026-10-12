@@ -29,27 +29,38 @@ static async Task<int> RunAsync(string[] arguments)
             if (!string.Equals(parent.MainModule?.FileName, executable, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The updater parent is not this installed Arkive.");
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-            await parent.WaitForExitAsync(timeout.Token);
+            try { await parent.WaitForExitAsync(timeout.Token); }
+            catch (OperationCanceledException exception)
+            {
+                throw new ArkiveUpdateException("Arkive did not close within 2 minutes, so the installer was not started.",
+                    "Close Arkive, including any dialog it is showing, then choose Install update and restart again.", exception);
+            }
             parentExited = true;
         }
         catch (ArgumentException) { parentExited = true; }
         using var stream = new FileStream(installer, FileMode.Open, FileAccess.Read, FileShare.Read);
-            if (!Convert.ToHexString(await SHA256.HashDataAsync(stream)).Equals(arguments[1], StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("Installer verification failed. Nothing was executed.");
+        if (!Convert.ToHexString(await SHA256.HashDataAsync(stream)).Equals(arguments[1], StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The downloaded installer changed after Arkive verified it, so it was not run.");
+        var log = Path.Combine(Path.GetDirectoryName(installer)!, "install.log");
         var start = new ProcessStartInfo(installer) { UseShellExecute = false, CreateNoWindow = true };
-        foreach (var value in new[] { "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", $"/DIR={applicationDirectory}", $"/LOG={Path.Combine(Path.GetDirectoryName(installer)!, "install.log")}" })
+        foreach (var value in new[] { "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", $"/DIR={applicationDirectory}", $"/LOG={log}" })
             start.ArgumentList.Add(value);
-        using var process = Process.Start(start) ?? throw new IOException("The installer did not start.");
+        using var process = Process.Start(start) ?? throw new ArkiveUpdateException("Windows did not start the installer.",
+            $"Security software may have blocked it. Allow it, or run the downloaded installer yourself: {installer}");
         await process.WaitForExitAsync();
-        if (process.ExitCode != 0) throw new IOException($"The installer returned {process.ExitCode}. Check the install.log beside the downloaded update.");
+        if (process.ExitCode != 0) throw ArkiveUpdateFailure.InstallerExit(process.ExitCode, installer, log);
         Restart(executable, dataRoot);
         return 0;
     }
     catch (Exception exception)
     {
-        NativeMessageBox(IntPtr.Zero, $"Arkive was not updated successfully.\n\n{exception.Message}\n\nYour mods and backups were not intentionally changed. Restart Arkive manually if it does not reopen.", "Arkive update", 0x10);
-        if (parentExited && executable is not null && File.Exists(executable))
-            try { Restart(executable, arguments[4]); } catch (Exception) { }
+        var failure = ArkiveUpdateFailure.Describe(ArkiveUpdateStage.Install, exception);
+        var reopen = parentExited && executable is not null && File.Exists(executable);
+        NativeMessageBox(IntPtr.Zero, failure.Text + (reopen
+            ? "\n\nArkive will reopen when you close this message."
+            : "\n\nStart Arkive again when you are ready."), "Arkive update failed", 0x10);
+        if (reopen)
+            try { Restart(executable!, arguments[4]); } catch (Exception) { }
         return 1;
     }
 }

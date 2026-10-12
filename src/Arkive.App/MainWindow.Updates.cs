@@ -19,9 +19,10 @@ public partial class MainWindow
     private static HttpClient CreateUpdateClient() => new(new HttpClientHandler { AllowAutoRedirect = false })
     { Timeout = TimeSpan.FromMinutes(10) };
 
-    private async Task CheckApplicationUpdatesAsync(bool interactive)
+    // Never throws: every failure is explained to the user (interactive) or the session log (startup).
+    private async Task<string> CheckApplicationUpdatesAsync(bool interactive)
     {
-        if (_applicationUpdateChecking) return;
+        if (_applicationUpdateChecking) return "An update check is already running.";
         _applicationUpdateChecking = true;
         try
         {
@@ -35,14 +36,18 @@ public partial class MainWindow
             {
                 UpdateNoticeText.Text = $"Arkive {release.Version.ToString(3)} is available. Your mods, drafts and backups will be kept.";
                 UpdateNotice.Visibility = Visibility.Visible;
+                return $"Arkive {release.Version.ToString(3)} is available; use Install update and restart in the main window.";
             }
-            else if (interactive) MessageBox.Show(this, "Arkive is up to date.", "Application updates", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (interactive) MessageBox.Show(this, "Arkive is up to date.", "Application updates", MessageBoxButton.OK, MessageBoxImage.Information);
+            return "Arkive is up to date.";
         }
-        catch (OperationCanceledException) { if (interactive) StatusText.Text = "Application update check timed out or was cancelled."; }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException or System.ComponentModel.Win32Exception)
+        catch (Exception exception)
         {
-            if (interactive) MessageBox.Show(this, exception.Message, "Could not check application updates", MessageBoxButton.OK, MessageBoxImage.Information);
-            Log("Application update check unavailable; check repository access and connectivity in Settings.");
+            if (_applicationUpdateCancellation.IsCancellationRequested) return "Update check cancelled.";
+            var failure = ArkiveUpdateFailure.Describe(ArkiveUpdateStage.Check, exception);
+            Log($"Application update check failed: {failure.Reason} [{exception.GetType().Name}]");
+            if (interactive) MessageBox.Show(this, failure.Text, "Could not check for updates", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return $"Update check failed: {failure.Reason}";
         }
         finally { _applicationUpdateChecking = false; }
     }
@@ -52,12 +57,24 @@ public partial class MainWindow
 
     private void CancelUpdateButton_Click(object sender, RoutedEventArgs e) => _updateDownloadCancellation?.Cancel();
 
+    private void ReportApplicationUpdateFailure(Exception exception, bool cancelledByUser)
+    {
+        var failure = ArkiveUpdateFailure.Describe(ArkiveUpdateStage.Download, exception, cancelledByUser);
+        UpdateNotice.Visibility = Visibility.Visible;
+        UpdateNoticeText.Text = cancelledByUser
+            ? "Update download cancelled. Nothing was installed."
+            : $"Update not installed: {failure.Reason}";
+        Log($"Application update not installed: {failure.Reason} [{exception.GetType().Name}]");
+        if (!cancelledByUser && !_applicationUpdateCancellation.IsCancellationRequested)
+            MessageBox.Show(this, failure.Text, "Arkive update failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
     private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
     {
         if (_availableApplicationUpdate is not { } release || _applicationUpdateDownloading) return;
         if (!File.Exists(Path.Combine(AppContext.BaseDirectory, ArkiveRuntimePaths.InstallationMarker)))
         {
-            MessageBox.Show(this, "Automatic installation is available in the installed version. Install the release from the private repository first. Source and portable builds are never overwritten.", "Application updates");
+            MessageBox.Show(this, $"Automatic updates work only in Arkive installed with Arkive-Setup. Source and portable builds are never overwritten; download the installer from {ArkiveUpdateFailure.ReleasesPage}.", "Application updates");
             return;
         }
         if (_authoringBusy || _modLibraryBusy || _workshopBusy || _guidedTextureModInProgress ||
@@ -66,7 +83,7 @@ public partial class MainWindow
             _clientUpdateAuditBusy || _textureReplacementInProgress || _libraryIndexCancellation is not null ||
             _databaseBuildCancellation is not null || _assetLinkCancellation is not null)
         {
-            StatusText.Text = "Finish the current operation before updating Arkive.";
+            StatusText.Text = UpdateNoticeText.Text = "Update not started: finish the current Arkive operation, then choose Install update and restart again.";
             return;
         }
         if (MessageBox.Show(this, $"Download and install Arkive {release.Version.ToString(3)}? Arkive will close and reopen. The installer is SHA-256 verified; this preview release is not code-signed.",
@@ -75,29 +92,35 @@ public partial class MainWindow
         InstallUpdateButton.IsEnabled = false;
         CancelUpdateButton.Visibility = Visibility.Visible;
         WorkspaceContent.IsEnabled = false;
+        using var userCancellation = new CancellationTokenSource();
+        _updateDownloadCancellation = userCancellation;
         try
         {
             await PersistAuthoringDraftAsync();
             TrySaveSettings("application update");
             using var client = CreateUpdateClient();
-            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_applicationUpdateCancellation.Token);
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_applicationUpdateCancellation.Token, userCancellation.Token);
             cancellation.CancelAfter(TimeSpan.FromMinutes(10));
-            _updateDownloadCancellation = cancellation;
             var directory = Path.Combine(_projectRoot, "updates", Guid.NewGuid().ToString("N"));
             var path = await new GitHubUpdateService(client).DownloadAsync(release, directory, UpdateCredentialStore.Read(),
                 new Progress<double>(value => UpdateNoticeText.Text = $"Downloading verified installer: {value:P0}"), cancellation.Token);
+            var installedHelper = Path.Combine(AppContext.BaseDirectory, "Arkive.Updater.exe");
+            if (!File.Exists(installedHelper))
+                throw new ArkiveUpdateException("The update helper (Arkive.Updater.exe) is missing from the Arkive folder.",
+                    $"Run the downloaded installer yourself: {path}. It restores the helper and keeps your data.");
             var helper = Path.Combine(directory, "Arkive.Updater.exe");
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "Arkive.Updater.exe"), helper);
+            File.Copy(installedHelper, helper);
             var start = new ProcessStartInfo(helper) { UseShellExecute = false, CreateNoWindow = true };
             foreach (var value in new[] { path, release.Sha256, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 Path.GetFullPath(AppContext.BaseDirectory), _projectRoot }) start.ArgumentList.Add(value);
-            using var process = Process.Start(start) ?? throw new IOException("The update helper could not start.");
+            using var process = Process.Start(start) ?? throw new ArkiveUpdateException("Windows did not start the update helper.",
+                $"Security software may have blocked Arkive.Updater.exe. Allow it and try again, or run the downloaded installer yourself: {path}");
             _authoringCloseApproved = true;
             _applicationUpdateDownloading = false;
             Close();
         }
-        catch (Exception exception) when (exception is IOException or HttpRequestException or InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException)
-        { UpdateNoticeText.Text = $"Update not installed: {exception.Message}"; }
+        catch (Exception exception)
+        { ReportApplicationUpdateFailure(exception, userCancellation.IsCancellationRequested); }
         finally
         {
             _updateDownloadCancellation = null;

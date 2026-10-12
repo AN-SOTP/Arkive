@@ -5,7 +5,7 @@ namespace Arkive.App;
 
 public partial class AppearanceSettingsWindow : Window
 {
-    private readonly Func<Task>? _checkUpdates;
+    private readonly Func<Task<string>>? _checkUpdates;
 
     public AppearanceSettingsWindow(
         string theme,
@@ -13,7 +13,7 @@ public partial class AppearanceSettingsWindow : Window
         bool compactDensity,
         bool showValidationPane,
         bool checkForUpdatesOnStartup = true,
-        Func<Task>? checkUpdates = null)
+        Func<Task<string>>? checkUpdates = null)
     {
         InitializeComponent();
         _checkUpdates = checkUpdates;
@@ -81,7 +81,8 @@ public partial class AppearanceSettingsWindow : Window
         if (_checkUpdates is null) return;
         var button = (Button)sender;
         button.IsEnabled = false;
-        try { await _checkUpdates(); UpdateStatusText.Text = "Update check finished; any available update appears in the main window."; }
+        UpdateStatusText.Text = "Checking GitHub for a newer release...";
+        try { UpdateStatusText.Text = await _checkUpdates(); }
         finally { button.IsEnabled = true; }
     }
 

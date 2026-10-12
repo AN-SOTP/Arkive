@@ -11,8 +11,6 @@ public sealed class GitHubUpdateService(HttpClient client)
     {
         using var request = ApiRequest($"releases/latest", accessToken);
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            throw new InvalidOperationException("No accessible release was found. For this private repository, add your own read-only GitHub token in Settings and ensure your account has repository access.");
         response.EnsureSuccessStatusCode();
         var bytes = await ReadBoundedAsync(response, 1024 * 1024, cancellationToken);
         try
@@ -25,7 +23,8 @@ public sealed class GitHubUpdateService(HttpClient client)
             var name = ArkiveReleasePolicy.InstallerName(version);
             var assets = release.GetProperty("assets").EnumerateArray()
                 .Where(asset => asset.GetProperty("name").GetString() == name).ToArray();
-            if (assets.Length != 1) throw new InvalidDataException("The release must contain exactly one matching Windows installer.");
+            if (assets.Length != 1)
+                throw new InvalidDataException($"Release {version.ToString(3)} must contain exactly one {name} installer; it contains {assets.Length}.");
             var asset = assets[0];
             var size = asset.GetProperty("size").GetInt64();
             var digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
@@ -33,11 +32,11 @@ public sealed class GitHubUpdateService(HttpClient client)
             var id = asset.GetProperty("id").GetInt64();
             if (id <= 0 || size <= 0 || size > ArkiveReleasePolicy.MaximumInstallerSize ||
                 hash is null || !ArkiveReleasePolicy.Sha256Pattern().IsMatch(hash))
-                throw new InvalidDataException("The release installer has missing or invalid size/SHA-256 evidence.");
+                throw new InvalidDataException($"GitHub did not publish a valid size and SHA-256 digest for {name}, so it cannot be verified.");
             return new ArkiveRelease(version, id, name, size, hash.ToUpperInvariant());
         }
         catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException)
-        { throw new InvalidDataException("The release metadata is malformed; no update was approved.", exception); }
+        { throw new InvalidDataException("GitHub returned release information Arkive cannot read; no update was approved.", exception); }
     }
 
     public async Task<string> DownloadAsync(ArkiveRelease release, string directory, string? accessToken,
@@ -46,7 +45,7 @@ public sealed class GitHubUpdateService(HttpClient client)
         if (release.FileName != ArkiveReleasePolicy.InstallerName(release.Version) || release.AssetId <= 0 ||
             release.Size <= 0 || release.Size > ArkiveReleasePolicy.MaximumInstallerSize ||
             !ArkiveReleasePolicy.Sha256Pattern().IsMatch(release.Sha256))
-            throw new InvalidDataException("Invalid installer metadata.");
+            throw new InvalidDataException("The selected update has invalid installer details.");
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, release.FileName);
         var temporaryPath = path + $".{Guid.NewGuid():N}.download";
@@ -64,7 +63,8 @@ public sealed class GitHubUpdateService(HttpClient client)
                 {
                     var location = initial.Headers.Location;
                     if (location is null || !location.IsAbsoluteUri || !ArkiveReleasePolicy.IsAllowedDownload(location))
-                        throw new InvalidDataException("The installer download redirected to an untrusted host.");
+                        throw new InvalidDataException(
+                            $"GitHub redirected the download to an unexpected address ({(location is { IsAbsoluteUri: true } ? location.Host : "none")}); only GitHub release-asset hosts over HTTPS are allowed.");
                     using var download = new HttpRequestMessage(HttpMethod.Get, location);
                     redirected = await client.SendAsync(download, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                     response = redirected;
@@ -72,7 +72,7 @@ public sealed class GitHubUpdateService(HttpClient client)
                 response.EnsureSuccessStatusCode();
                 if (response.Headers.Location is not null ||
                     response.Content.Headers.ContentLength is { } length && length != release.Size)
-                    throw new InvalidDataException("Unexpected installer download response.");
+                    throw new InvalidDataException($"GitHub's download response does not match the {release.Size:N0}-byte installer it listed.");
                 await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
                 await using (var output = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
                 using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
@@ -83,13 +83,15 @@ public sealed class GitHubUpdateService(HttpClient client)
                     while ((read = await input.ReadAsync(buffer, cancellationToken)) > 0)
                     {
                         total += read;
-                        if (total > release.Size) throw new InvalidDataException("The installer exceeds its approved size.");
+                        if (total > release.Size) throw new InvalidDataException($"GitHub sent more than the {release.Size:N0} bytes listed for the installer.");
                         hash.AppendData(buffer, 0, read);
                         await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                         progress?.Report((double)total / release.Size);
                     }
-                    if (total != release.Size || !Convert.ToHexString(hash.GetHashAndReset()).Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidDataException("Installer SHA-256 or size verification failed. Nothing was executed.");
+                    if (total != release.Size)
+                        throw new InvalidDataException($"The download ended after {total:N0} of {release.Size:N0} bytes.");
+                    if (!Convert.ToHexString(hash.GetHashAndReset()).Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("The downloaded installer's SHA-256 does not match the digest GitHub published for it.");
                 }
             }
             finally { redirected?.Dispose(); }
@@ -102,7 +104,7 @@ public sealed class GitHubUpdateService(HttpClient client)
     private static HttpRequestMessage ApiRequest(string route, string? token)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{ArkiveReleasePolicy.Repository}/{route}");
-        request.Headers.UserAgent.ParseAdd("Arkive/0.1.0");
+        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Arkive", ArkiveReleasePolicy.CurrentVersion.ToString(3)));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
         if (!string.IsNullOrWhiteSpace(token)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
