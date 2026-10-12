@@ -32,7 +32,9 @@ public sealed class GameDatabaseBuilder
         progress?.Report(new("Reading archive", 0, 1, Path.GetFileName(source)));
         var entries = LostArkDatabaseArchive.ReadEntries(archive, cancellation);
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-        var temporary = Path.Combine(Path.GetDirectoryName(output)!, ".database-build-" + Guid.NewGuid().ToString("N"));
+        var buildId = Guid.NewGuid().ToString("N");
+        var temporary = Path.Combine(Path.GetTempPath(), "Arkive", "database-build-" + buildId);
+        var candidate = Path.Combine(Path.GetDirectoryName(output)!, ".arkive-database-" + buildId + ".tmp");
         Directory.CreateDirectory(temporary);
         try
         {
@@ -42,7 +44,6 @@ public sealed class GameDatabaseBuilder
                 LostArkDatabaseArchive.Extract(archive, entries[index], Path.Combine(temporary, entries[index].Name), cancellation);
             }
             var document = GameDatabaseMetadataReader.Read(temporary, source, language, progress, cancellation);
-            var candidate = Path.Combine(temporary, "arkive-asset-metadata.json");
             using (var stream = File.Create(candidate))
                 JsonSerializer.Serialize(stream, document, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
             cancellation.ThrowIfCancellationRequested();
@@ -61,6 +62,7 @@ public sealed class GameDatabaseBuilder
         }
         finally
         {
+            File.Delete(candidate);
             Directory.Delete(temporary, recursive: true);
         }
     }
