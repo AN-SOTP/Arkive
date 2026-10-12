@@ -4,6 +4,7 @@ using Arkive.Core.Archives;
 using Arkive.Core.Assets;
 using Arkive.Core.Baselines;
 using Arkive.Core.Discovery;
+using Arkive.Core.Databases;
 using Arkive.Core.External;
 using Arkive.Core.Exports;
 using Arkive.Core.Inspection;
@@ -44,6 +45,8 @@ static int Run(string[] arguments)
 
         return command switch
         {
+            "database-build" => DatabaseBuild(target, ReadTextOption(arguments, "--out"),
+                ReadTextOption(arguments, "--language"), json),
             "inspect" => Inspect(target, json),
             "artifact-inspect" => ArtifactInspect(target, json),
             "dds-rgb-view" => DdsRgbView(
@@ -341,6 +344,30 @@ static int Run(string[] arguments)
         Console.Error.WriteLine($"error: {exception.Message}");
         return 1;
     }
+}
+
+static int DatabaseBuild(string archive, string? output, string? language, bool json)
+{
+    using var cancellation = new CancellationTokenSource();
+    ConsoleCancelEventHandler cancel = (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
+    Console.CancelKeyPress += cancel;
+    try
+    {
+        var progress = new InlineProgress<GameDatabaseBuildProgress>(value =>
+            Console.Error.WriteLine($"{value.Stage}: {value.Completed}/{value.Total} {value.CurrentFile}"));
+        var result = new GameDatabaseBuilder().BuildAsync(archive,
+            output ?? Path.Combine(ArkiveRuntimePaths.ResolveDataRoot(), "staging", "lpk", "data2-fixed", "arkive-asset-metadata.json"),
+            language ?? "English", progress, cancellation.Token).GetAwaiter().GetResult();
+        if (json) WriteJson(result);
+        else Console.WriteLine($"Built {result.AssociationCount:N0} asset references, {result.EntityCount:N0} entities and {result.CustomizationCount:N0} customization options: {result.OutputPath}");
+        return 0;
+    }
+    catch (OperationCanceledException)
+    {
+        Console.Error.WriteLine("Database build cancelled; the previous mapping was preserved.");
+        return 1;
+    }
+    finally { Console.CancelKeyPress -= cancel; }
 }
 
 static int ArtifactInspect(string filePath, bool json)
@@ -3153,8 +3180,10 @@ static int UnknownCommand(string command)
 static void PrintUsage()
 {
     Console.WriteLine("Arkive - offline Western Lost Ark UPK inspector");
+    Console.WriteLine("Copyright (c) 2026 Arkive contributors. AGPL-3.0-only; no warranty. See LICENSE.txt and https://github.com/AN-SOTP/Arkive for source.");
     Console.WriteLine();
     Console.WriteLine("Usage:");
+    Console.WriteLine("  arkive database-build <data2.lpk> [--out FILE.json] [--language English] [--json]");
     Console.WriteLine("  arkive inspect <package.upk> [--json]");
     Console.WriteLine("  arkive artifact-inspect <texture.dds|model.gltf|model.glb> [--json]");
     Console.WriteLine("  arkive dds-rgb-view <dxt5.dds> [--out FILE] [--json]");

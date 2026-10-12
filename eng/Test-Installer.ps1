@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Installer)
+param([Parameter(Mandatory)][string]$Installer, [string]$DatabaseArchive)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -21,6 +21,25 @@ try {
     $version = & (Join-Path $app 'Arkive.Cli.exe') --version
     if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') { throw 'Installed CLI did not run.' }
     & (Join-Path $PSScriptRoot 'Get-ExternalTools.ps1') -Destination (Join-Path $app 'tools\external')
+    if ($DatabaseArchive) {
+        $mapping = Join-Path $data 'staging\lpk\data2-fixed\arkive-asset-metadata.json'
+        $start = [Diagnostics.ProcessStartInfo]::new((Join-Path $app 'Arkive.Cli.exe'))
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.Environment['PATH'] = "$env:SystemRoot\System32;$env:SystemRoot"
+        $start.Environment['DOTNET_ROOT'] = (Join-Path $test 'no-global-runtime')
+        foreach ($argument in @('database-build', (Resolve-Path -LiteralPath $DatabaseArchive).Path, '--out', $mapping, '--json')) { $start.ArgumentList.Add($argument) }
+        $builder = [Diagnostics.Process]::Start($start)
+        $stdout = $builder.StandardOutput.ReadToEndAsync()
+        $stderr = $builder.StandardError.ReadToEndAsync()
+        $builder.WaitForExit()
+        if ($builder.ExitCode -ne 0) { throw "Installed database builder failed: $($stderr.GetAwaiter().GetResult())" }
+        $result = $stdout.GetAwaiter().GetResult() | ConvertFrom-Json
+        if ($result.AssociationCount -le 0 -or -not (Test-Path -LiteralPath $mapping)) { throw 'Installed database builder did not create a mapping.' }
+        Write-Host "PASS: installed database builder without global .NET/Python/QuickBMS ($($result.AssociationCount) references)."
+    }
     $process = Start-Process (Join-Path $app 'Arkive.App.exe') -PassThru -WindowStyle Hidden
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {

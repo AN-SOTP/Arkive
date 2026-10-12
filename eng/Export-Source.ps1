@@ -7,7 +7,7 @@ $root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $destinationPath = [IO.Path]::GetFullPath($Destination)
 if (Test-Path -LiteralPath $destinationPath) { throw 'Destination must not already exist; source snapshots are never overwritten.' }
 $files = @('.editorconfig', '.gitignore', '.gitattributes', 'Arkive.slnx', 'Directory.Build.props', 'NuGet.Config',
-    'global.json', 'README.md', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'lpk_extract_v5.bms',
+    'global.json', 'README.md', 'LICENSE.txt', 'COPYRIGHT.txt', 'THIRD-PARTY-NOTICES.txt', 'lpk_extract_v5.bms',
     'tools/Build-CrunchNative.ps1', 'tools/decrypt_lost_ark_databases.py', 'tools/build_game_asset_metadata.py',
     'tools/lpk_dump_encrypted_databases.bms')
 $extensions = @('.cs', '.xaml', '.csproj', '.vcxproj', '.h', '.cpp', '.txt', '.ico', '.jpg', '.ps1', '.json', '.iss', '.yml')

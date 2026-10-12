@@ -410,10 +410,10 @@ public partial class MainWindow : Window
 
     protected override async void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        if (_applicationUpdateDownloading || _authoringBusy || _modLibraryBusy || _guidedTextureModInProgress || _modSetBusy)
+        if (_applicationUpdateDownloading || _authoringBusy || _modLibraryBusy || _guidedTextureModInProgress || _modSetBusy || _databaseBuildCancellation is not null)
         {
             e.Cancel = true;
-            StatusText.Text = "Wait for the current mod operation to finish before closing Arkive.";
+            StatusText.Text = "Finish or cancel the current operation before closing Arkive.";
             base.OnClosing(e);
             return;
         }

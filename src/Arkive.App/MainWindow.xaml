@@ -185,6 +185,7 @@
                                               IsEnabled="False" Click="BaselineAssetButton_Click" />
                                     <Separator />
                                     <MenuItem Header="Open session logs" Click="OpenLogsButton_Click" />
+                                    <MenuItem Header="About / licence" Click="AboutLicenseButton_Click" />
                                 </ContextMenu>
                             </Button.ContextMenu>
                             </Button>
@@ -363,14 +364,32 @@
                                                     Content="Cancel links"
                                                     IsEnabled="False"
                                                     Click="GameAssetLinksCancelButton_Click" />
-                                            <Button Content="Load game DB mapping..."
+                                            <ComboBox x:Name="GameDatabaseLanguageComboBox" Width="90" SelectedIndex="0"
+                                                      Margin="6,0" ToolTip="Language used for in-game names in the database mapping.">
+                                                <ComboBoxItem Content="English" />
+                                                <ComboBoxItem Content="German" />
+                                                <ComboBoxItem Content="French" />
+                                                <ComboBoxItem Content="Spanish" />
+                                            </ComboBox>
+                                            <Button x:Name="BuildGameDatabaseButton" Content="Build game DB..."
+                                                    Click="BuildGameDatabaseButton_Click"
+                                                    ToolTip="Read your client's EFGame/data2.lpk and build the in-game-name mapping. All tools are included; game files stay unchanged." />
+                                            <Button x:Name="LoadGameMetadataButton" Content="Load mapping..."
                                                     Click="LoadGameMetadataButton_Click"
-                                                    ToolTip="Load an Arkive metadata index generated from the extracted Lost Ark databases." />
+                                                    ToolTip="Load an existing Arkive game-name metadata JSON instead of building one." />
                                         </StackPanel>
                                         <TextBlock x:Name="GameMetadataText"
                                                    VerticalAlignment="Center"
                                                    Text="Game DB mapping: not loaded"
                                                    TextTrimming="CharacterEllipsis" />
+                                    </DockPanel>
+                                    <DockPanel x:Name="GameDatabaseProgressPanel" Visibility="Collapsed" Margin="0,0,0,6">
+                                        <Button x:Name="GameDatabaseCancelButton" DockPanel.Dock="Right" Content="Cancel DB build"
+                                                Click="GameDatabaseCancelButton_Click" />
+                                        <StackPanel>
+                                            <TextBlock x:Name="GameDatabaseProgressText" TextWrapping="Wrap" />
+                                            <ProgressBar x:Name="GameDatabaseProgressBar" Height="8" Minimum="0" Maximum="1" Margin="0,4,6,0" />
+                                        </StackPanel>
                                     </DockPanel>
                                     <ProgressBar x:Name="LibraryProgressBar"
                                                  Height="8"

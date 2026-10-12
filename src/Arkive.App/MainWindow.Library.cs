@@ -618,6 +618,7 @@ public partial class MainWindow : Window
 
     private async void GameAssetLinksButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_databaseBuildCancellation is not null || _assetLinkCancellation is not null) return;
         if (_umodelBridge is null || _gameMetadataIndex is null ||
             string.IsNullOrWhiteSpace(_gameMetadataPath) ||
             string.IsNullOrWhiteSpace(_libraryRootPath))
@@ -750,11 +751,15 @@ public partial class MainWindow : Window
         }
 
         GameAssetLinksButton.IsEnabled =
+            _databaseBuildCancellation is null &&
             _assetLinkCancellation is null &&
             _umodelBridge is not null &&
             _gameMetadataIndex is not null &&
             !string.IsNullOrWhiteSpace(_gameMetadataPath) &&
             !string.IsNullOrWhiteSpace(_libraryRootPath);
+        BuildGameDatabaseButton.IsEnabled = _databaseBuildCancellation is null && _assetLinkCancellation is null;
+        LoadGameMetadataButton.IsEnabled = BuildGameDatabaseButton.IsEnabled;
+        GameDatabaseLanguageComboBox.IsEnabled = BuildGameDatabaseButton.IsEnabled;
     }
 
 }
