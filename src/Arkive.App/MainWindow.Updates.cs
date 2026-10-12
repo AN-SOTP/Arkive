@@ -63,7 +63,8 @@ public partial class MainWindow
         if (_authoringBusy || _modLibraryBusy || _workshopBusy || _guidedTextureModInProgress ||
             _modSetBusy || _staticMeshWorkspaceBusy || _skeletalMeshEditableWorkspaceBusy ||
             _skeletalMeshDeploymentBusy || _exportInProgress || _baselineOperationInProgress ||
-            _clientUpdateAuditBusy || _textureReplacementInProgress || _libraryIndexCancellation is not null)
+            _clientUpdateAuditBusy || _textureReplacementInProgress || _libraryIndexCancellation is not null ||
+            _databaseBuildCancellation is not null || _assetLinkCancellation is not null)
         {
             StatusText.Text = "Finish the current operation before updating Arkive.";
             return;

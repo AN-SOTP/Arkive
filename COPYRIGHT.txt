@@ -1,0 +1,18 @@
+Arkive - Lost Ark mod workbench
+Copyright (c) 2026 Arkive contributors
+
+Arkive's original code, tests, build scripts and documentation are licensed
+under the GNU Affero General Public License, version 3 only (AGPL-3.0-only).
+You may redistribute and modify them under that license. Arkive is provided
+without warranty, including merchantability or fitness for a particular purpose.
+The complete license is in LICENSE.txt.
+
+Corresponding source and build instructions:
+https://github.com/AN-SOTP/Arkive
+Recipients of a private preview must also have access to its exact source.
+Repository privacy does not impose additional redistribution restrictions.
+
+Third-party components retain their own licenses and notices. This license
+does not grant rights to Lost Ark artwork, trademarks, extracted game data,
+or independently authored mod content. See THIRD-PARTY-NOTICES.txt and the
+notices in vendored source for their provenance and applicable terms.

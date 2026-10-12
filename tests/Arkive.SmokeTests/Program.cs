@@ -11,6 +11,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     ArkiveModSmokeTests.Cases,
     ModAuthoringSmokeTests.Cases,
     DiscoverySmokeTests.Cases,
+    DatabaseSmokeTests.Cases,
     ExternalArtifactSmokeTests.Cases,
     UpdateSmokeTests.Cases,
 ];

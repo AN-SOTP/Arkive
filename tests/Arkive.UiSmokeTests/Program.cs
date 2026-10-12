@@ -53,6 +53,12 @@ internal static class Program
         Check(Control<Button>(window, "ModLibraryNewButton").IsVisible, "The initial mod library has no visible content.");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");
         tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");
+        Check(Control<Button>(window, "BuildGameDatabaseButton").IsEnabled &&
+              Control<ComboBox>(window, "GameDatabaseLanguageComboBox").SelectedIndex == 0 &&
+              Control<FrameworkElement>(window, "GameDatabaseProgressPanel").Visibility == Visibility.Collapsed,
+            "Fresh-install database controls or their initial state are missing.");
+        Check(Control<Button>(window, "PackageActionsButton").ContextMenu.Items.OfType<MenuItem>()
+            .Any(item => item.Header.ToString() == "About / licence"), "The application licence notice is missing.");
         Check((Control<ComboBox>(window, "LibrarySearchScopeComboBox").SelectedItem as ComboBoxItem)?.Tag?.ToString() == "AllFields",
             "Filename search is not the default library scope.");
         await SearchLibraryAsync(window, "UI fixture boss");

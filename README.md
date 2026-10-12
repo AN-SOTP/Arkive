@@ -28,18 +28,17 @@ Arkive operates on files **while the game, launcher and anti-cheat are closed**.
 - Windows 11 is recommended, 64-bit x64-compatible. The installer allows Windows 10 1809+, but .NET/OS support depends on edition and lifecycle; see [Microsoft's supported OS list](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md). Older Windows and Windows on ARM are not verified Arkive targets.
 - A Western/global Steam Lost Ark installation; write access to its Packages folder when applying/restoring mods.
 - Space for exports, decoded packages, staged builds and original backups. A large kit can use several times its source package size.
-- Your own GitHub account granted access to this private repository.
-- An external editor for authoring: Blender or another GLB editor, and an image editor preserving PNG/DDS channels. Material parameters can be edited in Arkive. External editors are not bundled.
 
 ### Installer
 
-1. Sign in to your authorized GitHub account and open [Releases](https://github.com/AN-SOTP/Arkive/releases/latest).
-2. Download `Arkive-Setup-0.1.0-win-x64.exe` (future versions use their own number). Optionally compare `Get-FileHash -Algorithm SHA256 PATH` with the release's `.sha256` file.
-3. Close running Arkive instances, run the installer and choose destination/shortcut options.
-4. In **Asset library → Library setup**, select your client's `EFGame\ReleasePC\Packages` directory and choose **Build / update index**. Source packages are read, never renamed.
-5. Technical object/package searches now work. For in-game names, load a metadata JSON generated from your own game databases, as described below.
+1. Download `Arkive-Setup-0.1.1-win-x64.exe` from [Releases](https://github.com/AN-SOTP/Arkive/releases/latest). Optionally compare `Get-FileHash -Algorithm SHA256 PATH` with the release's `.sha256` file.
+2. Close running Arkive instances, run the installer and choose destination/shortcut options.
+3. In **Asset library → Library setup**, select your client's `EFGame\ReleasePC\Packages` directory and choose **Build / update index**. Source packages are read, never renamed.
+4. Choose **Build game DB**, select `EFGame\data2.lpk`, and wait for the mapping to load. Technical and in-game-name searches are now available.
 
-The per-user installer normally needs no administrator access. Its default destination is `%LOCALAPPDATA%\Programs\Arkive`. It includes the .NET runtime, native Crunch decoder bridge, the exact tested Lost Ark UModel build, SDL libraries and pinned Crunch encoder. Normal editing/deployment needs no separate .NET, Visual Studio, Python or QuickBMS install. Python/QuickBMS are optional metadata-generation tools.
+The per-user installer normally needs no administrator access. Its default destination is `%LOCALAPPDATA%\Programs\Arkive`. It includes the .NET runtime, native Crunch decoder bridge, the exact tested Lost Ark UModel build, SDL libraries, pinned Crunch encoder, and the database builder's managed cryptography/SQLite libraries and native SQLite runtime. Database building, editing and deployment need no separate .NET, Visual Studio, Python or QuickBMS install.
+
+Dependencies are installed privately alongside Arkive, not as machine-wide prerequisites. The installer does not need to detect or download existing global runtimes: the tested versions are always provided, including on an offline machine. Upgrades replace the application's own dependency files and preserve its separate data folder. Building from source still requires the developer tools listed under **Build and release**.
 
 The private preview installer is **not Authenticode-signed**. Windows may show an unknown-publisher/SmartScreen warning. Verify trusted source and hashes; hashes are not publisher signatures.
 
@@ -98,17 +97,20 @@ Assets, Conflicts, Details and Apply plan panes explain the effective result. **
 
 ## Game names and metadata
 
-No database is bundled. For optional in-game name mapping, obtain QuickBMS from its [official site](https://aluigi.altervista.org/quickbms.htm), install Python 3.11+ and `cryptography`, and locate `data2.lpk` in your client:
+No game database is distributed. Both the installed GUI and CLI build the in-game-name mapping directly from your client's `EFGame\data2.lpk`. In **Asset library → Library setup**, choose the language and **Build game DB**. Progress shows archive decoding and mapping stages; **Cancel DB build** stops the operation. The resulting mapping loads automatically and is remembered for the next launch.
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install cryptography
-& 'C:\Tools\QuickBMS\quickbms.exe' .\tools\lpk_dump_encrypted_databases.bms 'E:\Game\data2.lpk' 'E:\ArkiveData\staging\lpk\encrypted'
-.\.venv\Scripts\python.exe .\tools\decrypt_lost_ark_databases.py 'E:\ArkiveData\staging\lpk\encrypted' 'E:\ArkiveData\staging\lpk\decrypted'
-.\.venv\Scripts\python.exe .\tools\build_game_asset_metadata.py 'E:\ArkiveData\staging\lpk\decrypted' 'E:\ArkiveData\staging\lpk\arkive-asset-metadata.json' --language English
+$cli = "$env:LOCALAPPDATA\Programs\Arkive\Arkive.Cli.exe"
+& $cli database-build 'E:\Games\Lost Ark\EFGame\data2.lpk' --language English
+# Optional explicit destination and JSON result; progress goes to stderr:
+& $cli database-build 'E:\Games\Lost Ark\EFGame\data2.lpk' --out 'E:\ArkiveData\staging\lpk\arkive-asset-metadata.json' --language English --json
 ```
 
-Choose **Load game DB mapping** and select the JSON. Regenerate it after client updates when mappings change. All outputs stay local; do not redistribute game databases. Python/QuickBMS are unnecessary if you already have valid local metadata. The general `lpk_extract_v5.bms` script retains its upstream credits.
+The default output is `staging\lpk\data2-fixed\arkive-asset-metadata.json` under Arkive's data root. **Load mapping** accepts an existing JSON. Rebuild after client updates when mappings change; then refresh verified asset links as needed. Database building does not itself scan every UPK or generate those dependency links.
+
+The builder reads only the supported main-client tables, handles LPK Blowfish word order and filename-derived AES with per-0x400-byte CBC resets, and reads SQLite in read-only mode. Decrypted tables are temporary and removed on success, failure or cancellation; only the mapping is retained. A failed/cancelled build leaves the previous mapping untouched. Current Western/global schema and a language present in the client are required; unsupported protection/schema changes are refused.
+
+Legacy Python/BMS scripts remain in source for format research, with upstream credits, but are not required by the installed workflow. All outputs stay local; do not redistribute game databases or generated game-data mappings.
 
 ## CLI workflow
 
@@ -234,7 +236,7 @@ Tokens go only to GitHub API requests, not approved asset redirects. Untrusted/H
 
 ### Developer requirements
 
-Git, PowerShell, .NET **10 SDK**, Visual Studio/Build Tools with **Desktop development with C++**, x64 MSVC/Windows SDK, and [Inno Setup 6.7+ or 7](https://jrsoftware.org/isdl.php) for installer builds. Native toolset defaults to `v145`; VS2022 can use `v143`. The source contains no managed third-party NuGet dependencies; self-contained Microsoft runtime packs use NuGet.
+Git, PowerShell, .NET **10 SDK**, Visual Studio/Build Tools with **Desktop development with C++**, x64 MSVC/Windows SDK, and [Inno Setup 6.7+ or 7](https://jrsoftware.org/isdl.php) for installer builds. Native toolset defaults to `v145`; VS2022 can use `v143`. NuGet restores pinned BouncyCastle.Cryptography, Microsoft.Data.Sqlite/SQLitePCLRaw and self-contained Microsoft runtime packs. Their notices are included in installer builds.
 
 ```powershell
 git clone https://github.com/AN-SOTP/Arkive.git
@@ -262,7 +264,7 @@ This verifies dependencies, runs both test suites, publishes self-contained win-
 
 On a clean Windows test account with no Arkive installed, `eng/Test-Installer.ps1 -Installer PATH` exercises installation, CLI/tool discovery, GUI launch, the staged updater/restart and uninstall against an isolated workspace. It refuses to overwrite an existing installation and retains test logs. It creates/removes the per-user test installation registration; do not run it while doing other Arkive work.
 
-The verification baseline contains **93 domain smoke cases** and an isolated WPF UI suite: archive/asset pipelines, import validation, composition/priority, restore/source contracts, discovery, selection/layout/theme and update validation. Set `ARKIVE_TEST_PACKAGE_DIR` for optional real-client tests. Synthetic tests cannot certify all live assets. Builds use nullable checks, warnings-as-errors, deterministic settings, neutral source path mapping and no managed Release PDBs; these do not prevent decompilation.
+The verification baseline contains **97 domain smoke cases** and an isolated WPF UI suite: archive/asset pipelines, import validation, composition/priority, restore/source contracts, discovery, selection/layout/theme and update validation. Set `ARKIVE_TEST_PACKAGE_DIR` for optional real-client tests. Synthetic tests cannot certify all live assets. Builds use nullable checks, warnings-as-errors, deterministic settings, neutral source path mapping and no managed Release PDBs; these do not prevent decompilation.
 
 ### Maintainers
 
@@ -302,6 +304,19 @@ Publication starts from a clean snapshot instead of prior commits. Mods, databas
 
 Bounded parsing, safe paths, exact source/backup hashes and explicit deployment confirmation are safeguards, not a formal security audit. Managed code remains decompilable; no secret client-side key can be made unrecoverable. A trusted installer still executes code. Game terms/anti-cheat and redistribution rights need separate consideration before going public; no bypass or stealth guarantee is offered.
 
-Original Arkive code is reserved for authorized private testing under `LICENSE.txt`; third-party code retains its licenses. Select a public code license and resolve artwork/tool redistribution questions before making the repository public. This project is not affiliated with Smilegate, Amazon Games, UE Viewer or Penumbra.
+Arkive's original code, tests, build scripts and documentation are licensed **AGPL-3.0-only**. See `LICENSE.txt` for the complete unmodified GNU licence and `COPYRIGHT.txt` for its scope. Distributed derivatives must provide corresponding source under the licence; modified versions offered for remote network interaction must offer source to their users. Recipients can redistribute it. Private modifications do not automatically require publication, and copyright licensing does not control independent implementations merely inspired by Arkive's ideas. See the [GNU licence FAQ](https://www.gnu.org/licenses/gpl-faq.html#GPLRequireSourcePostedPublic) and [AGPL section 13](https://www.gnu.org/licenses/agpl-3.0.html#section13).
+
+The repository remains private during testing; this is an access setting, not an additional licence restriction. Anyone receiving an installer must also have access to its exact corresponding source and build instructions. Third-party components retain their licences; Lost Ark artwork/trademarks and user/game assets are not relicensed as Arkive code. This project is not affiliated with Smilegate, Amazon Games or UE Viewer.
+
+### Before public release
+
+- Resolve redistribution rights and exact source provenance for the Lost Ark-specific UModel fork and all bundled components. Verify retained licence/attribution obligations; do not assume upstream permissions automatically cover an undocumented fork.
+- Obtain permission for the banner artwork/icon or replace them with artwork you can distribute. Review game terms, extraction/decryption and mod-distribution implications with qualified counsel; the code licence does not settle those rights.
+- Sign installers/updaters and verify publisher signatures during updates, in addition to hashes. Protect signing material outside the repo and review release jobs before granting write access.
+- Test a clean Windows installation, offline installation, database building, file associations, upgrades, recovery and uninstall. Include update checks without a token when public; never publish tester tokens.
+- Enable branch protection, required CI/review, dependency/security alerts and an appropriate private vulnerability-reporting channel. Pin workflow actions by reviewed immutable commits and audit release dependencies/provenance.
+- Review current source, Git history and every release attachment for credentials, personal paths and game data. Publish release notes, reproducible source/dependency instructions and a dependency inventory; keep known limitations prominent.
+
+Do not change repository visibility until these checks are complete. Public access and AGPL licensing are not guarantees of game compatibility, security or redistribution clearance.
 
 Primary references: [Lost Ark UModel fork](https://www.gildor.org/smf/index.php?topic=3055.0), [UE Viewer source/license](https://github.com/gildor2/UEViewer), [pinned Crunch source](https://github.com/Unity-Technologies/crunch/tree/8708900eca8ec609d279270e72936258f81ddfb7), [GitHub release API](https://docs.github.com/en/rest/releases/releases), [Inno Setup](https://jrsoftware.org/isdl.php).

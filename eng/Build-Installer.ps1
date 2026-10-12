@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0',
+    [string]$Version = '0.1.1',
     [string]$IsccPath,
     [string]$ToolsDirectory,
     [switch]$SkipVerification
@@ -43,8 +43,13 @@ try {
     foreach ($file in $manifest.files) { Copy-Item -LiteralPath (Join-Path $ToolsDirectory $file.name) -Destination $external }
     Copy-Item -LiteralPath (Join-Path $root 'THIRD-PARTY-NOTICES.txt') -Destination $payload
     Copy-Item -LiteralPath (Join-Path $root 'LICENSE.txt') -Destination $payload
+    Copy-Item -LiteralPath (Join-Path $root 'COPYRIGHT.txt') -Destination $payload
     Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $payload
     Copy-Item -LiteralPath (Join-Path $root 'installer\arkive-installation.json') -Destination $payload
+    foreach ($required in @('BouncyCastle.Cryptography.dll', 'Microsoft.Data.Sqlite.dll',
+        'SQLitePCLRaw.core.dll', 'SQLitePCLRaw.batteries_v2.dll', 'SQLitePCLRaw.provider.e_sqlite3.dll', 'e_sqlite3.dll')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Database runtime missing from installer payload: $required" }
+    }
     $runtimeConfig = Get-Content (Join-Path $payload 'Arkive.App.runtimeconfig.json') -Raw | ConvertFrom-Json
     $runtimeVersion = ($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -eq 'Microsoft.NETCore.App').version
     if ($runtimeVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Cannot determine the bundled .NET runtime version.' }

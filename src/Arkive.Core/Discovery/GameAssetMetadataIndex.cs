@@ -53,7 +53,7 @@ public sealed record GameAssetMetadataDocument(
 
 /// <summary>
 /// Resolves high-confidence database references to the matching UModel package
-/// and object names. The source JSON is produced by build_game_asset_metadata.py.
+/// and object names using the generated game database mapping.
 /// </summary>
 public sealed class GameAssetMetadataIndex
 {
