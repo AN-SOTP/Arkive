@@ -130,6 +130,8 @@ internal static class Program
         await UntilAsync(() => !window.IsVisible, () => "The initial test window did not finish closing.");
         window = CreateWindow(root);
         window.Show();
+        await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == 3,
+            () => "The reopened workspace did not finish restoring its asset library.");
         await UntilAsync(() => Control<ComboBox>(window, "AuthoringModComboBox") is { Items.Count: > 0, IsEnabled: true },
             () => "The restored draft did not appear after reopening.");
         Control<ComboBox>(window, "AuthoringModComboBox").SelectedIndex = 0;
