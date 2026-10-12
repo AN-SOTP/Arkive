@@ -9,8 +9,8 @@ The complete license is in LICENSE.txt.
 
 Corresponding source and build instructions:
 https://github.com/AN-SOTP/Arkive
-Recipients of a private preview must also have access to its exact source.
-Repository privacy does not impose additional redistribution restrictions.
+Anyone who receives an Arkive installer is entitled to its exact corresponding
+source: the repository tag matching the installer's version.
 
 Third-party components retain their own licenses and notices. This license
 does not grant rights to Lost Ark artwork, trademarks, extracted game data,

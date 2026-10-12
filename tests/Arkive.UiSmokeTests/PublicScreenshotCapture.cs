@@ -123,7 +123,7 @@ internal static class PublicScreenshotCapture
         var now = DateTimeOffset.UtcNow;
         var manifest = new ArkiveModFileManifest("arkive.mod", 1, Guid.NewGuid().ToString("N"), name + " · demo",
             "1.0.0", "Arkive examples", "Fictional screenshot data; not an installable mod.", null, ["demo"],
-            "western-global-steam-v1", now, now, "0.1.1", assets);
+            "western-global-steam-v1", now, now, ArkiveModAuthoringService.CurrentCreatedWith, assets);
         var entry = new ArkiveModLibraryEntry(manifest.ModId, name + ".arkive", new string('0', 64), 0, now,
             enabled, priority, ArkiveModOrigin.Created, manifest, []);
         return new(entry, false, assets.Select(asset => new ArkiveModAssetStatus(asset, outcome, null, null, null,

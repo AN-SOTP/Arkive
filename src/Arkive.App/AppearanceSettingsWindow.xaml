@@ -96,7 +96,7 @@
                 <StackPanel Grid.Row="10" Grid.ColumnSpan="2">
                     <TextBlock x:Name="UpdateVersionText" FontWeight="SemiBold" />
                     <CheckBox x:Name="CheckUpdatesCheckBox" Content="Check for application updates on startup" Margin="0,8,0,8" />
-                    <TextBlock Text="Private releases: use your own fine-grained GitHub token with Contents: read-only access to Arkive. Stored only in Windows Credential Manager."
+                    <TextBlock Text="Public releases need no token. A token is only for builds that update from a private fork: use your own fine-grained token with Contents: read-only access. Stored only in Windows Credential Manager."
                                TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
                     <PasswordBox x:Name="UpdateTokenBox" Margin="0,8,0,4" ToolTip="Leave blank to retain the current token. Never paste someone else's token." />
                     <StackPanel Orientation="Horizontal">

@@ -349,8 +349,8 @@ https://github.com/jrsoftware/issrc/blob/main/license.txt
 Lost Ark application artwork and icon
 Lost Ark is a trademark of Smilegate RPG. Artwork and the icon belong to
 their respective rights holders, including Smilegate and Amazon Games.
-Application artwork is retained for this private preview at the project
-owner's request; no ownership or unrestricted redistribution permission
-is claimed. Source-page credits are recorded in BannerArtworkManager.cs.
+Application artwork is included at the project owner's request; no
+ownership or unrestricted redistribution permission is claimed.
+Source-page credits are recorded in BannerArtworkManager.cs.
 Extracted game packages, meshes, textures, databases and mods are not
 included in the repository or release.

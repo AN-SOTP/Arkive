@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.1',
+    [string]$Version,
     [string]$IsccPath,
     [string]$ToolsDirectory,
     [switch]$SkipVerification
@@ -8,8 +8,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must be major.minor.patch.' }
 $root = Split-Path -Parent $PSScriptRoot
+# Directory.Build.props is the single source of the release version; -Version only confirms it.
+[xml]$properties = Get-Content -LiteralPath (Join-Path $root 'Directory.Build.props') -Raw
+$sourceVersion = $properties.SelectSingleNode('/Project/PropertyGroup/Version').InnerText.Trim()
+if (-not $Version) { $Version = $sourceVersion }
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must be major.minor.patch.' }
+if ($Version -ne $sourceVersion) { throw "Version $Version disagrees with Directory.Build.props ($sourceVersion). Update Directory.Build.props instead of overriding the version." }
 if (-not $ToolsDirectory) { $ToolsDirectory = Join-Path $root 'tools\external' }
 if (-not $IsccPath) {
     $candidates = @((Join-Path $root 'tools\build-tools\inno\ISCC.exe'),

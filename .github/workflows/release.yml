@@ -57,4 +57,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create '${{ github.ref_name }}' ./dist/releases/*.exe ./dist/releases/*.sha256 --repo '${{ github.repository }}' --verify-tag --draft --title "Arkive $env:ARKIVE_VERSION" --notes 'Private preview. Review the installer and checksums before publishing this stable release. Application data is preserved. See README for installation, update access, workflow and limitations.'
+          gh release create '${{ github.ref_name }}' ./dist/releases/*.exe ./dist/releases/*.sha256 --repo '${{ github.repository }}' --verify-tag --draft --title "Arkive $env:ARKIVE_VERSION" --notes "Draft for Arkive $env:ARKIVE_VERSION (public preview). Before publishing, replace these notes with a summary of changes and review the installer and its SHA-256 file. Publishing offers this update to every installed copy of Arkive."

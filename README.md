@@ -4,7 +4,7 @@
 
 Arkive finds game assets, exports editable working files, validates changes, rebuilds protected Unreal Engine 3 packages, and applies or restores mods with hash-verified backups. Mods are shared as portable `.arkive` files. The project includes a WPF desktop application, a command-line interface and a reusable core library.
 
-Arkive is an **AGPL-3.0-only public preview**, currently released as **0.1.1**. This repository contains current source, tests, build infrastructure, dependency notices, GUI screenshots and application artwork/icon. No game packages, exported game assets, databases, mods, personal settings, credentials or historical development checkouts are distributed.
+Arkive is an **AGPL-3.0-only public preview**; the current version is on the [Releases](https://github.com/AN-SOTP/Arkive/releases/latest) page. This repository contains current source, tests, build infrastructure, dependency notices, GUI screenshots and application artwork/icon. No game packages, exported game assets, databases, mods, personal settings, credentials or historical development checkouts are distributed.
 
 **Using Arkive always carries inherent risk. Creating, sharing or using mods may result in account suspension or a permanent ban.** There is no guarantee against crashes, client repairs, incompatibility, data loss or account sanctions. Use a client you are authorized to access and keep independent backups.
 
@@ -55,7 +55,7 @@ Enable mods, set priorities and review the effective asset selection before appl
 
 ### Installer
 
-1. Download `Arkive-Setup-0.1.1-win-x64.exe` from [Releases](https://github.com/AN-SOTP/Arkive/releases/latest). Optionally compare `Get-FileHash -Algorithm SHA256 PATH` with the release's `.sha256` file.
+1. Download the latest `Arkive-Setup-X.Y.Z-win-x64.exe` from [Releases](https://github.com/AN-SOTP/Arkive/releases/latest). Optionally compare `Get-FileHash -Algorithm SHA256 PATH` with the release's `.sha256` file.
 2. Close running Arkive instances, run the installer and choose destination/shortcut options.
 3. In **Asset library → Library setup**, select your client's `EFGame\ReleasePC\Packages` directory and choose **Build / update index**. Source packages are read, never renamed.
 4. Choose **Build game DB**, select `EFGame\data2.lpk`, and wait for the mapping to load. Technical and in-game-name searches are now available.
@@ -244,9 +244,11 @@ Steam reinstall changes game bytes but does not clear Arkive's library. If a mod
 
 When enabled in Settings, startup checks GitHub's latest stable release and shows an inline notice for a newer `major.minor.patch`. Download/install requires **Install update and restart**, explicit confirmation and no active mod work. Merely publishing a release does not install it.
 
-The download is bound to the exact versioned installer, API size and SHA-256. Arkive saves its draft/settings, closes, then a separately staged helper verifies again, runs the per-user installer and reopens the same data root. Source/portable builds are not automatically overwritten. Failure is reported; install logs remain beside the download. Mods/backups are outside application replacement.
+The download is bound to the exact versioned installer, API size and SHA-256. Arkive saves its draft/settings, closes, then a separately staged helper verifies again, runs the per-user installer and reopens the same data root. Source/portable builds are not automatically overwritten. Mods/backups are outside application replacement.
 
-Public releases can be checked and downloaded **without a GitHub token**. If you configured a token during private testing, **Settings → Forget token** removes it. Private forks/releases can still use an account's own fine-grained token with **Contents: read-only** access; it stays in Windows Credential Manager, not settings/logs/installer/source. Tokens do not grant access the account lacks.
+If a check, download or installation fails, Arkive says what failed, why and what to do next: for example an offline connection, GitHub's request limit, a download that failed verification (deleted, never run), another Arkive window or locked file blocking setup, or a required restart. Installer exit codes are translated and `install.log` stays beside the download. A failed download or install leaves the current version, mods, drafts and backups in place. Startup checks that fail are recorded in the session log instead of interrupting work.
+
+Releases are checked and downloaded **without a GitHub token**. If you saved a token in an earlier version, **Settings → Forget token** removes it. A token is only needed by builds that update from a private fork: use an account's own fine-grained token with **Contents: read-only** access; it stays in Windows Credential Manager, not settings/logs/installer/source. Tokens do not grant access the account lacks.
 
 Tokens go only to GitHub API requests, not approved asset redirects. Untrusted/HTTP hosts, missing/wrong hashes, oversized files and downgrades are refused. A compromised authorized repository can still publish a malicious correctly hashed installer; code-signing/release review remain recommended.
 
@@ -274,7 +276,8 @@ dotnet run --project src/Arkive.App -c Release
 `eng/ExternalTools.json` pins tested UModel/Crunch/SDL SHA-256 values and upstream sources. Do not replace them with random latest builds. The native decoder bridge is built from vendored source, not committed as a DLL.
 
 ```powershell
-.\eng\Build-Installer.ps1 -Version 0.1.0
+.\eng\Build-Installer.ps1
+# The version comes from Directory.Build.props; -Version X.Y.Z only confirms it and refuses a mismatch.
 # Optional: -IsccPath 'C:\Tools\Inno\ISCC.exe'
 ```
 
@@ -282,20 +285,21 @@ This verifies dependencies, runs both test suites, publishes self-contained win-
 
 On a clean Windows test account with no Arkive installed, `eng/Test-Installer.ps1 -Installer PATH` exercises installation, CLI/tool discovery, GUI launch, the staged updater/restart and uninstall against an isolated workspace. It refuses to overwrite an existing installation and retains test logs. It creates/removes the per-user test installation registration; do not run it while doing other Arkive work.
 
-The verification baseline contains **98 domain smoke cases** and an isolated WPF UI suite: archive/asset pipelines, import validation, composition/priority, restore/source contracts, discovery, selection/layout/theme and update validation. Set `ARKIVE_TEST_PACKAGE_DIR` for optional real-client tests. Synthetic tests cannot certify all live assets. Builds use nullable checks, warnings-as-errors, deterministic settings, neutral source path mapping and no managed Release PDBs; these do not prevent decompilation.
+The verification baseline contains **99 domain smoke cases** and an isolated WPF UI suite: archive/asset pipelines, import validation, composition/priority, restore/source contracts, discovery, selection/layout/theme and update validation. Set `ARKIVE_TEST_PACKAGE_DIR` for optional real-client tests. Synthetic tests cannot certify all live assets. Builds use nullable checks, warnings-as-errors, deterministic settings, neutral source path mapping and no managed Release PDBs; these do not prevent decompilation.
 
 ### Maintainers
 
-Tag-triggered Windows CI builds/tests, retrieves the pinned tool pack from `v0.1.0`, compiles and uploads installer/checksum assets. Update `Directory.Build.props`, review/test, then:
-The `v0.1.0` baseline is seeded manually; its tool pack is the bootstrap dependency for subsequent release tags. CI creates later releases as drafts for maintainer review before publishing.
+`Directory.Build.props` is the only place the release version is set; the installer build, the release workflow and the application's update check all read it. To release, update `<Version>` there, review/test, then push `main` and a matching tag:
 
 ```powershell
-git tag v0.1.1
+git tag vX.Y.Z
 git push origin main
-git push origin v0.1.1
+git push origin vX.Y.Z
 ```
 
-Run release jobs on reviewed repository-owned tags, not untrusted PR code with write credentials. The updater ignores drafts/prereleases. Published installers and source are available from the public repository's Releases page.
+The tag-triggered Windows workflow refuses a tag that disagrees with `Directory.Build.props`, retrieves the pinned tool pack from `v0.1.0`, runs both test suites, builds the installer and its `.sha256` file and creates a **draft** release. Replace the draft notes, review the assets, then publish: publishing offers the update to every installed copy, while drafts/prereleases are ignored by the updater. The `v0.1.0` baseline was seeded manually; its tool pack is the bootstrap dependency for later release tags.
+
+Run release jobs on reviewed repository-owned tags, not untrusted PR code with write credentials. Published installers and source are available from the Releases page.
 
 `eng/Export-Source.ps1 -Destination NEW_FOLDER` creates an allowlisted fresh snapshot without history, generated binaries, user data or extra Markdown documents. It is an initial-publication aid, not the normal push process. Audit new dependency/artwork additions.
 
@@ -312,7 +316,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 - Priority resolves target ownership, not semantic compatibility of all dependencies.
 - CLI authoring requires explicit manifest chaining; the GUI is the recommended named-mod editor.
 - The installer/updater is an unsigned preview; uninstall preserves data and does not restore the game.
-- Not every bug is known. Report version, operation, asset identity, failure code and a sanitized diagnostic excerpt. Review paths/names before sharing logs; never submit credentials or whole game packages casually.
+- Not every bug is known. Report it on [GitHub Issues](https://github.com/AN-SOTP/Arkive/issues) with version, operation, asset identity, failure code and a sanitized diagnostic excerpt. Review paths/names before sharing logs; never submit credentials or whole game packages casually.
 
 ## Privacy, security and licensing
 
@@ -320,7 +324,7 @@ No telemetry or credential upload is implemented. Asset operations run locally. 
 
 Publication starts from a clean snapshot instead of prior commits. Mods, database/asset exports, caches, backups, builds, personal settings and AI configs are excluded. Application banners/icon and the interoperability key are intentionally retained. `THIRD-PARTY-NOTICES.txt` contains dependency licenses and artwork credits.
 
-Bounded parsing, safe paths, exact source/backup hashes and explicit deployment confirmation are safeguards, not a formal security audit. Managed code remains decompilable; no secret client-side key can be made unrecoverable. A trusted installer still executes code. Game terms/anti-cheat and redistribution rights need separate consideration before going public; no bypass or stealth guarantee is offered.
+Bounded parsing, safe paths, exact source/backup hashes and explicit deployment confirmation are safeguards, not a formal security audit. Managed code remains decompilable; no secret client-side key can be made unrecoverable. A trusted installer still executes code. Game terms, anti-cheat policies and redistribution rights are separate from Arkive's licence; no bypass or stealth guarantee is offered.
 
 Arkive's original code, tests, build scripts and documentation are licensed **AGPL-3.0-only**. See `LICENSE.txt` for the complete unmodified GNU licence and `COPYRIGHT.txt` for its scope. Distributed derivatives must provide corresponding source under the licence; modified versions offered for remote network interaction must offer source to their users. Recipients can redistribute it. Private modifications do not automatically require publication, and copyright licensing does not control independent implementations merely inspired by Arkive's ideas. See the [GNU licence FAQ](https://www.gnu.org/licenses/gpl-faq.html#GPLRequireSourcePostedPublic) and [AGPL section 13](https://www.gnu.org/licenses/agpl-3.0.html#section13).
 

@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.1"
+  #error AppVersion must be supplied by Build-Installer.ps1
 #endif
 #ifndef PayloadDirectory
   #error PayloadDirectory must be supplied by Build-Installer.ps1

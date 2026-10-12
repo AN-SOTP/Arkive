@@ -32,7 +32,7 @@ if ($Archive) {
 foreach ($file in $manifest.files) {
     $path = Join-Path $Destination $file.name
     if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $file.sha256) {
-        throw "Missing or incompatible $($file.name). Download Arkive-Tools-win-x64.zip from the private v0.1.0 release, then run this script with -Archive PATH."
+        throw "Missing or incompatible $($file.name). Download Arkive-Tools-win-x64.zip from https://github.com/AN-SOTP/Arkive/releases/tag/v0.1.0, then run this script with -Archive PATH."
     }
     Write-Host "Verified $($file.name)"
 }
