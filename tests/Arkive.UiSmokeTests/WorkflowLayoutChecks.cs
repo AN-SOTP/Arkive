@@ -26,6 +26,10 @@ internal static class WorkflowLayoutChecks
             $"The default search pane does not use its available workspace: " +
             $"table={tableHeight:N0}, required={minimumTableHeight:N0}, " +
             $"search={searchRow.ActualHeight:N0}, assets={assetsRow.ActualHeight:N0}, workspace={workspaceHeight:N0}.");
+        var authoringGrid = Control<Grid>(window, "AuthoringPaneGrid");
+        var authoringMinimum = authoringGrid.MinHeight;
+        authoringGrid.MinHeight = Math.Max(authoringGrid.ActualHeight, 600);
+        window.UpdateLayout();
         var before = searchRow.ActualHeight;
         Resize(window, "AuthoringPaneSplitter", Key.Up);
         Check(searchRow.ActualHeight > before + 10, "The authoring tables cannot be resized with their splitter.");
@@ -44,8 +48,13 @@ internal static class WorkflowLayoutChecks
               Control<DataGrid>(window, "AuthoringAssetsGrid").CanUserResizeColumns,
             "Authoring table columns cannot be resized.");
         Console.WriteLine("PASS: authoring tables resize, collapse without dead space, and retain their split");
+        authoringGrid.MinHeight = authoringMinimum;
 
         tabs.SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
+        window.UpdateLayout();
+        var modGrid = Control<Grid>(window, "ModLibraryPaneGrid");
+        var modMinimum = modGrid.MinHeight;
+        modGrid.MinHeight = Math.Max(modGrid.ActualHeight, 600);
         window.UpdateLayout();
         var detailsRow = Control<RowDefinition>(window, "ModLibraryDetailsRow");
         before = detailsRow.ActualHeight;
@@ -54,6 +63,7 @@ internal static class WorkflowLayoutChecks
         Check(!Control<TabItem>(window, "ModLibraryTab").IsVisible,
             "The redundant inner Mod library tab strip still occupies space.");
         Console.WriteLine("PASS: mod details resize without a redundant inner tab strip");
+        modGrid.MinHeight = modMinimum;
 
         tabs.SelectedItem = Control<TabItem>(window, "WorkshopTab");
         var width = window.Width;
