@@ -22,7 +22,8 @@ public sealed record ShaderCacheIndexDocument(
     int SchemaVersion,
     IReadOnlyList<ShaderCacheExport> Caches,
     IReadOnlyList<ShaderCacheMaterialMap> Maps,
-    IReadOnlyDictionary<string, ShaderCacheRecord> PixelShaderRecords);
+    IReadOnlyDictionary<string, ShaderCacheRecord> PixelShaderRecords,
+    IReadOnlyDictionary<int, long[]>? BlobOffsets = null);
 
 /// <summary>Where a serialized shader object (with its parameter bindings) starts.</summary>
 public sealed record ShaderCacheRecord(int CacheIndex, long Offset);
@@ -48,7 +49,7 @@ public sealed record ShaderParameterBindings(
 /// </summary>
 public sealed class ShaderCacheIndex
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     private const int IndexOffset = 0x1D;
     private const int EntrySize = 24;
     private const string BasePassPixelShader = "tbasepasspixelshaderfnolightmappolicyskylight";
@@ -98,32 +99,44 @@ public sealed class ShaderCacheIndex
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var caches = DiscoverCaches(releasePcDirectory, reader, protectionProvider);
         if (File.Exists(indexPath))
         {
             try
             {
+                // Reuse the saved index while every cache package it came from is unchanged.
                 var saved = JsonSerializer.Deserialize<ShaderCacheIndexDocument>(File.ReadAllBytes(indexPath), JsonOptions);
-                if (saved is not null && saved.SchemaVersion == CurrentSchemaVersion && saved.Caches.SequenceEqual(caches))
+                if (saved is not null && saved.SchemaVersion == CurrentSchemaVersion && saved.Caches.Count > 0 &&
+                    saved.Caches.All(Unchanged))
                     return new ShaderCacheIndex(saved, protectionProvider);
             }
             catch (JsonException) { }
         }
+        var caches = DiscoverCaches(releasePcDirectory, reader, protectionProvider);
 
         var maps = new List<ShaderCacheMaterialMap>();
         var records = new Dictionary<string, ShaderCacheRecord>(StringComparer.OrdinalIgnoreCase);
+        var blobOffsets = new Dictionary<int, long[]>();
         for (var cacheIndex = 0; cacheIndex < caches.Count; cacheIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Indexing game shaders ({cacheIndex + 1}/{caches.Count})");
-            maps.AddRange(ScanMaterialMaps(caches[cacheIndex], cacheIndex, reader, protectionProvider, records, cancellationToken));
+            var offsets = new List<long>();
+            maps.AddRange(ScanMaterialMaps(caches[cacheIndex], cacheIndex, reader, protectionProvider, records, offsets,
+                cancellationToken));
+            blobOffsets[cacheIndex] = offsets.ToArray();
         }
-        var document = new ShaderCacheIndexDocument(CurrentSchemaVersion, caches, maps, records);
+        var document = new ShaderCacheIndexDocument(CurrentSchemaVersion, caches, maps, records, blobOffsets);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(indexPath))!);
         var temporary = indexPath + ".tmp";
         File.WriteAllBytes(temporary, JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions));
         File.Move(temporary, indexPath, overwrite: true);
         return new ShaderCacheIndex(document, protectionProvider);
+    }
+
+    private static bool Unchanged(ShaderCacheExport cache)
+    {
+        var file = new FileInfo(cache.PackagePath);
+        return file.Exists && file.Length == cache.PackageLength && file.LastWriteTimeUtc.Ticks == cache.PackageTicks;
     }
 
     private static List<ShaderCacheExport> DiscoverCaches(
@@ -158,6 +171,7 @@ public sealed class ShaderCacheIndex
         UpkPackageReader? reader,
         IChunkProtectionProvider protectionProvider,
         Dictionary<string, ShaderCacheRecord> records,
+        List<long> blobOffsets,
         CancellationToken cancellationToken)
     {
         var summary = (reader ?? new UpkPackageReader()).Read(cache.PackagePath);
@@ -174,6 +188,7 @@ public sealed class ShaderCacheIndex
         var blobs = ReadUInt32(stream);
         for (var blob = 0; blob < blobs; blob++)
         {
+            blobOffsets.Add(stream.Position);
             ReadUInt32(stream);
             var packed = ReadUInt32(stream);
             stream.Position += packed;
@@ -350,10 +365,12 @@ public sealed class ShaderCacheIndex
         return true;
     }
 
-    /// <summary>Returns the DXBC bytes of a compiled shader, searching every cache export.</summary>
-    public byte[]? ReadShader(string shaderId)
+    /// <summary>Returns the DXBC bytes of a compiled shader, trying its material map's cache export first.</summary>
+    public byte[]? ReadShader(string shaderId, int preferredCache = 0)
     {
-        for (var index = 0; index < Document.Caches.Count; index++)
+        var order = Enumerable.Range(0, Document.Caches.Count)
+            .OrderBy(index => index == preferredCache ? 0 : 1);
+        foreach (var index in order)
         {
             var cache = Open(index);
             lock (_gate)
@@ -372,7 +389,7 @@ public sealed class ShaderCacheIndex
         lock (_gate)
         {
             if (_caches.TryGetValue(index, out var state)) return state;
-            state = new CacheState(Document.Caches[index], _protectionProvider);
+            state = new CacheState(Document.Caches[index], _protectionProvider, Document.BlobOffsets?.GetValueOrDefault(index));
             _caches[index] = state;
             return state;
         }
@@ -387,10 +404,10 @@ public sealed class ShaderCacheIndex
 
     private sealed class CacheState
     {
-        private readonly List<(long Offset, int Raw, int Packed)> _blobs = [];
+        private readonly List<long> _blobs = [];
         private readonly Dictionary<int, byte[]> _decoded = new();
 
-        public CacheState(ShaderCacheExport cache, IChunkProtectionProvider protectionProvider)
+        public CacheState(ShaderCacheExport cache, IChunkProtectionProvider protectionProvider, long[]? blobOffsets)
         {
             var summary = new UpkPackageReader().Read(cache.PackagePath);
             Stream = new LogicalPackageStream(summary, protectionProvider);
@@ -407,12 +424,17 @@ public sealed class ShaderCacheIndex
                     (int)BinaryPrimitives.ReadUInt32LittleEndian(row[18..]),
                     BinaryPrimitives.ReadUInt16LittleEndian(row[22..]));
             }
+            if (blobOffsets is not null)
+            {
+                _blobs.AddRange(blobOffsets);
+                return;
+            }
             var blobs = (int)ReadUInt32(Stream);
             for (var i = 0; i < blobs; i++)
             {
-                var raw = (int)ReadUInt32(Stream);
+                _blobs.Add(Stream.Position);
+                ReadUInt32(Stream);
                 var packed = (int)ReadUInt32(Stream);
-                _blobs.Add((Stream.Position, raw, packed));
                 Stream.Position += packed;
             }
         }
@@ -424,9 +446,11 @@ public sealed class ShaderCacheIndex
         public byte[] ReadBlob(int index)
         {
             if (_decoded.TryGetValue(index, out var data)) return data;
-            var (offset, raw, packed) = _blobs[index];
+            Stream.Position = _blobs[index];
+            var raw = (int)ReadUInt32(Stream);
+            var packed = (int)ReadUInt32(Stream);
+            if (raw is < 0 or > 64 << 20 || packed is < 0 or > 64 << 20) throw new InvalidDataException("Invalid shader blob size.");
             var source = new byte[packed];
-            Stream.Position = offset;
             Stream.ReadExactly(source);
             data = Arkive.Core.Compression.Lz4BlockDecoder.Decode(source, raw);
             if (_decoded.Count > 64) _decoded.Clear();

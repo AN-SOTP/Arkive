@@ -86,7 +86,8 @@ public sealed record ModelViewerScene(
     string? PropertiesUrl,
     IReadOnlyList<string> Diagnostics,
     double PreparationSeconds,
-    string GlslPrelude);
+    string GlslPrelude,
+    IReadOnlyDictionary<string, double>? StageSeconds = null);
 
 public sealed record ModelViewerSceneResult(
     string Directory,

@@ -655,6 +655,8 @@ static int ModelViewerScene(
         Console.WriteLine($"  Textures:   {scene.Textures.Count}");
         foreach (var diagnostic in scene.Diagnostics) Console.WriteLine($"  Note:       {diagnostic}");
         Console.WriteLine($"  Prepared:   {(result.FromCache ? "from cache" : $"{scene.PreparationSeconds:N2}s")} -> {result.SceneJsonPath}");
+        if (!result.FromCache && scene.StageSeconds is { } stages)
+            Console.WriteLine($"  Stages:     {string.Join(", ", stages.Select(stage => $"{stage.Key} {stage.Value:N2}s"))}");
     }
     return 0;
 }

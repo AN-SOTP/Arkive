@@ -21,20 +21,34 @@ public sealed record GameShaderPlan(
 /// <summary>Finds, translates and binds the game's base-pass pixel shader for one material instance.</summary>
 public static class GameShaderMaterial
 {
-    /// <param name="materialBytes">The instance's export bytes, which name its shader variant; null if unknown.</param>
+    /// <param name="materialBytes">
+    /// Export bytes of a material by name (null when unavailable). The instance and then its parents are
+    /// searched for the GUID of the compiled variant they use.
+    /// </param>
     /// <param name="textureUrl">Resolves an exported texture name to a scene URL (null when it was not exported).</param>
     /// <param name="textureSrgb">Whether the game samples a texture with sRGB decoding.</param>
     public static GameShaderPlan? Build(
         ShaderCacheIndex index,
         MaterialInstanceDescription material,
-        ReadOnlySpan<byte> materialBytes,
+        Func<string, byte[]?> materialBytes,
         Func<string, string?> textureUrl,
         Func<string, bool> textureSrgb,
         out string? failure)
     {
         failure = null;
         var notes = new List<string>();
-        var map = materialBytes.IsEmpty ? null : index.FindMapIn(materialBytes);
+        ShaderCacheMaterialMap? map = null;
+        foreach (var name in material.ParentChain.Prepend(material.Name))
+        {
+            if (materialBytes(name) is not { } bytes) continue;
+            map = index.FindMapIn(bytes);
+            if (map is not null)
+            {
+                if (!name.Equals(material.Name, StringComparison.OrdinalIgnoreCase))
+                    notes.Add($"Uses the compiled variant of its parent {name}.");
+                break;
+            }
+        }
         var exactVariant = map is not null;
         if (map is null)
         {
@@ -62,7 +76,7 @@ public static class GameShaderMaterial
             failure = $"Could not read {map.FriendlyName}'s uniform expressions: {exception.Message}";
             return null;
         }
-        var dxbc = index.ReadShader(map.BasePassPixelShaderId);
+        var dxbc = index.ReadShader(map.BasePassPixelShaderId, map.CacheIndex);
         if (dxbc is null)
         {
             failure = $"The compiled shader {map.BasePassPixelShaderId} is missing from the cache.";

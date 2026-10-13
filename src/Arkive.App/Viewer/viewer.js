@@ -190,7 +190,10 @@ function materialFor(slot) {
     case 'clay': material = new THREE.MeshStandardMaterial({ color: 0xb8b2a8, roughness: 0.8, side: THREE.DoubleSide }); break;
     default:
       if (!info) material = new THREE.MeshStandardMaterial({ color: slotColor(slot) });
-      else if (state.shading === 'game' && info.gameShader) material = recipeMaterial(info, info.recipe, info.gameShader);
+      else if (state.shading === 'game' && info.gameShader && !info.gameShaderBroken) {
+        material = recipeMaterial(info, info.recipe, info.gameShader);
+        material.userData.gameSlot = slot;
+      }
       else material = recipeMaterial(info, state.shading === 'stored' ? info.storedTexture : info.recipe);
   }
   state.materialCache.set(key, material);
@@ -411,11 +414,32 @@ function requestRender() {
   requestAnimationFrame(render);
 }
 
+// A translated shader that the browser refuses to compile falls back to the material's colour recipe.
+function replaceBrokenGameShaders() {
+  let replaced = false;
+  for (const [key, material] of state.materialCache) {
+    const slot = material.userData.gameSlot;
+    if (slot === undefined) continue;
+    const program = renderer.properties.get(material).currentProgram;
+    if (!program?.diagnostics || program.diagnostics.runnable) continue;
+    const info = state.scene.materials[slot];
+    info.gameShaderBroken = true;
+    info.gameShaderFailure = `The browser could not compile this shader: ${program.diagnostics.fragmentShader.log || program.diagnostics.programLog}`.slice(0, 400);
+    state.materialCache.delete(key);
+    replaced = true;
+  }
+  if (replaced) {
+    applyMaterials();
+    renderMaterials();
+  }
+}
+
 function render() {
   renderQueued = false;
   resize();
   grid.visible = state.toggles.grid;
   renderer.render(world, camera);
+  if (state.shading === 'game') replaceBrokenGameShaders();
   if (state.scene) {
     drawOverlay();
     $('hud').textContent = hudText();
@@ -448,8 +472,9 @@ function renderInfo() {
   ])}`;
   html += `<h3>LODs</h3>`;
   for (const l of scene.lods) {
-    html += `<div class="row ${l.index === state.lod ? 'selected' : ''}" data-lod="${l.index}">LOD ${l.index}
-      <span class="muted">${l.vertices.toLocaleString()} verts · ${l.triangles.toLocaleString()} tris · ${l.sections.length} sections · ${l.uvSets} UV</span></div>`;
+    const hasGeometry = state.lods.has(l.index);
+    html += `<div class="row ${l.index === state.lod ? 'selected' : ''}" ${hasGeometry ? `data-lod="${l.index}"` : 'title="Only LOD 0 geometry is available for this object"'}>LOD ${l.index}
+      <span class="muted">${l.vertices.toLocaleString()} verts · ${l.triangles.toLocaleString()} tris · ${l.sections.length} sections · ${l.uvSets} UV${hasGeometry ? '' : ' · statistics only'}</span></div>`;
   }
   if (lod) {
     html += `<h3>Sections in LOD ${lod.index}</h3>`;
@@ -488,7 +513,7 @@ function renderMaterials() {
           ['Blend', `${escapeHtml(m.blendMode)}${m.masked ? ` (clip ${m.opacityMaskClipValue})` : ''}${m.twoSided ? ', two-sided' : ''}`],
           ['Recipe', `${escapeHtml(plan.familyLabel)} ${plan.matchedMaster ? `<span class="muted">via ${escapeHtml(plan.matchedMaster)}</span>` : ''}`],
         ])}
-        ${m.gameShader ? `<div>Game shader: <span class="mono">${escapeHtml(m.gameShader.materialMap)}</span> <span class="badge verified">${m.gameShader.exactVariant ? 'exact variant' : 'nearest variant'}</span> <span class="muted">${m.gameShader.instructionCount} instructions</span></div>${m.gameShader.notes.map((n) => `<div class="note">${escapeHtml(n)}</div>`).join('')}`
+        ${m.gameShader && !m.gameShaderBroken ? `<div>Game shader: <span class="mono">${escapeHtml(m.gameShader.materialMap)}</span> <span class="badge verified">${m.gameShader.exactVariant ? 'exact variant' : 'nearest variant'}</span> <span class="muted">${m.gameShader.instructionCount} instructions</span></div>${m.gameShader.notes.map((n) => `<div class="note">${escapeHtml(n)}</div>`).join('')}`
           : m.gameShaderFailure ? `<div class="note">Game shader unavailable: ${escapeHtml(m.gameShaderFailure)}</div>` : ''}
         ${plan.evidence ? `<div class="muted">${escapeHtml(plan.evidence)}</div>` : ''}
         ${plan.warnings.length ? plan.warnings.map((w) => `<div class="note">${escapeHtml(w)}</div>`).join('') : ''}
@@ -637,9 +662,14 @@ function renderProperties() {
 }
 
 function cycle(select, step = 1) {
-  if (!select.options.length) return;
-  select.selectedIndex = (select.selectedIndex + step + select.options.length) % select.options.length;
-  select.dispatchEvent(new Event('change'));
+  const count = select.options.length;
+  for (let i = 1; i <= count; i++) {
+    const index = (select.selectedIndex + step * i + count * count) % count;
+    if (select.options[index].disabled) continue;
+    select.selectedIndex = index;
+    select.dispatchEvent(new Event('change'));
+    return;
+  }
 }
 
 window.addEventListener('keydown', (e) => {
@@ -696,6 +726,7 @@ async function load(message) {
   $('uvSelect').innerHTML = Array.from({ length: uvSets }, (_, i) => `<option value="${i}">${i}</option>`).join('');
   try {
     await loadModel();
+    for (const option of $('lodSelect').options) option.disabled = !state.lods.has(Number(option.value));
     applyMaterials();
     applyLighting();
     showLod(scene.lods[0]?.index ?? 0);

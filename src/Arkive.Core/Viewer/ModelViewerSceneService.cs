@@ -89,6 +89,13 @@ public sealed class ModelViewerSceneService
         }
 
         var watch = Stopwatch.StartNew();
+        var stages = new Dictionary<string, double>(StringComparer.Ordinal);
+        var stageStart = TimeSpan.Zero;
+        void Stage(string name)
+        {
+            stages[name] = Math.Round((watch.Elapsed - stageStart).TotalSeconds, 2);
+            stageStart = watch.Elapsed;
+        }
         directory = _cache.Prepare(key);
         var asset = new UmodelAssetEntry(request.ExportIndex, request.SerialOffset, request.SerialSize,
             request.ClassName, request.ObjectName);
@@ -105,6 +112,7 @@ public sealed class ModelViewerSceneService
         await File.WriteAllTextAsync(Path.Combine(directory, PropertiesFile), dump.RawOutput, cancellationToken)
             .ConfigureAwait(false);
         var properties = UmodelPropertyTree.Parse(dump.RawOutput);
+        Stage("umodel");
 
         var lods = new List<ModelViewerLod>();
         var bones = new List<ModelViewerBone>();
@@ -147,20 +155,24 @@ public sealed class ModelViewerSceneService
             }
         }
 
+        Stage("geometry");
         progress?.Report(new("Resolving materials", request.ObjectName));
         var exportRoot = Path.Combine(directory, UmodelFolder);
         var textures = IndexTextures(directory, exportRoot);
         var materials = MaterialInstanceDescriptionReader.ReadExportFolder(exportRoot);
+        Stage("materials");
         var shaderIndex = await LoadShaderIndexAsync(request, progress, cancellationToken).ConfigureAwait(false);
+        Stage("shader index");
         if (shaderIndex is null && _shaderIndexFailure is not null) diagnostics.Add(_shaderIndexFailure);
-        using var package = shaderIndex is null ? null : PackageObjects.Open(request.PackagePath, _catalogReader, _protectionProvider);
+        // UModel reports which physical package each object it loaded came from.
+        using var objects = new LoadedObjects(request, export.Diagnostics, _catalogReader, _protectionProvider);
         var srgbCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         bool TextureSrgb(string name)
         {
             if (srgbCache.TryGetValue(name, out var cached)) return cached;
-            var bytes = package?.Read(name, kind => kind == AssetKind.Texture);
-            var srgb = bytes is not null
-                ? TexturePropertyProbe.SamplesSrgb(TexturePropertyProbe.Read(bytes, package!.Names))
+            var read = objects.Read(name, AssetKind.Texture);
+            var srgb = read is { } found
+                ? TexturePropertyProbe.SamplesSrgb(TexturePropertyProbe.Read(found.Bytes, found.Names))
                 : !name.EndsWith("_n", StringComparison.OrdinalIgnoreCase);
             return srgbCache[name] = srgb;
         }
@@ -183,10 +195,11 @@ public sealed class ModelViewerSceneService
             if (shaderIndex is not null)
             {
                 progress?.Report(new("Translating game shaders", description.Name));
-                var materialBytes = package?.Read(description.Name, kind => kind == AssetKind.Material) ?? [];
+                var shaderWatch = Stopwatch.StartNew();
                 try
                 {
-                    gameShader = GameShaderMaterial.Build(shaderIndex, description, materialBytes,
+                    gameShader = GameShaderMaterial.Build(shaderIndex, description,
+                        name => objects.Read(name, AssetKind.Material)?.Bytes,
                         name => textures.TryGetValue(name, out var texture) ? texture.Url : null,
                         TextureSrgb, out gameShaderFailure);
                 }
@@ -195,6 +208,8 @@ public sealed class ModelViewerSceneService
                 {
                     gameShaderFailure = exception.Message;
                 }
+                if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
+                    Console.Error.WriteLine($"[viewer] {description.Name}: {shaderWatch.Elapsed.TotalSeconds:N2}s");
             }
             viewerMaterials.Add(new ModelViewerMaterial(
                 slot, description.Name, reference, description.ClassName, description.ParentChain,
@@ -211,6 +226,7 @@ public sealed class ModelViewerSceneService
 
         // The dump lists sockets twice: the object's own properties (with offsets) first,
         // then UModel's converted summary (name and bone only).
+        Stage("shaders");
         var sockets = properties.Elements("Sockets")
             .Select(socket => new ModelViewerSocket(
                 socket.ChildValue("SocketName") ?? socket.ChildValue("Name") ?? socket.Name,
@@ -236,7 +252,8 @@ public sealed class ModelViewerSceneService
             PropertiesFile,
             diagnostics.Distinct().ToArray(),
             Math.Round(watch.Elapsed.TotalSeconds, 2),
-            RecipeGlslCompiler.Prelude);
+            RecipeGlslCompiler.Prelude,
+            stages);
         await File.WriteAllBytesAsync(Path.Combine(directory, "scene.json"),
             JsonSerializer.SerializeToUtf8Bytes(scene, JsonOptions), cancellationToken).ConfigureAwait(false);
         _cache.Trim(keepKey: key);
@@ -283,45 +300,78 @@ public sealed class ModelViewerSceneService
         }
     }
 
-    /// <summary>Reads named exports from one package (materials, textures) by object name.</summary>
-    private sealed class PackageObjects : IDisposable
+    /// <summary>
+    /// Reads exports UModel loaded for the scene (materials and textures), using UModel's
+    /// "Loading Class name from package file" lines to find their physical packages.
+    /// </summary>
+    private sealed class LoadedObjects : IDisposable
     {
-        private readonly AssetCatalog _catalog;
-        private readonly LogicalPackageStream _stream;
+        private readonly Dictionary<string, string> _packageByObject = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, (AssetCatalog Catalog, LogicalPackageStream Stream)?> _packages =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly string _packageFolder;
+        private readonly AssetCatalogReader _reader;
+        private readonly IChunkProtectionProvider _provider;
 
-        private PackageObjects(AssetCatalog catalog, LogicalPackageStream stream)
+        public LoadedObjects(
+            ModelViewerRequest request,
+            IEnumerable<string> umodelOutput,
+            AssetCatalogReader reader,
+            IChunkProtectionProvider provider)
         {
-            _catalog = catalog;
-            _stream = stream;
+            _reader = reader;
+            _provider = provider;
+            _packageFolder = request.PackageSearchRoot ?? Path.GetDirectoryName(Path.GetFullPath(request.PackagePath))!;
+            foreach (var line in umodelOutput)
+            {
+                const string from = " from package ";
+                if (!line.StartsWith("Loading ", StringComparison.Ordinal)) continue;
+                var at = line.IndexOf(from, StringComparison.Ordinal);
+                if (at < 0) continue;
+                var parts = line[8..at].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length != 2) continue;
+                _packageByObject.TryAdd(parts[1], line[(at + from.Length)..].Trim());
+            }
+            _packageByObject.TryAdd("\0mesh", Path.GetFileName(request.PackagePath));
         }
 
-        public IReadOnlyList<UnrealNameEntry> Names => _catalog.Names;
-
-        public static PackageObjects? Open(string packagePath, AssetCatalogReader reader, IChunkProtectionProvider provider)
+        public (byte[] Bytes, IReadOnlyList<UnrealNameEntry> Names)? Read(string objectName, AssetKind kind)
         {
+            var file = _packageByObject.GetValueOrDefault(objectName) ?? _packageByObject["\0mesh"];
+            var package = Open(file);
+            if (package is not { } opened) return null;
+            var asset = opened.Catalog.Assets.FirstOrDefault(candidate =>
+                candidate.ObjectName.Equals(objectName, StringComparison.OrdinalIgnoreCase) && candidate.Kind == kind);
+            if (asset is null || asset.SerialSize is <= 0 or > 64 << 20) return null;
+            var bytes = new byte[checked((int)asset.SerialSize)];
+            opened.Stream.Position = asset.SerialOffset;
+            opened.Stream.ReadExactly(bytes);
+            return (bytes, opened.Catalog.Names);
+        }
+
+        private (AssetCatalog Catalog, LogicalPackageStream Stream)? Open(string file)
+        {
+            if (_packages.TryGetValue(file, out var cached)) return cached;
+            (AssetCatalog, LogicalPackageStream)? opened = null;
             try
             {
-                var catalog = reader.Read(packagePath);
-                return new PackageObjects(catalog, new LogicalPackageStream(catalog.Summary, provider));
+                var path = Path.Combine(_packageFolder, file);
+                if (File.Exists(path))
+                {
+                    var catalog = _reader.Read(path);
+                    opened = (catalog, new LogicalPackageStream(catalog.Summary, _provider));
+                }
             }
             catch (Exception exception) when (exception is IOException or PackageFormatException or InvalidDataException)
             {
-                return null;
             }
+            return _packages[file] = opened;
         }
 
-        public byte[]? Read(string objectName, Func<AssetKind, bool> kind)
+        public void Dispose()
         {
-            var asset = _catalog.Assets.FirstOrDefault(candidate =>
-                candidate.ObjectName.Equals(objectName, StringComparison.OrdinalIgnoreCase) && kind(candidate.Kind));
-            if (asset is null || asset.SerialSize is <= 0 or > 64 << 20) return null;
-            var bytes = new byte[checked((int)asset.SerialSize)];
-            _stream.Position = asset.SerialOffset;
-            _stream.ReadExactly(bytes);
-            return bytes;
+            foreach (var package in _packages.Values) package?.Stream.Dispose();
         }
-
-        public void Dispose() => _stream.Dispose();
     }
 
     private sealed record NativeSkeletalMesh(

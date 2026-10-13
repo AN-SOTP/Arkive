@@ -90,6 +90,8 @@ The four primary tabs separate discovery, creation, editing and deployment. **Ad
 
 Search **All names and filenames** by physical/decoded package filename, object, class or loaded in-game name. The full index includes assets even when their class is not moddable. Inspect a selected object in UModel, browse its package, open it in Arkive, export it, copy its identity or explore evidence-labelled relationships. UModel and Arkive may support different display types. Direct database links, verified dependencies and candidate mappings are deliberately distinguished.
 
+**Preview** (or double-clicking a mesh) opens Arkive's model viewer. It shows every LOD decoded by Arkive's own parser, with UModel's materials, textures and object properties alongside: LOD and UV-set switching, wireframe, normals, tangents, skeleton, bone names, sockets, UV layout, material IDs, vertex colours, section isolation, texture channels, screenshots and PgUp/PgDn browsing. By default each material runs **the game's own compiled shader**, translated from the client's shader cache, so packed textures (for example two-tone hair masks) appear in their game colours rather than as raw masks; per-family colour recipes and the stored textures, as UModel shows them, remain available for comparison. The first preview indexes the game's shaders once (about 20 seconds, saved to the data folder); prepared scenes are cached up to 1 GB. The viewer needs the Microsoft Edge WebView2 Runtime, which ships with Windows 10 and 11.
+
 The local index is resumable. Worker count and optional fast scratch storage help indexing. The setup panel collapses after configuration; refresh the index when the client changes.
 
 ### Create
@@ -288,7 +290,7 @@ This verifies dependencies, runs both test suites, publishes self-contained win-
 
 On a clean Windows test account with no Arkive installed, `eng/Test-Installer.ps1 -Installer PATH` exercises installation, CLI/tool discovery, GUI launch, the staged updater/restart and uninstall against an isolated workspace. It refuses to overwrite an existing installation and retains test logs. It creates/removes the per-user test installation registration; do not run it while doing other Arkive work.
 
-The verification baseline contains **99 domain smoke cases** and an isolated WPF UI suite: archive/asset pipelines, import validation, composition/priority, restore/source contracts, discovery, selection/layout/theme and update validation. Set `ARKIVE_TEST_PACKAGE_DIR` for optional real-client tests. Synthetic tests cannot certify all live assets. Builds use nullable checks, warnings-as-errors, deterministic settings, neutral source path mapping and no managed Release PDBs; these do not prevent decompilation.
+The verification baseline contains **107 domain smoke cases** and an isolated WPF UI suite: archive/asset pipelines, import validation, composition/priority, restore/source contracts, discovery, selection/layout/theme and update validation. Set `ARKIVE_TEST_PACKAGE_DIR` for optional real-client tests. Synthetic tests cannot certify all live assets. Builds use nullable checks, warnings-as-errors, deterministic settings, neutral source path mapping and no managed Release PDBs; these do not prevent decompilation.
 
 ### Maintainers
 
