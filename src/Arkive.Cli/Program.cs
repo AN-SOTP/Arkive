@@ -646,7 +646,12 @@ static int ModelViewerScene(
             Console.WriteLine($"    LOD {lod.Index}: {lod.Vertices:N0} verts, {lod.Triangles:N0} tris, {lod.Sections.Count} section(s), {lod.UvSets} UV set(s)");
         Console.WriteLine($"  Materials:  {scene.Materials.Count}");
         foreach (var material in scene.Materials)
+        {
             Console.WriteLine($"    {material.Slot}: {material.Name} <- {material.RootMaterial} [{material.Recipe.Status}: {material.Recipe.FamilyId}] {material.TextureUrls.Count} texture(s)");
+            Console.WriteLine(material.GameShader is { } shader
+                ? $"       game shader: {shader.MaterialMap} ({(shader.ExactVariant ? "exact variant" : "nearest variant")}, {(shader.ExactBindings ? "exact registers" : "assumed registers")}, {shader.InstructionCount} instructions)"
+                : $"       game shader: unavailable ({material.GameShaderFailure ?? "no index"})");
+        }
         Console.WriteLine($"  Textures:   {scene.Textures.Count}");
         foreach (var diagnostic in scene.Diagnostics) Console.WriteLine($"  Note:       {diagnostic}");
         Console.WriteLine($"  Prepared:   {(result.FromCache ? "from cache" : $"{scene.PreparationSeconds:N2}s")} -> {result.SceneJsonPath}");

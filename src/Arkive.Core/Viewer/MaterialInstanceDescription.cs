@@ -16,7 +16,8 @@ public sealed record MaterialInstanceDescription(
     bool TwoSided,
     bool Masked,
     string BlendMode,
-    float OpacityMaskClipValue);
+    float OpacityMaskClipValue,
+    IReadOnlyList<string>? ReferencedTextures = null);
 
 public static class MaterialInstanceDescriptionReader
 {
@@ -108,7 +109,10 @@ public static class MaterialInstanceDescriptionReader
             IsTrue(root.Tree.ChildValue("TwoSided")),
             IsTrue(root.Tree.ChildValue("bIsMasked")) || blendMode.Contains("Masked", StringComparison.OrdinalIgnoreCase),
             blendMode.Split(' ')[0],
-            clip);
+            clip,
+            root.Tree.Elements("ReferencedTextures")
+                .Select(element => UmodelPropertyTree.ParseObjectReference(element.Value)?.Name ?? "")
+                .ToArray());
     }
 
     private static bool IsTrue(string? value) => string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);

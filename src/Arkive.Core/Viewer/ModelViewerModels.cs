@@ -66,7 +66,9 @@ public sealed record ModelViewerMaterial(
     IReadOnlyDictionary<string, string> Textures,
     IReadOnlyDictionary<string, string> TextureUrls,
     MaterialRecipePlan Recipe,
-    MaterialRecipePlan StoredTexture);
+    MaterialRecipePlan StoredTexture,
+    Arkive.Core.Viewer.Shaders.GameShaderPlan? GameShader = null,
+    string? GameShaderFailure = null);
 
 public sealed record ModelViewerScene(
     int SchemaVersion,

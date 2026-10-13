@@ -98,14 +98,30 @@ function slotColor(slot) {
   return new THREE.Color().setHSL(hue, 0.6, 0.55);
 }
 
-function recipeMaterial(info, plan) {
+// Inputs of the game's pixel shader, by semantic. World-space vectors are approximated in view space.
+function gameInput(input) {
+  const register = `ark_in${input.register}`;
+  switch (`${input.semantic}${input.index}`) {
+    case 'SV_IsFrontFace0': return `${register} = gl_FrontFacing ? uvec4(0xFFFFFFFFu) : uvec4(0u);`;
+    case 'TEXCOORD0': return `${register} = floatBitsToUint(vec4(vUv, ark_vUv1));`;
+    case 'TEXCOORD10': return `${register} = floatBitsToUint(vec4(1.0, 0.0, 0.0, 0.0));`;
+    case 'TEXCOORD11': return `${register} = floatBitsToUint(vec4(normalize(vNormal), 1.0));`;
+    case 'COLOR0': return `${register} = floatBitsToUint(vec4(1.0));`;
+    case 'COLOR1': return `${register} = floatBitsToUint(vec4(0.0));`;
+    default: return `${register} = floatBitsToUint(vec4(0.0, 0.0, 1.0, 1.0));`;
+  }
+}
+
+/// Standard material whose base colour comes from a colour recipe, or from the game's own
+/// translated pixel shader when `game` is given (lighting still uses the recipe's roughness etc.).
+function recipeMaterial(info, plan, game) {
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 });
   material.name = info.name;
   material.side = info.twoSided || state.toggles.backfaces ? THREE.DoubleSide : THREE.FrontSide;
   if (/Translucent|Additive|Modulate/i.test(info.blendMode)) {
     material.transparent = true;
     material.depthWrite = false;
-  } else if (info.masked) {
+  } else if (info.masked && !game) {
     material.alphaTest = Math.max(0.01, info.opacityMaskClipValue || 0.333);
   }
   if (plan.normalTextureParameter && info.textureUrls[plan.normalTextureParameter]) {
@@ -115,29 +131,51 @@ function recipeMaterial(info, plan) {
   const uniforms = {};
   for (const [uniform, parameter] of Object.entries(plan.samplers)) uniforms[uniform] = { value: texture(info.textureUrls[parameter]) };
   for (const u of plan.uniforms) uniforms[u.uniform] = { value: u.kind === 'vec4' ? new THREE.Vector4(...u.value) : u.value[0] };
-  const declarations = Object.keys(plan.samplers).map((name) => `uniform sampler2D ${name};`)
+  let declarations = Object.keys(plan.samplers).map((name) => `uniform sampler2D ${name};`)
     .concat(plan.uniforms.map((u) => `uniform ${u.kind} ${u.uniform};`)).join('\n');
+  let baseColour = `diffuseColor.rgb *= ${plan.baseColorGlsl};`;
+  let opacity = plan.opacityGlsl ? `diffuseColor.a *= ${plan.opacityGlsl};` : null;
+  if (game) {
+    for (const [name, values] of Object.entries(game.constantBuffers)) {
+      const vectors = [];
+      for (let i = 0; i < values.length; i += 4) vectors.push(new THREE.Vector4(values[i], values[i + 1], values[i + 2], values[i + 3]));
+      uniforms[name] = { value: vectors };
+      declarations += `\nuniform vec4 ${name}[${vectors.length}];`;
+    }
+    for (const [name, url] of Object.entries(game.samplers)) {
+      uniforms[name] = { value: texture(url) };
+      declarations += `\nuniform sampler2D ${name};`;
+    }
+    declarations += `\n${game.declarations}\n${state.scene.glslPrelude}\n${game.function}`;
+    const translucent = material.transparent && game.albedoOutput === 0;
+    baseColour = `{\n${game.inputs.map(gameInput).join('\n')}\nark_game_shader();\n` +
+      `vec4 ark_albedo = uintBitsToFloat(ark_o${game.albedoOutput});\n` +
+      `diffuseColor.rgb = clamp(ark_albedo.rgb, 0.0, 16.0);\n` +
+      (translucent ? 'diffuseColor.a = clamp(ark_albedo.a, 0.0, 1.0);\n' : '') + '}';
+    opacity = null;
+  }
+  const usesSecondUv = plan.usesSecondUv || !!game;
   material.defines = { USE_UV: '' };
-  if (plan.usesSecondUv) material.defines.USE_UV1 = '';
-  const secondUv = plan.usesSecondUv ? 'varying vec2 ark_vUv1;' : '';
+  if (usesSecondUv) material.defines.USE_UV1 = '';
+  const secondUv = usesSecondUv ? 'varying vec2 ark_vUv1;' : '';
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
-    if (plan.usesSecondUv) {
+    if (usesSecondUv) {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>\n${secondUv}`)
         .replace('#include <uv_vertex>', '#include <uv_vertex>\nark_vUv1 = uv1;');
     }
-    let fs = shader.fragmentShader.replace('#include <common>', `#include <common>\n${secondUv}\n${declarations}\n${state.scene.glslPrelude}`);
-    fs = fs.replace('#include <map_fragment>', `diffuseColor.rgb *= ${plan.baseColorGlsl};`);
-    if (plan.opacityGlsl) fs = fs.replace('#include <alphamap_fragment>', `diffuseColor.a *= ${plan.opacityGlsl};`);
+    let fs = shader.fragmentShader.replace('#include <common>', `#include <common>\n${secondUv}\n${game ? '' : state.scene.glslPrelude}\n${declarations}`);
+    fs = fs.replace('#include <map_fragment>', baseColour);
+    if (opacity) fs = fs.replace('#include <alphamap_fragment>', opacity);
     if (plan.roughnessGlsl) fs = fs.replace('#include <roughnessmap_fragment>', `float roughnessFactor = clamp(${plan.roughnessGlsl}, 0.04, 1.0);`);
     if (plan.metalnessGlsl) fs = fs.replace('#include <metalnessmap_fragment>', `float metalnessFactor = clamp(${plan.metalnessGlsl}, 0.0, 1.0);`);
     if (plan.emissiveGlsl) fs = fs.replace('#include <emissivemap_fragment>', `totalEmissiveRadiance += ${plan.emissiveGlsl};`);
     if (plan.occlusionGlsl) fs = fs.replace('#include <aomap_fragment>', `reflectedLight.indirectDiffuse *= clamp(${plan.occlusionGlsl}, 0.0, 1.0);`);
     shader.fragmentShader = fs;
   };
-  material.customProgramCacheKey = () => [plan.familyId, plan.usesSecondUv, plan.baseColorGlsl, plan.opacityGlsl, plan.roughnessGlsl,
-    plan.metalnessGlsl, plan.emissiveGlsl, plan.occlusionGlsl, declarations].join('|');
+  material.customProgramCacheKey = () => [plan.familyId, game?.shaderId, usesSecondUv, plan.baseColorGlsl, plan.opacityGlsl,
+    plan.roughnessGlsl, plan.metalnessGlsl, plan.emissiveGlsl, plan.occlusionGlsl, declarations.length, game?.albedoOutput].join('|');
   return material;
 }
 
@@ -151,8 +189,9 @@ function materialFor(slot) {
     case 'vertexColors': material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }); break;
     case 'clay': material = new THREE.MeshStandardMaterial({ color: 0xb8b2a8, roughness: 0.8, side: THREE.DoubleSide }); break;
     default:
-      material = info ? recipeMaterial(info, state.shading === 'stored' ? info.storedTexture : info.recipe)
-        : new THREE.MeshStandardMaterial({ color: slotColor(slot) });
+      if (!info) material = new THREE.MeshStandardMaterial({ color: slotColor(slot) });
+      else if (state.shading === 'game' && info.gameShader) material = recipeMaterial(info, info.recipe, info.gameShader);
+      else material = recipeMaterial(info, state.shading === 'stored' ? info.storedTexture : info.recipe);
   }
   state.materialCache.set(key, material);
   return material;
@@ -359,7 +398,8 @@ function hudText() {
     scene.sockets.length ? `Sockets : ${scene.sockets.length}` : '',
     lod ? `Sections: ${lod.sections.length}` : '',
     `Colours : ${$('shadingSelect').selectedOptions[0].text}` +
-      (state.shading === 'recipe' ? ` (${recipes.filter((s) => s !== 'fallback').length}/${recipes.length} recipes)` : ''),
+      (state.shading === 'recipe' ? ` (${recipes.filter((s) => s !== 'fallback').length}/${recipes.length} recipes)` : '') +
+      (state.shading === 'game' ? ` (${scene.materials.filter((m) => m.gameShader).length}/${recipes.length} game shaders)` : ''),
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -448,6 +488,8 @@ function renderMaterials() {
           ['Blend', `${escapeHtml(m.blendMode)}${m.masked ? ` (clip ${m.opacityMaskClipValue})` : ''}${m.twoSided ? ', two-sided' : ''}`],
           ['Recipe', `${escapeHtml(plan.familyLabel)} ${plan.matchedMaster ? `<span class="muted">via ${escapeHtml(plan.matchedMaster)}</span>` : ''}`],
         ])}
+        ${m.gameShader ? `<div>Game shader: <span class="mono">${escapeHtml(m.gameShader.materialMap)}</span> <span class="badge verified">${m.gameShader.exactVariant ? 'exact variant' : 'nearest variant'}</span> <span class="muted">${m.gameShader.instructionCount} instructions</span></div>${m.gameShader.notes.map((n) => `<div class="note">${escapeHtml(n)}</div>`).join('')}`
+          : m.gameShaderFailure ? `<div class="note">Game shader unavailable: ${escapeHtml(m.gameShaderFailure)}</div>` : ''}
         ${plan.evidence ? `<div class="muted">${escapeHtml(plan.evidence)}</div>` : ''}
         ${plan.warnings.length ? plan.warnings.map((w) => `<div class="note">${escapeHtml(w)}</div>`).join('') : ''}
         ${textures.length ? `<h3>Texture parameters</h3>${kv(textures)}` : ''}
@@ -645,6 +687,10 @@ async function load(message) {
   state.textures = new Map();
   state.materialCache = new Map();
   const scene = state.scene;
+  const hasGame = scene.materials.some((m) => m.gameShader);
+  $('shadingSelect').querySelector('option[value="game"]').disabled = !hasGame;
+  state.shading = hasGame ? 'game' : 'recipe';
+  $('shadingSelect').value = state.shading;
   $('lodSelect').innerHTML = scene.lods.map((l) => `<option value="${l.index}">${l.index}</option>`).join('');
   const uvSets = Math.max(1, ...scene.lods.map((l) => l.uvSets));
   $('uvSelect').innerHTML = Array.from({ length: uvSets }, (_, i) => `<option value="${i}">${i}</option>`).join('');
@@ -664,8 +710,9 @@ async function load(message) {
   } catch { propertyLines = ['UModel properties are unavailable.']; }
   renderProperties();
   const counts = scene.materials.reduce((a, m) => (a[m.recipe.status] = (a[m.recipe.status] ?? 0) + 1, a), {});
+  const games = scene.materials.filter((m) => m.gameShader).length;
   $('statusbar').textContent = `${scene.object.packageAlias}.${scene.object.objectName} · ${scene.materials.length} materials ` +
-    `(${counts.verified ?? 0} verified, ${counts.inferred ?? 0} inferred, ${counts.fallback ?? 0} stored-texture) · ` +
+    `(${games} using the game's shader; recipes: ${counts.verified ?? 0} verified, ${counts.inferred ?? 0} inferred, ${counts.fallback ?? 0} stored-texture) · ` +
     `${scene.textures.length} textures · prepared in ${scene.preparationSeconds}s`;
   $('loading').hidden = true;
   requestRender();
@@ -687,3 +734,12 @@ if (sceneUrl) {
 }
 for (const name of Object.keys(state.toggles)) document.querySelector(`[data-toggle="${name}"]`)?.setAttribute('aria-pressed', String(state.toggles[name]));
 post({ type: 'ready' });
+
+// Diagnostics handle for Arkive's host and tests.
+window.arkiveViewer = {
+  state,
+  renderer,
+  programErrors: () => renderer.info.programs
+    .filter((program) => program.diagnostics && !program.diagnostics.runnable)
+    .map((program) => `${program.name}: ${program.diagnostics.fragmentShader.log || program.diagnostics.programLog}`.slice(0, 600)),
+};

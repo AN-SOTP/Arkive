@@ -10,6 +10,7 @@ using Arkive.Core.External;
 using Arkive.Core.Inspection;
 using Arkive.Core.Meshes;
 using Arkive.Core.Packages;
+using Arkive.Core.Viewer.Shaders;
 
 namespace Arkive.Core.Viewer;
 
@@ -21,7 +22,7 @@ namespace Arkive.Core.Viewer;
 /// </summary>
 public sealed class ModelViewerSceneService
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
     public const string UmodelFolder = "umodel";
     public const string ModelFile = "model.glb";
     public const string PropertiesFile = "properties.txt";
@@ -39,6 +40,10 @@ public sealed class ModelViewerSceneService
     private readonly SkeletalMeshReconnaissanceService _skeletalReconnaissance;
     private readonly MaterialRecipeCatalog _recipes;
     private readonly ModelViewerCache _cache;
+    private readonly UpkPackageReader? _reader;
+    private readonly SemaphoreSlim _shaderIndexGate = new(1, 1);
+    private ShaderCacheIndex? _shaderIndex;
+    private string? _shaderIndexFailure;
 
     public ModelViewerSceneService(
         UmodelBridge bridge,
@@ -51,6 +56,7 @@ public sealed class ModelViewerSceneService
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _recipes = recipes ?? MaterialRecipeCatalog.LoadEmbedded();
         _protectionProvider = protectionProvider ?? NoChunkProtectionProvider.Instance;
+        _reader = reader;
         _catalogReader = new AssetCatalogReader(reader, _protectionProvider);
         _skeletalReconnaissance = new SkeletalMeshReconnaissanceService(reader, _protectionProvider, umodelBridge: null);
     }
@@ -145,6 +151,20 @@ public sealed class ModelViewerSceneService
         var exportRoot = Path.Combine(directory, UmodelFolder);
         var textures = IndexTextures(directory, exportRoot);
         var materials = MaterialInstanceDescriptionReader.ReadExportFolder(exportRoot);
+        var shaderIndex = await LoadShaderIndexAsync(request, progress, cancellationToken).ConfigureAwait(false);
+        if (shaderIndex is null && _shaderIndexFailure is not null) diagnostics.Add(_shaderIndexFailure);
+        using var package = shaderIndex is null ? null : PackageObjects.Open(request.PackagePath, _catalogReader, _protectionProvider);
+        var srgbCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        bool TextureSrgb(string name)
+        {
+            if (srgbCache.TryGetValue(name, out var cached)) return cached;
+            var bytes = package?.Read(name, kind => kind == AssetKind.Texture);
+            var srgb = bytes is not null
+                ? TexturePropertyProbe.SamplesSrgb(TexturePropertyProbe.Read(bytes, package!.Names))
+                : !name.EndsWith("_n", StringComparison.OrdinalIgnoreCase);
+            return srgbCache[name] = srgb;
+        }
+
         var viewerMaterials = new List<ModelViewerMaterial>();
         for (var slot = 0; slot < slotNames.Count; slot++)
         {
@@ -158,6 +178,24 @@ public sealed class ModelViewerSceneService
             }
             var plan = _recipes.Plan(description, textures.ContainsKey);
             diagnostics.AddRange(plan.Warnings.Select(warning => $"{description.Name}: {warning}"));
+            GameShaderPlan? gameShader = null;
+            string? gameShaderFailure = null;
+            if (shaderIndex is not null)
+            {
+                progress?.Report(new("Translating game shaders", description.Name));
+                var materialBytes = package?.Read(description.Name, kind => kind == AssetKind.Material) ?? [];
+                try
+                {
+                    gameShader = GameShaderMaterial.Build(shaderIndex, description, materialBytes,
+                        name => textures.TryGetValue(name, out var texture) ? texture.Url : null,
+                        TextureSrgb, out gameShaderFailure);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or FormatException
+                                                      or NotSupportedException or DllNotFoundException)
+                {
+                    gameShaderFailure = exception.Message;
+                }
+            }
             viewerMaterials.Add(new ModelViewerMaterial(
                 slot, description.Name, reference, description.ClassName, description.ParentChain,
                 description.RootMaterial, description.BlendMode, description.TwoSided, description.Masked,
@@ -166,7 +204,9 @@ public sealed class ModelViewerSceneService
                     .Where(pair => textures.ContainsKey(pair.Value))
                     .ToDictionary(pair => pair.Key, pair => textures[pair.Value].Url, StringComparer.OrdinalIgnoreCase),
                 plan,
-                _recipes.Plan(description, textures.ContainsKey, storedTextureOnly: true)));
+                _recipes.Plan(description, textures.ContainsKey, storedTextureOnly: true),
+                gameShader,
+                gameShaderFailure));
         }
 
         // The dump lists sockets twice: the object's own properties (with offsets) first,
@@ -201,6 +241,87 @@ public sealed class ModelViewerSceneService
             JsonSerializer.SerializeToUtf8Bytes(scene, JsonOptions), cancellationToken).ConfigureAwait(false);
         _cache.Trim(keepKey: key);
         return new ModelViewerSceneResult(directory, Path.Combine(directory, "scene.json"), scene, FromCache: false);
+    }
+
+    /// <summary>Loads the game shader index once; it is built on first use and reused while the game is unchanged.</summary>
+    private async Task<ShaderCacheIndex?> LoadShaderIndexAsync(
+        ModelViewerRequest request,
+        IProgress<ModelViewerProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (_shaderIndex is not null) return _shaderIndex;
+        var packages = request.PackageSearchRoot ?? Path.GetDirectoryName(request.PackagePath);
+        var releasePc = packages is null ? null : Directory.GetParent(Path.GetFullPath(packages))?.FullName;
+        if (releasePc is null) return null;
+        await _shaderIndexGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_shaderIndex is not null) return _shaderIndex;
+            var indexPath = Path.Combine(Path.GetDirectoryName(_cache.RootDirectory) ?? _cache.RootDirectory,
+                "game-shader-index.json");
+            var indexProgress = new Progress<string>(text => progress?.Report(new(text, "first time only")));
+            var index = await Task.Run(() => ShaderCacheIndex.LoadOrBuild(
+                releasePc, indexPath, _reader, _protectionProvider, indexProgress, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+            if (index.Document.Maps.Count == 0)
+            {
+                _shaderIndexFailure = "No game shader cache was found next to the Packages folder; showing colour recipes instead.";
+                return null;
+            }
+            _shaderIndexFailure = null;
+            return _shaderIndex = index;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
+                                              or PackageFormatException or NotSupportedException)
+        {
+            _shaderIndexFailure = $"The game's shader cache could not be indexed ({exception.Message}); showing colour recipes instead.";
+            return null;
+        }
+        finally
+        {
+            _shaderIndexGate.Release();
+        }
+    }
+
+    /// <summary>Reads named exports from one package (materials, textures) by object name.</summary>
+    private sealed class PackageObjects : IDisposable
+    {
+        private readonly AssetCatalog _catalog;
+        private readonly LogicalPackageStream _stream;
+
+        private PackageObjects(AssetCatalog catalog, LogicalPackageStream stream)
+        {
+            _catalog = catalog;
+            _stream = stream;
+        }
+
+        public IReadOnlyList<UnrealNameEntry> Names => _catalog.Names;
+
+        public static PackageObjects? Open(string packagePath, AssetCatalogReader reader, IChunkProtectionProvider provider)
+        {
+            try
+            {
+                var catalog = reader.Read(packagePath);
+                return new PackageObjects(catalog, new LogicalPackageStream(catalog.Summary, provider));
+            }
+            catch (Exception exception) when (exception is IOException or PackageFormatException or InvalidDataException)
+            {
+                return null;
+            }
+        }
+
+        public byte[]? Read(string objectName, Func<AssetKind, bool> kind)
+        {
+            var asset = _catalog.Assets.FirstOrDefault(candidate =>
+                candidate.ObjectName.Equals(objectName, StringComparison.OrdinalIgnoreCase) && kind(candidate.Kind));
+            if (asset is null || asset.SerialSize is <= 0 or > 64 << 20) return null;
+            var bytes = new byte[checked((int)asset.SerialSize)];
+            _stream.Position = asset.SerialOffset;
+            _stream.ReadExactly(bytes);
+            return bytes;
+        }
+
+        public void Dispose() => _stream.Dispose();
     }
 
     private sealed record NativeSkeletalMesh(

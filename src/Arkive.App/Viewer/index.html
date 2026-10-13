@@ -20,8 +20,9 @@
       <label class="field">LOD <select id="lodSelect" title="Cycle LODs (L)"></select></label>
       <label class="field">UV <select id="uvSelect" title="Cycle UV sets (Ctrl+U)"></select></label>
       <label class="field">Colours
-        <select id="shadingSelect" title="Game colours apply each material's colour recipe; stored textures show textures as the game files store them, like UModel (C)">
-          <option value="recipe">Game colours</option>
+        <select id="shadingSelect" title="Game shader runs each material's own compiled shader from the game; colour recipes are Arkive's per-family approximations; stored textures show textures as stored, like UModel (C)">
+          <option value="game">Game shader</option>
+          <option value="recipe">Colour recipes</option>
           <option value="stored">Stored textures</option>
           <option value="materialIds">Material IDs</option>
           <option value="vertexColors">Vertex colours</option>
