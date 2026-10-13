@@ -1201,17 +1201,18 @@ internal static class MeshSmokeTests
                     }
                     Lods[1] =
                     {
-                        Sections[1] =
+                        Sections[2] =
                         {
-                            Sections[0] =
+                            Sections[0] = { Material=MaterialInstanceConstant'mat.test_mi', FirstIndex=0, NumFaces=4 }
+                            Sections[1] =
                             {
                                 Material = MaterialInstanceConstant'mat.test_mi'
-                                FirstIndex = 0
+                                FirstIndex = 12
                                 NumFaces = 6
                             }
                         }
                         NumVerts = 7
-                        IndexCount = 18
+                        IndexCount = 30
                         NumTexCoords = 1
                     }
                 }
@@ -1227,8 +1228,10 @@ internal static class MeshSmokeTests
         Assert(oracle.HasVertexColors == true, "oracle vertex-color state was not parsed");
         Assert(oracle.Lods[0].VertexCount == 10 && oracle.Lods[0].TriangleCount == 12,
             "oracle LOD 0 geometry was not parsed");
-        Assert(oracle.Lods[1].Sections.Single().TriangleCount == 6,
+        Assert(oracle.Lods[1].Sections.Count == 2 && oracle.Lods[1].TriangleCount == 10,
             "oracle section evidence was not parsed");
+        Assert(oracle.Lods[1].Sections[0] is { FirstIndex: 0, TriangleCount: 4 },
+            "oracle one-line section evidence was not parsed");
     }
 
 }

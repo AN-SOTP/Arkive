@@ -209,7 +209,7 @@ public sealed class StaticMeshReconnaissanceService
         string fallbackClassName = "StaticMesh3")
     {
         ArgumentNullException.ThrowIfNull(rawOutput);
-        var lines = rawOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var lines = SkeletalMeshReconnaissanceService.SplitDumpLines(rawOutput);
         var className = MatchValue(lines, @"^ClassName:\s*(?<v>\S+)") ?? fallbackClassName;
         var lodCount = MatchInt(lines, @"^LodCount\s*=\s*(?<v>\d+)");
         var materials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

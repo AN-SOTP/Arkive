@@ -315,7 +315,7 @@ public sealed class SkeletalMeshReconnaissanceService
         string fallbackClassName = "SkeletalMesh")
     {
         ArgumentNullException.ThrowIfNull(rawOutput);
-        var lines = rawOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var lines = SplitDumpLines(rawOutput);
         var className = MatchValue(lines, @"^ClassName:\s*(?<v>\S+)") ?? fallbackClassName;
         var lodCount = MatchInt(lines, @"^LodCount\s*=\s*(?<v>\d+)");
         var boneCount = MatchInt(lines, @"^BoneCount\s*=\s*(?<v>\d+)");
@@ -401,6 +401,23 @@ public sealed class SkeletalMeshReconnaissanceService
             lod = null;
         }
     }
+
+    // UModel prints a short section on one line, e.g.
+    // "Sections[0] = { Material=M, FirstIndex=0, NumFaces=940 }"; expand it to the multi-line form.
+    internal static string[] SplitDumpLines(string rawOutput) =>
+        rawOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .SelectMany(line =>
+            {
+                var match = Regex.Match(line.Trim(), @"^(?<head>Sections\[\d+\]\s*=)\s*\{(?<body>.*)\}$",
+                    RegexOptions.CultureInvariant);
+                if (!match.Success) return [line];
+                return match.Groups["body"].Value.Split(',')
+                    .Select(field => field.Split('=', 2))
+                    .Where(pair => pair.Length == 2)
+                    .Select(pair => $"{pair[0].Trim()} = {pair[1].Trim()}")
+                    .Prepend(match.Groups["head"].Value);
+            })
+            .ToArray();
 
     private static string? MatchValue(IEnumerable<string> lines, string pattern)
     {
