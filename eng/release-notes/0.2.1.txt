@@ -1,0 +1,7 @@
+Model viewer fixes for faces, hair, layered clothing and metal.
+
+- Faces render correctly: no more black (Brelshaza), white (Beatrice) or red placeholder make-up.
+- Eyelashes and eyebrows no longer cover the eyes.
+- Hair and see-through clothing sort properly, so hair no longer shows through dresses.
+- Roughness and metal now come from the game's own shaders.
+- 99.6% of the game's material shaders now translate (the rest are screen effects).
