@@ -23,7 +23,7 @@ public static class GameShaderMaterial
 {
     /// <param name="materialBytes">
     /// Export bytes of a material by name (null when unavailable). The instance and then its parents are
-    /// searched for the GUID of the compiled variant they use.
+    /// searched for the static parameters of the compiled permutation they use.
     /// </param>
     /// <param name="textureUrl">Resolves an exported texture name to a scene URL (null when it was not exported).</param>
     /// <param name="textureSrgb">Whether the game samples a texture with sRGB decoding.</param>
@@ -37,19 +37,31 @@ public static class GameShaderMaterial
     {
         failure = null;
         var notes = new List<string>();
-        ShaderCacheMaterialMap? map = null;
+        // The first material in the chain with its own static permutation decides the variant; a material
+        // without one renders with its parent's.
+        ShaderVariantMatch? match = null;
+        string? owner = null;
         foreach (var name in material.ParentChain.Prepend(material.Name))
         {
-            if (materialBytes(name) is not { } bytes) continue;
-            map = index.FindMapIn(bytes);
-            if (map is not null)
+            if (materialBytes(name) is not { } bytes || index.FindVariant(bytes) is not { } found) continue;
+            if (match is null || found.FromStaticParameters)
             {
-                if (!name.Equals(material.Name, StringComparison.OrdinalIgnoreCase))
-                    notes.Add($"Uses the compiled variant of its parent {name}.");
-                break;
+                match = found;
+                owner = name;
             }
+            if (found.FromStaticParameters) break;
         }
-        var exactVariant = map is not null;
+        var map = match?.Map;
+        var exactVariant = match?.Exact == true;
+        if (match is not null)
+        {
+            if (!owner!.Equals(material.Name, StringComparison.OrdinalIgnoreCase))
+                notes.Add($"Uses the static permutation of its parent {owner}.");
+            if (!match.Exact)
+                notes.Add(match.Differences > 0
+                    ? $"The game's exact permutation is not in the cache; using the nearest one ({match.Differences} static switch(es) differ)."
+                    : "The game's exact permutation is not in the cache; using the nearest one.");
+        }
         if (map is null)
         {
             var candidates = index.FindMapsByName(material.RootMaterial);
@@ -92,9 +104,10 @@ public static class GameShaderMaterial
         for (var expression = 0; expression < expressions.Textures.Count; expression++)
         {
             if (expressions.Textures[expression] is not UniformTexture texture) continue;
-            var slot = bindings is { TextureSlots.Count: > 0 } && expression < bindings.TextureSlots.Count
-                ? bindings.TextureSlots[expression]
+            var slot = bindings is { TextureSlots.Count: > 0 }
+                ? expression < bindings.TextureSlots.Count ? bindings.TextureSlots[expression] : -1
                 : expression;
+            if (slot < 0) continue;
             string? name = null;
             if (texture.Parameter is not null) material.Textures.TryGetValue(texture.Parameter, out name);
             if (name is null && material.ReferencedTextures is { } referenced &&
@@ -136,13 +149,14 @@ public static class GameShaderMaterial
         for (var k = 0; k < expressions.Vectors.Count && k < bindings.VectorRegisters.Count; k++)
         {
             var register = bindings.VectorRegisters[k];
-            if (register * 4 + 3 >= cb0.Length) continue;
+            if (register < 0 || register * 4 + 3 >= cb0.Length) continue;
             var value = UniformExpressionEvaluator.Evaluate(expressions.Vectors[k], Vector, Scalar);
             Array.Copy(value, 0, cb0, register * 4, 4);
         }
         for (var k = 0; k < expressions.Scalars.Count; k++)
         {
             if (k / 4 >= bindings.ScalarRegisters.Count) break;
+            if (bindings.ScalarRegisters[k / 4] < 0) continue;
             var slot = bindings.ScalarRegisters[k / 4] * 4 + k % 4;
             if (slot >= cb0.Length) continue;
             cb0[slot] = UniformExpressionEvaluator.Evaluate(expressions.Scalars[k], Vector, Scalar)[0];

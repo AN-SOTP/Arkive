@@ -7,13 +7,24 @@ using Arkive.Core.Packages;
 
 namespace Arkive.Core.Viewer.Shaders;
 
-/// <summary>Where one material shader map lives inside a shader cache export.</summary>
+/// <summary>Where one material shader map (one compiled permutation of a material) lives in a shader cache.</summary>
+/// <param name="MaterialId">The base material GUID every permutation of the material shares.</param>
+/// <param name="VariantKey">The <see cref="StaticParameterSet.Key"/> the permutation was compiled for.</param>
+/// <param name="OnSwitches">Its static switches that are on (<see cref="StaticParameterSet.OnSwitches"/>).</param>
 public sealed record ShaderCacheMaterialMap(
     string MaterialId,
     string FriendlyName,
     int CacheIndex,
     long ExpressionsOffset,
-    string? BasePassPixelShaderId);
+    string? BasePassPixelShaderId,
+    string VariantKey,
+    IReadOnlyList<string> OnSwitches,
+    int SwitchCount);
+
+/// <summary>The shader map chosen for a material, and how it was matched.</summary>
+/// <param name="Exact">The map was compiled for exactly the material's static parameters.</param>
+/// <param name="Differences">Static switches that differ, for a nearest match.</param>
+public sealed record ShaderVariantMatch(ShaderCacheMaterialMap Map, bool Exact, int Differences, bool FromStaticParameters);
 
 /// <summary>One shader cache export: its package and logical byte range.</summary>
 public sealed record ShaderCacheExport(string PackagePath, long PackageLength, long PackageTicks, long Offset, long Size);
@@ -28,7 +39,8 @@ public sealed record ShaderCacheIndexDocument(
 /// <summary>Where a serialized shader object (with its parameter bindings) starts.</summary>
 public sealed record ShaderCacheRecord(int CacheIndex, long Offset);
 
-/// <summary>Constant-buffer registers the compiled shader uses for its uniform expressions.</summary>
+/// <summary>Constant-buffer registers the compiled shader uses for its uniform expressions (-1 where unused).</summary>
+/// <param name="ScalarRegisters">The register of each group of four scalar expressions.</param>
 /// <param name="TextureSlots">The t# slot of each 2D texture expression, in expression order (empty when unknown).</param>
 public sealed record ShaderParameterBindings(
     IReadOnlyList<int> ScalarRegisters,
@@ -49,14 +61,15 @@ public sealed record ShaderParameterBindings(
 /// </summary>
 public sealed class ShaderCacheIndex
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 5;
     private const int IndexOffset = 0x1D;
     private const int EntrySize = 24;
     private const string BasePassPixelShader = "tbasepasspixelshaderfnolightmappolicyskylight";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     private readonly IChunkProtectionProvider _protectionProvider;
-    private readonly Dictionary<string, ShaderCacheMaterialMap> _maps;
+    private readonly Dictionary<string, List<ShaderCacheMaterialMap>> _mapsByBase;
+    private readonly Dictionary<string, ShaderCacheMaterialMap> _mapsByVariant;
     private readonly Dictionary<string, List<ShaderCacheMaterialMap>> _mapsByName;
     private readonly Dictionary<int, CacheState> _caches = new();
     private readonly object _gate = new();
@@ -65,29 +78,61 @@ public sealed class ShaderCacheIndex
     {
         Document = document;
         _protectionProvider = protectionProvider;
-        _maps = new Dictionary<string, ShaderCacheMaterialMap>(StringComparer.OrdinalIgnoreCase);
-        foreach (var map in document.Maps) _maps.TryAdd(map.MaterialId, map);
+        // Several caches can hold the same permutation; the first one with a pixel shader wins.
+        var usable = document.Maps.OrderBy(map => map.BasePassPixelShaderId is null ? 1 : 0).ToList();
+        _mapsByBase = usable.GroupBy(map => map.MaterialId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+        _mapsByVariant = new Dictionary<string, ShaderCacheMaterialMap>(StringComparer.OrdinalIgnoreCase);
+        foreach (var map in usable) _mapsByVariant.TryAdd(map.VariantKey, map);
         _mapsByName = document.Maps.GroupBy(map => map.FriendlyName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
     }
 
     public ShaderCacheIndexDocument Document { get; }
 
-    public ShaderCacheMaterialMap? FindMap(string materialId) => _maps.GetValueOrDefault(materialId);
-
     public IReadOnlyList<ShaderCacheMaterialMap> FindMapsByName(string friendlyName) =>
         _mapsByName.TryGetValue(friendlyName, out var maps) ? maps : [];
 
-    /// <summary>Finds the first 16-byte window of <paramref name="bytes"/> that is a known material id.</summary>
-    public ShaderCacheMaterialMap? FindMapIn(ReadOnlySpan<byte> bytes)
+    /// <summary>
+    /// Finds the permutation a material export uses. A material instance with its own static permutation
+    /// stores an <see cref="StaticParameterSet"/>: the map compiled for the same values is an exact match,
+    /// otherwise the map of the same base material with the fewest differing switches. Without a set, a
+    /// known base material GUID in the bytes selects that material's default (switch-free) permutation.
+    /// </summary>
+    public ShaderVariantMatch? FindVariant(ReadOnlySpan<byte> bytes)
     {
-        for (var index = bytes.Length - 16; index >= 0; index--)
+        ShaderVariantMatch? baseOnly = null;
+        for (var index = 0; index + 16 <= bytes.Length; index++)
         {
             var window = bytes.Slice(index, 16);
             if (window.IndexOfAnyExcept((byte)0) < 0) continue;
-            if (_maps.TryGetValue(Convert.ToHexString(window), out var map)) return map;
+            if (!_mapsByBase.TryGetValue(Convert.ToHexString(window), out var maps)) continue;
+            if (StaticParameterSet.TryRead(bytes, index, out var set, out _) && set.Switches.Count + set.ComponentMasks.Count > 0)
+                return Match(set, maps);
+            baseOnly ??= Default(maps);
         }
-        return null;
+        return baseOnly;
+    }
+
+    private ShaderVariantMatch Match(StaticParameterSet set, List<ShaderCacheMaterialMap> maps)
+    {
+        if (_mapsByVariant.TryGetValue(set.Key, out var exact)) return new ShaderVariantMatch(exact, true, 0, true);
+        var on = set.OnSwitches.ToHashSet(StringComparer.Ordinal);
+        var nearest = maps.Where(map => map.BasePassPixelShaderId is not null)
+            .Select(map => (Map: map, Differences: map.OnSwitches.Count(item => !on.Contains(item)) +
+                                                   on.Count(item => !map.OnSwitches.Contains(item, StringComparer.Ordinal))))
+            .OrderBy(item => item.Differences)
+            .ThenBy(item => Math.Abs(item.Map.SwitchCount - set.Switches.Count))
+            .FirstOrDefault();
+        return nearest.Map is null ? Default(maps) : new ShaderVariantMatch(nearest.Map, false, nearest.Differences, true);
+    }
+
+    private static ShaderVariantMatch Default(List<ShaderCacheMaterialMap> maps)
+    {
+        var plain = maps.FirstOrDefault(map => map.SwitchCount == 0 && map.BasePassPixelShaderId is not null);
+        return plain is not null
+            ? new ShaderVariantMatch(plain, true, 0, false)
+            : new ShaderVariantMatch(maps.FirstOrDefault(map => map.BasePassPixelShaderId is not null) ?? maps[0], false, -1, false);
     }
 
     /// <summary>Loads a saved index when the cache packages are unchanged, otherwise rebuilds and saves it.</summary>
@@ -125,6 +170,13 @@ public sealed class ShaderCacheIndex
                 cancellationToken));
             blobOffsets[cacheIndex] = offsets.ToArray();
         }
+        // Caches repeat permutations; keep one map for each, preferring one with a base-pass pixel shader.
+        maps = maps.GroupBy(map => map.VariantKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.FirstOrDefault(map => map.BasePassPixelShaderId is not null) ?? group.First())
+            .ToList();
+        var used = maps.Select(map => map.BasePassPixelShaderId).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        records = records.Where(pair => used.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
         var document = new ShaderCacheIndexDocument(CurrentSchemaVersion, caches, maps, records, blobOffsets);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(indexPath))!);
         var temporary = indexPath + ".tmp";
@@ -164,7 +216,10 @@ public sealed class ShaderCacheIndex
         return result;
     }
 
-    /// <summary>Finds material shader maps by their length-prefixed friendly names followed by valid expression lists.</summary>
+    /// <summary>
+    /// Finds material shader maps: a length-prefixed friendly name, then the static parameter set the map
+    /// was compiled for, then valid uniform expression lists.
+    /// </summary>
     private static IEnumerable<ShaderCacheMaterialMap> ScanMaterialMaps(
         ShaderCacheExport cache,
         int cacheIndex,
@@ -206,7 +261,9 @@ public sealed class ShaderCacheIndex
         {
             cancellationToken.ThrowIfCancellationRequested();
             stream.Position = bufferStart + carried;
-            var read = stream.Read(buffer, carried, (int)Math.Min(window, end - stream.Position));
+            // The logical stream may return less than asked (it stops at chunk edges), so fill the window.
+            var wanted = (int)Math.Min(window, end - stream.Position);
+            var read = stream.ReadAtLeast(buffer.AsSpan(carried, wanted), wanted, throwOnEndOfStream: false);
             if (read <= 0) break;
             var length = carried + read;
             var limit = bufferStart + length >= end ? length : length - overlap;
@@ -223,13 +280,14 @@ public sealed class ShaderCacheIndex
                     records.TryAdd(Convert.ToHexString(buffer, i + 8, 16), new ShaderCacheRecord(cacheIndex, bufferStart + i));
                 }
 
-                // A friendly name: u32 length (incl. NUL), ASCII identifier, NUL, then a 16-byte material GUID.
+                // A friendly name: u32 length (incl. NUL), ASCII identifier, NUL, then the static parameter set.
                 var nameLength = buffer[i];
                 if (nameLength is < 4 or > 96 || buffer[i + 1] != 0 || buffer[i + 2] != 0 || buffer[i + 3] != 0) continue;
                 if (i + 4 + nameLength + 48 > length) continue;
                 if (buffer[i + 4 + nameLength - 1] != 0 || !IsIdentifier(buffer.AsSpan(i + 4, nameLength - 1))) continue;
                 var guidAt = i + 4 + nameLength;
-                var listAt = guidAt + 32;
+                if (!StaticParameterSet.TryRead(buffer.AsSpan(0, length), guidAt, out var parameters, out var listAt) ||
+                    listAt + 12 > length) continue;
                 // The first list (or, when it is empty, the next one) must start with a uniform expression class.
                 var vectors = BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(listAt));
                 if (vectors is < 0 or > 256) continue;
@@ -240,13 +298,13 @@ public sealed class ShaderCacheIndex
                     !names[firstClass].Value.StartsWith("fmaterialuniformexpression", StringComparison.Ordinal)) continue;
 
                 var friendly = Encoding.ASCII.GetString(buffer, i + 4, nameLength - 1);
-                var id = Convert.ToHexString(buffer, guidAt, 16);
                 var absolute = bufferStart + i;
                 string? basePass = basePassName < 0 ? null
                     : FindLastShaderPair(buffer, Math.Max(0, (int)(previousEnd - bufferStart)), i, basePassName);
-                yield return new ShaderCacheMaterialMap(id, friendly, cacheIndex, bufferStart + listAt, basePass);
+                yield return new ShaderCacheMaterialMap(parameters.BaseMaterialId, friendly, cacheIndex, bufferStart + listAt,
+                    basePass, parameters.Key, parameters.OnSwitches, parameters.Switches.Count);
                 previousEnd = absolute + 4 + nameLength;
-                i = guidAt + 16;
+                i = listAt;
             }
             if (bufferStart + length >= end) break;
             // Keep the last megabyte so names crossing the window edge are still seen.
@@ -310,6 +368,7 @@ public sealed class ShaderCacheIndex
             cache.Stream.ReadExactly(bytes);
         }
         var arrays = new List<List<int>>();
+        var end = 0;
         for (var i = 0; i + 4 < bytes.Length && arrays.Count < 2;)
         {
             var count = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(i));
@@ -317,39 +376,54 @@ public sealed class ShaderCacheIndex
             {
                 arrays.Add(registers);
                 i += 4 + count * 10;
+                end = i;
                 continue;
             }
-            if (arrays.Count == 1) break;
+            if (arrays.Count == 1)
+            {
+                // A shader without scalar parameters: the one array is the vectors when textures follow it.
+                if (IsTextureArray(bytes, i)) arrays.Insert(0, []);
+                break;
+            }
             i++;
         }
         if (arrays.Count != 2) return null;
-        return new ShaderParameterBindings(arrays[0], arrays[1], ReadTextureSlots(bytes, arrays));
+        return new ShaderParameterBindings(arrays[0], arrays[1], ReadTextureSlots(bytes, end));
     }
 
-    private static IReadOnlyList<int> ReadTextureSlots(byte[] bytes, List<List<int>> arrays)
+    private static bool IsTextureArray(byte[] bytes, int at)
     {
-        // Find where the vector array ends by re-locating it, then read the texture array after it.
-        for (var i = 0; i + 4 < bytes.Length; i++)
-        {
-            var count = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(i));
-            if (count != arrays[1].Count || i + 4 + count * 10 > bytes.Length ||
-                !TryReadRegisters(bytes, i + 4, count, out var registers) || !registers.SequenceEqual(arrays[1])) continue;
-            var at = i + 4 + count * 10;
-            if (at + 4 > bytes.Length) return [];
-            var textures = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at));
-            if (textures is < 0 or > 32 || at + 4 + textures * 10 > bytes.Length) return [];
-            var slots = new List<int>(textures);
-            for (var k = 0; k < textures; k++)
-            {
-                var row = bytes.AsSpan(at + 4 + k * 10, 10);
-                if (BinaryPrimitives.ReadInt32LittleEndian(row) != k || BinaryPrimitives.ReadUInt16LittleEndian(row[6..]) != 1) return [];
-                slots.Add(BinaryPrimitives.ReadUInt16LittleEndian(row[4..]));
-            }
-            return slots;
-        }
-        return [];
+        if (at + 4 > bytes.Length) return false;
+        var count = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at));
+        if (count is < 1 or > 32 || at + 4 + count * 10 > bytes.Length) return false;
+        for (var k = 0; k < count; k++)
+            if (BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(at + 4 + k * 10 + 6)) != 1) return false;
+        return true;
     }
 
+    /// <summary>Reads the texture array that follows the vector array.</summary>
+    private static IReadOnlyList<int> ReadTextureSlots(byte[] bytes, int at)
+    {
+        if (at + 4 > bytes.Length) return [];
+        var textures = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at));
+        if (textures is < 0 or > 32 || at + 4 + textures * 10 > bytes.Length) return [];
+        // Rows are (u32 expression index, u16 slot, u16 count = 1, u16 sampler); unused textures are dropped.
+        var slots = new List<int>(textures);
+        for (var k = 0; k < textures; k++)
+        {
+            var row = bytes.AsSpan(at + 4 + k * 10, 10);
+            var index = BinaryPrimitives.ReadInt32LittleEndian(row);
+            if (index < slots.Count || index > 255 || BinaryPrimitives.ReadUInt16LittleEndian(row[6..]) != 1) return [];
+            while (slots.Count < index) slots.Add(-1);
+            slots.Add(BinaryPrimitives.ReadUInt16LittleEndian(row[4..]));
+        }
+        return slots;
+    }
+
+    /// <summary>
+    /// Reads (u32 expression index, u16 byte offset, u16 size, u16 buffer) rows. The compiler drops unused
+    /// parameters, so indices only increase; the result holds -1 for the dropped ones.
+    /// </summary>
     private static bool TryReadRegisters(byte[] bytes, int at, int count, out List<int> registers)
     {
         registers = new List<int>(count);
@@ -359,7 +433,8 @@ public sealed class ShaderCacheIndex
             var index = BinaryPrimitives.ReadInt32LittleEndian(row);
             var offset = BinaryPrimitives.ReadUInt16LittleEndian(row[4..]);
             var size = BinaryPrimitives.ReadUInt16LittleEndian(row[6..]);
-            if (index != k || size != 16 || offset % 16 != 0) return false;
+            if (index < registers.Count || index > 255 || size != 16 || offset % 16 != 0) return false;
+            while (registers.Count < index) registers.Add(-1);
             registers.Add(offset / 16);
         }
         return true;

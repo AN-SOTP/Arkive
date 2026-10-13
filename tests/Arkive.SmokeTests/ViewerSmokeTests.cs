@@ -12,6 +12,7 @@ internal static class ViewerSmokeTests
         new("compiles colour recipes to GLSL and evaluates them identically on the CPU", TestRecipeLanguage),
         new("matches shipped colour recipes to master materials and falls back to stored textures", TestRecipeCatalog),
         new("reads and evaluates a shader map's uniform expressions", TestUniformExpressions),
+        new("keys shader permutations by their static parameter set", TestStaticParameterSet),
         new("translates pixel shader disassembly to GLSL with D3D register semantics", TestDxbcTranslation),
         new("reads texture sampling settings from cooked properties", TestTextureProbe),
         new("keys and trims the model viewer cache", TestViewerCache),
@@ -191,6 +192,44 @@ internal static class ViewerSmokeTests
         Assert(colour.SequenceEqual([0.3f, 0.2f, 0.1f, 1]) && append[0] == 0.5f && Math.Abs(append[1] - 0.2f) < 1e-6 &&
                Math.Abs(clamp[0] - 0.1f) < 1e-6,
             "uniform expressions did not evaluate with the material's parameters");
+    }
+
+    private static void TestStaticParameterSet()
+    {
+        var baseId = Guid.NewGuid().ToByteArray();
+        var dyeing = Guid.NewGuid().ToByteArray();
+        var masked = Guid.NewGuid().ToByteArray();
+        byte[] Set(params (byte[] Expression, int Name, bool Value, bool Override)[] switches)
+        {
+            using var stream = new MemoryStream();
+            using var writer = new BinaryWriter(stream);
+            writer.Write(baseId);
+            writer.Write(switches.Length);
+            foreach (var (expression, name, value, overridden) in switches)
+            {
+                writer.Write(name); writer.Write(0); writer.Write(value ? 1 : 0); writer.Write(overridden ? 1 : 0);
+                writer.Write(expression);
+            }
+            writer.Write(0); writer.Write(0); writer.Write(0);
+            writer.Write(11);
+            return stream.ToArray();
+        }
+
+        // The cache and an instance list the same switches with different name indices (each package has its
+        // own name table) and override flags, in any order: the permutation is the same.
+        var cache = Set((dyeing, 7, false, false), (masked, 9, true, false));
+        var instance = Set((masked, 40, true, true), (dyeing, 31, false, false));
+        Assert(StaticParameterSet.TryRead(cache, 0, out var cached, out var end) && end == cache.Length - 4 &&
+               BitConverter.ToInt32(cache, end) == 11, "a static parameter set was not read to its end");
+        Assert(StaticParameterSet.TryRead(instance, 0, out var used, out _) && used.Key == cached.Key &&
+               used.OnSwitches.SequenceEqual([Convert.ToHexString(masked)[..8]]),
+            "equal static permutations were keyed differently");
+        var other = Set((dyeing, 7, true, true), (masked, 9, true, false));
+        Assert(StaticParameterSet.TryRead(other, 0, out var different, out _) && different.Key != cached.Key,
+            "a different switch value kept the same permutation key");
+        var broken = Set((dyeing, 7, false, false));
+        broken[16 + 4 + 8] = 2;
+        Assert(!StaticParameterSet.TryRead(broken, 0, out _, out _), "a switch value that is not a boolean was accepted");
     }
 
     private static void TestDxbcTranslation()
