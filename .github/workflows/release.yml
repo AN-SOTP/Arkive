@@ -57,4 +57,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create '${{ github.ref_name }}' ./dist/releases/*.exe ./dist/releases/*.sha256 --repo '${{ github.repository }}' --verify-tag --draft --title "Arkive $env:ARKIVE_VERSION" --notes "Draft for Arkive $env:ARKIVE_VERSION (public preview). Before publishing, replace these notes with a summary of changes and review the installer and its SHA-256 file. Publishing offers this update to every installed copy of Arkive."
+          # Notes written for the version (eng/release-notes/X.Y.Z.txt) are used when present.
+          $notes = "eng/release-notes/$env:ARKIVE_VERSION.txt"
+          if (-not (Test-Path -LiteralPath $notes)) {
+            $notes = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
+            Set-Content -LiteralPath $notes -Encoding utf8 -Value "Draft for Arkive $env:ARKIVE_VERSION (public preview). Before publishing, replace these notes with a summary of changes and review the installer and its SHA-256 file. Publishing offers this update to every installed copy of Arkive."
+          }
+          gh release create '${{ github.ref_name }}' ./dist/releases/*.exe ./dist/releases/*.sha256 --repo '${{ github.repository }}' --verify-tag --draft --title "Arkive $env:ARKIVE_VERSION" --notes-file $notes

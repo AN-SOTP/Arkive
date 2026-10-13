@@ -1,0 +1,27 @@
+Arkive 0.2.0 adds its own model viewer, which runs the game's compiled shaders, so meshes look the way they do in game instead of showing raw packed textures.
+
+## Model viewer
+
+- **Preview** in the Asset library (or double-clicking a mesh) opens the viewer. It shows every LOD of skeletal and static meshes from Arkive's own decoder, with UModel's materials, textures and object properties alongside.
+- It covers what UModel's viewer offers, and more: LOD and UV-set switching, wireframe, normals, tangents, skeleton, bone names, sockets, UV layout, material IDs, vertex colours, section isolation, texture channels, screenshots (including transparent ones) and PgUp/PgDn browsing through search results.
+- Meshes UModel cannot open still show their geometry from Arkive's decoder.
+- **Open in UModel** is one click away for comparison.
+
+## The game's own shaders
+
+- Each material runs the exact shader permutation the game compiled for it, translated from the client's shader cache. Packed textures appear in their game colours. For example, Serca's hair is no longer pink, and two-tone hair masks show the right colours.
+- Glow and effect materials show. Thaemine's blue lines, Kazeros' red veins and effect hair and wings now appear as light instead of grey.
+- Colour recipes and the stored textures (as UModel shows them) are still available from **Colours** for comparison.
+- The first preview indexes the game's shaders once (about 30 seconds, about 8 MB). Prepared scenes are cached up to 1 GB.
+
+## Modding with the viewer
+
+- **Preview with edits** in Edit mods shows a mesh with your mod's working files on top: the edited GLB, edited texture images and changed material values. Saving any of those files refreshes the view, keeping the camera. **Your edits** (E) switches back to the original.
+- The viewer follows the game files too. Applying or restoring a mod that touches the mesh, its materials or its textures refreshes the open view.
+- **Export colours** saves each material's colours, as shown, as textures laid out on UV set 0.
+- Meshes added to a mod get their game colours baked next to the working GLB. **Open edited file** connects them in Blender, so you see in-game colours while you edit. The baked images are for reference only and are never put into the game.
+
+## Notes
+
+- The viewer needs the Microsoft Edge WebView2 Runtime, which is part of Windows 10 and 11.
+- It runs the game's material shaders, not its renderer. In-game lighting, bloom, fog, animation and particle simulation are not reproduced, and moving or flickering effects show a single moment.
