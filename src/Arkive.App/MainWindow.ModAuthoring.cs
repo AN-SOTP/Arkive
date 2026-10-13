@@ -282,6 +282,9 @@ public partial class MainWindow : Window
             : _authoringDraft with { EditIds = _authoringDraft.EditIds.Append(created.EditId).ToArray() });
         session.Existing.Add(key, created);
         AuthoringStatusText.Text = $"Added {row.ObjectName}. Open its working file to edit it, then save the mod.";
+        if (CanPreviewInArkive(row.Kind) && EditablePath(created) is { } glb &&
+            Path.GetExtension(glb).Equals(".glb", StringComparison.OrdinalIgnoreCase))
+            _ = BakeAuthoringColoursAsync(row, glb);
         return created;
     }
 

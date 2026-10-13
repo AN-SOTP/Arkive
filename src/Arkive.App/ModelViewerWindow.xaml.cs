@@ -27,6 +27,20 @@ public partial class ModelViewerWindow : Window
     private string? _pendingLoadMessage;
     private bool _pageReady;
     private CancellationTokenSource? _loading;
+    private TaskCompletionSource<bool> _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private BakeJob? _bake;
+
+    /// <summary>A texture baked in texture space from one material, as the viewer shows it.</summary>
+    public sealed record BakedTexture(int Slot, string Material, string Name, string Source, int Size, string File);
+
+    private sealed class BakeJob(string requestId, string directory)
+    {
+        public string RequestId { get; } = requestId;
+        public string Directory { get; } = directory;
+        public List<BakedTexture> Textures { get; } = [];
+        public TaskCompletionSource<IReadOnlyList<BakedTexture>> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 
     public ModelViewerWindow(
         ModelViewerSceneService service,
@@ -54,6 +68,7 @@ public partial class ModelViewerWindow : Window
         Title = $"Arkive model viewer · {request.PackageAlias}.{request.ObjectName}";
         _loading?.Cancel();
         var loading = _loading = new CancellationTokenSource();
+        if (_sceneLoaded.Task.IsCompleted) _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Post(new { type = "progress", text = $"Preparing {request.ObjectName}…" });
         try
         {
@@ -77,6 +92,63 @@ public partial class ModelViewerWindow : Window
         {
             _log($"Model viewer preparation failed: object={request.ObjectName}, error={exception}");
             Post(new { type = "error", text = $"Arkive could not prepare {request.ObjectName}: {exception.Message}" });
+            _sceneLoaded.TrySetException(exception);
+        }
+    }
+
+    /// <summary>
+    /// Bakes every material of the shown object (LOD 0, UV set 0) to sRGB PNGs, using the same colours the
+    /// viewer shows, and writes <c>materials.json</c> listing which file belongs to which material.
+    /// </summary>
+    public async Task<IReadOnlyList<BakedTexture>> BakeAsync(string directory, CancellationToken cancellationToken = default)
+    {
+        await _sceneLoaded.Task.WaitAsync(TimeSpan.FromMinutes(5), cancellationToken);
+        Directory.CreateDirectory(directory);
+        var job = _bake = new BakeJob(Guid.NewGuid().ToString("N"), directory);
+        Post(new { type = "bake", requestId = job.RequestId });
+        await using var registration = cancellationToken.Register(() => job.Completion.TrySetCanceled());
+        var textures = await job.Completion.Task.WaitAsync(TimeSpan.FromMinutes(10), cancellationToken);
+        File.WriteAllText(Path.Combine(directory, "materials.json"), JsonSerializer.Serialize(
+            textures.Select(texture => new { material = texture.Material, name = texture.Name, file = texture.File, source = texture.Source, size = texture.Size }),
+            new JsonSerializerOptions { WriteIndented = true }));
+        return textures;
+    }
+
+    private void ReceiveBaked(JsonElement root)
+    {
+        if (_bake is not { } job || root.GetProperty("requestId").GetString() != job.RequestId) return;
+        const string prefix = "data:image/png;base64,";
+        var data = root.GetProperty("dataUrl").GetString() ?? string.Empty;
+        if (!data.StartsWith(prefix, StringComparison.Ordinal)) return;
+        var slot = root.GetProperty("slot").GetInt32();
+        var name = root.GetProperty("name").GetString() ?? $"material_{slot}";
+        var safe = new string(name.Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
+        var file = $"{slot:D2}_{safe}.png";
+        File.WriteAllBytes(Path.Combine(job.Directory, file), Convert.FromBase64String(data[prefix.Length..]));
+        job.Textures.Add(new BakedTexture(slot, root.GetProperty("material").GetString() ?? name, name,
+            root.GetProperty("source").GetString() ?? "", root.GetProperty("size").GetInt32(), file));
+    }
+
+    private async Task BakeToChosenFolderAsync()
+    {
+        if (_request is null) return;
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Choose a folder for the coloured textures",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        var directory = Path.Combine(dialog.FolderName, $"{_request.ObjectName}-colours");
+        try
+        {
+            var textures = await BakeAsync(directory);
+            _log($"Model viewer baked {textures.Count} texture(s) to {directory}.");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(directory) { UseShellExecute = true });
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or TimeoutException
+                                              or OperationCanceledException)
+        {
+            MessageBox.Show(this, exception.Message, "Arkive model viewer", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -131,6 +203,25 @@ public partial class ModelViewerWindow : Window
                 break;
             case "openUmodel":
                 OpenInUmodel();
+                break;
+            case "loaded":
+                _sceneLoaded.TrySetResult(true);
+                break;
+            case "baked":
+                ReceiveBaked(root);
+                break;
+            case "bakeDone":
+                if (_bake is { } job && root.GetProperty("requestId").GetString() == job.RequestId)
+                {
+                    _bake = null;
+                    if (root.TryGetProperty("error", out var error))
+                        job.Completion.TrySetException(new IOException($"Baking failed: {error.GetString()}"));
+                    else
+                        job.Completion.TrySetResult(job.Textures.ToArray());
+                }
+                break;
+            case "requestBake":
+                _ = BakeToChosenFolderAsync();
                 break;
             case "screenshot":
                 SaveScreenshot(root.GetProperty("dataUrl").GetString(), root.GetProperty("name").GetString());

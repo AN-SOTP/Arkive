@@ -114,7 +114,7 @@ function gameInput(input) {
 
 /// Standard material whose base colour comes from a colour recipe, or from the game's own
 /// translated pixel shader when `game` is given (lighting still uses the recipe's roughness etc.).
-function recipeMaterial(info, plan, game) {
+function recipeMaterial(info, plan, game, bake = false) {
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 });
   material.name = info.name;
   material.side = info.twoSided || state.toggles.backfaces ? THREE.DoubleSide : THREE.FrontSide;
@@ -165,6 +165,11 @@ function recipeMaterial(info, plan, game) {
         .replace('#include <common>', `#include <common>\n${secondUv}`)
         .replace('#include <uv_vertex>', '#include <uv_vertex>\nark_vUv1 = uv1;');
     }
+    if (bake) {
+      // Rasterise in texture space: each triangle lands where its UV set 0 coordinates are.
+      shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>',
+        '#include <project_vertex>\ngl_Position = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);');
+    }
     let fs = shader.fragmentShader.replace('#include <common>', `#include <common>\n${secondUv}\n${game ? '' : state.scene.glslPrelude}\n${declarations}`);
     fs = fs.replace('#include <map_fragment>', baseColour);
     if (opacity) fs = fs.replace('#include <alphamap_fragment>', opacity);
@@ -172,9 +177,20 @@ function recipeMaterial(info, plan, game) {
     if (plan.metalnessGlsl) fs = fs.replace('#include <metalnessmap_fragment>', `float metalnessFactor = clamp(${plan.metalnessGlsl}, 0.0, 1.0);`);
     if (plan.emissiveGlsl) fs = fs.replace('#include <emissivemap_fragment>', `totalEmissiveRadiance += ${plan.emissiveGlsl};`);
     if (plan.occlusionGlsl) fs = fs.replace('#include <aomap_fragment>', `reflectedLight.indirectDiffuse *= clamp(${plan.occlusionGlsl}, 0.0, 1.0);`);
+    if (bake) {
+      if (!game) fs = fs.replace('#include <common>', `#include <common>\n${state.scene.glslPrelude}`);
+      fs = fs.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor = vec4(ark_encode_srgb(diffuseColor.rgb), diffuseColor.a);');
+    }
     shader.fragmentShader = fs;
   };
-  material.customProgramCacheKey = () => [plan.familyId, game?.shaderId, usesSecondUv, plan.baseColorGlsl, plan.opacityGlsl,
+  if (bake) {
+    material.blending = THREE.NoBlending;
+    material.transparent = false;
+    material.depthTest = false;
+    material.depthWrite = false;
+    material.side = THREE.DoubleSide;
+  }
+  material.customProgramCacheKey = () => [bake, plan.familyId, game?.shaderId, usesSecondUv, plan.baseColorGlsl, plan.opacityGlsl,
     plan.roughnessGlsl, plan.metalnessGlsl, plan.emissiveGlsl, plan.occlusionGlsl, declarations.length, game?.albedoOutput].join('|');
   return material;
 }
@@ -615,6 +631,7 @@ $('lightSelect').addEventListener('change', (e) => { state.light = e.target.valu
 $('focusButton').addEventListener('click', focus);
 $('screenshotButton').addEventListener('click', (e) => screenshot(e.altKey));
 $('umodelButton').addEventListener('click', () => post({ type: 'openUmodel' }));
+$('bakeButton').addEventListener('click', () => post({ type: 'requestBake' }));
 $('textureClose').addEventListener('click', () => { $('texturePane').hidden = true; });
 document.querySelectorAll('[data-channel]').forEach((button) => button.addEventListener('click', () => {
   texView.channel = button.dataset.channel;
@@ -766,10 +783,144 @@ if (sceneUrl) {
 for (const name of Object.keys(state.toggles)) document.querySelector(`[data-toggle="${name}"]`)?.setAttribute('aria-pressed', String(state.toggles[name]));
 post({ type: 'ready' });
 
+// Baking: renders each material's colour in texture space (UV set 0) into PNGs for exports.
+const coverageMaterial = new THREE.ShaderMaterial({
+  vertexShader: '#include <common>\n#include <skinning_pars_vertex>\nvoid main() { gl_Position = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0); }',
+  fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }',
+  side: THREE.DoubleSide,
+  depthTest: false,
+  depthWrite: false,
+});
+
+function bakeSize(info) {
+  const plan = state.shading === 'game' && info.gameShader && !info.gameShaderBroken ? info.gameShader : null;
+  const urls = plan ? Object.values(plan.samplers) : Object.values(info.textureUrls);
+  const sizes = urls.map((url) => state.scene.textures.find((t) => t.url === url)?.width ?? 0);
+  const size = Math.max(256, ...sizes);
+  return Math.min(2048, 2 ** Math.round(Math.log2(size)));
+}
+
+function renderBake(meshes, material, size) {
+  const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false });
+  const bakeScene = new THREE.Scene();
+  const proxies = meshes.map((mesh) => {
+    const proxy = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(mesh.geometry, material) : new THREE.Mesh(mesh.geometry, material);
+    if (mesh.isSkinnedMesh) proxy.bind(mesh.skeleton, mesh.bindMatrix);
+    proxy.frustumCulled = false;
+    bakeScene.add(proxy);
+    return proxy;
+  });
+  const previousTarget = renderer.getRenderTarget();
+  const previousClear = renderer.getClearColor(new THREE.Color());
+  const previousAlpha = renderer.getClearAlpha();
+  renderer.setRenderTarget(target);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(bakeScene, camera);
+  const pixels = new Uint8Array(size * size * 4);
+  renderer.readRenderTargetPixels(target, 0, 0, size, size, pixels);
+  renderer.setRenderTarget(previousTarget);
+  renderer.setClearColor(previousClear, previousAlpha);
+  target.dispose();
+  for (const proxy of proxies) bakeScene.remove(proxy);
+  return pixels;
+}
+
+// Pads UV islands outwards so mip-mapping and filtering never sample the empty background.
+function dilate(pixels, coverage, size, passes) {
+  let covered = new Uint8Array(size * size);
+  for (let i = 0; i < covered.length; i++) covered[i] = coverage[i * 4] > 0 ? 1 : 0;
+  for (let pass = 0; pass < passes; pass++) {
+    const next = covered.slice();
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = y * size + x;
+        if (covered[i]) continue;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = y + dy;
+          if (yy < 0 || yy >= size) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx;
+            if (xx < 0 || xx >= size || !covered[yy * size + xx]) continue;
+            const j = (yy * size + xx) * 4;
+            r += pixels[j]; g += pixels[j + 1]; b += pixels[j + 2]; n++;
+          }
+        }
+        if (!n) continue;
+        const k = i * 4;
+        pixels[k] = r / n; pixels[k + 1] = g / n; pixels[k + 2] = b / n;
+        next[i] = 1;
+      }
+    }
+    covered = next;
+  }
+}
+
+function encodePng(pixels, size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const context = canvas.getContext('2d');
+  const image = context.createImageData(size, size);
+  // Render-target rows run bottom-up; images run top-down.
+  for (let y = 0; y < size; y++) image.data.set(pixels.subarray((size - 1 - y) * size * 4, (size - y) * size * 4), y * size * 4);
+  context.putImageData(image, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+async function bakeTextures(requestId) {
+  const lod = Math.min(...state.lods.keys());
+  const bySlot = new Map();
+  for (const mesh of state.lods.get(lod) ?? []) {
+    const slot = slotOf(mesh);
+    if (!bySlot.has(slot)) bySlot.set(slot, []);
+    bySlot.get(slot).push(mesh);
+  }
+  let count = 0;
+  for (const [slot, meshes] of bySlot) {
+    const info = state.scene.materials[slot];
+    if (!info || !meshes.some((mesh) => mesh.geometry.attributes.uv)) continue;
+    const game = state.shading === 'game' && info.gameShader && !info.gameShaderBroken ? info.gameShader : null;
+    const material = recipeMaterial(info, info.recipe, game, true);
+    const size = bakeSize(info);
+    const colour = renderBake(meshes, material, size);
+    const coverage = renderBake(meshes, coverageMaterial, size);
+    material.dispose();
+    dilate(colour, coverage, size, 8);
+    post({ type: 'baked', requestId, slot, material: info.reference ?? info.name, name: info.name, source: game ? 'game shader' : info.recipe.familyId,
+      size, dataUrl: encodePng(colour, size) });
+    count++;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  post({ type: 'bakeDone', requestId, count });
+}
+
+host?.addEventListener('message', (event) => {
+  if (event.data?.type === 'bake') bakeTextures(event.data.requestId).catch((error) => post({ type: 'bakeDone', requestId: event.data.requestId, count: 0, error: String(error) }));
+});
+
 // Diagnostics handle for Arkive's host and tests.
 window.arkiveViewer = {
   state,
   renderer,
+  bake: () => bakeTextures('debug'),
+  bakeStats: (slot, size = 256) => {
+    const info = state.scene.materials[slot];
+    const meshes = [...state.lods.get(Math.min(...state.lods.keys()))].filter((mesh) => slotOf(mesh) === slot);
+    const material = recipeMaterial(info, info.recipe, info.gameShader, true);
+    const pixels = renderBake(meshes, material, size);
+    let lit = 0, alpha = 0, sum = 0;
+    for (let i = 0; i < pixels.length; i += 4) { if (pixels[i] + pixels[i + 1] + pixels[i + 2]) lit++; if (pixels[i + 3]) alpha++; sum += pixels[i]; }
+    const program = renderer.properties.get(material).currentProgram;
+    return { meshes: meshes.length, lit, alpha, mean: sum / (size * size), runnable: program?.diagnostics?.runnable ?? 'n/a',
+      log: program?.diagnostics?.fragmentShader?.log?.slice(0, 300) };
+  },
+  coverage: (size = 256) => {
+    const pixels = renderBake([...state.lods.get(Math.min(...state.lods.keys()))], coverageMaterial, size);
+    let covered = 0;
+    for (let i = 0; i < pixels.length; i += 4) if (pixels[i]) covered++;
+    return { covered, error: renderer.getContext().getError(), programs: renderer.info.programs.length };
+  },
   programErrors: () => renderer.info.programs
     .filter((program) => program.diagnostics && !program.diagnostics.runnable)
     .map((program) => `${program.name}: ${program.diagnostics.fragmentShader.log || program.diagnostics.programLog}`.slice(0, 600)),

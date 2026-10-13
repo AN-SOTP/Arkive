@@ -40,10 +40,27 @@ public partial class MainWindow : Window
     }
 
     // Blender treats a file passed on its command line as a .blend, so a .glb has to go through its glTF importer.
+    // After importing, connect the game colours Arkive baked next to the GLB (<name>.arkive-colours) to
+    // each material's Base Color, so the mesh looks as it does in game. The GLB itself is unchanged.
     private const string BlenderGlbImportScript =
-        "import bpy, sys\n" +
+        "import bpy, sys, os, json, re\n" +
+        "glb = sys.argv[sys.argv.index('--') + 1]\n" +
         "for o in list(bpy.data.objects): bpy.data.objects.remove(o)\n" +
-        "bpy.ops.import_scene.gltf(filepath=sys.argv[sys.argv.index('--') + 1])";
+        "bpy.ops.import_scene.gltf(filepath=glb)\n" +
+        "folder = os.path.splitext(glb)[0] + '.arkive-colours'\n" +
+        "listing = os.path.join(folder, 'materials.json')\n" +
+        "for entry in (json.load(open(listing, encoding='utf-8')) if os.path.exists(listing) else []):\n" +
+        "    for m in [m for m in bpy.data.materials if re.sub(r'\\.\\d{3}$', '', m.name) == entry['material'][:63]]:\n" +
+        "        if not m.use_nodes: continue\n" +
+        "        bsdf = next((n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)\n" +
+        "        if bsdf is None: continue\n" +
+        "        node = m.node_tree.nodes.new('ShaderNodeTexImage')\n" +
+        "        node.image = bpy.data.images.load(os.path.join(folder, entry['file']), check_existing=True)\n" +
+        "        node.location = (bsdf.location.x - 400, bsdf.location.y)\n" +
+        "        m.node_tree.links.new(node.outputs['Color'], bsdf.inputs['Base Color'])\n" +
+        "        m.node_tree.links.new(node.outputs['Alpha'], bsdf.inputs['Alpha'])\n" +
+        "        try: m.blend_method = 'HASHED'\n" +
+        "        except Exception: pass\n";
 
     private void OpenGlbInBlender(string blender, string glb)
     {

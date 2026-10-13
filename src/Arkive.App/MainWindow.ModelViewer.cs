@@ -9,6 +9,7 @@ public partial class MainWindow
 {
     private ModelViewerSceneService? _modelViewerService;
     private ModelViewerWindow? _modelViewerWindow;
+    private readonly SemaphoreSlim _colourBakeGate = new(1, 1);
 
     private static bool CanPreviewInArkive(AssetKind kind) => kind is AssetKind.SkeletalMesh or AssetKind.StaticMesh;
 
@@ -17,24 +18,66 @@ public partial class MainWindow
         if (LibraryGrid.SelectedItem is LibraryAssetRow row) OpenModelViewer(row);
     }
 
+    private ModelViewerSceneService ModelViewerService() => _modelViewerService ??= new ModelViewerSceneService(
+        _umodelBridge!,
+        new ModelViewerCache(Path.Combine(_projectRoot, "cache", "model-viewer")),
+        protectionProvider: _protectionProvider);
+
+    private ModelViewerWindow CreateModelViewerWindow(Func<int, ModelViewerRequest?> browse) => new(
+        ModelViewerService(),
+        _umodelBridge!,
+        Path.Combine(_projectRoot, "cache", "webview2"),
+        _effectiveAppearanceTheme,
+        browse,
+        Log);
+
+    /// <summary>
+    /// Bakes the game colours of a newly added mesh next to its working GLB (<c>name.arkive-colours</c>), so
+    /// Open edited file shows them in Blender. Runs in an off-screen viewer; failures only reach the log.
+    /// </summary>
+    private async Task BakeAuthoringColoursAsync(LibraryAssetRow row, string glb)
+    {
+        if (_umodelBridge is null) return;
+        var folder = Path.Combine(Path.GetDirectoryName(glb)!, Path.GetFileNameWithoutExtension(glb) + ".arkive-colours");
+        await _colourBakeGate.WaitAsync();
+        ModelViewerWindow? window = null;
+        try
+        {
+            window = CreateModelViewerWindow(_ => null);
+            window.ShowInTaskbar = false;
+            window.ShowActivated = false;
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            window.Left = -20000;
+            window.Top = -20000;
+            window.Width = 1024;
+            window.Height = 768;
+            window.Show();
+            await window.ShowObjectAsync(ToModelViewerRequest(row));
+            var textures = await window.BakeAsync(folder);
+            Log($"Baked {textures.Count} game colour texture(s) for {row.ObjectName}: {folder}");
+            AuthoringStatusText.Text = $"Baked {row.ObjectName}'s game colours for Blender. Open edited file shows them.";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or TimeoutException
+                                              or InvalidOperationException or OperationCanceledException)
+        {
+            Log($"Game colour baking skipped for {row.ObjectName}: {exception.Message}");
+        }
+        finally
+        {
+            window?.Close();
+            _colourBakeGate.Release();
+        }
+    }
+
     private void OpenModelViewer(LibraryAssetRow row)
     {
         if (_umodelBridge is null) return;
         try
         {
-            _modelViewerService ??= new ModelViewerSceneService(
-                _umodelBridge,
-                new ModelViewerCache(Path.Combine(_projectRoot, "cache", "model-viewer")),
-                protectionProvider: _protectionProvider);
             if (_modelViewerWindow is null || !_modelViewerWindow.IsLoaded)
             {
-                _modelViewerWindow = new ModelViewerWindow(
-                    _modelViewerService,
-                    _umodelBridge,
-                    Path.Combine(_projectRoot, "cache", "webview2"),
-                    _effectiveAppearanceTheme,
-                    BrowseModelViewer,
-                    Log) { Owner = this };
+                _modelViewerWindow = CreateModelViewerWindow(BrowseModelViewer);
+                _modelViewerWindow.Owner = this;
                 _modelViewerWindow.Closed += (_, _) => _modelViewerWindow = null;
                 _modelViewerWindow.Show();
             }

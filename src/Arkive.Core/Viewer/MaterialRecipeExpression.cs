@@ -221,7 +221,8 @@ public sealed class RecipeGlslCompiler(IRecipeBindings bindings)
     public const string Prelude =
         "vec3 ark_srgb(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }\n" +
         "vec4 ark_srgb(vec4 c) { return vec4(ark_srgb(c.rgb), c.a); }\n" +
-        "float ark_srgb(float c) { return ark_srgb(vec3(c)).x; }\n";
+        "float ark_srgb(float c) { return ark_srgb(vec3(c)).x; }\n" +
+        "vec3 ark_encode_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }\n";
 
     /// <summary>Emits GLSL whose result is converted to <paramref name="width"/> components.</summary>
     public string Compile(RecipeNode node, int width)
