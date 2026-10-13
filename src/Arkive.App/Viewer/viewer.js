@@ -118,9 +118,16 @@ function recipeMaterial(info, plan) {
   const declarations = Object.keys(plan.samplers).map((name) => `uniform sampler2D ${name};`)
     .concat(plan.uniforms.map((u) => `uniform ${u.kind} ${u.uniform};`)).join('\n');
   material.defines = { USE_UV: '' };
+  if (plan.usesSecondUv) material.defines.USE_UV1 = '';
+  const secondUv = plan.usesSecondUv ? 'varying vec2 ark_vUv1;' : '';
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
-    let fs = shader.fragmentShader.replace('#include <common>', `#include <common>\n${declarations}\n${state.scene.glslPrelude}`);
+    if (plan.usesSecondUv) {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\n${secondUv}`)
+        .replace('#include <uv_vertex>', '#include <uv_vertex>\nark_vUv1 = uv1;');
+    }
+    let fs = shader.fragmentShader.replace('#include <common>', `#include <common>\n${secondUv}\n${declarations}\n${state.scene.glslPrelude}`);
     fs = fs.replace('#include <map_fragment>', `diffuseColor.rgb *= ${plan.baseColorGlsl};`);
     if (plan.opacityGlsl) fs = fs.replace('#include <alphamap_fragment>', `diffuseColor.a *= ${plan.opacityGlsl};`);
     if (plan.roughnessGlsl) fs = fs.replace('#include <roughnessmap_fragment>', `float roughnessFactor = clamp(${plan.roughnessGlsl}, 0.04, 1.0);`);
@@ -129,7 +136,7 @@ function recipeMaterial(info, plan) {
     if (plan.occlusionGlsl) fs = fs.replace('#include <aomap_fragment>', `reflectedLight.indirectDiffuse *= clamp(${plan.occlusionGlsl}, 0.0, 1.0);`);
     shader.fragmentShader = fs;
   };
-  material.customProgramCacheKey = () => [plan.familyId, plan.baseColorGlsl, plan.opacityGlsl, plan.roughnessGlsl,
+  material.customProgramCacheKey = () => [plan.familyId, plan.usesSecondUv, plan.baseColorGlsl, plan.opacityGlsl, plan.roughnessGlsl,
     plan.metalnessGlsl, plan.emissiveGlsl, plan.occlusionGlsl, declarations].join('|');
   return material;
 }
@@ -441,6 +448,7 @@ function renderMaterials() {
           ['Blend', `${escapeHtml(m.blendMode)}${m.masked ? ` (clip ${m.opacityMaskClipValue})` : ''}${m.twoSided ? ', two-sided' : ''}`],
           ['Recipe', `${escapeHtml(plan.familyLabel)} ${plan.matchedMaster ? `<span class="muted">via ${escapeHtml(plan.matchedMaster)}</span>` : ''}`],
         ])}
+        ${plan.evidence ? `<div class="muted">${escapeHtml(plan.evidence)}</div>` : ''}
         ${plan.warnings.length ? plan.warnings.map((w) => `<div class="note">${escapeHtml(w)}</div>`).join('') : ''}
         ${textures.length ? `<h3>Texture parameters</h3>${kv(textures)}` : ''}
         ${vectors.length ? `<h3>Vector parameters</h3>${kv(vectors)}` : ''}

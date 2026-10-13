@@ -2,23 +2,72 @@
   // Colour recipes for Lost Ark master material families.
   // Expressions: tex('param'[, default]) vec('param'[, defaults]) scalar('param'[, default])
   // switch('param'[, default]) has('param') lerp mix saturate clamp min max pow step abs sqrt
-  // fract dot lum srgb vec2 vec3 vec4, + - * /, swizzles .rgba/.xyzw. 'a|b' tries names in order.
+  // fract floor dot lum srgb uv(0|1) vec2 vec3 vec4, + - * /, swizzles .rgba/.xyzw. 'a|b' tries names in order.
+  // $name expands a define; "defines" here are shared by every recipe, a recipe's own defines win.
   // baseColor is linear RGB; textures are sampled as stored, so colour textures go through srgb().
   // status: "inferred" until checked against the game's compiled shader or in-game captures.
   "schemaVersion": 1,
+  "defines": {
+    "hair_d": "tex('texture_diffuse')",
+    "hair_edge": "scalar('var_base_hairtwotonerangeedge_ui', 0.5)",
+    "hair_hard": "scalar('var_base_hairtwotonerangehardness_ui', 0.5)",
+    "hair_ra": "scalar('var_base_hairtwotonerangea_ui', 0.5)",
+    "hair_rb": "scalar('var_base_hairtwotonerangeb_ui', 0.5)",
+    "hair_e7": "clamp($hair_edge, 0.2, 1.0)",
+    "hair_w": "(5.0 - 3.5 * $hair_edge) * clamp($hair_hard * $hair_hard, 0.1, 1.0)",
+    "hair_g": "lerp(1.0 - uv(1).x, uv(1).x, scalar('hairtwotone_color_switch', 0))",
+    "hair_g0": "saturate($hair_g * (1.0 + 0.75 * clamp($hair_hard, 0.1, 0.5)) * 0.5 * (1.0 + 0.5 * $hair_e7))",
+    "hair_p": "(tex('texture_normal', 0.5).r * 2.0 - 1.0) * $hair_d.r + 0.2",
+    "hair_q": "1.0 - $hair_d.b - $hair_p",
+    "hair_k": "$hair_e7 * 0.7",
+    "hair_ta": "1.0 - lerp($hair_g0, $hair_ra * 0.5 * $hair_q + $hair_p, $hair_k) / $hair_ra",
+    "hair_tb": "1.0 - lerp($hair_g0, $hair_rb * 0.5 * $hair_q + $hair_p, $hair_k) / $hair_rb",
+    "hair_h": "floor(uv(1).y + 0.5)",
+    "hair_range": "saturate($hair_h * 4.0 * $hair_tb * $hair_w) + saturate((1.0 - $hair_h) * 4.0 * $hair_ta * $hair_w)",
+    "hair_mask": "lerp($hair_d.b, $hair_range, scalar('var_base_hairtwotonerange_bool_ui', 0))",
+    "hair_colour": "lerp(vec('var_base_haircolor_base_ui', 1).rgb, vec('var_base_hairtwotonecolor_ui', 1).rgb, $hair_mask * scalar('var_base_hairtwotone_bool_ui', 0))"
+  },
   "families": [
     {
-      "id": "hair-fur-two-tone",
-      "label": "Hair (two-tone fur)",
-      "status": "inferred",
-      "masters": [ "npc_hair_fur_*", "pc_hair_fur_*" ],
-      "baseColor": "lerp(vec('var_base_haircolor_base_ui|haircolor_base', 0.3, 0.2, 0.1), vec('var_base_hairtwotonecolor_ui', 0.3, 0.2, 0.1), tex('texture_diffuse', 0).g * scalar('var_base_hairtwotone_bool_ui', 0)).rgb * srgb(tex('texture_diffuse').r) * 2.0",
-      "opacity": "tex('texture_diffuse').a",
-      "roughness": "0.55",
+      "id": "npc-hair-fur-masked",
+      "label": "NPC hair, two-tone fur (masked)",
+      "status": "verified",
+      "masters": [ "npc_hair_fur_msk" ],
+      "baseColor": "$hair_d.r * $hair_colour * scalar('ambientlight', 0.82)",
+      "opacity": "saturate($hair_d.a - scalar('opacity_clamp', 0))",
+      "roughness": "0.5",
       "metalness": "0.0",
       "normal": "texture_normal",
       "flipNormalGreen": true,
-      "notes": "texture_diffuse packs shading in R and B (identical), the two-tone mask in G and cutout in A. Colour comes from var_base_haircolor_base_ui and var_base_hairtwotonecolor_ui."
+      "evidence": "Base colour and opacity follow the compiled base-pass pixel shader of NPC_Hair_Fur_MSK in the shader cache. Lighting (anisotropic hair specular, rim) is approximated.",
+      "notes": "texture_diffuse: R shading, G highlight mask, B two-tone mask, A cutout (sampled linear). With the range switch on, the two-tone mask comes from a UV set 1 gradient."
+    },
+    {
+      "id": "npc-hair-fur-translucent",
+      "label": "NPC hair, two-tone fur (translucent)",
+      "status": "verified",
+      "masters": [ "npc_hair_fur_trn*" ],
+      "baseColor": "$hair_d.r * $hair_colour",
+      "opacity": "$hair_d.a",
+      "roughness": "0.5",
+      "metalness": "0.0",
+      "normal": "texture_normal",
+      "flipNormalGreen": true,
+      "evidence": "Base colour follows the compiled base-pass pixel shader of NPC_Hair_Fur_TRN_AutoSorting in the shader cache. Lighting is approximated.",
+      "notes": "Same packing as the masked hair master, without its ambient-light factor."
+    },
+    {
+      "id": "pc-hair-fur-two-tone",
+      "label": "Player hair, two-tone fur",
+      "status": "inferred",
+      "masters": [ "pc_hair_fur_*" ],
+      "baseColor": "$hair_d.r * $hair_colour",
+      "opacity": "$hair_d.a",
+      "roughness": "0.5",
+      "metalness": "0.0",
+      "normal": "texture_normal",
+      "flipNormalGreen": true,
+      "notes": "Assumes the NPC fur hair packing; not yet checked against the player hair shader."
     },
     {
       "id": "pbr-orm-variation",

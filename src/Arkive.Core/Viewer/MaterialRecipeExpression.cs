@@ -21,6 +21,26 @@ public sealed class RecipeSyntaxException(string message) : FormatException(mess
 
 public static class RecipeParser
 {
+    /// <summary>
+    /// Expands <c>$name</c> references using <paramref name="defines"/> (which may refer to
+    /// earlier defines), then parses the expression.
+    /// </summary>
+    public static RecipeNode Parse(string text, IReadOnlyDictionary<string, string>? defines)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return Parse(Expand(text, defines, 0));
+    }
+
+    private static string Expand(string text, IReadOnlyDictionary<string, string>? defines, int depth)
+    {
+        if (defines is null || !text.Contains('$')) return text;
+        if (depth > 16) throw new RecipeSyntaxException("Recipe defines refer to each other in a loop.");
+        return System.Text.RegularExpressions.Regex.Replace(text, @"\$([A-Za-z_][A-Za-z0-9_]*)", match =>
+            defines.TryGetValue(match.Groups[1].Value, out var body)
+                ? "(" + Expand(body, defines, depth + 1) + ")"
+                : throw new RecipeSyntaxException($"Unknown recipe define ${match.Groups[1].Value}."));
+    }
+
     public static RecipeNode Parse(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -192,6 +212,9 @@ public sealed class RecipeGlslCompiler(IRecipeBindings bindings)
 
     public IReadOnlyCollection<RecipeUniform> Uniforms => _uniforms.Values;
 
+    /// <summary>True when an expression reads the second UV set (needs an extra varying).</summary>
+    public bool UsesSecondUv { get; private set; }
+
     /// <summary>Texture parameter name for each sampler uniform.</summary>
     public IReadOnlyDictionary<string, string> Samplers => _samplers;
 
@@ -314,11 +337,19 @@ public sealed class RecipeGlslCompiler(IRecipeBindings bindings)
                 var width = Combine(a.Width, b.Width, call.Name);
                 return ($"{call.Name}({Convert(a.Code, a.Width, width)}, {Convert(b.Code, b.Width, width)})", width);
             }
-            case "abs" or "sqrt" or "fract":
+            case "abs" or "sqrt" or "fract" or "floor":
             {
                 Arity(call, 1);
                 var x = Emit(args[0]);
                 return ($"{call.Name}({x.Code})", x.Width);
+            }
+            case "uv":
+            {
+                Arity(call, 1);
+                var set = (int)ConstantValue(args[0]);
+                if (set is not 0 and not 1) throw new RecipeSyntaxException("uv() supports UV sets 0 and 1.");
+                if (set == 1) UsesSecondUv = true;
+                return (set == 0 ? "vUv" : "ark_vUv1", 2);
             }
             case "dot":
             {
@@ -428,11 +459,16 @@ public sealed class RecipeEvaluator(IRecipeBindings bindings, Func<string, float
 {
     private float _u;
     private float _v;
+    private float _u1;
+    private float _v1;
 
-    public float[] Evaluate(RecipeNode node, float u, float v, int width)
+    /// <summary>Evaluates at UV set 0 coordinates; UV set 1 defaults to the same point.</summary>
+    public float[] Evaluate(RecipeNode node, float u, float v, int width, float? u1 = null, float? v1 = null)
     {
         _u = u;
         _v = v;
+        _u1 = u1 ?? u;
+        _v1 = v1 ?? v;
         return Resize(Eval(node), width);
     }
 
@@ -533,6 +569,8 @@ public sealed class RecipeEvaluator(IRecipeBindings bindings, Func<string, float
             case "abs": return Map(Eval(args[0]), Math.Abs);
             case "sqrt": return Map(Eval(args[0]), x => MathF.Sqrt(Math.Max(x, 0)));
             case "fract": return Map(Eval(args[0]), x => x - MathF.Floor(x));
+            case "floor": return Map(Eval(args[0]), MathF.Floor);
+            case "uv": return RecipeGlslCompiler.ConstantValue(args[0]) == 1 ? [_u1, _v1] : [_u, _v];
             case "dot":
             {
                 var product = Zip(Eval(args[0]), Eval(args[1]), (a, b) => a * b);

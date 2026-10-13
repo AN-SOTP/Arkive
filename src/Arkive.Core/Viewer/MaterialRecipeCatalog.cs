@@ -29,12 +29,15 @@ public sealed record MaterialRecipeDefinition(
     string? Occlusion,
     string? Normal,
     bool FlipNormalGreen,
-    string? Notes);
+    string? Notes,
+    IReadOnlyDictionary<string, string>? Defines = null,
+    string? Evidence = null);
 
 public sealed record MaterialRecipeCatalogDocument(
     int SchemaVersion,
     IReadOnlyList<MaterialRecipeDefinition> Families,
-    MaterialRecipeDefinition Fallback);
+    MaterialRecipeDefinition Fallback,
+    IReadOnlyDictionary<string, string>? Defines = null);
 
 /// <summary>GLSL and uniforms for one material, ready for the preview.</summary>
 public sealed record MaterialRecipePlan(
@@ -52,6 +55,8 @@ public sealed record MaterialRecipePlan(
     bool FlipNormalGreen,
     IReadOnlyList<RecipeUniform> Uniforms,
     IReadOnlyDictionary<string, string> Samplers,
+    bool UsesSecondUv,
+    string? Evidence,
     IReadOnlyList<string> Warnings);
 
 public sealed class MaterialRecipeCatalog
@@ -70,14 +75,19 @@ public sealed class MaterialRecipeCatalog
     public MaterialRecipeCatalog(MaterialRecipeCatalogDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
-        Document = document;
+        Document = document with
+        {
+            Families = document.Families.Select(recipe => WithSharedDefines(recipe, document.Defines)).ToArray(),
+            Fallback = WithSharedDefines(document.Fallback, document.Defines),
+        };
+        document = Document;
         _families = document.Families
             .Select(recipe => (recipe, recipe.Masters.Select(Glob).ToArray()))
             .ToArray();
         // Parse everything up front so a broken recipe fails at load, not mid-preview.
         foreach (var recipe in document.Families.Append(document.Fallback))
             foreach (var expression in Expressions(recipe))
-                RecipeParser.Parse(expression);
+                RecipeParser.Parse(expression, recipe.Defines);
     }
 
     public MaterialRecipeCatalogDocument Document { get; }
@@ -119,7 +129,7 @@ public sealed class MaterialRecipeCatalog
         string? Optional(string? expression, int width)
         {
             if (string.IsNullOrWhiteSpace(expression)) return null;
-            try { return compiler.Compile(RecipeParser.Parse(expression), width); }
+            try { return compiler.Compile(RecipeParser.Parse(expression, recipe.Defines), width); }
             catch (RecipeSyntaxException exception)
             {
                 warnings.Add(exception.Message);
@@ -135,7 +145,7 @@ public sealed class MaterialRecipeCatalog
             recipe = Document.Fallback;
             master = null;
             compiler = new RecipeGlslCompiler(bindings);
-            baseColor = compiler.Compile(RecipeParser.Parse(recipe.BaseColor), 3);
+            baseColor = compiler.Compile(RecipeParser.Parse(recipe.BaseColor, recipe.Defines), 3);
         }
         var normal = recipe.Normal?
             .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
@@ -155,6 +165,8 @@ public sealed class MaterialRecipeCatalog
             recipe.FlipNormalGreen,
             compiler.Uniforms.ToArray(),
             compiler.Samplers.ToDictionary(pair => pair.Value, pair => pair.Key),
+            compiler.UsesSecondUv,
+            recipe.Evidence,
             warnings);
     }
 
@@ -162,6 +174,16 @@ public sealed class MaterialRecipeCatalog
         new[] { recipe.BaseColor, recipe.Opacity, recipe.Emissive, recipe.Roughness, recipe.Metalness, recipe.Occlusion }
             .Where(expression => !string.IsNullOrWhiteSpace(expression))
             .Select(expression => expression!);
+
+    private static MaterialRecipeDefinition WithSharedDefines(
+        MaterialRecipeDefinition recipe,
+        IReadOnlyDictionary<string, string>? shared)
+    {
+        if (shared is null || shared.Count == 0) return recipe;
+        var merged = new Dictionary<string, string>(shared, StringComparer.Ordinal);
+        foreach (var (name, body) in recipe.Defines ?? new Dictionary<string, string>()) merged[name] = body;
+        return recipe with { Defines = merged };
+    }
 
     private static Regex Glob(string pattern) => new(
         "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$",
