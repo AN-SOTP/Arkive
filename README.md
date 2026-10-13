@@ -15,7 +15,7 @@ Arkive operates on files **while the game, launcher and anti-cheat are closed**.
 
 ## Screenshots
 
-The actual desktop GUI, shown with fictional demonstration data. These examples are not installable mods and contain no extracted game assets or personal library data.
+The actual desktop GUI. The library and mod screenshots use fictional demonstration data; the model viewer screenshots show game models rendered from a locally installed client. None of them are installable mods, and the repository contains no game files or personal library data.
 
 ### Asset library
 
@@ -34,6 +34,18 @@ Keep a named draft, edit its working assets and add individual assets or a mesh'
 Enable mods, set priorities and review the effective asset selection before applying changes.
 
 ![Arkive mod library with demonstration priorities and asset details](docs/screenshots/mod-library.png)
+
+### Model viewer
+
+Every LOD from Arkive's own decoder, coloured by the game's own compiled shaders, including glow and effect materials.
+
+![Arkive model viewer showing Thaemine, Conqueror of Stars, with the game's shaders and blue glow](docs/screenshots/model-viewer-thaemine.png)
+
+![Arkive model viewer showing Death Incarnate Kazeros with glowing effect wings](docs/screenshots/model-viewer-kazeros.png)
+
+**Preview with edits** shows a mod's working files on top of the original asset and refreshes when they are saved (here a changed hair colour and a recoloured texture).
+
+![Arkive model viewer showing a mesh with a mod's edited material values and texture](docs/screenshots/model-viewer-edits.png)
 
 ## Contents
 
@@ -90,7 +102,7 @@ The four primary tabs separate discovery, creation, editing and deployment. **Ad
 
 Search **All names and filenames** by physical/decoded package filename, object, class or loaded in-game name. The full index includes assets even when their class is not moddable. Inspect a selected object in UModel, browse its package, open it in Arkive, export it, copy its identity or explore evidence-labelled relationships. UModel and Arkive may support different display types. Direct database links, verified dependencies and candidate mappings are deliberately distinguished.
 
-**Preview** (or double-clicking a mesh) opens Arkive's model viewer. It shows every LOD decoded by Arkive's own parser, with UModel's materials, textures and object properties alongside: LOD and UV-set switching, wireframe, normals, tangents, skeleton, bone names, sockets, UV layout, material IDs, vertex colours, section isolation, texture channels, screenshots and PgUp/PgDn browsing. By default each material runs **the game's own compiled shader**, translated from the client's shader cache, so packed textures (for example two-tone hair masks) appear in their game colours rather than as raw masks; per-family colour recipes and the stored textures, as UModel shows them, remain available for comparison. The first preview indexes the game's shaders once (about 20 seconds, saved to the data folder); prepared scenes are cached up to 1 GB. The viewer follows the files it reads: when the object's package or any package its materials and textures come from changes (for example when a mod is applied or restored), the open view refreshes and keeps the camera. In mod authoring, **Preview with edits** shows a mesh from its clean package with the mod's edited GLB, texture images and material values on top, and refreshes whenever one of those working files is saved; **Your edits** (E) switches back to the original. The viewer needs the Microsoft Edge WebView2 Runtime, which ships with Windows 10 and 11.
+**Preview** (or double-clicking a mesh) opens Arkive's model viewer. It shows every LOD of skeletal and static meshes decoded by Arkive's own parser, with UModel's materials, textures and object properties alongside: LOD and UV-set switching, wireframe, normals, tangents, skeleton, bone names, sockets, UV layout, material IDs, vertex colours, section isolation, texture channels, screenshots and PgUp/PgDn browsing. Objects UModel cannot read still show their geometry. By default each material runs **the game's own compiled shader**: the exact permutation the material uses, translated from the client's shader cache, so packed textures (for example two-tone hair masks) appear in their game colours, glow shows, and effect materials are drawn as the light they emit. Per-family colour recipes and the stored textures, as UModel shows them, remain available for comparison. **Export colours** saves each material's colours, as shown, as textures laid out on UV set 0. The first preview indexes the game's shaders once (about 30 seconds, about 8 MB in the data folder); prepared scenes are cached up to 1 GB. The viewer follows the files it reads: when the object's package or any package its materials and textures come from changes (for example when a mod is applied or restored), the open view refreshes and keeps the camera. In mod authoring, **Preview with edits** shows a mesh from its clean package with the mod's edited GLB, texture images and material values on top, and refreshes whenever one of those working files is saved; **Your edits** (E) switches back to the original. The viewer needs the Microsoft Edge WebView2 Runtime, which ships with Windows 10 and 11.
 
 The local index is resumable. Worker count and optional fast scratch storage help indexing. The setup panel collapses after configuration; refresh the index when the client changes.
 
@@ -228,6 +240,12 @@ Skeleton comparison checks names, hierarchy/bind transforms. Retarget workspaces
 
 Supported StaticMesh render buffers can be replaced while retaining original BodySetup/collision and non-editable data. Collision is not regenerated. Extensive geometry changes still need sensible target weights, supported UV/colour contracts, material correspondence and attachment expectations. Entirely new skeletons/classes are not automatically accepted.
 
+### Model viewer and game shaders
+
+The viewer is a three.js page hosted in WebView2; Arkive prepares each scene natively. Geometry comes from Arkive's skeletal and static mesh decoders (UModel's glTF only when the native layout is unproven); materials, textures and properties come from UModel's export and dump of the same object, and every package they were read from is recorded so a later change rebuilds the scene.
+
+Lost Ark's shader caches (the `ShaderCache` exports in `ReleasePC`) hold LZ4-compressed DXBC shaders and, for every compiled material permutation, its static parameter set, uniform expressions and base-pass pixel shader. Arkive indexes them once, matches each material instance (or its nearest parent with a static permutation) to the permutation compiled for exactly its switch and mask values, evaluates the uniform expressions with the instance's parameters into the registers the shader record names, and translates the disassembled shader to GLSL with D3D bit-exact register semantics. Engine inputs the viewer does not have (sky and ambient light, fog, exact world vectors) are neutral or approximated, so lighting is the viewer's own; the material's colour, masks and glow are the game's.
+
 ### .arkive files, composition and deployment
 
 An `.arkive` is a versioned ZIP-based container with manifest, edited payloads and target/source contract metadata, not a prebuilt game UPK. Local priority/enable state, absolute working paths, install receipts and backups stay in the user's library. Import validates paths, duplicates, counts/sizes, schema, kind/class correspondence, required entries and SHA-256. Unknown/newer schemas, unsafe paths, tampering and extra payloads are refused. New archive writes are re-read/verified before replacing their destination.
@@ -313,6 +331,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 - Support is limited to verified Western/global Steam layouts; client updates can alter protection/serialization/contracts.
 - Arbitrary new exports/imports/classes, renamed native asset identities, unlimited new skeletons and generic UE3/UE4/UE5 import are not implemented.
 - UModel is an original-asset viewer/semantic oracle, not the game's renderer. Some shaders, streamed textures or animations differ; fork upgrades need a new verified tool baseline.
+- Arkive's model viewer runs the game's material shaders but not its renderer: there is no in-game lighting, bloom, fog, animation or particle simulation, glow is scaled into a displayable range, and panning or flickering effects show a single moment. Materials without a matching compiled shader fall back to colour recipes or stored textures. It needs the WebView2 Runtime.
 - Cross-character replacements may deform during live animations. Stress poses cannot prove every animation, cloth/morph/attachment or physics case.
 - Some cloth/morph/animation layouts and references remain unsupported. Full kits can retain unresolved dependencies and first-time preparation can be expensive; progress is not a completion-time guarantee.
 - StaticMesh collision is preserved, not rebuilt. Large visible geometry changes can disagree with it.

@@ -10,8 +10,11 @@ $files = @('.editorconfig', '.gitignore', '.gitattributes', 'Arkive.slnx', 'Dire
     'global.json', 'README.md', 'LICENSE.txt', 'COPYRIGHT.txt', 'THIRD-PARTY-NOTICES.txt', 'lpk_extract_v5.bms',
     'tools/Build-CrunchNative.ps1', 'tools/decrypt_lost_ark_databases.py', 'tools/build_game_asset_metadata.py',
     'tools/lpk_dump_encrypted_databases.bms')
-$files += @('docs/screenshots/asset-library.png', 'docs/screenshots/edit-mods.png', 'docs/screenshots/mod-library.png')
-$extensions = @('.cs', '.xaml', '.csproj', '.vcxproj', '.h', '.cpp', '.txt', '.ico', '.jpg', '.ps1', '.json', '.iss', '.yml')
+$files += @('docs/screenshots/asset-library.png', 'docs/screenshots/edit-mods.png', 'docs/screenshots/mod-library.png',
+    'docs/screenshots/model-viewer-thaemine.png', 'docs/screenshots/model-viewer-kazeros.png', 'docs/screenshots/model-viewer-edits.png',
+    'src/Arkive.App/Viewer/vendor/three/LICENSE')
+$extensions = @('.cs', '.xaml', '.csproj', '.vcxproj', '.h', '.cpp', '.txt', '.ico', '.jpg', '.ps1', '.json', '.iss', '.yml',
+    '.html', '.js', '.css')
 foreach ($directory in @('src', 'tests', 'eng', 'installer', '.github')) {
     $files += Get-ChildItem -LiteralPath (Join-Path $root $directory) -File -Recurse |
         Where-Object { $_.Extension -in $extensions -and $_.FullName -notmatch '[\\/](bin|obj|x64|runtimes|Arkive\.C\.[^\\/]+)[\\/]' } |
