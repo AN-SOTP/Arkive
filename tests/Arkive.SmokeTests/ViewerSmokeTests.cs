@@ -16,6 +16,7 @@ internal static class ViewerSmokeTests
         new("translates pixel shader disassembly to GLSL with D3D register semantics", TestDxbcTranslation),
         new("reads texture sampling settings from cooked properties", TestTextureProbe),
         new("keys and trims the model viewer cache", TestViewerCache),
+        new("rebuilds a viewer scene when any package it read changes", TestPackageStamps),
     ];
 
     private static void TestPropertyTree()
@@ -299,6 +300,25 @@ internal static class ViewerSmokeTests
         Assert(TexturePropertyProbe.SamplesSrgb(new TextureSamplingInfo(true, "TC_Default", "PF_DXT5")) &&
                !TexturePropertyProbe.SamplesSrgb(new TextureSamplingInfo(false, "TC_Default", "PF_DXT5")),
             "default textures did not follow their SRGB flag");
+    }
+
+    private static void TestPackageStamps()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "arkive-viewer-stamps-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var texturePackage = Path.Combine(root, "textures.upk");
+            File.WriteAllBytes(texturePackage, [1, 2, 3]);
+            var stamp = ModelViewerPackageStamp.Of(texturePackage);
+            Assert(stamp.Unchanged, "an untouched package was reported as changed");
+            File.WriteAllBytes(texturePackage, [1, 2, 3, 4]);
+            File.SetLastWriteTimeUtc(texturePackage, DateTime.UtcNow.AddMinutes(1));
+            Assert(!stamp.Unchanged, "a rewritten texture package did not invalidate the scene");
+            File.Delete(texturePackage);
+            Assert(!stamp.Unchanged, "a removed package did not invalidate the scene");
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static void TestViewerCache()

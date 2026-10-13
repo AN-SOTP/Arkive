@@ -87,7 +87,23 @@ public sealed record ModelViewerScene(
     IReadOnlyList<string> Diagnostics,
     double PreparationSeconds,
     string GlslPrelude,
-    IReadOnlyDictionary<string, double>? StageSeconds = null);
+    IReadOnlyDictionary<string, double>? StageSeconds = null,
+    IReadOnlyDictionary<string, string>? ObjectPackages = null,
+    IReadOnlyList<ModelViewerPackageStamp>? Packages = null,
+    ModelViewerEditSummary? Edits = null);
+
+/// <summary>A package file the scene was read from, as it was then; any change rebuilds the scene.</summary>
+public sealed record ModelViewerPackageStamp(string Path, long Length, long Ticks)
+{
+    public static ModelViewerPackageStamp Of(string path)
+    {
+        var file = new FileInfo(path);
+        return new ModelViewerPackageStamp(file.FullName, file.Exists ? file.Length : -1,
+            file.Exists ? file.LastWriteTimeUtc.Ticks : 0);
+    }
+
+    public bool Unchanged => Of(Path) == this;
+}
 
 public sealed record ModelViewerSceneResult(
     string Directory,

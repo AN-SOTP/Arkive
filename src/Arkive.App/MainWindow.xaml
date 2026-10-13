@@ -792,6 +792,8 @@
                                         <Button x:Name="AuthoringOpenButton" Content="Open edited file" Click="AuthoringOpenButton_Click" />
                                         <Button x:Name="AuthoringReplaceButton" Content="Replace file…" Click="AuthoringReplaceButton_Click" />
                                         <Button x:Name="AuthoringCompareButton" Content="Compare with original" Click="AuthoringCompareButton_Click" />
+                                        <Button x:Name="AuthoringViewButton" Content="Preview with edits" Click="AuthoringViewButton_Click"
+                                                ToolTip="Open the selected mesh (or the mod's first mesh) in Arkive's model viewer with this mod's edited mesh, textures and material values. The view refreshes when you save a working file." />
                                         <Button x:Name="AuthoringPreviewButton" Content="Preview original" Click="AuthoringPreviewButton_Click" />
                                         <Button x:Name="AuthoringFolderButton" Content="Working folder" Click="AuthoringFolderButton_Click" />
                                         <Button x:Name="AuthoringRemoveButton" Content="Remove selected assets" Click="AuthoringRemoveButton_Click"

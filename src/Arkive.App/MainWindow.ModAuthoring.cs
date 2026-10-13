@@ -240,6 +240,9 @@ public partial class MainWindow : Window
         AuthoringAssetsGrid.Tag = idle;
         AuthoringPreviewButton.IsEnabled = (idle || _authoringExtractionCancellation is not null) &&
             _umodelBridge is not null && selected?.Edit is not null;
+        AuthoringViewButton.IsEnabled = idle && _umodelBridge is not null &&
+            AuthoringAssetsGrid.Items.OfType<AuthoringAssetRow>().Any(row =>
+                row.Edit?.Kind is UnifiedPackageAssetKind.SkeletalMesh or UnifiedPackageAssetKind.StaticMesh);
         AuthoringOpenButton.Content = selected?.Edit?.Kind == UnifiedPackageAssetKind.MaterialInstanceConstant
             ? "Edit material" : "Open edited file";
     }

@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Threading;
 using Arkive.Core.External;
 using Arkive.Core.Viewer;
 using Microsoft.Web.WebView2.Core;
@@ -24,6 +25,11 @@ public partial class ModelViewerWindow : Window
     private readonly Action<string> _log;
     private readonly string _theme;
     private ModelViewerRequest? _request;
+    private Func<CancellationToken, Task<ModelViewerEdits?>>? _edits;
+    private bool _showEdits = true;
+    private readonly List<FileSystemWatcher> _watchers = [];
+    private HashSet<string> _watchedFiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DispatcherTimer _refreshTimer;
     private string? _pendingLoadMessage;
     private bool _pageReady;
     private CancellationTokenSource? _loading;
@@ -58,14 +64,36 @@ public partial class ModelViewerWindow : Window
         _log = log;
         InitializeComponent();
         SourceInitialized += (_, _) => AppearanceManager.ApplyWindowChrome(this, effectiveTheme);
+        // Saving a working file or applying a mod often writes several times; refresh once it settles.
+        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+        _refreshTimer.Tick += async (_, _) =>
+        {
+            _refreshTimer.Stop();
+            if (_request is not null) await ShowObjectAsync(_request, _edits, keepView: true);
+        };
         Loaded += async (_, _) => await InitializeBrowserAsync();
-        Closed += (_, _) => _loading?.Cancel();
+        Closed += (_, _) =>
+        {
+            _loading?.Cancel();
+            _refreshTimer.Stop();
+            StopWatching();
+        };
     }
 
-    public async Task ShowObjectAsync(ModelViewerRequest request)
+    /// <summary>
+    /// Shows an object as the game files have it and, when <paramref name="edits"/> is given, with a mod's
+    /// working files on top. The view refreshes by itself when the object's packages, the packages its
+    /// materials and textures come from, or any working file changes.
+    /// </summary>
+    public async Task ShowObjectAsync(
+        ModelViewerRequest request,
+        Func<CancellationToken, Task<ModelViewerEdits?>>? edits = null,
+        bool keepView = false)
     {
+        keepView &= _request == request && _edits == edits;
         _request = request;
-        Title = $"Arkive model viewer · {request.PackageAlias}.{request.ObjectName}";
+        _edits = edits;
+        Title = $"Arkive model viewer · {request.PackageAlias}.{request.ObjectName}" + (edits is null ? "" : " · with your edits");
         _loading?.Cancel();
         var loading = _loading = new CancellationTokenSource();
         if (_sceneLoaded.Task.IsCompleted) _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -74,11 +102,16 @@ public partial class ModelViewerWindow : Window
         {
             var progress = new Progress<ModelViewerProgress>(update =>
                 Post(new { type = "progress", text = $"{update.Stage}: {update.Detail}…" }));
-            var result = await Task.Run(() => _service.PrepareAsync(request, progress, loading.Token), loading.Token);
+            var workingFiles = edits is null ? null : await edits(loading.Token);
+            var shown = _showEdits ? workingFiles : null;
+            var result = await Task.Run(() => _service.PrepareAsync(request, shown, progress, loading.Token), loading.Token);
             if (loading.IsCancellationRequested) return;
+            Watch(result.Scene, workingFiles);
             var sceneJson = JsonSerializer.Serialize(result.Scene, ModelViewerSceneService.JsonOptions);
             var baseUrl = $"https://{SceneHost}/{Uri.EscapeDataString(Path.GetFileName(result.Directory))}/";
-            var message = $"{{\"type\":\"load\",\"theme\":\"{_theme}\",\"baseUrl\":{JsonSerializer.Serialize(baseUrl)},\"scene\":{sceneJson}}}";
+            var message = $"{{\"type\":\"load\",\"theme\":\"{_theme}\",\"keepView\":{(keepView ? "true" : "false")}," +
+                          $"\"hasEdits\":{(workingFiles is not null ? "true" : "false")}," +
+                          $"\"baseUrl\":{JsonSerializer.Serialize(baseUrl)},\"scene\":{sceneJson}}}";
             _log($"Model viewer scene ready: object={request.ObjectName}, cached={result.FromCache}, " +
                  $"geometry={result.Scene.GeometrySource}, lods={result.Scene.Lods.Count}, " +
                  $"materials={result.Scene.Materials.Count}, seconds={result.Scene.PreparationSeconds}.");
@@ -94,6 +127,58 @@ public partial class ModelViewerWindow : Window
             Post(new { type = "error", text = $"Arkive could not prepare {request.ObjectName}: {exception.Message}" });
             _sceneLoaded.TrySetException(exception);
         }
+    }
+
+    /// <summary>Watches the scene's package files and the working files, one watcher per folder.</summary>
+    private void Watch(ModelViewerScene scene, ModelViewerEdits? edits)
+    {
+        var files = (scene.Packages?.Select(stamp => stamp.Path) ?? [])
+            .Concat(edits?.Files ?? [])
+            .Select(Path.GetFullPath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (files.SetEquals(_watchedFiles)) return;
+        StopWatching();
+        _watchedFiles = files;
+        foreach (var folder in files.Select(Path.GetDirectoryName).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!Directory.Exists(folder)) continue;
+            try
+            {
+                var watcher = new FileSystemWatcher(folder)
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
+                    IncludeSubdirectories = false,
+                };
+                watcher.Changed += OnWatchedFileChanged;
+                watcher.Created += OnWatchedFileChanged;
+                watcher.Renamed += OnWatchedFileChanged;
+                watcher.Deleted += OnWatchedFileChanged;
+                watcher.EnableRaisingEvents = true;
+                _watchers.Add(watcher);
+            }
+            catch (Exception exception) when (exception is IOException or ArgumentException or UnauthorizedAccessException)
+            {
+                _log($"Model viewer cannot watch {folder} for changes: {exception.Message}");
+            }
+        }
+    }
+
+    private void OnWatchedFileChanged(object sender, FileSystemEventArgs args)
+    {
+        var path = args is RenamedEventArgs renamed && !_watchedFiles.Contains(renamed.FullPath) ? renamed.OldFullPath : args.FullPath;
+        if (!_watchedFiles.Contains(path) && !_watchedFiles.Contains(args.FullPath)) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _refreshTimer.Stop();
+            _refreshTimer.Start();
+        });
+    }
+
+    private void StopWatching()
+    {
+        foreach (var watcher in _watchers) watcher.Dispose();
+        _watchers.Clear();
+        _watchedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -228,6 +313,10 @@ public partial class ModelViewerWindow : Window
                 break;
             case "browse":
                 if (_browse(root.GetProperty("delta").GetInt32()) is { } next) _ = ShowObjectAsync(next);
+                break;
+            case "showEdits":
+                _showEdits = root.GetProperty("value").GetBoolean();
+                if (_request is not null) _ = ShowObjectAsync(_request, _edits, keepView: true);
                 break;
         }
     }

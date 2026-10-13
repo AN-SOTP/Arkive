@@ -222,7 +222,8 @@ function slotOf(mesh) {
   const byExtras = original?.userData?.arkiveMaterialSlot;
   let slot = byExtras;
   if (slot === undefined) {
-    slot = state.scene.materials.findIndex((m) => m.name === original?.name || m.reference === original?.name);
+    const name = original?.name?.replace(/\.\d{3}$/, '');
+    slot = state.scene.materials.findIndex((m) => m.name === name || m.reference === name || m.name === original?.name);
   }
   mesh.userData.slot = slot;
   return slot;
@@ -309,7 +310,13 @@ async function loadModel() {
     object.frustumCulled = false;
     let lodNode = object;
     while (lodNode && lodNode.userData.arkiveLod === undefined) lodNode = lodNode.parent;
-    const lod = lodNode?.userData.arkiveLod ?? 0;
+    let lod = lodNode?.userData.arkiveLod;
+    // An edited GLB may have lost Arkive's extras; its mesh names still end in _LOD#.
+    for (let node = object; lod === undefined && node; node = node.parent) {
+      const match = /_LOD(\d+)/i.exec(node.name ?? '');
+      if (match) lod = Number(match[1]);
+    }
+    lod ??= 0;
     if (!state.lods.has(lod)) state.lods.set(lod, []);
     state.lods.get(lod).push(object);
   });
@@ -484,8 +491,15 @@ function renderInfo() {
     ['Class', escapeHtml(scene.object.className)],
     ['Object', `<span class="mono">${escapeHtml(scene.object.objectName)}</span>`],
     ['Export', `#${scene.object.exportIndex}`],
-    ['Geometry', scene.geometrySource === 'arkive-native' ? 'Arkive native decoder (all LODs)' : scene.geometrySource === 'umodel-gltf' ? 'UModel glTF (LOD 0)' : 'none'],
+    ['Geometry', { 'arkive-native': 'Arkive native decoder (all LODs)', 'umodel-gltf': 'UModel glTF (LOD 0)', edited: 'Your edited mesh' }[scene.geometrySource] ?? 'none'],
   ])}`;
+  if (scene.edits) {
+    html += `<h3>Your edits · ${escapeHtml(scene.edits.label)}</h3>`;
+    html += scene.edits.applied.map((line) => `<div class="row">${escapeHtml(line)}</div>`).join('') ||
+      '<div class="row muted">None of the edits belong to this object.</div>';
+    html += scene.edits.problems.map((line) => `<div class="row warning">${escapeHtml(line)}</div>`).join('');
+    html += '<div class="row muted">Saving a working file refreshes this view.</div>';
+  }
   html += `<h3>LODs</h3>`;
   for (const l of scene.lods) {
     const hasGeometry = state.lods.has(l.index);
@@ -625,6 +639,7 @@ function toggle(name, value) {
 }
 
 $('lodSelect').addEventListener('change', (e) => showLod(Number(e.target.value)));
+$('editsToggle').addEventListener('click', () => post({ type: 'showEdits', value: $('editsToggle').getAttribute('aria-pressed') !== 'true' }));
 $('uvSelect').addEventListener('change', (e) => { state.uvSet = Number(e.target.value); requestRender(); });
 $('shadingSelect').addEventListener('change', (e) => { state.shading = e.target.value; applyMaterials(); });
 $('lightSelect').addEventListener('change', (e) => { state.light = e.target.value; applyLighting(); requestRender(); });
@@ -704,6 +719,7 @@ window.addEventListener('keydown', (e) => {
     l: () => cycle($('lodSelect')), w: () => toggle('wireframe'), n: () => toggle('normals'), t: () => toggle('tangents'),
     b: () => toggle('skeleton'), s: () => toggle('sockets'), u: () => toggle('uvs'), g: () => toggle('grid'), f: focus,
     c: () => cycle($('shadingSelect')),
+    e: () => { if (!$('editsToggle').hidden) $('editsToggle').click(); },
     m: () => { $('shadingSelect').value = state.shading === 'materialIds' ? 'recipe' : 'materialIds'; $('shadingSelect').dispatchEvent(new Event('change')); },
     v: () => { $('shadingSelect').value = state.shading === 'vertexColors' ? 'recipe' : 'vertexColors'; $('shadingSelect').dispatchEvent(new Event('change')); },
   };
@@ -722,6 +738,11 @@ function screenshot(transparent) {
 
 // Loading.
 async function load(message) {
+  // A refresh of the same object (its files changed) keeps the camera and view settings.
+  const keep = message.keepView && state.scene && state.model ? {
+    position: camera.position.clone(), target: controls.target.clone(), lod: state.lod, uvSet: state.uvSet,
+    shading: state.shading, isolatedSection: state.isolatedSection,
+  } : null;
   $('loading').hidden = false;
   $('loading').textContent = `Loading ${message.scene.object.objectName}…`;
   if (message.theme) document.documentElement.dataset.theme = message.theme;
@@ -736,8 +757,10 @@ async function load(message) {
   const scene = state.scene;
   const hasGame = scene.materials.some((m) => m.gameShader);
   $('shadingSelect').querySelector('option[value="game"]').disabled = !hasGame;
-  state.shading = hasGame ? 'game' : 'recipe';
+  state.shading = keep && (keep.shading !== 'game' || hasGame) ? keep.shading : hasGame ? 'game' : 'recipe';
   $('shadingSelect').value = state.shading;
+  $('editsToggle').hidden = !message.hasEdits;
+  $('editsToggle').setAttribute('aria-pressed', String(!!scene.edits));
   $('lodSelect').innerHTML = scene.lods.map((l) => `<option value="${l.index}">${l.index}</option>`).join('');
   const uvSets = Math.max(1, ...scene.lods.map((l) => l.uvSets));
   $('uvSelect').innerHTML = Array.from({ length: uvSets }, (_, i) => `<option value="${i}">${i}</option>`).join('');
@@ -746,8 +769,17 @@ async function load(message) {
     for (const option of $('lodSelect').options) option.disabled = !state.lods.has(Number(option.value));
     applyMaterials();
     applyLighting();
-    showLod(scene.lods[0]?.index ?? 0);
-    focus();
+    if (keep && state.lods.has(keep.lod)) {
+      state.uvSet = Math.min(keep.uvSet, Math.max(0, $('uvSelect').options.length - 1));
+      $('uvSelect').value = String(state.uvSet);
+      showLod(keep.lod);
+      camera.position.copy(keep.position);
+      controls.target.copy(keep.target);
+      controls.update();
+    } else {
+      showLod(scene.lods[0]?.index ?? 0);
+      focus();
+    }
   } catch (error) {
     $('statusbar').textContent = `Could not load the model: ${error.message}`;
   }
@@ -759,7 +791,8 @@ async function load(message) {
   renderProperties();
   const counts = scene.materials.reduce((a, m) => (a[m.recipe.status] = (a[m.recipe.status] ?? 0) + 1, a), {});
   const games = scene.materials.filter((m) => m.gameShader).length;
-  $('statusbar').textContent = `${scene.object.packageAlias}.${scene.object.objectName} · ${scene.materials.length} materials ` +
+  $('statusbar').textContent = (scene.edits ? `With your edits (${scene.edits.applied.length}) · ` : '') +
+    `${scene.object.packageAlias}.${scene.object.objectName} · ${scene.materials.length} materials ` +
     `(${games} using the game's shader; recipes: ${counts.verified ?? 0} verified, ${counts.inferred ?? 0} inferred, ${counts.fallback ?? 0} stored-texture) · ` +
     `${scene.textures.length} textures · prepared in ${scene.preparationSeconds}s`;
   $('loading').hidden = true;

@@ -11,6 +11,7 @@ using Arkive.Core.Inspection;
 using Arkive.Core.Meshes;
 using Arkive.Core.Packages;
 using Arkive.Core.StaticMeshes;
+using Arkive.Core.Textures;
 using Arkive.Core.Viewer.Shaders;
 
 namespace Arkive.Core.Viewer;
@@ -23,7 +24,7 @@ namespace Arkive.Core.Viewer;
 /// </summary>
 public sealed class ModelViewerSceneService
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
     public const string UmodelFolder = "umodel";
     public const string ModelFile = "model.glb";
     public const string PropertiesFile = "properties.txt";
@@ -67,12 +68,35 @@ public sealed class ModelViewerSceneService
     public MaterialRecipeCatalog Recipes => _recipes;
     public ModelViewerCache Cache => _cache;
 
+    public Task<ModelViewerSceneResult> PrepareAsync(
+        ModelViewerRequest request,
+        IProgress<ModelViewerProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        PrepareAsync(request, edits: null, progress, cancellationToken);
+
+    /// <summary>
+    /// Prepares the object as the game currently has it (rebuilt whenever its package or any package
+    /// its materials and textures came from changes) and, when <paramref name="edits"/> are given, shows a
+    /// modder's working files on top of it.
+    /// </summary>
     public async Task<ModelViewerSceneResult> PrepareAsync(
         ModelViewerRequest request,
+        ModelViewerEdits? edits,
         IProgress<ModelViewerProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        var original = await PrepareOriginalAsync(request, progress, cancellationToken).ConfigureAwait(false);
+        if (edits is null || edits.IsEmpty) return original;
+        progress?.Report(new("Applying your edits", edits.Label));
+        return await ApplyEditsAsync(request, original, edits, progress, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ModelViewerSceneResult> PrepareOriginalAsync(
+        ModelViewerRequest request,
+        IProgress<ModelViewerProgress>? progress,
+        CancellationToken cancellationToken)
+    {
         var key = ModelViewerCache.Key(request.PackagePath, request.ExportIndex, request.ObjectName, CurrentSchemaVersion);
         var directory = _cache.DirectoryFor(key);
         var scenePath = Path.Combine(directory, "scene.json");
@@ -82,7 +106,9 @@ public sealed class ModelViewerSceneService
             {
                 var cached = JsonSerializer.Deserialize<ModelViewerScene>(await File.ReadAllBytesAsync(scenePath, cancellationToken)
                     .ConfigureAwait(false), JsonOptions);
-                if (cached?.SchemaVersion == CurrentSchemaVersion)
+                // Linked materials and textures live in other packages; a change to any of them (a mod being
+                // applied or restored) invalidates the scene just like a change to the object's own package.
+                if (cached?.SchemaVersion == CurrentSchemaVersion && cached.Packages?.All(stamp => stamp.Unchanged) == true)
                 {
                     _cache.Touch(key);
                     return new ModelViewerSceneResult(directory, scenePath, cached, FromCache: true);
@@ -187,18 +213,8 @@ public sealed class ModelViewerSceneService
         Stage("shader index");
         if (shaderIndex is null && _shaderIndexFailure is not null) diagnostics.Add(_shaderIndexFailure);
         // UModel reports which physical package each object it loaded came from.
-        using var objects = new LoadedObjects(request, export.Diagnostics, _catalogReader, _protectionProvider);
-        var srgbCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        bool TextureSrgb(string name)
-        {
-            if (srgbCache.TryGetValue(name, out var cached)) return cached;
-            var read = objects.Read(name, AssetKind.Texture);
-            var srgb = read is { } found
-                ? TexturePropertyProbe.SamplesSrgb(TexturePropertyProbe.Read(found.Bytes, found.Names))
-                : !name.EndsWith("_n", StringComparison.OrdinalIgnoreCase);
-            return srgbCache[name] = srgb;
-        }
-
+        var objectPackages = LoadedObjects.Parse(request, export.Diagnostics);
+        using var objects = new LoadedObjects(request, objectPackages, _catalogReader, _protectionProvider);
         var viewerMaterials = new List<ModelViewerMaterial>();
         for (var slot = 0; slot < slotNames.Count; slot++)
         {
@@ -210,40 +226,7 @@ public sealed class ModelViewerSceneService
                 description = MaterialInstanceDescriptionReader.Resolve(reference,
                     new Dictionary<string, (string, UmodelPropertyNode)>());
             }
-            var plan = _recipes.Plan(description, textures.ContainsKey);
-            diagnostics.AddRange(plan.Warnings.Select(warning => $"{description.Name}: {warning}"));
-            GameShaderPlan? gameShader = null;
-            string? gameShaderFailure = null;
-            if (shaderIndex is not null)
-            {
-                progress?.Report(new("Translating game shaders", description.Name));
-                var shaderWatch = Stopwatch.StartNew();
-                try
-                {
-                    gameShader = GameShaderMaterial.Build(shaderIndex, description,
-                        name => objects.Read(name, AssetKind.Material)?.Bytes,
-                        name => textures.TryGetValue(name, out var texture) ? texture.Url : null,
-                        TextureSrgb, out gameShaderFailure);
-                }
-                catch (Exception exception) when (exception is IOException or InvalidDataException or FormatException
-                                                      or NotSupportedException or DllNotFoundException)
-                {
-                    gameShaderFailure = exception.Message;
-                }
-                if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
-                    Console.Error.WriteLine($"[viewer] {description.Name}: {shaderWatch.Elapsed.TotalSeconds:N2}s");
-            }
-            viewerMaterials.Add(new ModelViewerMaterial(
-                slot, description.Name, reference, description.ClassName, description.ParentChain,
-                description.RootMaterial, description.BlendMode, description.TwoSided, description.Masked,
-                description.OpacityMaskClipValue, description.Scalars, description.Vectors, description.Textures,
-                description.Textures
-                    .Where(pair => textures.ContainsKey(pair.Value))
-                    .ToDictionary(pair => pair.Key, pair => textures[pair.Value].Url, StringComparer.OrdinalIgnoreCase),
-                plan,
-                _recipes.Plan(description, textures.ContainsKey, storedTextureOnly: true),
-                gameShader,
-                gameShaderFailure));
+            viewerMaterials.Add(BuildMaterial(slot, reference, description, textures, shaderIndex, objects, diagnostics, progress));
         }
 
         // The dump lists sockets twice: the object's own properties (with offsets) first,
@@ -275,12 +258,278 @@ public sealed class ModelViewerSceneService
             diagnostics.Distinct().ToArray(),
             Math.Round(watch.Elapsed.TotalSeconds, 2),
             RecipeGlslCompiler.Prelude,
-            stages);
+            stages,
+            objectPackages,
+            objects.PackageFiles.Prepend(Path.GetFullPath(request.PackagePath))
+                .Distinct(StringComparer.OrdinalIgnoreCase).Select(ModelViewerPackageStamp.Of).ToArray());
         await File.WriteAllBytesAsync(Path.Combine(directory, "scene.json"),
             JsonSerializer.SerializeToUtf8Bytes(scene, JsonOptions), cancellationToken).ConfigureAwait(false);
         _cache.Trim(keepKey: key);
         return new ModelViewerSceneResult(directory, Path.Combine(directory, "scene.json"), scene, FromCache: false);
     }
+
+    private ModelViewerMaterial BuildMaterial(
+        int slot,
+        string reference,
+        MaterialInstanceDescription description,
+        IReadOnlyDictionary<string, ModelViewerTexture> textures,
+        ShaderCacheIndex? shaderIndex,
+        LoadedObjects objects,
+        List<string> diagnostics,
+        IProgress<ModelViewerProgress>? progress)
+    {
+        var plan = _recipes.Plan(description, textures.ContainsKey);
+        diagnostics.AddRange(plan.Warnings.Select(warning => $"{description.Name}: {warning}"));
+        GameShaderPlan? gameShader = null;
+        string? gameShaderFailure = null;
+        if (shaderIndex is not null)
+        {
+            progress?.Report(new("Translating game shaders", description.Name));
+            var shaderWatch = Stopwatch.StartNew();
+            try
+            {
+                gameShader = GameShaderMaterial.Build(shaderIndex, description,
+                    name => objects.Read(name, AssetKind.Material)?.Bytes,
+                    name => textures.TryGetValue(name, out var texture) ? texture.Url : null,
+                    objects.TextureSrgb, out gameShaderFailure);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or FormatException
+                                                  or NotSupportedException or DllNotFoundException)
+            {
+                gameShaderFailure = exception.Message;
+            }
+            if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
+                Console.Error.WriteLine($"[viewer] {description.Name}: {shaderWatch.Elapsed.TotalSeconds:N2}s");
+        }
+        return new ModelViewerMaterial(
+            slot, description.Name, reference, description.ClassName, description.ParentChain,
+            description.RootMaterial, description.BlendMode, description.TwoSided, description.Masked,
+            description.OpacityMaskClipValue, description.Scalars, description.Vectors, description.Textures,
+            description.Textures
+                .Where(pair => textures.ContainsKey(pair.Value))
+                .ToDictionary(pair => pair.Key, pair => textures[pair.Value].Url, StringComparer.OrdinalIgnoreCase),
+            plan,
+            _recipes.Plan(description, textures.ContainsKey, storedTextureOnly: true),
+            gameShader,
+            gameShaderFailure);
+    }
+
+    /// <summary>
+    /// Shows a modder's working files on top of a prepared scene: the edited GLB replaces the mesh, edited
+    /// images replace the textures they belong to, and materials with changed values are rebuilt. Each call
+    /// writes a fresh folder (so the page never shows a stale cached image) and removes older ones.
+    /// </summary>
+    private async Task<ModelViewerSceneResult> ApplyEditsAsync(
+        ModelViewerRequest request,
+        ModelViewerSceneResult original,
+        ModelViewerEdits edits,
+        IProgress<ModelViewerProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var scene = original.Scene;
+        var editsRoot = Path.Combine(original.Directory, "edits");
+        var stamp = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}"[..26];
+        var folder = Path.Combine(editsRoot, stamp);
+        Directory.CreateDirectory(folder);
+        foreach (var old in Directory.EnumerateDirectories(editsRoot).Where(path => !path.Equals(folder, StringComparison.OrdinalIgnoreCase)))
+        {
+            try { Directory.Delete(old, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+
+        var applied = new List<string>();
+        var problems = new List<string>();
+        var diagnostics = scene.Diagnostics.ToList();
+
+        // Textures: the edited image takes the place of the exported original.
+        var textures = scene.Textures.ToDictionary(texture => texture.Name, StringComparer.OrdinalIgnoreCase);
+        var urlChanges = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, image) in edits.TextureImages.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!textures.TryGetValue(name, out var originalTexture)) continue;
+            try
+            {
+                var target = Path.Combine(folder, SafeFileName(name) + ".png");
+                var (width, height, format) = await WriteEditedImageAsync(image, target, cancellationToken).ConfigureAwait(false);
+                var editedTexture = new ModelViewerTexture(name, Relative(original.Directory, target), width, height,
+                    $"{format} (edited)", new FileInfo(target).Length);
+                textures[name] = editedTexture;
+                urlChanges[originalTexture.Url] = editedTexture.Url;
+                applied.Add($"Texture {name}: your edited image");
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException
+                                                  or UnauthorizedAccessException or FormatException)
+            {
+                problems.Add($"Texture {name}: {exception.Message}");
+            }
+        }
+
+        // Materials: rebuilt when their values changed, otherwise pointed at the edited textures.
+        var materials = scene.Materials.ToList();
+        var changed = materials.Where(material => edits.Materials.ContainsKey(material.Name)).ToArray();
+        var changedSlots = changed.Select(material => material.Slot).ToHashSet();
+        if (changed.Length > 0)
+        {
+            var descriptions = MaterialInstanceDescriptionReader.ReadExportFolder(Path.Combine(original.Directory, UmodelFolder));
+            var shaderIndex = await LoadShaderIndexAsync(request, progress, cancellationToken).ConfigureAwait(false);
+            using var objects = new LoadedObjects(request,
+                scene.ObjectPackages ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                _catalogReader, _protectionProvider);
+            foreach (var material in changed)
+            {
+                var edit = edits.Materials[material.Name];
+                var description = FindMaterial(descriptions, material.Reference ?? material.Name)
+                    ?? MaterialInstanceDescriptionReader.Resolve(material.Reference ?? material.Name,
+                        new Dictionary<string, (string, UmodelPropertyNode)>());
+                var textureParameters = new Dictionary<string, string>(description.Textures, StringComparer.OrdinalIgnoreCase);
+                foreach (var (parameter, texture) in edit.Textures)
+                {
+                    if (textures.ContainsKey(texture)) textureParameters[parameter] = texture;
+                    else problems.Add($"{material.Name}: {parameter} now uses {texture}, which is not loaded with this object; showing the original texture.");
+                }
+                description = description with
+                {
+                    Scalars = Merge(description.Scalars, edit.Scalars),
+                    Vectors = Merge(description.Vectors, edit.Vectors),
+                    Textures = textureParameters,
+                };
+                materials[material.Slot] = BuildMaterial(material.Slot, material.Reference ?? material.Name, description,
+                    textures, shaderIndex, objects, diagnostics, progress);
+                var count = edit.Scalars.Count + edit.Vectors.Count + edit.Textures.Count;
+                applied.Add($"Material {material.Name}: {count} changed value(s)");
+            }
+        }
+        for (var index = 0; index < materials.Count; index++)
+        {
+            if (changedSlots.Contains(index) || urlChanges.Count == 0) continue;
+            var material = materials[index];
+            materials[index] = material with
+            {
+                TextureUrls = material.TextureUrls.ToDictionary(pair => pair.Key,
+                    pair => urlChanges.GetValueOrDefault(pair.Value, pair.Value), StringComparer.OrdinalIgnoreCase),
+                GameShader = material.GameShader is { } shader
+                    ? shader with
+                    {
+                        Samplers = shader.Samplers.ToDictionary(pair => pair.Key,
+                            pair => urlChanges.GetValueOrDefault(pair.Value, pair.Value), StringComparer.Ordinal),
+                    }
+                    : null,
+            };
+        }
+
+        // Mesh: the edited GLB, with LOD counts read from it.
+        var modelUrl = scene.ModelUrl;
+        var geometrySource = scene.GeometrySource;
+        var units = scene.GeometryUnits;
+        var lods = scene.Lods;
+        if (edits.MeshGlbPath is { } glbPath)
+        {
+            try
+            {
+                var bytes = await File.ReadAllBytesAsync(glbPath, cancellationToken).ConfigureAwait(false);
+                var target = Path.Combine(folder, ModelFile);
+                await File.WriteAllBytesAsync(target, bytes, cancellationToken).ConfigureAwait(false);
+                modelUrl = Relative(original.Directory, target);
+                geometrySource = "edited";
+                units = "metres";
+                lods = EditedLods(bytes, scene.Lods);
+                applied.Add($"Mesh: your edited {Path.GetFileName(glbPath)}");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException
+                                                  or ArgumentOutOfRangeException or InvalidOperationException)
+            {
+                problems.Add($"Mesh: {exception.Message}");
+            }
+        }
+
+        var edited = scene with
+        {
+            ModelUrl = modelUrl,
+            GeometrySource = geometrySource,
+            GeometryUnits = units,
+            Lods = lods,
+            Materials = materials,
+            Textures = textures.Values.OrderBy(texture => texture.Name, StringComparer.OrdinalIgnoreCase).ToArray(),
+            Diagnostics = diagnostics.Distinct().ToArray(),
+            Edits = new ModelViewerEditSummary(edits.Label, applied, problems),
+        };
+        var scenePath = Path.Combine(folder, "scene.json");
+        await File.WriteAllBytesAsync(scenePath, JsonSerializer.SerializeToUtf8Bytes(edited, JsonOptions), cancellationToken)
+            .ConfigureAwait(false);
+        return new ModelViewerSceneResult(original.Directory, scenePath, edited, original.FromCache);
+    }
+
+    private static IReadOnlyDictionary<string, T> Merge<T>(IReadOnlyDictionary<string, T> values, IReadOnlyDictionary<string, T> changes)
+    {
+        var merged = new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, value) in values) merged[name] = value;
+        foreach (var (name, value) in changes) merged[name] = value;
+        return merged;
+    }
+
+    private static async Task<(int Width, int Height, string Format)> WriteEditedImageAsync(
+        string source,
+        string target,
+        CancellationToken cancellationToken)
+    {
+        if (Path.GetExtension(source).Equals(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            await using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            await using (var output = File.Create(target))
+                await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+            return ReadPngHeader(target);
+        }
+        var loaded = await TextureEditableImageService.LoadAsync(source, cancellationToken).ConfigureAwait(false);
+        await PngRgbaCodec.WriteAsync(target, loaded.Image, cancellationToken).ConfigureAwait(false);
+        return (loaded.Image.Width, loaded.Image.Height, loaded.SourceFormat);
+    }
+
+    /// <summary>
+    /// Vertex and triangle counts per LOD of an edited GLB. Meshes are grouped by the <c>arkiveLod</c> extra
+    /// Arkive writes or, after an editor dropped extras, the <c>_LOD#</c> suffix of their names.
+    /// </summary>
+    private static IReadOnlyList<ModelViewerLod> EditedLods(byte[] glb, IReadOnlyList<ModelViewerLod> original)
+    {
+        var jsonLength = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(glb.AsSpan(12)));
+        using var document = JsonDocument.Parse(glb.AsMemory(20, jsonLength));
+        var root = document.RootElement;
+        if (!root.TryGetProperty("meshes", out var meshes) || !root.TryGetProperty("accessors", out var accessors)) return original;
+        var counts = new SortedDictionary<int, (int Vertices, int Triangles)>();
+        var index = 0;
+        foreach (var mesh in meshes.EnumerateArray())
+        {
+            var lod = LodOf(mesh, index++);
+            var (vertices, triangles) = counts.GetValueOrDefault(lod);
+            var seen = new HashSet<int>();
+            foreach (var primitive in mesh.GetProperty("primitives").EnumerateArray())
+            {
+                var position = primitive.GetProperty("attributes").GetProperty("POSITION").GetInt32();
+                if (seen.Add(position)) vertices += accessors[position].GetProperty("count").GetInt32();
+                triangles += primitive.TryGetProperty("indices", out var indices)
+                    ? accessors[indices.GetInt32()].GetProperty("count").GetInt32() / 3
+                    : accessors[position].GetProperty("count").GetInt32() / 3;
+            }
+            counts[lod] = (vertices, triangles);
+        }
+        return counts.Select(pair =>
+        {
+            var source = original.FirstOrDefault(item => item.Index == pair.Key);
+            return new ModelViewerLod(pair.Key, pair.Value.Vertices, pair.Value.Triangles, source?.UvSets ?? 1,
+                source?.Sections ?? []);
+        }).ToArray();
+    }
+
+    private static int LodOf(JsonElement mesh, int index)
+    {
+        if (mesh.TryGetProperty("extras", out var extras) && extras.ValueKind == JsonValueKind.Object &&
+            extras.TryGetProperty("arkiveLod", out var lod) && lod.TryGetInt32(out var value)) return value;
+        var name = mesh.TryGetProperty("name", out var nameElement) ? nameElement.GetString() ?? "" : "";
+        var match = System.Text.RegularExpressions.Regex.Match(name, @"_LOD(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return match.Success ? int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : 0;
+    }
+
+    private static string SafeFileName(string name) =>
+        new(name.Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
 
     /// <summary>Loads the game shader index once; it is built on first use and reused while the game is unchanged.</summary>
     private async Task<ShaderCacheIndex?> LoadShaderIndexAsync(
@@ -328,22 +577,33 @@ public sealed class ModelViewerSceneService
     /// </summary>
     private sealed class LoadedObjects : IDisposable
     {
-        private readonly Dictionary<string, string> _packageByObject = new(StringComparer.OrdinalIgnoreCase);
+        private const string MeshKey = "\0mesh";
+        private readonly IReadOnlyDictionary<string, string> _packageByObject;
         private readonly Dictionary<string, (AssetCatalog Catalog, LogicalPackageStream Stream)?> _packages =
             new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, bool> _srgb = new(StringComparer.OrdinalIgnoreCase);
         private readonly string _packageFolder;
         private readonly AssetCatalogReader _reader;
         private readonly IChunkProtectionProvider _provider;
 
         public LoadedObjects(
             ModelViewerRequest request,
-            IEnumerable<string> umodelOutput,
+            IReadOnlyDictionary<string, string> packageByObject,
             AssetCatalogReader reader,
             IChunkProtectionProvider provider)
         {
             _reader = reader;
             _provider = provider;
             _packageFolder = request.PackageSearchRoot ?? Path.GetDirectoryName(Path.GetFullPath(request.PackagePath))!;
+            var map = new Dictionary<string, string>(packageByObject, StringComparer.OrdinalIgnoreCase);
+            map.TryAdd(MeshKey, Path.GetFileName(request.PackagePath));
+            _packageByObject = map;
+        }
+
+        /// <summary>Object name to package file, from UModel's "Loading Class name from package file" lines.</summary>
+        public static Dictionary<string, string> Parse(ModelViewerRequest request, IEnumerable<string> umodelOutput)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in umodelOutput)
             {
                 const string from = " from package ";
@@ -352,14 +612,27 @@ public sealed class ModelViewerSceneService
                 if (at < 0) continue;
                 var parts = line[8..at].Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length != 2) continue;
-                _packageByObject.TryAdd(parts[1], line[(at + from.Length)..].Trim());
+                result.TryAdd(parts[1], line[(at + from.Length)..].Trim());
             }
-            _packageByObject.TryAdd("\0mesh", Path.GetFileName(request.PackagePath));
+            return result;
+        }
+
+        /// <summary>Every existing package file the scene's objects came from.</summary>
+        public IEnumerable<string> PackageFiles => _packageByObject.Values.Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(file => Path.GetFullPath(Path.Combine(_packageFolder, file))).Where(File.Exists);
+
+        public bool TextureSrgb(string name)
+        {
+            if (_srgb.TryGetValue(name, out var cached)) return cached;
+            var srgb = Read(name, AssetKind.Texture) is { } found
+                ? TexturePropertyProbe.SamplesSrgb(TexturePropertyProbe.Read(found.Bytes, found.Names))
+                : !name.EndsWith("_n", StringComparison.OrdinalIgnoreCase);
+            return _srgb[name] = srgb;
         }
 
         public (byte[] Bytes, IReadOnlyList<UnrealNameEntry> Names)? Read(string objectName, AssetKind kind)
         {
-            var file = _packageByObject.GetValueOrDefault(objectName) ?? _packageByObject["\0mesh"];
+            var file = _packageByObject.GetValueOrDefault(objectName) ?? _packageByObject[MeshKey];
             var package = Open(file);
             if (package is not { } opened) return null;
             var asset = opened.Catalog.Assets.FirstOrDefault(candidate =>

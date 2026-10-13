@@ -1,6 +1,11 @@
 using System.IO;
 using System.Windows;
 using Arkive.Core.Assets;
+using Arkive.Core.Materials;
+using Arkive.Core.Meshes;
+using Arkive.Core.Mods;
+using Arkive.Core.StaticMeshes;
+using Arkive.Core.Textures;
 using Arkive.Core.Viewer;
 
 namespace Arkive.App;
@@ -71,7 +76,13 @@ public partial class MainWindow
 
     private void OpenModelViewer(LibraryAssetRow row)
     {
-        if (_umodelBridge is null) return;
+        if (OpenModelViewer(ToModelViewerRequest(row), edits: null))
+            StatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's model viewer.";
+    }
+
+    private bool OpenModelViewer(ModelViewerRequest request, Func<CancellationToken, Task<ModelViewerEdits?>>? edits)
+    {
+        if (_umodelBridge is null) return false;
         try
         {
             if (_modelViewerWindow is null || !_modelViewerWindow.IsLoaded)
@@ -82,15 +93,114 @@ public partial class MainWindow
                 _modelViewerWindow.Show();
             }
             _modelViewerWindow.Activate();
-            _ = _modelViewerWindow.ShowObjectAsync(ToModelViewerRequest(row));
-            StatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's model viewer.";
-            Log($"Model viewer opened: package={row.SourcePath}, class={row.ClassName}, object={row.ObjectName}.");
+            _ = _modelViewerWindow.ShowObjectAsync(request, edits);
+            Log($"Model viewer opened: package={request.PackagePath}, class={request.ClassName}, object={request.ObjectName}, " +
+                $"edits={edits is not null}.");
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             Log($"Model viewer could not open: {exception}");
             MessageBox.Show(this, exception.Message, "Arkive model viewer", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
         }
+    }
+
+    /// <summary>
+    /// Mod authoring: shows the selected mesh (or the mod's first mesh) from its clean package with the mod's
+    /// working files on top: its edited GLB, and every included texture and material edit it uses. The view
+    /// follows saves to those files.
+    /// </summary>
+    private async void AuthoringViewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_umodelBridge is null || _authoringDraft is not { } draft) return;
+        static bool IsMesh(AuthoringAssetRow row) =>
+            row.Edit?.Kind is UnifiedPackageAssetKind.SkeletalMesh or UnifiedPackageAssetKind.StaticMesh;
+        var rows = AuthoringAssetsGrid.Items.OfType<AuthoringAssetRow>().ToList();
+        var mesh = AuthoringAssetsGrid.SelectedItem is AuthoringAssetRow selected && IsMesh(selected)
+            ? selected
+            : rows.FirstOrDefault(IsMesh);
+        if (mesh?.Edit is not { } edit)
+        {
+            AuthoringStatusText.Text = "Add a mesh to this mod to see it with your edits.";
+            return;
+        }
+        try
+        {
+            var clean = await _arkiveModApply.ResolveCleanPackageAsync(edit.SourcePackagePath);
+            var catalogue = await Task.Run(() => new AssetCatalogReader(_reader, _protectionProvider).Read(clean));
+            var match = catalogue.Assets.SingleOrDefault(asset => asset.ObjectName.Equals(edit.ObjectName, StringComparison.OrdinalIgnoreCase) &&
+                    asset.ClassName.Equals(edit.Kind.ToString(), StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("The original mesh is unavailable or ambiguous in its clean package.");
+            var request = new ModelViewerRequest(clean, mesh.Package,
+                _libraryRootPath ?? Path.GetDirectoryName(edit.SourcePackagePath), match.ExportIndex, match.SerialOffset,
+                match.SerialSize, match.ClassName, match.ObjectName);
+            var draftId = draft.DraftId;
+            if (OpenModelViewer(request, cancellationToken => AuthoringViewerEditsAsync(draftId, edit.EditId, cancellationToken)))
+                AuthoringStatusText.Text = $"Showing {edit.ObjectName} with this mod's edits. Saving a working file refreshes the view.";
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            AuthoringStatusText.Text = $"Preview failed: {exception.Message}";
+            Log($"Authoring model viewer failed: {exception}");
+        }
+    }
+
+    /// <summary>Reads the draft's working files afresh; unticked references are not part of the mod and are left out.</summary>
+    private async Task<ModelViewerEdits?> AuthoringViewerEditsAsync(string draftId, string meshEditId, CancellationToken cancellationToken)
+    {
+        var draft = _authoringDraft?.DraftId == draftId
+            ? _authoringDraft
+            : (await _modAuthoringWorkspace.LoadAsync()).FirstOrDefault(candidate => candidate.DraftId == draftId);
+        if (draft is null) return null;
+        var snapshot = await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits, cancellationToken);
+        var included = draft.EditIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var textures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var materials = new Dictionary<string, ModelViewerMaterialEdit>(StringComparer.OrdinalIgnoreCase);
+        var watched = new List<string>();
+        string? glb = null;
+        foreach (var id in draft.EditIds.Concat(draft.ReferenceEditIds).Append(meshEditId).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (snapshot.Find(id) is not { } edit) continue;
+            watched.Add(edit.ManifestPath);
+            var isMesh = id.Equals(meshEditId, StringComparison.OrdinalIgnoreCase);
+            if (!isMesh && !included.Contains(id)) continue;
+            switch (edit.Entry)
+            {
+                case GuidedTextureModProjectEntry texture when File.Exists(texture.Manifest.EditableImagePath):
+                    textures[edit.ObjectName] = texture.Manifest.EditableImagePath;
+                    break;
+                case SkeletalMeshEditWorkspaceEntry skeletal when isMesh && File.Exists(skeletal.EditedGlbPath):
+                    glb = skeletal.EditedGlbPath;
+                    break;
+                case StaticMeshEditEntry staticMesh when isMesh && File.Exists(staticMesh.Manifest.EditedGlbPath):
+                    glb = staticMesh.Manifest.EditedGlbPath;
+                    break;
+                case MaterialInstanceEditEntry material when ToViewerEdit(material.Document) is { } changed:
+                    materials[edit.ObjectName] = changed;
+                    break;
+            }
+        }
+        return new ModelViewerEdits(draft.Metadata.Name, glb, textures, materials, watched);
+    }
+
+    private static ModelViewerMaterialEdit? ToViewerEdit(MaterialInstanceEditDocument document)
+    {
+        // Texture references read like Texture2D'Package.Group.Name'; the viewer knows textures by name.
+        static string Leaf(string resolved)
+        {
+            var quote = resolved.IndexOf('\'');
+            var path = quote >= 0 ? resolved[(quote + 1)..].TrimEnd('\'') : resolved;
+            return path[(path.LastIndexOf('.') + 1)..];
+        }
+        var edit = new ModelViewerMaterialEdit(
+            document.Scalars.Where(scalar => scalar.Changed)
+                .ToDictionary(scalar => scalar.Name, scalar => scalar.Value, StringComparer.OrdinalIgnoreCase),
+            document.Vectors.Where(vector => vector.Changed).ToDictionary(vector => vector.Name,
+                vector => new[] { vector.Red, vector.Green, vector.Blue, vector.Alpha }, StringComparer.OrdinalIgnoreCase),
+            document.Textures.Where(texture => texture.ObjectReference != texture.SourceObjectReference && texture.ObjectReference != 0)
+                .ToDictionary(texture => texture.Name, texture => Leaf(texture.ResolvedObject), StringComparer.OrdinalIgnoreCase));
+        return edit.Scalars.Count + edit.Vectors.Count + edit.Textures.Count == 0 ? null : edit;
     }
 
     private ModelViewerRequest ToModelViewerRequest(LibraryAssetRow row) => new(
