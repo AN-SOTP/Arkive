@@ -151,7 +151,10 @@ public static class GameShaderMaterial
             if (name is null && texture.Parameter is null && material.ReferencedTextures is { } referenced &&
                 texture.TextureIndex >= 0 && texture.TextureIndex < referenced.Count)
                 name = referenced[texture.TextureIndex];
-            if (!string.IsNullOrWhiteSpace(name)) slotTextures[slot] = name;
+            // The engine's "null" texture is transparent black; its exported PNG has lost the alpha, which as a
+            // decal mask would paint the whole region (Beatrice's face turned white).
+            if (string.Equals(name, "null", StringComparison.OrdinalIgnoreCase)) neutralSlots[slot] = "vec4(0.0)";
+            else if (!string.IsNullOrWhiteSpace(name)) slotTextures[slot] = name;
             else if (texture.Parameter is { } unset) neutralSlots[slot] = NeutralTexture(unset, customization);
             if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
                 Console.Error.WriteLine($"[texture] {material.Name} t{slot} <- {texture.Parameter ?? "-"} #{texture.TextureIndex} = {name ?? "(none)"}");

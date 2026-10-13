@@ -202,7 +202,7 @@ function recipeMaterial(info, plan, game, bake = false, part = null) {
   // Diagnostics: window.arkiveViewer.showOutput('o5.y') shows one game shader output channel as grey.
   if (game && state.debugOutput) {
     const [register, channel] = state.debugOutput.split('.');
-    baseColour = baseColour.replace(/\}$/, `diffuseColor.rgb = vec3(0.0);\nark_debug = uintBitsToFloat(ark_${register}).${channel};\n}`);
+    baseColour = baseColour.replace(/\}$/, `diffuseColor.rgb = vec3(0.0);\nark_debug = ${channel === 'nan' ? `(any(isnan(uintBitsToFloat(ark_${register}))) || any(isinf(uintBitsToFloat(ark_${register})))) ? 1.0 : 0.0` : `uintBitsToFloat(ark_${register}).${channel}`};\n}`);
     declarations += '\nfloat ark_debug = 0.0;';
   }
   const gameEmissive = game && state.debugOutput ? 'totalEmissiveRadiance = vec3(ark_debug);' : game?.unlit || game?.emitsSceneColour
