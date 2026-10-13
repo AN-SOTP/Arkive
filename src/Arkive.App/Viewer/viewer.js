@@ -1,0 +1,681 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
+import { VertexTangentsHelper } from 'three/addons/helpers/VertexTangentsHelper.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const $ = (id) => document.getElementById(id);
+const host = window.chrome?.webview;
+const post = (message) => host?.postMessage(message);
+
+const state = {
+  scene: null,
+  base: '',
+  model: null,
+  lods: new Map(),
+  lod: 0,
+  uvSet: 0,
+  shading: 'recipe',
+  light: 'studio',
+  toggles: { wireframe: false, normals: false, tangents: false, skeleton: false, boneNames: false, sockets: false, uvs: false, grid: true, backfaces: false },
+  isolatedSection: null,
+  selectedMaterial: null,
+  helpers: [],
+  textures: new Map(),
+  materialCache: new Map(),
+  bounds: new THREE.Box3(),
+};
+
+// Renderer, camera and lights.
+const canvas = $('view3d');
+const overlay = $('overlay2d');
+const overlayContext = overlay.getContext('2d');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+const world = new THREE.Scene();
+const environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(renderer), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.screenSpacePanning = true;
+const lights = {
+  hemi: new THREE.HemisphereLight(0xffffff, 0x404048, 1.2),
+  key: new THREE.DirectionalLight(0xffffff, 2.2),
+  fill: new THREE.DirectionalLight(0xdfe8ff, 0.8),
+  rim: new THREE.DirectionalLight(0xffffff, 1.0),
+  head: new THREE.DirectionalLight(0xffffff, 2.6),
+  ambient: new THREE.AmbientLight(0xffffff, Math.PI),
+};
+lights.key.position.set(2, 3, 4);
+lights.fill.position.set(-4, 1, 2);
+lights.rim.position.set(0, 3, -4);
+camera.add(lights.head);
+world.add(camera, lights.hemi, lights.key, lights.fill, lights.rim, lights.ambient);
+const grid = new THREE.GridHelper(4, 40, 0x888888, 0x555555);
+grid.material.transparent = true;
+grid.material.opacity = 0.35;
+world.add(grid);
+
+function applyLighting() {
+  const studio = state.light === 'studio';
+  lights.hemi.visible = lights.key.visible = lights.fill.visible = lights.rim.visible = studio;
+  lights.head.visible = state.light === 'headlight';
+  lights.ambient.visible = state.light === 'flat';
+  world.environment = state.light === 'flat' ? null : environment;
+  if (state.light === 'headlight') lights.hemi.visible = true;
+}
+
+function resize() {
+  const { clientWidth: w, clientHeight: h } = canvas;
+  if (canvas.width !== Math.floor(w * devicePixelRatio) || canvas.height !== Math.floor(h * devicePixelRatio)) {
+    renderer.setSize(w, h, false);
+    overlay.width = Math.floor(w * devicePixelRatio);
+    overlay.height = Math.floor(h * devicePixelRatio);
+    camera.aspect = w / Math.max(1, h);
+    camera.updateProjectionMatrix();
+  }
+}
+
+// Textures are sampled as stored; recipes decode sRGB themselves.
+function texture(url) {
+  if (!url) return null;
+  if (!state.textures.has(url)) {
+    const t = new THREE.TextureLoader().load(state.base + url, () => requestRender());
+    t.colorSpace = THREE.NoColorSpace;
+    t.flipY = false;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    state.textures.set(url, t);
+  }
+  return state.textures.get(url);
+}
+
+function slotColor(slot) {
+  const hue = (slot * 0.61803398875) % 1;
+  return new THREE.Color().setHSL(hue, 0.6, 0.55);
+}
+
+function recipeMaterial(info, plan) {
+  const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 });
+  material.name = info.name;
+  material.side = info.twoSided || state.toggles.backfaces ? THREE.DoubleSide : THREE.FrontSide;
+  if (/Translucent|Additive|Modulate/i.test(info.blendMode)) {
+    material.transparent = true;
+    material.depthWrite = false;
+  } else if (info.masked) {
+    material.alphaTest = Math.max(0.01, info.opacityMaskClipValue || 0.333);
+  }
+  if (plan.normalTextureParameter && info.textureUrls[plan.normalTextureParameter]) {
+    material.normalMap = texture(info.textureUrls[plan.normalTextureParameter]);
+    material.normalScale.set(1, plan.flipNormalGreen ? -1 : 1);
+  }
+  const uniforms = {};
+  for (const [uniform, parameter] of Object.entries(plan.samplers)) uniforms[uniform] = { value: texture(info.textureUrls[parameter]) };
+  for (const u of plan.uniforms) uniforms[u.uniform] = { value: u.kind === 'vec4' ? new THREE.Vector4(...u.value) : u.value[0] };
+  const declarations = Object.keys(plan.samplers).map((name) => `uniform sampler2D ${name};`)
+    .concat(plan.uniforms.map((u) => `uniform ${u.kind} ${u.uniform};`)).join('\n');
+  material.defines = { USE_UV: '' };
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    let fs = shader.fragmentShader.replace('#include <common>', `#include <common>\n${declarations}\n${state.scene.glslPrelude}`);
+    fs = fs.replace('#include <map_fragment>', `diffuseColor.rgb *= ${plan.baseColorGlsl};`);
+    if (plan.opacityGlsl) fs = fs.replace('#include <alphamap_fragment>', `diffuseColor.a *= ${plan.opacityGlsl};`);
+    if (plan.roughnessGlsl) fs = fs.replace('#include <roughnessmap_fragment>', `float roughnessFactor = clamp(${plan.roughnessGlsl}, 0.04, 1.0);`);
+    if (plan.metalnessGlsl) fs = fs.replace('#include <metalnessmap_fragment>', `float metalnessFactor = clamp(${plan.metalnessGlsl}, 0.0, 1.0);`);
+    if (plan.emissiveGlsl) fs = fs.replace('#include <emissivemap_fragment>', `totalEmissiveRadiance += ${plan.emissiveGlsl};`);
+    if (plan.occlusionGlsl) fs = fs.replace('#include <aomap_fragment>', `reflectedLight.indirectDiffuse *= clamp(${plan.occlusionGlsl}, 0.0, 1.0);`);
+    shader.fragmentShader = fs;
+  };
+  material.customProgramCacheKey = () => [plan.familyId, plan.baseColorGlsl, plan.opacityGlsl, plan.roughnessGlsl,
+    plan.metalnessGlsl, plan.emissiveGlsl, plan.occlusionGlsl, declarations].join('|');
+  return material;
+}
+
+function materialFor(slot) {
+  const info = state.scene.materials[slot];
+  const key = `${state.shading}:${slot}:${state.toggles.backfaces}`;
+  if (state.materialCache.has(key)) return state.materialCache.get(key);
+  let material;
+  switch (state.shading) {
+    case 'materialIds': material = new THREE.MeshBasicMaterial({ color: slotColor(slot), side: THREE.DoubleSide }); break;
+    case 'vertexColors': material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }); break;
+    case 'clay': material = new THREE.MeshStandardMaterial({ color: 0xb8b2a8, roughness: 0.8, side: THREE.DoubleSide }); break;
+    default:
+      material = info ? recipeMaterial(info, state.shading === 'stored' ? info.storedTexture : info.recipe)
+        : new THREE.MeshStandardMaterial({ color: slotColor(slot) });
+  }
+  state.materialCache.set(key, material);
+  return material;
+}
+
+function slotOf(mesh) {
+  if (mesh.userData.slot !== undefined) return mesh.userData.slot;
+  const original = mesh.userData.originalMaterial;
+  const byExtras = original?.userData?.arkiveMaterialSlot;
+  let slot = byExtras;
+  if (slot === undefined) {
+    slot = state.scene.materials.findIndex((m) => m.name === original?.name || m.reference === original?.name);
+  }
+  mesh.userData.slot = slot;
+  return slot;
+}
+
+function applyMaterials() {
+  for (const meshes of state.lods.values()) {
+    for (const mesh of meshes) {
+      const material = materialFor(slotOf(mesh));
+      material.wireframe = state.toggles.wireframe;
+      mesh.material = material;
+      const section = mesh.geometry.userData.arkiveSection;
+      mesh.visible = state.isolatedSection === null || section === state.isolatedSection;
+    }
+  }
+  requestRender();
+}
+
+function clearHelpers() {
+  for (const helper of state.helpers) {
+    world.remove(helper);
+    helper.geometry?.dispose();
+  }
+  state.helpers = [];
+}
+
+function rebuildHelpers() {
+  clearHelpers();
+  const meshes = state.lods.get(state.lod) ?? [];
+  const size = state.bounds.getSize(new THREE.Vector3()).length() * 0.008;
+  if (state.toggles.normals) for (const mesh of meshes) state.helpers.push(new VertexNormalsHelper(mesh, size, 0x33ddff));
+  if (state.toggles.tangents) {
+    for (const mesh of meshes) if (mesh.geometry.attributes.tangent) state.helpers.push(new VertexTangentsHelper(mesh, size, 0xffaa33));
+  }
+  if (state.toggles.skeleton && state.model) {
+    const helper = new THREE.SkeletonHelper(state.model);
+    helper.material.depthTest = false;
+    state.helpers.push(helper);
+  }
+  for (const helper of state.helpers) world.add(helper);
+  requestRender();
+}
+
+function showLod(index) {
+  state.lod = index;
+  for (const [lod, meshes] of state.lods) for (const mesh of meshes) mesh.parent.visible = lod === index;
+  $('lodSelect').value = String(index);
+  rebuildHelpers();
+  renderInfo();
+}
+
+function focus() {
+  const meshes = state.lods.get(state.lod) ?? [];
+  const box = new THREE.Box3();
+  for (const mesh of meshes) box.expandByObject(mesh);
+  if (box.isEmpty()) return;
+  state.bounds.copy(box);
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = box.getSize(new THREE.Vector3()).length() / 2;
+  const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2));
+  camera.near = Math.max(0.001, radius / 500);
+  camera.far = radius * 100;
+  camera.updateProjectionMatrix();
+  camera.position.copy(center).add(new THREE.Vector3(1, 0.15, 0.35).normalize().multiplyScalar(distance * 1.05));
+  controls.target.copy(center);
+  controls.update();
+  grid.position.set(center.x, box.min.y, center.z);
+  grid.scale.setScalar(Math.max(0.25, radius));
+  requestRender();
+}
+
+async function loadModel() {
+  const scene = state.scene;
+  if (!scene.modelUrl) return;
+  const gltf = await new GLTFLoader().loadAsync(state.base + scene.modelUrl);
+  const root = gltf.scene;
+  if (scene.geometryUnits === 'unreal') {
+    // UModel's glTF is in Unreal centimetres with Z up.
+    root.scale.setScalar(0.01);
+  }
+  root.traverse((object) => {
+    if (!object.isMesh) return;
+    object.userData.originalMaterial = object.material;
+    object.frustumCulled = false;
+    let lodNode = object;
+    while (lodNode && lodNode.userData.arkiveLod === undefined) lodNode = lodNode.parent;
+    const lod = lodNode?.userData.arkiveLod ?? 0;
+    if (!state.lods.has(lod)) state.lods.set(lod, []);
+    state.lods.get(lod).push(object);
+  });
+  world.add(root);
+  state.model = root;
+  root.updateMatrixWorld(true);
+}
+
+// 2D overlay: bone names, sockets and UV layout.
+function drawOverlay() {
+  const ctx = overlayContext;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const w = overlay.width / devicePixelRatio;
+  const h = overlay.height / devicePixelRatio;
+  const bones = new Map();
+  if (state.model && (state.toggles.boneNames || state.toggles.sockets)) {
+    state.model.traverse((object) => { if (object.isBone) bones.set(object.name.replace(/__ARKIVE_\d+$/, ''), object); });
+  }
+  const projectPoint = (point) => {
+    const p = point.clone().project(camera);
+    return p.z > 1 ? null : [(p.x + 1) / 2 * w, (1 - p.y) / 2 * h];
+  };
+  const project = (object) => projectPoint(object.getWorldPosition(new THREE.Vector3()));
+  ctx.font = '11px Consolas, monospace';
+  if (state.toggles.boneNames) {
+    ctx.fillStyle = '#ffe680';
+    for (const [name, bone] of bones) {
+      const p = project(bone);
+      if (p) ctx.fillText(name, p[0] + 3, p[1] - 3);
+    }
+  }
+  if (state.toggles.sockets) {
+    for (const socket of state.scene.sockets) {
+      const bone = bones.get(socket.bone);
+      if (!bone) continue;
+      const p = projectPoint(bone.localToWorld(socketOffset(socket)));
+      if (!p) continue;
+      ctx.strokeStyle = ctx.fillStyle = '#ff7de0';
+      ctx.strokeRect(p[0] - 4, p[1] - 4, 8, 8);
+      ctx.fillText(`${socket.name} (${socket.bone})`, p[0] + 7, p[1] + 4);
+    }
+  }
+  if (state.toggles.uvs) drawUvs(ctx, w, h);
+}
+
+function drawUvs(ctx, w, h) {
+  const size = Math.min(w, h) - 40;
+  const x0 = w - size - 20;
+  const y0 = 20;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(x0, y0, size, size);
+  const info = state.selectedMaterial !== null ? state.scene.materials[state.selectedMaterial] : null;
+  const backgroundUrl = info && (info.textureUrls[info.recipe.samplers?.ark_t0] ?? Object.values(info.textureUrls)[0]);
+  const image = backgroundUrl ? state.textures.get(backgroundUrl)?.image : null;
+  if (image?.complete) {
+    ctx.globalAlpha = 0.6;
+    ctx.drawImage(image, x0, y0, size, size);
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = 'rgba(120,200,255,0.55)';
+  ctx.lineWidth = 0.5;
+  const attribute = state.uvSet === 0 ? 'uv' : `uv${state.uvSet}`;
+  for (const mesh of state.lods.get(state.lod) ?? []) {
+    if (!mesh.visible || (state.selectedMaterial !== null && slotOf(mesh) !== state.selectedMaterial)) continue;
+    const uv = mesh.geometry.attributes[attribute];
+    const index = mesh.geometry.index;
+    if (!uv || !index) continue;
+    ctx.beginPath();
+    for (let i = 0; i < index.count; i += 3) {
+      for (let k = 0; k <= 3; k++) {
+        const v = index.getX(i + (k % 3));
+        const px = x0 + (uv.getX(v) % 1 + 1) % 1 * size;
+        const py = y0 + (uv.getY(v) % 1 + 1) % 1 * size;
+        if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+    }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = '#888';
+  ctx.strokeRect(x0, y0, size, size);
+}
+
+// Socket offsets are Unreal centimetres in bone space; Arkive's GLB maps Unreal (X,Y,Z) to (X,Z,Y) metres.
+function socketOffset(socket) {
+  const l = socket.location ?? [0, 0, 0];
+  return state.scene.geometryUnits === 'unreal'
+    ? new THREE.Vector3(l[0], l[1], l[2])
+    : new THREE.Vector3(l[0], l[2], l[1]).multiplyScalar(0.01);
+}
+
+function hudText() {
+  const scene = state.scene;
+  const lod = scene.lods.find((l) => l.index === state.lod);
+  const recipes = scene.materials.map((m) => m.recipe.status);
+  const lines = [
+    `${scene.object.className}  ${scene.object.packageAlias}.${scene.object.objectName}`,
+    lod ? `LOD     : ${state.lod + 1}/${scene.lods.length}` : 'LOD     : n/a',
+    lod ? `Verts   : ${lod.vertices.toLocaleString()}` : '',
+    lod ? `Tris    : ${lod.triangles.toLocaleString()}` : '',
+    lod ? `UV Set  : ${state.uvSet + 1}/${lod.uvSets}` : '',
+    `Colors  : ${scene.hasVertexColors === null ? 'unknown' : scene.hasVertexColors ? 'present' : 'none'}`,
+    scene.bones.length ? `Bones   : ${scene.bones.length}` : '',
+    scene.sockets.length ? `Sockets : ${scene.sockets.length}` : '',
+    lod ? `Sections: ${lod.sections.length}` : '',
+    `Colours : ${$('shadingSelect').selectedOptions[0].text}` +
+      (state.shading === 'recipe' ? ` (${recipes.filter((s) => s !== 'fallback').length}/${recipes.length} recipes)` : ''),
+  ];
+  return lines.filter(Boolean).join('\n');
+}
+
+let renderQueued = false;
+function requestRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(render);
+}
+
+function render() {
+  renderQueued = false;
+  resize();
+  grid.visible = state.toggles.grid;
+  renderer.render(world, camera);
+  if (state.scene) {
+    drawOverlay();
+    $('hud').textContent = hudText();
+  }
+}
+controls.addEventListener('change', requestRender);
+(function loop() { if (controls.update()) requestRender(); requestAnimationFrame(loop); })();
+new ResizeObserver(requestRender).observe(canvas);
+
+// Side panel.
+const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const kv = (rows) => `<table class="kv">${rows.filter((r) => r[1] !== undefined && r[1] !== null && r[1] !== '')
+  .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${v}</td></tr>`).join('')}</table>`;
+const badge = (status) => `<span class="badge ${status}" title="${{ verified: 'Checked against the game', inferred: 'Not yet checked against the game', fallback: 'No recipe: shown as stored, like UModel' }[status]}">${status}</span>`;
+const linearToCss = (v) => {
+  const c = (x) => Math.round(255 * Math.min(1, Math.max(0, x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)));
+  return `rgb(${c(v[0])},${c(v[1])},${c(v[2])})`;
+};
+
+function renderInfo() {
+  const scene = state.scene;
+  const lod = scene.lods.find((l) => l.index === state.lod);
+  let html = `<h3>Object</h3>${kv([
+    ['Package', `<span class="mono">${escapeHtml(scene.object.packageAlias)}</span>`],
+    ['File', `<span class="mono">${escapeHtml(scene.object.packageFile)}</span>`],
+    ['Class', escapeHtml(scene.object.className)],
+    ['Object', `<span class="mono">${escapeHtml(scene.object.objectName)}</span>`],
+    ['Export', `#${scene.object.exportIndex}`],
+    ['Geometry', scene.geometrySource === 'arkive-native' ? 'Arkive native decoder (all LODs)' : scene.geometrySource === 'umodel-gltf' ? 'UModel glTF (LOD 0)' : 'none'],
+  ])}`;
+  html += `<h3>LODs</h3>`;
+  for (const l of scene.lods) {
+    html += `<div class="row ${l.index === state.lod ? 'selected' : ''}" data-lod="${l.index}">LOD ${l.index}
+      <span class="muted">${l.vertices.toLocaleString()} verts · ${l.triangles.toLocaleString()} tris · ${l.sections.length} sections · ${l.uvSets} UV</span></div>`;
+  }
+  if (lod) {
+    html += `<h3>Sections in LOD ${lod.index}</h3>`;
+    for (const s of lod.sections) {
+      const m = scene.materials[s.materialSlot];
+      html += `<div class="row ${state.isolatedSection === s.index ? 'selected' : ''}" data-section="${s.index}" title="Click to isolate this section">
+        <span class="swatch" style="background:${slotColor(s.materialSlot).getStyle()}"></span>
+        ${s.index}: ${escapeHtml(m?.name ?? s.material ?? 'unresolved')}<span class="muted">${s.triangles.toLocaleString()} tris</span></div>`;
+    }
+  }
+  html += `<h3>Skeleton</h3>${kv([['Bones', scene.bones.length], ['Sockets', scene.sockets.length],
+    ['Vertex colours', scene.hasVertexColors === null ? 'unknown' : scene.hasVertexColors ? 'present' : 'none']])}`;
+  if (scene.sockets.length) {
+    html += `<h3>Sockets</h3>` + scene.sockets.map((s) => `<div class="mono" title="${s.location ? `offset ${s.location.join(', ')} cm; rotation ${s.rotation?.join(', ')}` : ''}">${escapeHtml(s.name)} → ${escapeHtml(s.bone)}</div>`).join('');
+  }
+  if (scene.diagnostics.length) html += `<h3>Notes</h3>${scene.diagnostics.map((d) => `<div class="note">${escapeHtml(d)}</div>`).join('')}`;
+  html += `<h3>Prepared</h3><div class="muted">${scene.preparationSeconds}s · ${new Date(scene.createdUtc).toLocaleString()}</div>`;
+  $('tab-info').innerHTML = html;
+}
+
+function renderMaterials() {
+  const scene = state.scene;
+  $('tab-materials').innerHTML = scene.materials.map((m) => {
+    const plan = m.recipe;
+    const vectors = Object.entries(m.vectors).map(([k, v]) => [k, `<span class="swatch" style="display:inline-block;vertical-align:middle;background:${linearToCss(v)}"></span> <span class="mono">${v.map((x) => +x.toFixed(4)).join(', ')}</span>`]);
+    const scalars = Object.entries(m.scalars).map(([k, v]) => [k, `<span class="mono">${+v.toFixed(4)}</span>`]);
+    const textures = Object.entries(m.textures).map(([k, v]) => [k, m.textureUrls[k]
+      ? `<a href="#" data-texture="${escapeHtml(m.textureUrls[k])}" data-name="${escapeHtml(v)}" class="mono">${escapeHtml(v)}</a>`
+      : `<span class="mono muted">${escapeHtml(v)} (not exported)</span>`]);
+    return `<details ${state.selectedMaterial === m.slot ? 'open' : ''} data-material="${m.slot}">
+      <summary><span class="swatch" style="background:${slotColor(m.slot).getStyle()}"></span>${m.slot}: ${escapeHtml(m.name)} ${badge(plan.status)}</summary>
+      <div>
+        ${kv([
+          ['Class', escapeHtml(m.className)],
+          ['Parents', m.parentChain.map(escapeHtml).join(' → ') || '—'],
+          ['Blend', `${escapeHtml(m.blendMode)}${m.masked ? ` (clip ${m.opacityMaskClipValue})` : ''}${m.twoSided ? ', two-sided' : ''}`],
+          ['Recipe', `${escapeHtml(plan.familyLabel)} ${plan.matchedMaster ? `<span class="muted">via ${escapeHtml(plan.matchedMaster)}</span>` : ''}`],
+        ])}
+        ${plan.warnings.length ? plan.warnings.map((w) => `<div class="note">${escapeHtml(w)}</div>`).join('') : ''}
+        ${textures.length ? `<h3>Texture parameters</h3>${kv(textures)}` : ''}
+        ${vectors.length ? `<h3>Vector parameters</h3>${kv(vectors)}` : ''}
+        ${scalars.length ? `<h3>Scalar parameters</h3>${kv(scalars)}` : ''}
+      </div></details>`;
+  }).join('');
+}
+
+function renderTextures() {
+  $('tab-textures').innerHTML = `<div class="thumbs">${state.scene.textures.map((t) => `
+    <div class="thumb" data-texture="${escapeHtml(t.url)}" data-name="${escapeHtml(t.name)}" title="${escapeHtml(t.name)}">
+      <img loading="lazy" src="${escapeHtml(state.base + t.url)}" alt="">
+      <span>${escapeHtml(t.name)}</span><span class="muted">${t.width}×${t.height} ${escapeHtml(t.pixelFormat)}</span>
+    </div>`).join('')}</div>`;
+}
+
+// Texture pane with channel isolation, zoom and pan.
+const texView = { image: null, channel: 'rgb', zoom: 1, panX: 0, panY: 0, name: '' };
+function openTexture(url, name) {
+  const image = new Image();
+  image.onload = () => {
+    texView.image = image; texView.zoom = 0; texView.panX = 0; texView.panY = 0; texView.name = name;
+    const info = state.scene.textures.find((t) => t.url === url);
+    $('textureTitle').textContent = `${name}  ${info ? `${info.width}×${info.height} ${info.pixelFormat}` : ''}`;
+    $('texturePane').hidden = false;
+    drawTexture();
+  };
+  image.src = state.base + url;
+}
+
+function drawTexture() {
+  const view = $('textureCanvas');
+  const image = texView.image;
+  if (!image) return;
+  view.width = view.clientWidth * devicePixelRatio;
+  view.height = view.clientHeight * devicePixelRatio;
+  const ctx = view.getContext('2d');
+  ctx.fillStyle = '#555';
+  ctx.fillRect(0, 0, view.width, view.height);
+  const fit = Math.min(view.width / image.width, view.height / image.height) * 0.95;
+  const scale = texView.zoom || fit;
+  const w = image.width * scale;
+  const h = image.height * scale;
+  const x = (view.width - w) / 2 + texView.panX;
+  const y = (view.height - h) / 2 + texView.panY;
+  const source = document.createElement('canvas');
+  source.width = image.width;
+  source.height = image.height;
+  const sctx = source.getContext('2d', { willReadFrequently: true });
+  sctx.drawImage(image, 0, 0);
+  if (texView.channel !== 'rgba') {
+    const data = sctx.getImageData(0, 0, image.width, image.height);
+    const p = data.data;
+    const pick = { r: 0, g: 1, b: 2, a: 3 }[texView.channel];
+    for (let i = 0; i < p.length; i += 4) {
+      if (pick !== undefined) { const v = p[i + pick]; p[i] = p[i + 1] = p[i + 2] = v; }
+      p[i + 3] = 255;
+    }
+    sctx.putImageData(data, 0, 0);
+  } else {
+    ctx.fillStyle = ctx.createPattern(checker(), 'repeat');
+    ctx.fillRect(x, y, w, h);
+  }
+  ctx.imageSmoothingEnabled = scale < 1;
+  ctx.drawImage(source, x, y, w, h);
+}
+
+function checker() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const x = c.getContext('2d');
+  x.fillStyle = '#777'; x.fillRect(0, 0, 16, 16);
+  x.fillStyle = '#999'; x.fillRect(0, 0, 8, 8); x.fillRect(8, 8, 8, 8);
+  return c;
+}
+
+// Events.
+document.querySelectorAll('.tabs button').forEach((button) => button.addEventListener('click', () => {
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b === button));
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.id === `tab-${button.dataset.tab}`));
+}));
+
+document.querySelectorAll('[data-toggle]').forEach((button) => button.addEventListener('click', () => toggle(button.dataset.toggle)));
+
+function toggle(name, value) {
+  state.toggles[name] = value ?? !state.toggles[name];
+  document.querySelector(`[data-toggle="${name}"]`)?.setAttribute('aria-pressed', String(state.toggles[name]));
+  if (name === 'wireframe' || name === 'backfaces') applyMaterials();
+  if (['normals', 'tangents', 'skeleton'].includes(name)) rebuildHelpers();
+  requestRender();
+}
+
+$('lodSelect').addEventListener('change', (e) => showLod(Number(e.target.value)));
+$('uvSelect').addEventListener('change', (e) => { state.uvSet = Number(e.target.value); requestRender(); });
+$('shadingSelect').addEventListener('change', (e) => { state.shading = e.target.value; applyMaterials(); });
+$('lightSelect').addEventListener('change', (e) => { state.light = e.target.value; applyLighting(); requestRender(); });
+$('focusButton').addEventListener('click', focus);
+$('screenshotButton').addEventListener('click', (e) => screenshot(e.altKey));
+$('umodelButton').addEventListener('click', () => post({ type: 'openUmodel' }));
+$('textureClose').addEventListener('click', () => { $('texturePane').hidden = true; });
+document.querySelectorAll('[data-channel]').forEach((button) => button.addEventListener('click', () => {
+  texView.channel = button.dataset.channel;
+  document.querySelectorAll('[data-channel]').forEach((b) => b.classList.toggle('active', b === button));
+  drawTexture();
+}));
+$('textureCanvas').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const view = $('textureCanvas');
+  const fit = Math.min(view.width / texView.image.width, view.height / texView.image.height) * 0.95;
+  texView.zoom = Math.min(32, Math.max(0.02, (texView.zoom || fit) * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
+  drawTexture();
+}, { passive: false });
+$('textureCanvas').addEventListener('pointermove', (e) => {
+  if (e.buttons !== 1) return;
+  texView.panX += e.movementX * devicePixelRatio;
+  texView.panY += e.movementY * devicePixelRatio;
+  drawTexture();
+});
+
+$('panel').addEventListener('click', (e) => {
+  const target = e.target.closest('[data-lod],[data-section],[data-texture],details[data-material] > summary');
+  if (!target) return;
+  if (target.dataset.lod !== undefined) showLod(Number(target.dataset.lod));
+  else if (target.dataset.section !== undefined) {
+    const section = Number(target.dataset.section);
+    state.isolatedSection = state.isolatedSection === section ? null : section;
+    applyMaterials();
+    renderInfo();
+  } else if (target.dataset.texture) {
+    e.preventDefault();
+    openTexture(target.dataset.texture, target.dataset.name);
+  } else {
+    const slot = Number(target.parentElement.dataset.material);
+    state.selectedMaterial = state.selectedMaterial === slot ? null : slot;
+    requestRender();
+  }
+});
+
+$('propertySearch').addEventListener('input', renderProperties);
+let propertyLines = [];
+function renderProperties() {
+  const filter = $('propertySearch').value.trim().toLowerCase();
+  $('propertyText').textContent = filter ? propertyLines.filter((l) => l.toLowerCase().includes(filter)).join('\n') : propertyLines.join('\n');
+}
+
+function cycle(select, step = 1) {
+  if (!select.options.length) return;
+  select.selectedIndex = (select.selectedIndex + step + select.options.length) % select.options.length;
+  select.dispatchEvent(new Event('change'));
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement) return;
+  const key = e.key.toLowerCase();
+  if (key === 'escape') { $('texturePane').hidden = true; return; }
+  if (e.ctrlKey && key === 's') { e.preventDefault(); screenshot(false); return; }
+  if (e.altKey && key === 's') { e.preventDefault(); screenshot(true); return; }
+  if (e.ctrlKey && key === 'b') { e.preventDefault(); toggle('boneNames'); return; }
+  if (e.ctrlKey && key === 'u') { e.preventDefault(); cycle($('uvSelect')); return; }
+  if (e.ctrlKey && key === 'l') { e.preventDefault(); cycle($('lightSelect')); return; }
+  if (key === 'pageup' || key === 'pagedown') { e.preventDefault(); post({ type: 'browse', delta: key === 'pageup' ? -1 : 1 }); return; }
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const actions = {
+    l: () => cycle($('lodSelect')), w: () => toggle('wireframe'), n: () => toggle('normals'), t: () => toggle('tangents'),
+    b: () => toggle('skeleton'), s: () => toggle('sockets'), u: () => toggle('uvs'), g: () => toggle('grid'), f: focus,
+    c: () => cycle($('shadingSelect')),
+    m: () => { $('shadingSelect').value = state.shading === 'materialIds' ? 'recipe' : 'materialIds'; $('shadingSelect').dispatchEvent(new Event('change')); },
+    v: () => { $('shadingSelect').value = state.shading === 'vertexColors' ? 'recipe' : 'vertexColors'; $('shadingSelect').dispatchEvent(new Event('change')); },
+  };
+  if (actions[key]) { e.preventDefault(); actions[key](); }
+});
+
+function screenshot(transparent) {
+  const previous = grid.visible;
+  if (transparent) { grid.visible = false; renderer.setClearColor(0x000000, 0); }
+  renderer.render(world, camera);
+  const data = canvas.toDataURL('image/png');
+  grid.visible = previous;
+  requestRender();
+  post({ type: 'screenshot', dataUrl: data, name: `${state.scene.object.objectName}_lod${state.lod}${transparent ? '_alpha' : ''}` });
+}
+
+// Loading.
+async function load(message) {
+  $('loading').hidden = false;
+  $('loading').textContent = `Loading ${message.scene.object.objectName}…`;
+  if (message.theme) document.documentElement.dataset.theme = message.theme;
+  for (const t of state.textures.values()) t.dispose();
+  for (const m of state.materialCache.values()) m.dispose();
+  if (state.model) world.remove(state.model);
+  clearHelpers();
+  Object.assign(state, { scene: message.scene, base: message.baseUrl, model: null, lod: 0, uvSet: 0, isolatedSection: null, selectedMaterial: null });
+  state.lods = new Map();
+  state.textures = new Map();
+  state.materialCache = new Map();
+  const scene = state.scene;
+  $('lodSelect').innerHTML = scene.lods.map((l) => `<option value="${l.index}">${l.index}</option>`).join('');
+  const uvSets = Math.max(1, ...scene.lods.map((l) => l.uvSets));
+  $('uvSelect').innerHTML = Array.from({ length: uvSets }, (_, i) => `<option value="${i}">${i}</option>`).join('');
+  try {
+    await loadModel();
+    applyMaterials();
+    applyLighting();
+    showLod(scene.lods[0]?.index ?? 0);
+    focus();
+  } catch (error) {
+    $('statusbar').textContent = `Could not load the model: ${error.message}`;
+  }
+  renderMaterials();
+  renderTextures();
+  try {
+    propertyLines = (await (await fetch(state.base + scene.propertiesUrl)).text()).split(/\r?\n/);
+  } catch { propertyLines = ['UModel properties are unavailable.']; }
+  renderProperties();
+  const counts = scene.materials.reduce((a, m) => (a[m.recipe.status] = (a[m.recipe.status] ?? 0) + 1, a), {});
+  $('statusbar').textContent = `${scene.object.packageAlias}.${scene.object.objectName} · ${scene.materials.length} materials ` +
+    `(${counts.verified ?? 0} verified, ${counts.inferred ?? 0} inferred, ${counts.fallback ?? 0} stored-texture) · ` +
+    `${scene.textures.length} textures · prepared in ${scene.preparationSeconds}s`;
+  $('loading').hidden = true;
+  requestRender();
+  post({ type: 'loaded' });
+}
+
+host?.addEventListener('message', (event) => {
+  const message = event.data;
+  if (message?.type === 'load') load(message);
+  if (message?.type === 'theme') document.documentElement.dataset.theme = message.theme;
+  if (message?.type === 'progress') { $('loading').hidden = false; $('loading').textContent = message.text; }
+  if (message?.type === 'error') { $('loading').hidden = false; $('loading').textContent = message.text; }
+});
+
+// Outside Arkive (for development): viewer.html?scene=<url of scene.json>
+const sceneUrl = new URLSearchParams(location.search).get('scene');
+if (sceneUrl) {
+  fetch(sceneUrl).then((r) => r.json()).then((scene) => load({ scene, baseUrl: sceneUrl.replace(/scene\.json$/, '') }));
+}
+for (const name of Object.keys(state.toggles)) document.querySelector(`[data-toggle="${name}"]`)?.setAttribute('aria-pressed', String(state.toggles[name]));
+post({ type: 'ready' });

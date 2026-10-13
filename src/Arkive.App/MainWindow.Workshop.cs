@@ -529,6 +529,7 @@ public partial class MainWindow : Window
                         row is not null &&
                         CreateExternalAsset(row).IsExportable;
         LibraryInspectButton.IsEnabled = backendAvailable && hasSelection && !_exportInProgress;
+        LibraryPreviewButton.IsEnabled = backendAvailable && row is not null && CanPreviewInArkive(row.Kind);
         LibraryBrowsePackageButton.IsEnabled = backendAvailable && hasSelection && !_exportInProgress;
         LibraryOpenPackageButton.IsEnabled = hasSelection && !_exportInProgress;
         LibraryExportButton.IsEnabled = canExport;
@@ -571,7 +572,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        InspectLibrarySelection();
+        if (_umodelBridge is not null && LibraryGrid.SelectedItem is LibraryAssetRow row && CanPreviewInArkive(row.Kind))
+            OpenModelViewer(row);
+        else
+            InspectLibrarySelection();
         e.Handled = true;
     }
 

@@ -470,6 +470,11 @@
                                           VerticalAlignment="Center"
                                           Click="LibrarySearchOption_Click"
                                           ToolTip="Hide purely technical name matches that have no in-game database association." />
+                                <Button x:Name="LibraryPreviewButton"
+                                        Content="Preview"
+                                        IsEnabled="False"
+                                        Click="LibraryPreviewButton_Click"
+                                        ToolTip="Open the selected mesh in Arkive's model viewer: every LOD, game colours, materials, textures and UModel's object properties. You can also double-click a mesh result." />
                                 <Button x:Name="LibraryInspectButton"
                                         Content="Inspect selected in UModel"
                                         IsEnabled="False"

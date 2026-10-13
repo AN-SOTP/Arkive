@@ -9,9 +9,10 @@
     <ProjectReference Include="../Arkive.Core/Arkive.Core.csproj" />
     <Resource Include="Assets/Banners/*.jpg" />
     <Resource Include="Assets/Arkive.ico" />
-    <None Include="../Arkive.Core/runtimes/win-x64/native/Arkive.Crunch.Native.dll"
-          Link="Arkive.Crunch.Native.dll"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Viewer/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../Arkive.Core/runtimes/win-x64/native/Arkive.Crunch.Native.dll" Link="Arkive.Crunch.Native.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 </Project>

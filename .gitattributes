@@ -10,3 +10,4 @@
 *.ico binary
 *.jpg binary
 *.png binary
+src/Arkive.App/Viewer/vendor/** -text

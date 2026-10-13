@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arkive model viewer</title>
+  <link rel="stylesheet" href="viewer.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.min.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header id="toolbar">
+    <div class="group">
+      <label class="field">LOD <select id="lodSelect" title="Cycle LODs (L)"></select></label>
+      <label class="field">UV <select id="uvSelect" title="Cycle UV sets (Ctrl+U)"></select></label>
+      <label class="field">Colours
+        <select id="shadingSelect" title="Game colours apply each material's colour recipe; stored textures show textures as the game files store them, like UModel (C)">
+          <option value="recipe">Game colours</option>
+          <option value="stored">Stored textures</option>
+          <option value="materialIds">Material IDs</option>
+          <option value="vertexColors">Vertex colours</option>
+          <option value="clay">Clay</option>
+        </select>
+      </label>
+    </div>
+    <div class="group toggles">
+      <button data-toggle="wireframe" title="Wireframe (W)">Wireframe</button>
+      <button data-toggle="normals" title="Show normals (N)">Normals</button>
+      <button data-toggle="tangents" title="Show tangents (T)">Tangents</button>
+      <button data-toggle="skeleton" title="Show skeleton (B)">Skeleton</button>
+      <button data-toggle="boneNames" title="Show bone names (Ctrl+B)">Bone names</button>
+      <button data-toggle="sockets" title="Show attach sockets (S)">Sockets</button>
+      <button data-toggle="uvs" title="Show mesh UVs (U)">UVs</button>
+      <button data-toggle="grid" title="Grid (G)">Grid</button>
+      <button data-toggle="backfaces" title="Show back faces of one-sided materials">Back faces</button>
+    </div>
+    <div class="group">
+      <label class="field">Light
+        <select id="lightSelect" title="Lighting (Ctrl+L)">
+          <option value="studio">Studio</option>
+          <option value="headlight">Headlight</option>
+          <option value="flat">Unlit</option>
+        </select>
+      </label>
+      <button id="focusButton" title="Focus camera on mesh (F)">Focus</button>
+      <button id="screenshotButton" title="Save screenshot (Ctrl+S); Alt+S keeps a transparent background">Screenshot</button>
+      <button id="umodelButton" title="Open the same object in UModel">Open in UModel</button>
+    </div>
+  </header>
+  <main>
+    <aside id="panel">
+      <nav class="tabs">
+        <button data-tab="info" class="active">Info</button>
+        <button data-tab="materials">Materials</button>
+        <button data-tab="textures">Textures</button>
+        <button data-tab="properties">Properties</button>
+      </nav>
+      <section id="tab-info" class="tab active"></section>
+      <section id="tab-materials" class="tab"></section>
+      <section id="tab-textures" class="tab"></section>
+      <section id="tab-properties" class="tab">
+        <input id="propertySearch" type="search" placeholder="Filter UModel properties">
+        <pre id="propertyText"></pre>
+      </section>
+    </aside>
+    <div id="stage">
+      <canvas id="view3d"></canvas>
+      <canvas id="overlay2d"></canvas>
+      <div id="texturePane" hidden>
+        <div class="textureBar">
+          <span id="textureTitle"></span>
+          <span class="channels">
+            <button data-channel="rgb" class="active">RGB</button>
+            <button data-channel="r">R</button>
+            <button data-channel="g">G</button>
+            <button data-channel="b">B</button>
+            <button data-channel="a">A</button>
+            <button data-channel="rgba">RGBA</button>
+          </span>
+          <button id="textureClose" title="Back to the model (Esc)">Close</button>
+        </div>
+        <canvas id="textureCanvas"></canvas>
+      </div>
+      <div id="hud"></div>
+      <div id="loading">Loading…</div>
+    </div>
+  </main>
+  <footer id="statusbar"></footer>
+  <script type="module" src="viewer.js"></script>
+</body>
+</html>

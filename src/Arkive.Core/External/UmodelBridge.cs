@@ -207,6 +207,41 @@ public sealed partial class UmodelBridge
             usedPackageWideFallback);
     }
 
+    /// <summary>
+    /// Exports an object with its materials and PNG textures for Arkive's model viewer.
+    /// Unlike <see cref="ExportAsync"/> it never falls back to a package-wide export.
+    /// </summary>
+    public async Task<UmodelExportResult> ExportForViewerAsync(
+        string packagePath,
+        UmodelAssetEntry asset,
+        string outputDirectory,
+        string? packageSearchRoot,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(asset);
+        var fullPackagePath = ValidatePackage(packagePath);
+        var fullOutputDirectory = Path.GetFullPath(outputDirectory);
+        Directory.CreateDirectory(fullOutputDirectory);
+        var arguments = new List<string> { "-export" };
+        arguments.AddRange(CommonArguments(resolvePackageNames: false));
+        if (!string.IsNullOrWhiteSpace(packageSearchRoot) && Directory.Exists(packageSearchRoot))
+            arguments.Add($"-path={Path.GetFullPath(packageSearchRoot)}");
+        arguments.Add($"-out={fullOutputDirectory}");
+        arguments.Add("-png");
+        if (asset.Kind is AssetKind.StaticMesh or AssetKind.SkeletalMesh) arguments.Add("-gltf");
+        arguments.Add(fullPackagePath);
+        arguments.Add(asset.ObjectName);
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = await RunAsync(arguments, DefaultTimeout, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0) throw CreateProcessException($"export {asset.ObjectName} for preview", result);
+        var files = Directory.EnumerateFiles(fullOutputDirectory, "*", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return new UmodelExportResult(fullPackagePath, asset, fullOutputDirectory, files,
+            CollectDiagnostics(result), stopwatch.Elapsed, false);
+    }
+
     public Process StartPreview(string packagePath)
     {
         var fullPackagePath = ValidatePackage(packagePath);

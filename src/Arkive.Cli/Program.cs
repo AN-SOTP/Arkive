@@ -15,6 +15,7 @@ using Arkive.Core.Packages;
 using Arkive.Core.Scanning;
 using Arkive.Core.Textures;
 using Arkive.Core.Validation;
+using Arkive.Core.Viewer;
 using Arkive.Core.StaticMeshes;
 
 return Run(args);
@@ -71,6 +72,12 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--workspace"),
                 ReadTextOption(arguments, "--name"),
                 ReadTextOption(arguments, "--alpha"),
+                json),
+            "model-viewer-scene" => ModelViewerScene(
+                target,
+                ReadTextOption(arguments, "--object"),
+                ReadTextOption(arguments, "--alias"),
+                ReadTextOption(arguments, "--cache"),
                 json),
             "skeletal-mesh-recon" => SkeletalMeshRecon(
                 target,
@@ -596,6 +603,53 @@ static int TextureProjectCreate(
         Console.WriteLine($"  Editable image:      {project.Manifest.EditableImagePath}");
         Console.WriteLine($"  Alpha policy:        {project.Manifest.AlphaPolicy}");
         Console.WriteLine($"  Project manifest:    {project.ManifestPath}");
+    }
+    return 0;
+}
+
+static int ModelViewerScene(
+    string packagePath,
+    string? objectName,
+    string? packageAlias,
+    string? cachePath,
+    bool json)
+{
+    if (string.IsNullOrWhiteSpace(objectName))
+        throw new ArgumentException("model-viewer-scene requires --object NAME.");
+    var package = Path.GetFullPath(packagePath);
+    var provider = ChunkProtectionProviderFactory.CreateWesternGlobal();
+    var catalog = new AssetCatalogReader(protectionProvider: provider).Read(package);
+    var matches = catalog.Assets.Where(asset =>
+        asset.ObjectName.Equals(objectName, StringComparison.OrdinalIgnoreCase)).ToArray();
+    if (matches.Length != 1)
+        throw new InvalidOperationException($"Expected one object named '{objectName}', found {matches.Length:N0}.");
+    var asset = matches[0];
+    var executable = UmodelLocator.FindExecutable()
+        ?? throw new InvalidOperationException("The model viewer needs the Lost Ark UModel backend.");
+    var cache = new ModelViewerCache(string.IsNullOrWhiteSpace(cachePath)
+        ? Path.Combine(ArkiveRuntimePaths.ResolveDataRoot(), "cache", "model-viewer")
+        : Path.GetFullPath(cachePath));
+    var service = new ModelViewerSceneService(new UmodelBridge(executable), cache, protectionProvider: provider);
+    var result = service.PrepareAsync(new ModelViewerRequest(
+        package,
+        string.IsNullOrWhiteSpace(packageAlias) ? Path.GetFileNameWithoutExtension(package) : packageAlias.Trim(),
+        Path.GetDirectoryName(package),
+        asset.ExportIndex, asset.SerialOffset, asset.SerialSize, asset.ClassName, asset.ObjectName))
+        .GetAwaiter().GetResult();
+    if (json) WriteJson(result.Scene);
+    else
+    {
+        var scene = result.Scene;
+        Console.WriteLine($"{scene.Object.PackageAlias}.{scene.Object.ObjectName} ({scene.Object.ClassName})");
+        Console.WriteLine($"  Geometry:   {scene.GeometrySource}, {scene.Lods.Count} LOD(s), {scene.Bones.Count} bone(s), {scene.Sockets.Count} socket(s)");
+        foreach (var lod in scene.Lods)
+            Console.WriteLine($"    LOD {lod.Index}: {lod.Vertices:N0} verts, {lod.Triangles:N0} tris, {lod.Sections.Count} section(s), {lod.UvSets} UV set(s)");
+        Console.WriteLine($"  Materials:  {scene.Materials.Count}");
+        foreach (var material in scene.Materials)
+            Console.WriteLine($"    {material.Slot}: {material.Name} <- {material.RootMaterial} [{material.Recipe.Status}: {material.Recipe.FamilyId}] {material.TextureUrls.Count} texture(s)");
+        Console.WriteLine($"  Textures:   {scene.Textures.Count}");
+        foreach (var diagnostic in scene.Diagnostics) Console.WriteLine($"  Note:       {diagnostic}");
+        Console.WriteLine($"  Prepared:   {(result.FromCache ? "from cache" : $"{scene.PreparationSeconds:N2}s")} -> {result.SceneJsonPath}");
     }
     return 0;
 }
@@ -3189,6 +3243,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive dds-rgb-view <dxt5.dds> [--out FILE] [--json]");
     Console.WriteLine("  arkive texture-export-native <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive texture-project-create <arkive-native-texture.json> --edited FILE --workspace DIR [--name TEXT] [--alpha preserve-original|use-edited|force-opaque] [--json]");
+    Console.WriteLine("  arkive model-viewer-scene <package.upk> --object NAME [--alias NAME] [--cache DIR] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive static-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive static-mesh-export-editable <arkive-staticmesh-recon.json> [--out DIR] [--json]");

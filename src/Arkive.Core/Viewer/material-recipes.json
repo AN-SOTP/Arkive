@@ -1,0 +1,66 @@
+{
+  // Colour recipes for Lost Ark master material families.
+  // Expressions: tex('param'[, default]) vec('param'[, defaults]) scalar('param'[, default])
+  // switch('param'[, default]) has('param') lerp mix saturate clamp min max pow step abs sqrt
+  // fract dot lum srgb vec2 vec3 vec4, + - * /, swizzles .rgba/.xyzw. 'a|b' tries names in order.
+  // baseColor is linear RGB; textures are sampled as stored, so colour textures go through srgb().
+  // status: "inferred" until checked against the game's compiled shader or in-game captures.
+  "schemaVersion": 1,
+  "families": [
+    {
+      "id": "hair-fur-two-tone",
+      "label": "Hair (two-tone fur)",
+      "status": "inferred",
+      "masters": [ "npc_hair_fur_*", "pc_hair_fur_*" ],
+      "baseColor": "lerp(vec('var_base_haircolor_base_ui|haircolor_base', 0.3, 0.2, 0.1), vec('var_base_hairtwotonecolor_ui', 0.3, 0.2, 0.1), tex('texture_diffuse', 0).g * scalar('var_base_hairtwotone_bool_ui', 0)).rgb * srgb(tex('texture_diffuse').r) * 2.0",
+      "opacity": "tex('texture_diffuse').a",
+      "roughness": "0.55",
+      "metalness": "0.0",
+      "normal": "texture_normal",
+      "flipNormalGreen": true,
+      "notes": "texture_diffuse packs shading in R and B (identical), the two-tone mask in G and cutout in A. Colour comes from var_base_haircolor_base_ui and var_base_hairtwotonecolor_ui."
+    },
+    {
+      "id": "pbr-orm-variation",
+      "label": "PBR with ORM and colour variation",
+      "status": "inferred",
+      "masters": [ "realpbr_*", "preset_realpbr_*" ],
+      "baseColor": "srgb(tex('texture_basecolor|texture_diffuse')).rgb * vec('basecolor_color|diffusecolor', 1).rgb * lerp(vec3(1.0), lerp(lerp(lerp(vec3(1.0), vec('diffusecolor_a', 1).rgb, tex('texture_mask_variation', 0).r), vec('diffusecolor_b', 1).rgb, tex('texture_mask_variation', 0).g), vec('diffusecolor_c', 1).rgb, tex('texture_mask_variation', 0).b), scalar('mask_variation_visible', 0))",
+      "opacity": "tex('texture_basecolor|texture_diffuse').a",
+      "emissive": "srgb(tex('texture_emissive', 0)).rgb * vec('emissive_color', 0).rgb",
+      "roughness": "tex('texture_orm', 0.6).g",
+      "metalness": "tex('texture_orm', 0).b",
+      "occlusion": "tex('texture_orm', 1).r",
+      "normal": "texture_normal",
+      "flipNormalGreen": true,
+      "notes": "ORM: occlusion R, roughness G, metalness B. Colour variation masks R/G/B select diffusecolor_a/b/c."
+    },
+    {
+      "id": "diffuse-specular-variation",
+      "label": "Diffuse/specular with colour variation",
+      "status": "inferred",
+      "masters": [ "monster_base_*", "monster_dead_*", "pc_weapon_*", "pc_parts_*", "*_parts_msk*", "*_parts_opa*", "pbr_base_*", "trophyprop_monster_*" ],
+      "baseColor": "srgb(tex('texture_diffuse')).rgb * vec('diffusecolor|diffuse_color', 1).rgb * lerp(vec3(1.0), lerp(lerp(lerp(vec3(1.0), vec('diffusecolor_a', 1).rgb, tex('texture_mask_variation', 0).r), vec('diffusecolor_b', 1).rgb, tex('texture_mask_variation', 0).g), vec('diffusecolor_c', 1).rgb, tex('texture_mask_variation', 0).b), scalar('mask_variation_visible', 0))",
+      "opacity": "tex('texture_diffuse').a",
+      "emissive": "srgb(tex('texture_emissive', 0)).rgb * vec('emissive_color', 0).rgb",
+      "roughness": "1.0 - 0.6 * lum(tex('texture_specular', 0.25))",
+      "metalness": "0.0",
+      "normal": "texture_normal",
+      "flipNormalGreen": true,
+      "notes": "Specular maps are approximated as inverse roughness until the shader is verified."
+    }
+  ],
+  "fallback": {
+    "id": "stored-texture",
+    "label": "Stored texture (no recipe)",
+    "status": "fallback",
+    "masters": [],
+    "baseColor": "srgb(tex('texture_diffuse|texture_basecolor|diffuse|basecolor|texture_color', 0.6)).rgb",
+    "opacity": "tex('texture_diffuse|texture_basecolor|diffuse|basecolor').a",
+    "roughness": "0.7",
+    "metalness": "0.0",
+    "normal": "texture_normal|normal",
+    "flipNormalGreen": true,
+    "notes": "Shows the main texture as stored, which is what UModel's viewer does."
+  }
+}
