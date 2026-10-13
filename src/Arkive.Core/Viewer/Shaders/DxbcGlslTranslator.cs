@@ -84,6 +84,15 @@ public static partial class DxbcGlslTranslator
 
         for (var i = 0; i < Math.Max(6, outputs.DefaultIfEmpty(0).Max() + 1); i++)
             declarations.Append($"uvec4 ark_o{i};\n");
+        // Bit-field insert with D3D semantics: widths and offsets use their low 5 bits, and a full-width field
+        // replaces every bit.
+        if (body.ToString().Contains("ark_bfi(", StringComparison.Ordinal))
+            declarations.Append(
+                "uvec4 ark_bfi(uvec4 width, uvec4 offset, uvec4 insert, uvec4 base) {\n" +
+                "  uvec4 w = width & uvec4(31u); uvec4 o = offset & uvec4(31u);\n" +
+                "  uvec4 mask = ((uvec4(1u) << w) - uvec4(1u)) << o;\n" +
+                "  return ((insert << o) & mask) | (base & ~mask);\n" +
+                "}\n");
         foreach (var input in inputs)
             declarations.Append($"uvec4 ark_in{input.Register};\n");
         var function = new StringBuilder("void ark_game_shader() {\n");
@@ -247,6 +256,13 @@ public static partial class DxbcGlslTranslator
             case "imax": return Store(ops[0], $"uvec4(max({Int(1)}, {Int(2)}))");
             case "imin": return Store(ops[0], $"uvec4(min({Int(1)}, {Int(2)}))");
             case "umax": return Store(ops[0], $"max({Bits(1)}, {Bits(2)})");
+            case "bfi": return Store(ops[0], $"ark_bfi({Bits(1)}, {Bits(2)}, {Bits(3)}, {Bits(4)})");
+            case "ubfe": return Store(ops[0], $"(({Bits(3)} >> ({Bits(2)} & uvec4(31u))) & ((uvec4(1u) << ({Bits(1)} & uvec4(31u))) - uvec4(1u)))");
+            case "countbits": return Store(ops[0], $"uvec4(bitCount({Bits(1)}))");
+            case "bfrev": return Store(ops[0], $"bitfieldReverse({Bits(1)})");
+            case "firstbit_lo": return Store(ops[0], $"uvec4(findLSB({Bits(1)}))");
+            case "firstbit_hi": return Store(ops[0], $"uvec4(findMSB({Bits(1)}))");
+            case "resinfo" or "resinfo_indexable": return ResourceInfo(opcode, ops, textureBound);
             case "umin": return Store(ops[0], $"min({Bits(1)}, {Bits(2)})");
             case "ineg": return Store(ops[0], $"uvec4(-{Int(1)})");
             case "ftoi": return Store(ops[0], $"uvec4(ivec4({Float(1)}))");
@@ -277,6 +293,20 @@ public static partial class DxbcGlslTranslator
                 return Sample(bare, ops, cubes, textureBound, srgb);
         }
         throw new DxbcTranslationException($"Unsupported instruction '{opcode}'.");
+    }
+
+    /// <summary>Texture dimensions (mip count reported as 1); unbound textures report 1 x 1.</summary>
+    private static string ResourceInfo(string opcode, List<string> ops, Func<int, bool> textureBound)
+    {
+        var resource = ResourceOperandRegex().Match(ops[2]);
+        if (!resource.Success) throw new DxbcTranslationException($"Unsupported texture operand '{ops[2]}'.");
+        var slot = int.Parse(resource.Groups["t"].Value, CultureInfo.InvariantCulture);
+        var swizzle = resource.Groups["s"].Success ? resource.Groups["s"].Value : "xyzw";
+        var size = textureBound(slot) ? $"uvec2(textureSize(ark_gt{slot}, int(({BitsSource(ops[1])}).x)))" : "uvec2(1u)";
+        var value = opcode.Contains("uint", StringComparison.Ordinal)
+            ? $"uvec4({size}, 1u, 1u)"
+            : $"floatBitsToUint(vec4(vec2({size}), 1.0, 1.0))";
+        return Store(ops[0], $"({value}).{swizzle}");
     }
 
     private static string Sample(
@@ -414,6 +444,13 @@ public static partial class DxbcGlslTranslator
         var values = operand[2..^1].Split(',', StringSplitOptions.TrimEntries);
         var lanes = values.Select(value =>
         {
+            if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                return $"{uint.Parse(value[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture)}u";
+            // MSVC prints infinities and NaNs as 1.#INF00, -1.#INF00, 1.#QNAN0 and so on.
+            if (value.Contains("#INF", StringComparison.OrdinalIgnoreCase))
+                return value.StartsWith('-') ? "4286578688u" : "2139095040u";
+            if (value.Contains("#QNAN", StringComparison.OrdinalIgnoreCase) || value.Contains("#IND", StringComparison.OrdinalIgnoreCase))
+                return "2143289344u";
             if (value.Contains('.') || value.Contains('e') || value.Contains("inf", StringComparison.OrdinalIgnoreCase) ||
                 value.Contains("nan", StringComparison.OrdinalIgnoreCase))
             {

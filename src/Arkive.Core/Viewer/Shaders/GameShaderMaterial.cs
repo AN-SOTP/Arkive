@@ -18,7 +18,8 @@ public sealed record GameShaderPlan(
     int InstructionCount,
     IReadOnlyList<string> Notes,
     bool EmitsSceneColour = false,
-    bool Unlit = false);
+    bool Unlit = false,
+    bool WritesSurface = false);
 
 /// <summary>Finds, translates and binds the game's base-pass pixel shader for one material instance.</summary>
 public static class GameShaderMaterial
@@ -125,10 +126,17 @@ public static class GameShaderMaterial
             if (slot < 0) continue;
             string? name = null;
             if (texture.Parameter is not null) material.Textures.TryGetValue(texture.Parameter, out name);
-            if (name is null && material.ReferencedTextures is { } referenced &&
+            // Character-creator textures (var_*_ui) the instance leaves unset hold placeholders such as flat_red;
+            // the game supplies them from customization data, so they stay unbound (no make-up or decal).
+            var customization = texture.Parameter is { } parameter &&
+                                parameter.StartsWith("var_", StringComparison.OrdinalIgnoreCase) &&
+                                parameter.EndsWith("_ui", StringComparison.OrdinalIgnoreCase);
+            if (name is null && !customization && material.ReferencedTextures is { } referenced &&
                 texture.TextureIndex >= 0 && texture.TextureIndex < referenced.Count)
                 name = referenced[texture.TextureIndex];
             if (!string.IsNullOrWhiteSpace(name)) slotTextures[slot] = name;
+            if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
+                Console.Error.WriteLine($"[texture] {material.Name} t{slot} <- {texture.Parameter ?? "-"} #{texture.TextureIndex} = {name ?? "(none)"}");
         }
         var samplers = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (slot, name) in slotTextures)
@@ -177,6 +185,13 @@ public static class GameShaderMaterial
             cb0[slot] = UniformExpressionEvaluator.Evaluate(expressions.Scalars[k], Vector, Scalar)[0];
         }
 
+        if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
+        {
+            Console.Error.WriteLine($"[shader] {material.Name} {map.FriendlyName} scalars@{string.Join(',', bindings.ScalarRegisters)} vectors@{string.Join(',', bindings.VectorRegisters)} textures@{string.Join(',', bindings.TextureSlots)}");
+            for (var k = 0; k < expressions.Scalars.Count; k++) Console.Error.WriteLine($"   s{k}: {expressions.Scalars[k]}");
+            for (var k = 0; k < expressions.Vectors.Count; k++) Console.Error.WriteLine($"   v{k}: {expressions.Vectors[k]}");
+        }
+
         // Engine constant buffers are zero, except the per-object tint cb2[3] (rgb added, w scales),
         // whose identity is (0,0,0,1).
         var buffers = new Dictionary<string, float[]>(StringComparer.Ordinal);
@@ -184,12 +199,14 @@ public static class GameShaderMaterial
             buffers[$"ark_cb{buffer}"] = buffer == 0 ? cb0 : new float[Math.Max(1, size) * 4];
         if (buffers.TryGetValue("ark_cb2", out var cb2) && cb2.Length >= 16) cb2[15] = 1;
 
-        // Translucent shaders scale their opacity by the first engine constant (1 while the object is fully faded
-        // in); it is only set when no material parameter lives there.
+        // Translucent shaders scale their opacity by engine constants held in the registers before the material's
+        // own parameters (1 while the object is fully faded in), so those are set to 1.
         var translucent = material.BlendMode.Contains("Translucent", StringComparison.OrdinalIgnoreCase) ||
                           material.BlendMode.Contains("Additive", StringComparison.OrdinalIgnoreCase);
-        if (translucent && cb0.Length >= 4 && !bindings.VectorRegisters.Contains(0) && !bindings.ScalarRegisters.Contains(0))
-            cb0[0] = 1;
+        var firstParameter = bindings.VectorRegisters.Concat(bindings.ScalarRegisters).Where(register => register >= 0)
+            .DefaultIfEmpty(cb0.Length / 4).Min();
+        if (translucent)
+            for (var slot = 0; slot < Math.Min(firstParameter * 4, cb0.Length); slot++) cb0[slot] = 1;
 
         // Effect shaders write only the per-object tint to the albedo target; their colour is the scene colour
         // they emit (o0), with its alpha as opacity.
@@ -211,6 +228,8 @@ public static class GameShaderMaterial
             translation.InstructionCount,
             notes,
             albedo != 0 && translation.Outputs.Contains(0) && HasEmissiveParameter(material),
-            unlit);
+            unlit,
+            // The deferred surface target: o2.z roughness, o2.w metalness (checked against RealPBR, PBR and hair).
+            albedo == 3 && translation.Outputs.Contains(2));
     }
 }

@@ -275,6 +275,13 @@ internal static class ViewerSmokeTests
                glsl.Contains("} else {", StringComparison.Ordinal) && glsl.Contains("ark_cb0[2]", StringComparison.Ordinal) &&
                glsl.Contains("vec4(0.0, 0.0, 0.0, 1.0)", StringComparison.Ordinal) && glsl.Contains("ark_o3.xyzw", StringComparison.Ordinal),
             "the translated GLSL is missing sampling, sRGB, discard, saturate, branching or unbound-texture handling");
+        // Bit-field instructions, hexadecimal literals and MSVC infinity spellings appear in game shaders.
+        var bits = DxbcGlslTranslator.Translate(
+            "ps_5_0\ndcl_temps 2\nbfi r0.x, l(4), l(8), r1.x, r1.y\nmov r0.y, l(0x3c6ef35f)\nmov r0.z, l(-1.#INF00)\nret\n", _ => true);
+        Assert(bits.Declarations.Contains("uvec4 ark_bfi(", StringComparison.Ordinal) &&
+               bits.Function.Contains("ark_bfi(", StringComparison.Ordinal) &&
+               bits.Function.Contains("1013904223u", StringComparison.Ordinal) && bits.Function.Contains("4286578688u", StringComparison.Ordinal),
+            "bit-field inserts, hexadecimal literals or infinities were not translated");
         var refused = false;
         try { DxbcGlslTranslator.Translate("ps_5_0\nlds_bogus r0.x, r1.x\n", _ => true); }
         catch (DxbcTranslationException) { refused = true; }

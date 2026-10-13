@@ -3,7 +3,6 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
 import { VertexTangentsHelper } from 'three/addons/helpers/VertexTangentsHelper.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const $ = (id) => document.getElementById(id);
 const host = window.chrome?.webview;
@@ -36,7 +35,35 @@ renderer.setPixelRatio(window.devicePixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 const world = new THREE.Scene();
-const environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(renderer), 0.04).texture;
+// A photo-studio environment for reflections: dark floor, grey walls, a few softboxes. Metals reflect it,
+// so it needs contrast; an evenly bright room makes every metal read as white.
+function studioEnvironment() {
+  const scene = new THREE.Scene();
+  const dome = new THREE.SphereGeometry(10, 48, 24);
+  const colours = [];
+  const position = dome.attributes.position;
+  for (let i = 0; i < position.count; i++) {
+    const y = position.getY(i) / 10;
+    const shade = y < 0 ? 0.03 + 0.12 * (1 + y) : 0.15 + 0.3 * y;
+    colours.push(shade, shade, shade * 1.04);
+  }
+  dome.setAttribute('color', new THREE.Float32BufferAttribute(colours, 3));
+  scene.add(new THREE.Mesh(dome, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
+  const softbox = (width, height, intensity, x, y, z) => {
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(width, height),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(intensity, intensity, intensity), side: THREE.DoubleSide }));
+    panel.position.set(x, y, z);
+    panel.lookAt(0, 0, 0);
+    scene.add(panel);
+  };
+  softbox(4, 3, 4, 5, 5, 5);
+  softbox(3, 4, 1.6, -6, 2, 3);
+  softbox(6, 1.2, 2.5, 0, 6, -5);
+  const texture = new THREE.PMREMGenerator(renderer).fromScene(scene, 0.03).texture;
+  dome.dispose();
+  return texture;
+}
+const environment = studioEnvironment();
 const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -114,13 +141,17 @@ function gameInput(input) {
   }
 }
 
+const isTranslucent = (info) => /Translucent|Additive|Modulate/i.test(info?.blendMode ?? '');
+
 /// Standard material whose base colour comes from a colour recipe, or from the game's own
-/// translated pixel shader when `game` is given (lighting still uses the recipe's roughness etc.).
-function recipeMaterial(info, plan, game, bake = false) {
+/// translated pixel shader when `game` is given (its roughness and metalness too, when it writes them).
+/// Translucent materials are drawn like the game's auto-sorting: an `opaque` part (nearly opaque pixels,
+/// writing depth) and a `blend` part (the rest, blended over it), so hair and layered cloth sort correctly.
+function recipeMaterial(info, plan, game, bake = false, part = null) {
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 });
   material.name = info.name;
   material.side = info.twoSided || state.toggles.backfaces ? THREE.DoubleSide : THREE.FrontSide;
-  if (/Translucent|Additive|Modulate/i.test(info.blendMode)) {
+  if (isTranslucent(info) && part !== 'opaque') {
     material.transparent = true;
     material.depthWrite = false;
   } else if (info.masked && !game) {
@@ -137,8 +168,16 @@ function recipeMaterial(info, plan, game, bake = false) {
     .concat(plan.uniforms.map((u) => `uniform ${u.kind} ${u.uniform};`)).join('\n');
   let baseColour = `diffuseColor.rgb *= ${plan.baseColorGlsl};`;
   let opacity = plan.opacityGlsl ? `diffuseColor.a *= ${plan.opacityGlsl};` : null;
+  // Auto-sorting shaders draw in two engine passes chosen by a constant they compare with zero; the
+  // second pass writes the full opacity to o0.w and discards what the first drew. The viewer runs the
+  // second pass with that discard removed and sorts opaque and blended pixels itself.
+  const passFlag = game && isTranslucent(info) && /AutoSorting/i.test(game.materialMap)
+    ? /equal\(uintBitsToFloat\(floatBitsToUint\(ark_cb0\[(\d+)\]\)\.([xyzw])\2\2\2\), uintBitsToFloat\(uvec4\(0u\)\)\)/.exec(game.function)
+    : null;
   if (game) {
-    for (const [name, values] of Object.entries(game.constantBuffers)) {
+    for (const [name, original] of Object.entries(game.constantBuffers)) {
+      const values = [...original];
+      if (passFlag && name === 'ark_cb0') values[Number(passFlag[1]) * 4 + 'xyzw'.indexOf(passFlag[2])] = 1;
       const vectors = [];
       for (let i = 0; i < values.length; i += 4) vectors.push(new THREE.Vector4(values[i], values[i + 1], values[i + 2], values[i + 3]));
       uniforms[name] = { value: vectors };
@@ -148,18 +187,25 @@ function recipeMaterial(info, plan, game, bake = false) {
       uniforms[name] = { value: texture(url) };
       declarations += `\nuniform sampler2D ${name};`;
     }
-    declarations += `\n${game.declarations}\n${state.scene.glslPrelude}\n${game.function}`;
-    const translucent = material.transparent && game.albedoOutput === 0;
+    declarations += `\n${game.declarations}\n${state.scene.glslPrelude}\n${passFlag ? game.function.replaceAll('discard;', '{}') : game.function}`;
+    // Translucent shaders write their opacity to o0.w (negative on back faces of auto-sorted parts).
+    const translucent = isTranslucent(info);
     baseColour = `{\n${game.inputs.map(gameInput).join('\n')}\nark_game_shader();\n` +
       `vec4 ark_albedo = uintBitsToFloat(ark_o${game.albedoOutput});\n` +
       // An effect material is all emitted light: nothing of it is lit (a bake keeps its colour).
       `diffuseColor.rgb = ${game.unlit && !bake ? 'vec3(0.0)' : 'clamp(ark_albedo.rgb, 0.0, 16.0)'};\n` +
-      (translucent ? 'diffuseColor.a = clamp(ark_albedo.a, 0.0, 1.0);\n' : '') + '}';
+      (translucent ? 'diffuseColor.a = clamp(abs(uintBitsToFloat(ark_o0).w), 0.0, 1.0);\n' : '') + '}';
     opacity = null;
   }
   // With a separate albedo target, the game's o0 is the base pass's own scene colour: emissive, glow and rim
   // light. Arkive's engine constants (sky and ambient light) are zero, so it adds only what the material emits.
-  const gameEmissive = game?.unlit || game?.emitsSceneColour
+  // Diagnostics: window.arkiveViewer.showOutput('o5.y') shows one game shader output channel as grey.
+  if (game && state.debugOutput) {
+    const [register, channel] = state.debugOutput.split('.');
+    baseColour = baseColour.replace(/\}$/, `diffuseColor.rgb = vec3(0.0);\nark_debug = uintBitsToFloat(ark_${register}).${channel};\n}`);
+    declarations += '\nfloat ark_debug = 0.0;';
+  }
+  const gameEmissive = game && state.debugOutput ? 'totalEmissiveRadiance = vec3(ark_debug);' : game?.unlit || game?.emitsSceneColour
     // The viewer has no tone mapping, so bright (HDR) glow is scaled into range keeping its hue.
     ? '{ vec3 ark_glow = max(uintBitsToFloat(ark_o0).rgb, vec3(0.0));' +
       ' totalEmissiveRadiance += ark_glow / max(1.0, max(ark_glow.r, max(ark_glow.g, ark_glow.b))); }' : null;
@@ -184,9 +230,16 @@ function recipeMaterial(info, plan, game, bake = false) {
     if (opacity) fs = fs.replace('#include <alphamap_fragment>', opacity);
     if (plan.roughnessGlsl) fs = fs.replace('#include <roughnessmap_fragment>', `float roughnessFactor = clamp(${plan.roughnessGlsl}, 0.04, 1.0);`);
     if (plan.metalnessGlsl) fs = fs.replace('#include <metalnessmap_fragment>', `float metalnessFactor = clamp(${plan.metalnessGlsl}, 0.0, 1.0);`);
+    if (game?.writesSurface && !game.unlit && !state.debugOutput) {
+      fs = fs.replace('#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(uintBitsToFloat(ark_o2).z, 0.04, 1.0);');
+      fs = fs.replace('#include <metalnessmap_fragment>', 'float metalnessFactor = clamp(uintBitsToFloat(ark_o2).w, 0.0, 1.0);');
+    }
+    if (part === 'opaque') fs = fs.replace('#include <alphatest_fragment>', 'if (diffuseColor.a < 0.98) discard;');
+    if (part === 'blend') fs = fs.replace('#include <alphatest_fragment>', 'if (diffuseColor.a >= 0.98 || diffuseColor.a < 0.004) discard;');
     if (gameEmissive) fs = fs.replace('#include <emissivemap_fragment>', gameEmissive);
     else if (plan.emissiveGlsl) fs = fs.replace('#include <emissivemap_fragment>', `totalEmissiveRadiance += ${plan.emissiveGlsl};`);
     if (plan.occlusionGlsl) fs = fs.replace('#include <aomap_fragment>', `reflectedLight.indirectDiffuse *= clamp(${plan.occlusionGlsl}, 0.0, 1.0);`);
+    if (game && state.debugOutput) fs = fs.replace('#include <dithering_fragment>', 'gl_FragColor = vec4(vec3(ark_debug), 1.0);');
     if (bake) {
       if (!game) fs = fs.replace('#include <common>', `#include <common>\n${state.scene.glslPrelude}`);
       fs = fs.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor = vec4(ark_encode_srgb(diffuseColor.rgb), diffuseColor.a);');
@@ -201,13 +254,14 @@ function recipeMaterial(info, plan, game, bake = false) {
     material.side = THREE.DoubleSide;
   }
   material.customProgramCacheKey = () => [bake, plan.familyId, game?.shaderId, !!gameEmissive, usesSecondUv, plan.baseColorGlsl, plan.opacityGlsl,
-    plan.roughnessGlsl, plan.metalnessGlsl, plan.emissiveGlsl, plan.occlusionGlsl, declarations.length, game?.albedoOutput].join('|');
+    plan.roughnessGlsl, plan.metalnessGlsl, plan.emissiveGlsl, plan.occlusionGlsl, declarations.length, game?.albedoOutput,
+    state.debugOutput, part, game?.writesSurface, !!passFlag].join('|');
   return material;
 }
 
-function materialFor(slot) {
+function materialFor(slot, part = null) {
   const info = state.scene.materials[slot];
-  const key = `${state.shading}:${slot}:${state.toggles.backfaces}`;
+  const key = `${state.shading}:${slot}:${state.toggles.backfaces}:${part}`;
   if (state.materialCache.has(key)) return state.materialCache.get(key);
   let material;
   switch (state.shading) {
@@ -217,10 +271,10 @@ function materialFor(slot) {
     default:
       if (!info) material = new THREE.MeshStandardMaterial({ color: slotColor(slot) });
       else if (state.shading === 'game' && info.gameShader && !info.gameShaderBroken) {
-        material = recipeMaterial(info, info.recipe, info.gameShader);
+        material = recipeMaterial(info, info.recipe, info.gameShader, false, part);
         material.userData.gameSlot = slot;
       }
-      else material = recipeMaterial(info, state.shading === 'stored' ? info.storedTexture : info.recipe);
+      else material = recipeMaterial(info, state.shading === 'stored' ? info.storedTexture : info.recipe, null, false, part);
   }
   state.materialCache.set(key, material);
   return material;
@@ -239,14 +293,40 @@ function slotOf(mesh) {
   return slot;
 }
 
+const LAYERED_SHADINGS = new Set(['game', 'recipe', 'stored']);
+
+// The blended part of a translucent mesh: a child mesh sharing its geometry (and skeleton), drawn after it.
+function blendCompanion(mesh) {
+  if (mesh.userData.companion) return mesh.userData.companion;
+  const companion = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(mesh.geometry, mesh.material) : new THREE.Mesh(mesh.geometry, mesh.material);
+  if (mesh.isSkinnedMesh) {
+    companion.bindMode = mesh.bindMode;
+    companion.bind(mesh.skeleton, mesh.bindMatrix);
+  }
+  companion.frustumCulled = false;
+  companion.renderOrder = 1;
+  companion.userData.isCompanion = true;
+  mesh.add(companion); // inherits the mesh's transform and visibility
+  mesh.userData.companion = companion;
+  return companion;
+}
+
 function applyMaterials() {
   for (const meshes of state.lods.values()) {
     for (const mesh of meshes) {
-      const material = materialFor(slotOf(mesh));
+      const slot = slotOf(mesh);
+      const layered = LAYERED_SHADINGS.has(state.shading) && isTranslucent(state.scene.materials[slot]);
+      const material = materialFor(slot, layered ? 'opaque' : null);
       material.wireframe = state.toggles.wireframe;
       mesh.material = material;
       const section = mesh.geometry.userData.arkiveSection;
       mesh.visible = state.isolatedSection === null || section === state.isolatedSection;
+      if (layered || mesh.userData.companion) {
+        const companion = blendCompanion(mesh);
+        companion.material = layered ? materialFor(slot, 'blend') : material;
+        companion.material.wireframe = state.toggles.wireframe;
+        companion.visible = layered && mesh.visible;
+      }
     }
   }
   requestRender();
@@ -948,6 +1028,131 @@ host?.addEventListener('message', (event) => {
 window.arkiveViewer = {
   state,
   renderer,
+  camera,
+  controls,
+  // Automated check: renders each material alone from the front and reports its pixel statistics
+  // (share of near-white and near-black pixels, mean colour) and shader compile errors.
+  materialStats: () => {
+    focus();
+    const gl = renderer.getContext();
+    const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
+    const pixels = new Uint8Array(width * height * 4);
+    const previousClear = renderer.getClearColor(new THREE.Color());
+    const previousAlpha = renderer.getClearAlpha();
+    const gridVisible = grid.visible;
+    grid.visible = false;
+    renderer.setClearColor(0x000000, 0);
+    const meshes = [...(state.lods.get(state.lod) ?? [])];
+    const results = [];
+    for (let slot = 0; slot < state.scene.materials.length; slot++) {
+      const own = meshes.filter((mesh) => slotOf(mesh) === slot);
+      if (own.length === 0) continue;
+      for (const mesh of meshes) mesh.visible = own.includes(mesh);
+      const box = new THREE.Box3();
+      const point = new THREE.Vector3();
+      for (const mesh of own) {
+        const position = mesh.geometry.attributes.position;
+        for (let i = 0; i < position.count; i += 7) box.expandByPoint(point.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld));
+      }
+      const saved = [camera.position.clone(), controls.target.clone()];
+      const radius = Math.max(1e-3, box.getSize(new THREE.Vector3()).length() / 2);
+      controls.target.copy(box.getCenter(new THREE.Vector3()));
+      // The same viewing direction as Focus.
+      camera.position.copy(controls.target).add(new THREE.Vector3(1, 0.15, 0.35).normalize()
+        .multiplyScalar(radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))));
+      camera.lookAt(controls.target);
+      camera.updateMatrixWorld();
+      renderer.clear();
+      renderer.render(world, camera);
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      camera.position.copy(saved[0]);
+      controls.target.copy(saved[1]);
+      controls.update();
+      let covered = 0, white = 0, black = 0, r = 0, g = 0, b = 0;
+      for (let i = 0; i < pixels.length; i += 16) {
+        const alpha = pixels[i + 3];
+        if (alpha < 128) continue;
+        covered++;
+        // The canvas holds premultiplied colour.
+        const pr = pixels[i] * 255 / alpha, pg = pixels[i + 1] * 255 / alpha, pb = pixels[i + 2] * 255 / alpha;
+        r += pr; g += pg; b += pb;
+        if (pr > 240 && pg > 240 && pb > 240) white++;
+        if (pr < 8 && pg < 8 && pb < 8) black++;
+      }
+      const info = state.scene.materials[slot];
+      results.push({
+        slot, name: info.name, master: info.rootMaterial, blend: info.blendMode,
+        game: !!(info.gameShader && !info.gameShaderBroken), failure: info.gameShaderFailure ?? null,
+        covered, white: covered ? +(white / covered).toFixed(3) : 0, black: covered ? +(black / covered).toFixed(3) : 0,
+        mean: covered ? [r / covered, g / covered, b / covered].map((v) => Math.round(v)) : null,
+      });
+    }
+    for (const mesh of meshes) mesh.visible = true;
+    grid.visible = gridVisible;
+    renderer.setClearColor(previousClear, previousAlpha);
+
+    applyMaterials();
+    return { errors: (window.arkiveViewer.programErrors?.() ?? []).length, materials: results };
+  },
+  showOutput: (output) => {
+    state.debugOutput = output || null;
+    for (const m of state.materialCache.values()) m.dispose();
+    state.materialCache = new Map();
+    applyMaterials();
+    requestRender();
+    return 'ok';
+  },
+  // Orbits the camera around the model (degrees) at a distance factor, for checks from several sides.
+  orbit: (yaw, pitch = 10, distance = 1) => {
+    focus();
+    const offset = camera.position.clone().sub(controls.target);
+    const spherical = new THREE.Spherical().setFromVector3(offset);
+    spherical.theta = THREE.MathUtils.degToRad(yaw);
+    spherical.phi = THREE.MathUtils.degToRad(90 - pitch);
+    spherical.radius *= distance;
+    camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
+    controls.update();
+    requestRender();
+  },
+  // Frames a bone (by name fragment) at the given radius, for close-ups of hands, heads and so on.
+  frameBone: (name, radius = 0.25, yaw = 0) => {
+    focus();
+    let bone = null;
+    state.model.traverse((o) => { if (!bone && o.isBone && o.name.toLowerCase().includes(name.toLowerCase())) bone = o; });
+    if (!bone) return 'no bone';
+    const direction = camera.position.clone().sub(controls.target).normalize()
+      .applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(yaw));
+    bone.getWorldPosition(controls.target);
+    camera.position.copy(controls.target).addScaledVector(direction, radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)));
+    controls.update();
+    requestRender();
+    return bone.name;
+  },
+  // Frames the given material slot's meshes from the default viewing direction, for close-ups.
+  frameSlot: (slot, distance = 1, yaw = 0) => {
+    focus();
+    const box = new THREE.Box3();
+    // Sections share one vertex buffer, so bound the vertices each section's indices use.
+    const point = new THREE.Vector3();
+    for (const mesh of state.lods.get(state.lod) ?? []) {
+      if (slotOf(mesh) !== slot) continue;
+      const position = mesh.geometry.attributes.position;
+      const index = mesh.geometry.index;
+      for (let i = 0, n = index ? index.count : position.count; i < n; i++) {
+        point.fromBufferAttribute(position, index ? index.getX(i) : i).applyMatrix4(mesh.matrixWorld);
+        box.expandByPoint(point);
+      }
+    }
+    if (box.isEmpty()) return 'empty';
+    const direction = camera.position.clone().sub(controls.target).normalize()
+      .applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(yaw));
+    const radius = box.getSize(new THREE.Vector3()).length() / 2;
+    controls.target.copy(box.getCenter(new THREE.Vector3()));
+    camera.position.copy(controls.target).addScaledVector(direction, distance * radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)));
+    controls.update();
+    requestRender();
+    return 'ok';
+  },
   bake: () => bakeTextures('debug'),
   bakeStats: (slot, size = 256) => {
     const info = state.scene.materials[slot];
