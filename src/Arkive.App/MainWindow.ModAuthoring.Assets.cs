@@ -30,8 +30,54 @@ public partial class MainWindow : Window
                 MaterialEditorTab.IsSelected = true;
             }
             else if (EditablePath(edit) is { } path)
-                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            {
+                if (Path.GetExtension(path).Equals(".glb", StringComparison.OrdinalIgnoreCase) && FindBlender() is { } blender)
+                    OpenGlbInBlender(blender, path);
+                else
+                    Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
         });
+    }
+
+    // Blender treats a file passed on its command line as a .blend, so a .glb has to go through its glTF importer.
+    private const string BlenderGlbImportScript =
+        "import bpy, sys\n" +
+        "for o in list(bpy.data.objects): bpy.data.objects.remove(o)\n" +
+        "bpy.ops.import_scene.gltf(filepath=sys.argv[sys.argv.index('--') + 1])";
+
+    private void OpenGlbInBlender(string blender, string glb)
+    {
+        var start = new ProcessStartInfo(blender) { UseShellExecute = false };
+        foreach (var argument in new[] { "--python-expr", BlenderGlbImportScript, "--", Path.GetFullPath(glb) })
+            start.ArgumentList.Add(argument);
+        Process.Start(start);
+        try
+        {
+            Clipboard.SetText(Path.GetFullPath(glb));
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+        }
+        AuthoringStatusText.Text = "Opened in Blender. When done, use File > Export > glTF 2.0 and save over the same file " +
+            "(its path is on your clipboard).";
+        Log($"Opened editable mesh in Blender: blender={blender}, glb={glb}.");
+    }
+
+    private static string? FindBlender()
+    {
+        using var extension = Registry.ClassesRoot.OpenSubKey(".blend");
+        using var open = extension?.GetValue(null) is string progId
+            ? Registry.ClassesRoot.OpenSubKey($@"{progId}\shell\open\command") : null;
+        if (open?.GetValue(null) is string command &&
+            command.Split('"', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() is { } registered &&
+            registered.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(registered))
+            return registered;
+        var foundation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Blender Foundation");
+        return Directory.Exists(foundation)
+            ? Directory.EnumerateFiles(foundation, "blender.exe", SearchOption.AllDirectories)
+                .OrderByDescending(path => Version.TryParse(Path.GetFileName(Path.GetDirectoryName(path))!.Replace("Blender ", ""), out var version) ? version : new Version())
+                .FirstOrDefault()
+            : null;
     }
 
     private void AuthoringAssetsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
