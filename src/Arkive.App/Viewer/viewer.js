@@ -269,7 +269,7 @@ function rebuildHelpers() {
 
 function showLod(index) {
   state.lod = index;
-  for (const [lod, meshes] of state.lods) for (const mesh of meshes) mesh.parent.visible = lod === index;
+  for (const [lod, meshes] of state.lods) for (const mesh of meshes) mesh.userData.lodNode.visible = lod === index;
   $('lodSelect').value = String(index);
   rebuildHelpers();
   renderInfo();
@@ -314,9 +314,11 @@ async function loadModel() {
     // An edited GLB may have lost Arkive's extras; its mesh names still end in _LOD#.
     for (let node = object; lod === undefined && node; node = node.parent) {
       const match = /_LOD(\d+)/i.exec(node.name ?? '');
-      if (match) lod = Number(match[1]);
+      if (match) { lod = Number(match[1]); lodNode = node; }
     }
     lod ??= 0;
+    // The node to show or hide for this LOD: a one-section mesh is its own node, so its parent may hold every LOD.
+    object.userData.lodNode = lodNode ?? object;
     if (!state.lods.has(lod)) state.lods.set(lod, []);
     state.lods.get(lod).push(object);
   });
