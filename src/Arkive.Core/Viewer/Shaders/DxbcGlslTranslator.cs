@@ -29,10 +29,13 @@ public static partial class DxbcGlslTranslator
     private const int MaximumLoopIterations = 256;
 
     /// <param name="textureBound">Whether a material texture is bound to a t# slot (unbound slots read a constant).</param>
+    /// <param name="unboundValue">The GLSL vec4 an unbound slot reads (null for opaque black).</param>
     /// <param name="srgb">Whether a slot's texture is sampled with sRGB decoding, as the game's sampler does.</param>
-    public static DxbcTranslation Translate(string disassembly, Func<int, bool> textureBound, Func<int, bool>? srgb = null)
+    public static DxbcTranslation Translate(
+        string disassembly, Func<int, bool> textureBound, Func<int, bool>? srgb = null, Func<int, string?>? unboundValue = null)
     {
         srgb ??= _ => false;
+        unboundValue ??= _ => null;
         ArgumentNullException.ThrowIfNull(disassembly);
         var lines = disassembly.Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
         var inputs = ParseSignature(lines, "// Input signature:");
@@ -74,7 +77,7 @@ public static partial class DxbcGlslTranslator
                     if (!swizzles.TryGetValue(register, out var set)) swizzles[register] = set = [];
                     set.Add(match.Groups["s"].Value);
                 }
-            var code = Emit(opcode, operands, cubes, textureBound, srgb, ref depth);
+            var code = Emit(opcode, operands, cubes, textureBound, srgb, unboundValue, ref depth);
             if (code.Length == 0) continue;
             if (code.StartsWith('}')) depth = Math.Max(1, depth);
             body.Append(' ', depth * 2).Append(code).Append('\n');
@@ -177,7 +180,8 @@ public static partial class DxbcGlslTranslator
     }
 
     private static string Emit(
-        string opcode, List<string> ops, HashSet<int> cubes, Func<int, bool> textureBound, Func<int, bool> srgb, ref int depth)
+        string opcode, List<string> ops, HashSet<int> cubes, Func<int, bool> textureBound, Func<int, bool> srgb,
+        Func<int, string?> unboundValue, ref int depth)
     {
         var saturate = opcode.EndsWith("_sat", StringComparison.Ordinal);
         var name = saturate ? opcode[..^4] : opcode;
@@ -290,7 +294,7 @@ public static partial class DxbcGlslTranslator
             case "sample" or "sample_indexable" or "sample_b" or "sample_b_indexable" or "sample_l" or "sample_l_indexable"
                 or "sample_d" or "sample_d_indexable" or "sample_c" or "sample_c_indexable" or "sample_c_lz"
                 or "sample_c_lz_indexable":
-                return Sample(bare, ops, cubes, textureBound, srgb);
+                return Sample(bare, ops, cubes, textureBound, srgb, unboundValue);
         }
         throw new DxbcTranslationException($"Unsupported instruction '{opcode}'.");
     }
@@ -310,7 +314,8 @@ public static partial class DxbcGlslTranslator
     }
 
     private static string Sample(
-        string bare, List<string> ops, HashSet<int> cubes, Func<int, bool> textureBound, Func<int, bool> srgb)
+        string bare, List<string> ops, HashSet<int> cubes, Func<int, bool> textureBound, Func<int, bool> srgb,
+        Func<int, string?> unboundValue)
     {
         var resource = ResourceOperandRegex().Match(ops[2]);
         if (!resource.Success) throw new DxbcTranslationException($"Unsupported texture operand '{ops[2]}'.");
@@ -321,7 +326,7 @@ public static partial class DxbcGlslTranslator
         if (bare.StartsWith("sample_c", StringComparison.Ordinal))
             sampled = "vec4(1.0)";
         else if (cubes.Contains(slot) || !textureBound(slot))
-            sampled = cubes.Contains(slot) ? "vec4(0.2, 0.2, 0.22, 1.0)" : "vec4(0.0, 0.0, 0.0, 1.0)";
+            sampled = cubes.Contains(slot) ? "vec4(0.2, 0.2, 0.22, 1.0)" : unboundValue(slot) ?? "vec4(0.0, 0.0, 0.0, 1.0)";
         else
         {
             var sampler = $"ark_gt{slot}";

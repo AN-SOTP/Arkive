@@ -34,6 +34,20 @@ public static class GameShaderMaterial
             .Any(name => name.Contains("emissive", StringComparison.OrdinalIgnoreCase) ||
                          name.Contains("glow", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// What an unset texture parameter reads: empty make-up and decal masks (their alpha weights the colour),
+    /// a flat normal, and white for colour, occlusion and other multipliers.
+    /// </summary>
+    private static string NeutralTexture(string parameter, bool customization)
+    {
+        if (customization) return "vec4(0.0)";
+        if (parameter.Contains("normal", StringComparison.OrdinalIgnoreCase)) return "vec4(0.5, 0.5, 1.0, 1.0)";
+        if (parameter.Contains("mask", StringComparison.OrdinalIgnoreCase) || parameter.Contains("emissive", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("fx", StringComparison.OrdinalIgnoreCase) || parameter.Contains("pan", StringComparison.OrdinalIgnoreCase))
+            return "vec4(0.0, 0.0, 0.0, 1.0)";
+        return "vec4(1.0)";
+    }
+
     private static readonly System.Text.RegularExpressions.Regex UnlitAlbedo = new(
         @"ark_o3\.xyz = \(floatBitsToUint\(ark_cb2\[\d+\]\)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
@@ -117,6 +131,7 @@ public static class GameShaderMaterial
         // Each 2D texture expression is bound to the t# slot the shader record names (or, when that is
         // unknown, to the slot matching its position).
         var slotTextures = new Dictionary<int, string>();
+        var neutralSlots = new Dictionary<int, string>();
         for (var expression = 0; expression < expressions.Textures.Count; expression++)
         {
             if (expressions.Textures[expression] is not UniformTexture texture) continue;
@@ -131,10 +146,13 @@ public static class GameShaderMaterial
             var customization = texture.Parameter is { } parameter &&
                                 parameter.StartsWith("var_", StringComparison.OrdinalIgnoreCase) &&
                                 parameter.EndsWith("_ui", StringComparison.OrdinalIgnoreCase);
-            if (name is null && !customization && material.ReferencedTextures is { } referenced &&
+            // An unset texture parameter's default is not recoverable from the cooked data (its texture index does
+            // not address ReferencedTextures), so it reads a neutral value; only non-parameter textures use the index.
+            if (name is null && texture.Parameter is null && material.ReferencedTextures is { } referenced &&
                 texture.TextureIndex >= 0 && texture.TextureIndex < referenced.Count)
                 name = referenced[texture.TextureIndex];
             if (!string.IsNullOrWhiteSpace(name)) slotTextures[slot] = name;
+            else if (texture.Parameter is { } unset) neutralSlots[slot] = NeutralTexture(unset, customization);
             if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
                 Console.Error.WriteLine($"[texture] {material.Name} t{slot} <- {texture.Parameter ?? "-"} #{texture.TextureIndex} = {name ?? "(none)"}");
         }
@@ -148,7 +166,8 @@ public static class GameShaderMaterial
             translation = DxbcGlslTranslator.Translate(
                 DxbcDisassembler.Disassemble(dxbc),
                 slot => samplers.ContainsKey($"ark_gt{slot}"),
-                slot => slotTextures.TryGetValue(slot, out var name) && textureSrgb(name));
+                slot => slotTextures.TryGetValue(slot, out var name) && textureSrgb(name),
+                neutralSlots.GetValueOrDefault);
         }
         catch (Exception exception) when (exception is DxbcTranslationException or InvalidDataException or DllNotFoundException)
         {
