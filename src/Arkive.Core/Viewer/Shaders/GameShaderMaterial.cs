@@ -16,11 +16,26 @@ public sealed record GameShaderPlan(
     IReadOnlyList<GameShaderInput> Inputs,
     int AlbedoOutput,
     int InstructionCount,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    bool EmitsSceneColour = false,
+    bool Unlit = false);
 
 /// <summary>Finds, translates and binds the game's base-pass pixel shader for one material instance.</summary>
 public static class GameShaderMaterial
 {
+    /// <summary>
+    /// Whether the material sets up glow. The scene colour (o0) of a lit shader also holds rim light and
+    /// specular terms that depend on lighting inputs the viewer can only approximate (hair turns pink with
+    /// them), so it is added only for materials that emit light.
+    /// </summary>
+    private static bool HasEmissiveParameter(MaterialInstanceDescription material) =>
+        material.Textures.Keys.Concat(material.Vectors.Keys).Concat(material.Scalars.Keys)
+            .Any(name => name.Contains("emissive", StringComparison.OrdinalIgnoreCase) ||
+                         name.Contains("glow", StringComparison.OrdinalIgnoreCase));
+
+    private static readonly System.Text.RegularExpressions.Regex UnlitAlbedo = new(
+        @"ark_o3\.xyz = \(floatBitsToUint\(ark_cb2\[\d+\]\)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     /// <param name="materialBytes">
     /// Export bytes of a material by name (null when unavailable). The instance and then its parents are
     /// searched for the static parameters of the compiled permutation they use.
@@ -169,7 +184,18 @@ public static class GameShaderMaterial
             buffers[$"ark_cb{buffer}"] = buffer == 0 ? cb0 : new float[Math.Max(1, size) * 4];
         if (buffers.TryGetValue("ark_cb2", out var cb2) && cb2.Length >= 16) cb2[15] = 1;
 
-        var albedo = translation.Outputs.Contains(3) ? 3 : 0;
+        // Translucent shaders scale their opacity by the first engine constant (1 while the object is fully faded
+        // in); it is only set when no material parameter lives there.
+        var translucent = material.BlendMode.Contains("Translucent", StringComparison.OrdinalIgnoreCase) ||
+                          material.BlendMode.Contains("Additive", StringComparison.OrdinalIgnoreCase);
+        if (translucent && cb0.Length >= 4 && !bindings.VectorRegisters.Contains(0) && !bindings.ScalarRegisters.Contains(0))
+            cb0[0] = 1;
+
+        // Effect shaders write only the per-object tint to the albedo target; their colour is the scene colour
+        // they emit (o0), with its alpha as opacity.
+        var unlit = UnlitAlbedo.IsMatch(translation.Function);
+        if (unlit) notes.Add("Effect material: shown as the light it emits.");
+        var albedo = translation.Outputs.Contains(3) && !unlit ? 3 : 0;
         return new GameShaderPlan(
             map.FriendlyName,
             map.MaterialId,
@@ -183,6 +209,8 @@ public static class GameShaderMaterial
             translation.Inputs.Select(input => new GameShaderInput(input.Register, input.Semantic, input.Index)).ToArray(),
             albedo,
             translation.InstructionCount,
-            notes);
+            notes,
+            albedo != 0 && translation.Outputs.Contains(0) && HasEmissiveParameter(material),
+            unlit);
     }
 }

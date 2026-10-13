@@ -108,6 +108,8 @@ function gameInput(input) {
     case 'TEXCOORD11': return `${register} = floatBitsToUint(vec4(normalize(vNormal), 1.0));`;
     case 'COLOR0': return `${register} = floatBitsToUint(vec4(1.0));`;
     case 'COLOR1': return `${register} = floatBitsToUint(vec4(0.0));`;
+    // Height fog: colour in xyz, the share of the surface that survives in w. The viewer has no fog.
+    case 'TEXCOORD4': return `${register} = floatBitsToUint(vec4(0.0, 0.0, 0.0, 1.0));`;
     default: return `${register} = floatBitsToUint(vec4(0.0, 0.0, 1.0, 1.0));`;
   }
 }
@@ -150,10 +152,17 @@ function recipeMaterial(info, plan, game, bake = false) {
     const translucent = material.transparent && game.albedoOutput === 0;
     baseColour = `{\n${game.inputs.map(gameInput).join('\n')}\nark_game_shader();\n` +
       `vec4 ark_albedo = uintBitsToFloat(ark_o${game.albedoOutput});\n` +
-      `diffuseColor.rgb = clamp(ark_albedo.rgb, 0.0, 16.0);\n` +
+      // An effect material is all emitted light: nothing of it is lit (a bake keeps its colour).
+      `diffuseColor.rgb = ${game.unlit && !bake ? 'vec3(0.0)' : 'clamp(ark_albedo.rgb, 0.0, 16.0)'};\n` +
       (translucent ? 'diffuseColor.a = clamp(ark_albedo.a, 0.0, 1.0);\n' : '') + '}';
     opacity = null;
   }
+  // With a separate albedo target, the game's o0 is the base pass's own scene colour: emissive, glow and rim
+  // light. Arkive's engine constants (sky and ambient light) are zero, so it adds only what the material emits.
+  const gameEmissive = game?.unlit || game?.emitsSceneColour
+    // The viewer has no tone mapping, so bright (HDR) glow is scaled into range keeping its hue.
+    ? '{ vec3 ark_glow = max(uintBitsToFloat(ark_o0).rgb, vec3(0.0));' +
+      ' totalEmissiveRadiance += ark_glow / max(1.0, max(ark_glow.r, max(ark_glow.g, ark_glow.b))); }' : null;
   const usesSecondUv = plan.usesSecondUv || !!game;
   material.defines = { USE_UV: '' };
   if (usesSecondUv) material.defines.USE_UV1 = '';
@@ -175,7 +184,8 @@ function recipeMaterial(info, plan, game, bake = false) {
     if (opacity) fs = fs.replace('#include <alphamap_fragment>', opacity);
     if (plan.roughnessGlsl) fs = fs.replace('#include <roughnessmap_fragment>', `float roughnessFactor = clamp(${plan.roughnessGlsl}, 0.04, 1.0);`);
     if (plan.metalnessGlsl) fs = fs.replace('#include <metalnessmap_fragment>', `float metalnessFactor = clamp(${plan.metalnessGlsl}, 0.0, 1.0);`);
-    if (plan.emissiveGlsl) fs = fs.replace('#include <emissivemap_fragment>', `totalEmissiveRadiance += ${plan.emissiveGlsl};`);
+    if (gameEmissive) fs = fs.replace('#include <emissivemap_fragment>', gameEmissive);
+    else if (plan.emissiveGlsl) fs = fs.replace('#include <emissivemap_fragment>', `totalEmissiveRadiance += ${plan.emissiveGlsl};`);
     if (plan.occlusionGlsl) fs = fs.replace('#include <aomap_fragment>', `reflectedLight.indirectDiffuse *= clamp(${plan.occlusionGlsl}, 0.0, 1.0);`);
     if (bake) {
       if (!game) fs = fs.replace('#include <common>', `#include <common>\n${state.scene.glslPrelude}`);
@@ -190,7 +200,7 @@ function recipeMaterial(info, plan, game, bake = false) {
     material.depthWrite = false;
     material.side = THREE.DoubleSide;
   }
-  material.customProgramCacheKey = () => [bake, plan.familyId, game?.shaderId, usesSecondUv, plan.baseColorGlsl, plan.opacityGlsl,
+  material.customProgramCacheKey = () => [bake, plan.familyId, game?.shaderId, !!gameEmissive, usesSecondUv, plan.baseColorGlsl, plan.opacityGlsl,
     plan.roughnessGlsl, plan.metalnessGlsl, plan.emissiveGlsl, plan.occlusionGlsl, declarations.length, game?.albedoOutput].join('|');
   return material;
 }
