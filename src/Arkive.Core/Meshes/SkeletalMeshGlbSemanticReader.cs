@@ -545,12 +545,35 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
                     StringComparison.OrdinalIgnoreCase) ||
                 !left.InverseBindByBone.TryGetValue(bone, out var leftBind) ||
                 !right.InverseBindByBone.TryGetValue(bone, out var rightBind) ||
-                leftBind.Length != rightBind.Length) return false;
-            for (var index = 0; index < leftBind.Length; index++)
-                if (Math.Abs(leftBind[index] - rightBind[index]) > 2e-4f) return false;
+                !BindPoseMatches(leftBind, rightBind)) return false;
         }
         return true;
     }
+
+    // Blender rebuilds each rest bone from its head, tail and roll, which tilts some axis-aligned bones by
+    // about 2.4e-4 rad (0.014 degrees) on an untouched import/export. Allow for that in the rotation, and
+    // compare the rest position directly, because the inverse-bind translation scales the same tilt by the
+    // bone's distance from the origin.
+    internal static bool BindPoseMatches(IReadOnlyList<float> leftInverseBind, IReadOnlyList<float> rightInverseBind)
+    {
+        if (leftInverseBind.Count != 16 || rightInverseBind.Count != 16 ||
+            !Matrix4x4.Invert(InverseBindMatrix(leftInverseBind), out var left) ||
+            !Matrix4x4.Invert(InverseBindMatrix(rightInverseBind), out var right)) return false;
+        var rotation = new[]
+        {
+            left.M11 - right.M11, left.M12 - right.M12, left.M13 - right.M13,
+            left.M21 - right.M21, left.M22 - right.M22, left.M23 - right.M23,
+            left.M31 - right.M31, left.M32 - right.M32, left.M33 - right.M33,
+        };
+        return rotation.All(delta => Math.Abs(delta) <= 1e-3f) &&
+               Vector3.Distance(left.Translation, right.Translation) <= 1e-4f;
+    }
+
+    private static Matrix4x4 InverseBindMatrix(IReadOnlyList<float> values) => new(
+        values[0], values[1], values[2], values[3],
+        values[4], values[5], values[6], values[7],
+        values[8], values[9], values[10], values[11],
+        values[12], values[13], values[14], values[15]);
 
     private JsonElement FindSkinForMeshLod(int lodIndex)
     {

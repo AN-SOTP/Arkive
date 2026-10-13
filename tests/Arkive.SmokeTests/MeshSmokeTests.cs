@@ -378,6 +378,14 @@ internal static class MeshSmokeTests
                    ExactSkeletonIdentity: false,
                } && skeletonPreflight.Issues.Any(issue => issue.Code == "SKC001"),
             "mesh preflight accepted a changed reference skeleton bind matrix");
+        var blenderDriftEdit = Path.Combine(entry.DirectoryPath, "synthetic-blender-bind-drift.glb");
+        WriteSkeletalMeshInverseBindEdit(editable.GlbPath, blenderDriftEdit, 5e-4f);
+        var blenderDriftPreflight = new SkeletalMeshEditPreflightService()
+            .InspectAsync(editableSnapshot.Entries[0], blenderDriftEdit)
+            .GetAwaiter().GetResult();
+        Assert(blenderDriftPreflight.SkeletonCompatibility is { ExactSkeletonIdentity: true } &&
+               !blenderDriftPreflight.Issues.Any(issue => issue.Code == "SKC001"),
+            "mesh preflight refused the bind-matrix rounding Blender adds on an untouched import/export");
 
         var clothReconPath = Path.Combine(entry.DirectoryPath, "synthetic-cloth-recon.json");
         var clothProperty = new SkeletalMeshPropertyEvidence(

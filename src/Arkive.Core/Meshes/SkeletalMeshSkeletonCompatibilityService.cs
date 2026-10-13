@@ -13,7 +13,6 @@ namespace Arkive.Core.Meshes;
 public sealed class SkeletalMeshSkeletonCompatibilityService
 {
     public const int CurrentSchemaVersion = 1;
-    private const double MatrixTolerance = 2e-4d;
 
     public async Task<SkeletalMeshSkeletonCompatibilityReport> AnalyzeAsync(
         SkeletalMeshEditableWorkspaceEntry source,
@@ -277,10 +276,9 @@ public sealed class SkeletalMeshSkeletonCompatibilityService
                 !Canonical(source.NameByBone.GetValueOrDefault(bone, string.Empty)).Equals(
                     Canonical(target.NameByBone.GetValueOrDefault(bone, string.Empty)), StringComparison.Ordinal) ||
                 !source.InverseBindByBone.TryGetValue(bone, out var left) ||
-                !target.InverseBindByBone.TryGetValue(bone, out var right) || left.Length != right.Length)
+                !target.InverseBindByBone.TryGetValue(bone, out var right) ||
+                !SkeletalMeshGlbSemanticReader.BindPoseMatches(left, right))
                 return false;
-            for (var index = 0; index < left.Length; index++)
-                if (Math.Abs(left[index] - right[index]) > MatrixTolerance) return false;
         }
         return true;
     }
