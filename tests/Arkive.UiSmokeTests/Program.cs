@@ -70,9 +70,14 @@ internal static class Program
         var results = Control<DataGrid>(window, "LibraryGrid");
         Check(results.Items.Count == 1, "The asset library cannot search by in-game name.");
         results.SelectedIndex = 0;
-        Check(Control<Button>(window, "LibraryInspectButton").IsVisible &&
-              Control<Button>(window, "LibraryCopyIdentityButton").IsEnabled,
-            "UModel preview or asset information controls are no longer available.");
+        await UntilAsync(
+            () => Control<Button>(window, "LibraryInspectButton").IsVisible &&
+                  Control<Button>(window, "LibraryCopyIdentityButton").IsEnabled,
+            () => "UModel preview or asset information controls are no longer available: " +
+                  $"tab={(tabs.SelectedItem as TabItem)?.Name}, results={results.Items.Count}, " +
+                  $"selected={results.SelectedIndex}, windowVisible={window.IsVisible}, " +
+                  $"inspectVisible={Control<Button>(window, "LibraryInspectButton").IsVisible}, " +
+                  $"copyEnabled={Control<Button>(window, "LibraryCopyIdentityButton").IsEnabled}.");
         await SearchLibraryAsync(window, "fixture_sound");
         Check(results.Items.Count == 1, "The asset library hides assets that cannot be modded.");
         await SearchLibraryAsync(window, "fixture-package.upk");
