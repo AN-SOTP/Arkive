@@ -24,7 +24,7 @@ namespace Arkive.Core.Viewer;
 /// </summary>
 public sealed class ModelViewerSceneService
 {
-    public const int CurrentSchemaVersion = 8;
+    public const int CurrentSchemaVersion = 9;
     public const string UmodelFolder = "umodel";
     public const string ModelFile = "model.glb";
     public const string PropertiesFile = "properties.txt";
@@ -131,12 +131,20 @@ public sealed class ModelViewerSceneService
         var diagnostics = new List<string>();
 
         progress?.Report(new("Exporting materials and textures", request.ObjectName));
-        var exportTask = _bridge.ExportForViewerAsync(request.PackagePath, asset,
-            Path.Combine(directory, UmodelFolder), request.PackageSearchRoot, cancellationToken);
-        var dumpTask = _bridge.DumpObjectAsync(request.PackagePath, asset, cancellationToken);
+        // UModel cannot read every object; Arkive's own decoder may still show its geometry.
+        var exportTask = Tolerate(_bridge.ExportForViewerAsync(request.PackagePath, asset,
+            Path.Combine(directory, UmodelFolder), request.PackageSearchRoot, cancellationToken));
+        var dumpTask = Tolerate(_bridge.DumpObjectAsync(request.PackagePath, asset, cancellationToken));
         await Task.WhenAll(exportTask, dumpTask).ConfigureAwait(false);
-        var export = await exportTask.ConfigureAwait(false);
-        var dump = await dumpTask.ConfigureAwait(false);
+        var (exported, exportFailure) = await exportTask.ConfigureAwait(false);
+        var (dumped, dumpFailure) = await dumpTask.ConfigureAwait(false);
+        var export = exported ?? new UmodelExportResult(Path.GetFullPath(request.PackagePath), asset,
+            Path.Combine(directory, UmodelFolder), [], [], TimeSpan.Zero, false);
+        var dump = dumped ?? new UmodelObjectDumpResult(Path.GetFullPath(request.PackagePath), asset, string.Empty, [], TimeSpan.Zero);
+        var umodelFailed = (exportFailure ?? dumpFailure) is not null;
+        if (umodelFailed)
+            diagnostics.Add("UModel cannot read this object, so its materials, textures and properties are unavailable. " +
+                            "The geometry comes from Arkive's own decoder.");
         diagnostics.AddRange(export.Diagnostics.Where(IsUsefulDiagnostic).Distinct().Take(20));
         await File.WriteAllTextAsync(Path.Combine(directory, PropertiesFile), dump.RawOutput, cancellationToken)
             .ConfigureAwait(false);
@@ -222,7 +230,7 @@ public sealed class ModelViewerSceneService
             var description = FindMaterial(materials, reference);
             if (description is null)
             {
-                diagnostics.Add($"Material slot {slot} ({reference}) was not exported by UModel.");
+                if (!umodelFailed) diagnostics.Add($"Material slot {slot} ({reference}) was not exported by UModel.");
                 description = MaterialInstanceDescriptionReader.Resolve(reference,
                     new Dictionary<string, (string, UmodelPropertyNode)>());
             }
@@ -266,6 +274,12 @@ public sealed class ModelViewerSceneService
             JsonSerializer.SerializeToUtf8Bytes(scene, JsonOptions), cancellationToken).ConfigureAwait(false);
         _cache.Trim(keepKey: key);
         return new ModelViewerSceneResult(directory, Path.Combine(directory, "scene.json"), scene, FromCache: false);
+    }
+
+    private static async Task<(T? Result, string? Failure)> Tolerate<T>(Task<T> task) where T : class
+    {
+        try { return (await task.ConfigureAwait(false), null); }
+        catch (UmodelBridgeException exception) { return (null, exception.Message); }
     }
 
     private ModelViewerMaterial BuildMaterial(
