@@ -10,6 +10,7 @@ using Arkive.Core.External;
 using Arkive.Core.Inspection;
 using Arkive.Core.Meshes;
 using Arkive.Core.Packages;
+using Arkive.Core.StaticMeshes;
 using Arkive.Core.Viewer.Shaders;
 
 namespace Arkive.Core.Viewer;
@@ -22,7 +23,7 @@ namespace Arkive.Core.Viewer;
 /// </summary>
 public sealed class ModelViewerSceneService
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
     public const string UmodelFolder = "umodel";
     public const string ModelFile = "model.glb";
     public const string PropertiesFile = "properties.txt";
@@ -38,6 +39,7 @@ public sealed class ModelViewerSceneService
     private readonly IChunkProtectionProvider _protectionProvider;
     private readonly AssetCatalogReader _catalogReader;
     private readonly SkeletalMeshReconnaissanceService _skeletalReconnaissance;
+    private readonly StaticMeshReconnaissanceService _staticReconnaissance;
     private readonly MaterialRecipeCatalog _recipes;
     private readonly ModelViewerCache _cache;
     private readonly UpkPackageReader? _reader;
@@ -59,6 +61,7 @@ public sealed class ModelViewerSceneService
         _reader = reader;
         _catalogReader = new AssetCatalogReader(reader, _protectionProvider);
         _skeletalReconnaissance = new SkeletalMeshReconnaissanceService(reader, _protectionProvider, umodelBridge: null);
+        _staticReconnaissance = new StaticMeshReconnaissanceService(reader, _protectionProvider, umodelBridge: null);
     }
 
     public MaterialRecipeCatalog Recipes => _recipes;
@@ -133,6 +136,25 @@ public sealed class ModelViewerSceneService
                 bones.AddRange(native.Bones);
                 vertexColors = native.HasVertexColors;
                 slotNames = native.SlotNames;
+                modelUrl = ModelFile;
+                geometrySource = "arkive-native";
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                diagnostics.Add($"Arkive's native decoder could not read this mesh ({exception.Message}); showing UModel's LOD 0 export.");
+            }
+        }
+
+        if (asset.Kind == AssetKind.StaticMesh)
+        {
+            progress?.Report(new("Decoding every LOD", request.ObjectName));
+            try
+            {
+                var native = await BuildNativeStaticMeshAsync(request, dump, directory, cancellationToken)
+                    .ConfigureAwait(false);
+                lods.AddRange(native.Lods);
+                slotNames = native.SlotNames;
+                vertexColors = native.HasVertexColors;
                 modelUrl = ModelFile;
                 geometrySource = "arkive-native";
             }
@@ -426,6 +448,53 @@ public sealed class ModelViewerSceneService
                 section.TriangleCount)).ToArray())).ToArray();
         var bones = layout.Bones.Select(bone => new ModelViewerBone(bone.BoneIndex, bone.Name, bone.ParentIndex)).ToArray();
         return new NativeSkeletalMesh(lods, bones, decoded.Any(lod => lod.Colors is not null), slotNames);
+    }
+
+    private async Task<NativeSkeletalMesh> BuildNativeStaticMeshAsync(
+        ModelViewerRequest request,
+        UmodelObjectDumpResult dump,
+        string directory,
+        CancellationToken cancellationToken)
+    {
+        var file = new FileInfo(request.PackagePath);
+        var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}")));
+        var report = await _staticReconnaissance.InspectAsync(
+            new StaticMeshReconnaissanceRequest(request.PackagePath, request.PackageAlias, request.ExportIndex,
+                AssetKind.StaticMesh, request.ClassName, request.ObjectName, request.SerialOffset,
+                request.SerialSize, identity) { SkipUmodelOracle = true },
+            cancellationToken).ConfigureAwait(false);
+        var layout = report.NativeLayout
+            ?? throw new InvalidDataException(report.Issues.FirstOrDefault(issue => issue.Severity == "Error")?.Message
+                ?? "the native layout was not proven");
+        report = report with { Oracle = StaticMeshReconnaissanceService.ParseDump(dump.RawOutput, dump.Duration, request.ClassName) };
+
+        var catalog = _catalogReader.Read(request.PackagePath);
+        using var logical = new LogicalPackageStream(catalog.Summary, _protectionProvider);
+        var bytes = new byte[checked((int)request.SerialSize)];
+        logical.Position = request.SerialOffset;
+        logical.ReadExactly(bytes);
+        var decoded = new StaticMeshSemanticDecoder().Decode(bytes, layout);
+        var glb = new ArkiveStaticMeshGlbWriter().Build(report, decoded);
+        await File.WriteAllBytesAsync(Path.Combine(directory, ModelFile), glb.Bytes, cancellationToken)
+            .ConfigureAwait(false);
+
+        // The static GLB has one material per LOD section; the viewer works with distinct materials.
+        var materialNames = ReadGlbMaterialNames(glb.Bytes);
+        var slots = materialNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var lods = decoded.Select(lod => new ModelViewerLod(
+            lod.Evidence.LodIndex,
+            lod.Evidence.VertexCount,
+            lod.Indices.Length / 3,
+            lod.Evidence.TextureCoordinateCount,
+            lod.Evidence.Sections.Select(section =>
+            {
+                var name = report.Oracle?.Lods.SingleOrDefault(item => item.LodIndex == lod.Evidence.LodIndex)?
+                    .Sections.SingleOrDefault(item => item.SectionIndex == section.SectionIndex)?.Material;
+                var slot = name is null ? -1 : slots.FindIndex(candidate => candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
+                return new ModelViewerSection(section.SectionIndex, slot, name, section.FirstIndex, section.TriangleCount);
+            }).ToArray())).ToArray();
+        return new NativeSkeletalMesh(lods, [], decoded.Any(lod => lod.Colours is not null), slots);
     }
 
     private static (List<ModelViewerLod> Lods, IReadOnlyList<string> SlotNames) OracleLods(string dump, AssetKind kind)
