@@ -126,7 +126,7 @@ The local index is resumable. Worker count and optional fast scratch storage hel
 
 1. In **Create mod**, enter a name and optional version/author/description. **Create mod** saves a draft and opens **Edit mods**; no game files change.
 2. Expand **Add assets**, search by game/object name and select results. **Add asset only** prepares one editable GLB, PNG/DDS or material project. **Add mesh + textures/materials** prepares a skeletal mesh and its exact resolved dependencies as a structured kit. References start excluded; tick **Include** only for assets your mod should replace.
-3. Use **Preview original** to inspect sources in UModel. Extraction shows stage, elapsed time and dependency counts, with cancellation at safe checkpoints. Original previews remain available during extraction; editing/building waits until completion.
+3. Use **Preview original** to inspect sources: meshes open in Arkive's model viewer, where PgUp/PgDn step through these search results, and textures and materials open in UModel. **Open in UModel** opens any selected asset in UModel instead. Extraction shows stage, elapsed time and dependency counts, with cancellation at safe checkpoints. Original previews remain available during extraction; editing/building waits until completion.
 4. Select a working asset and use **Open edited file**, **Working folder**, **Replace file**, **Compare with original** or **Edit material**. Edit the working file displayed in the table. Export meshes back as GLB while retaining the target contract.
 5. **Save mod** validates included edits and writes a `.arkive` file. New mods start disabled; saving is not installation.
 6. **Preview changes** shows the hypothetical enabled result without changing files. **Save and apply** saves/enables, reviews the actual plan and applies after confirmation. You can also enable later in **Mods**.
@@ -244,13 +244,13 @@ The built-in Western/global protection profile is `western-global-steam-v1`. It 
 
 ### Textures and materials
 
-Verified paths cover BC1/DXT1, BC3/DXT5, BC5/ATI2, supported Unity-Crunch and UE3 bulk mips. Native manifests retain format/dimension/mip contracts and alpha policy. Arkive rebuilds required mip payloads and validates decoded results. Preserve normal-map semantics; colour changes do not permit arbitrary compression/layout changes.
+Verified paths cover BC1/DXT1, BC3/DXT5, BC5/ATI2, supported Unity-Crunch and UE3 bulk mips. Native manifests retain format/dimension/mip contracts and alpha policy. An edited image keeps the original size, or is exactly 2× or 4× it on both sides (up to 4096×4096): Arkive then adds the larger mip levels above the original ones and updates the texture's size properties. Other sizes are refused. Arkive rebuilds required mip payloads and validates decoded results. Preserve normal-map semantics; colour changes do not permit arbitrary compression/layout changes.
 
 Supported `MaterialInstanceConstant` edits cover proven scalar/vector parameters, compatible texture references and supported parent/reference fields. Arkive is not a shader compiler or arbitrary material graph importer. An emissive recolour may also need a material-tint edit. Particle effects and animation events are separate.
 
 ### Meshes, skeletons, cloth and morphs
 
-GLB exports retain supported position/normal/tangent/UV/colour buffers, material sections, joints/weights, reference skeleton and stable vertex identifiers. Topology-preserving edits retain native structure. Topology-capable replacements compile changed LOD0 within bone/section limits and duplicate it into source LOD slots; independently authored LODs are not supplied by this route.
+GLB exports retain supported position/normal/tangent/UV/colour buffers, material sections, joints/weights, reference skeleton and stable vertex identifiers. Topology-preserving edits retain native structure. Topology-capable replacements compile changed LOD0 within bone/section limits and duplicate it into source LOD slots; independently authored LODs are not supplied by this route. Zero-area triangles already present in the game mesh are kept; new ones are refused with their location in Blender coordinates.
 
 Skeleton comparison checks names, hierarchy/bind transforms. Retarget workspaces help map donors but do not guarantee live animation compatibility. Animation-aware preflight checks weights, bounds and stress poses, not every animation/attachment/physics interaction. Verified cloth/morph links are preserved/remapped; unsupported or incompatible cases are refused. This is not a universal cloth solver, new physics importer or unlimited morph authoring system.
 
