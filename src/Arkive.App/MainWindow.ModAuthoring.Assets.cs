@@ -31,7 +31,7 @@ public partial class MainWindow : Window
             }
             else if (EditablePath(edit) is { } path)
             {
-                if (Path.GetExtension(path).Equals(".glb", StringComparison.OrdinalIgnoreCase) && FindBlender() is { } blender)
+                if (Path.GetExtension(path).Equals(".glb", StringComparison.OrdinalIgnoreCase) && ResolveBlender() is { } blender)
                     OpenGlbInBlender(blender, path);
                 else
                     Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
@@ -78,6 +78,26 @@ public partial class MainWindow : Window
         AuthoringStatusText.Text = "Opened in Blender. When done, use File > Export > glTF 2.0 and save over the same file " +
             "(its path is on your clipboard).";
         Log($"Opened editable mesh in Blender: blender={blender}, glb={glb}.");
+    }
+
+    private string? _blenderPath;
+
+    // Portable, Steam and Store installs of Blender are not found automatically, so ask once and remember the answer.
+    // Cancelling opens the GLB with the Windows default app instead.
+    private string? ResolveBlender()
+    {
+        if ((_blenderPath ?? _restoredSettings.BlenderPath) is { } saved && File.Exists(saved)) return saved;
+        if (FindBlender() is { } found) return found;
+        var dialog = new OpenFileDialog
+        {
+            Title = "Find blender.exe to open this mesh (Cancel opens it in the default app)",
+            CheckFileExists = true,
+            Filter = "Blender (blender.exe)|blender.exe",
+        };
+        if (dialog.ShowDialog(this) != true) return null;
+        _blenderPath = dialog.FileName;
+        TrySaveSettings("blender path chosen");
+        return _blenderPath;
     }
 
     private static string? FindBlender()

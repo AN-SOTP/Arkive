@@ -58,6 +58,8 @@ internal sealed record ArkiveSettings
     public bool ShowValidationPane { get; init; }
 
     public bool CheckForUpdatesOnStartup { get; init; } = true;
+
+    public string? BlenderPath { get; init; }
 }
 
 internal sealed class ArkiveSettingsStore

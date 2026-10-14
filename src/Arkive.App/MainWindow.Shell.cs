@@ -385,6 +385,7 @@ public partial class MainWindow : Window
                 CompactDensity = _compactDensity,
                 ShowValidationPane = _showValidationPane,
                 CheckForUpdatesOnStartup = _checkForUpdatesOnStartup ?? _restoredSettings.CheckForUpdatesOnStartup,
+                BlenderPath = _blenderPath ?? _restoredSettings.BlenderPath,
             };
             _settingsStore.Save(settings);
             Log(
