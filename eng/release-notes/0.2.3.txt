@@ -1,0 +1,6 @@
+Bigger textures, and fewer outfits refused after a Blender round trip.
+
+- Edited texture images can now be 2x or 4x their original size (up to 4096x4096), and Arkive writes the larger texture into the game package.
+- Outfits are no longer refused after a plain Blender import and export because of tiny triangles that were already in the game's model. New ones are still refused, and the message now says where they are.
+- Preview original in Add assets opens meshes in Arkive's model viewer, and a new Open in UModel button opens any asset in UModel.
+- PgUp/PgDn in the model viewer steps through the list the mesh was opened from.
