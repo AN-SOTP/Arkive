@@ -1,0 +1,3 @@
+Open edited file finds Blender wherever it is installed.
+
+- If Blender is not found automatically (portable, Steam or Microsoft Store installs), Arkive asks for blender.exe once and remembers it. Cancel opens the file with the Windows default app as before.
