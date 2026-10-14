@@ -752,7 +752,10 @@
                                             <Button x:Name="WorkshopExtractAssetKitButton" Content="Add mesh + textures/materials"
                                                     Click="WorkshopExtractAssetKitButton_Click"
                                                     ToolTip="Add the editable skeletal mesh, export its exact dependency kit, and prepare linked texture/material working copies as optional references. References are excluded until you tick Include; the game is not changed." />
-                                            <Button x:Name="WorkshopPreviewButton" Content="Preview original" Click="WorkshopPreviewButton_Click" />
+                                            <Button x:Name="WorkshopPreviewButton" Content="Preview original" Click="WorkshopPreviewButton_Click"
+                                                    ToolTip="Open the selected mesh in Arkive's model viewer. Textures and materials open in UModel." />
+                                            <Button x:Name="WorkshopUmodelButton" Content="Open in UModel" Click="WorkshopUmodelButton_Click"
+                                                    ToolTip="Ask UModel to open the selected asset instead." />
                                         </WrapPanel>
                                         <TextBlock x:Name="WorkshopAddHelpText" Text="Asset only creates one working copy. Full kit also prepares the mesh's linked textures and materials."
                                                    Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,4" />

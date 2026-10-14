@@ -192,6 +192,20 @@ public partial class MainWindow : Window
     private void WorkshopPreviewButton_Click(object sender, RoutedEventArgs e)
     {
         if (!WorkshopPreviewButton.IsEnabled || _umodelBridge is null || WorkshopSearchResultsGrid.SelectedItem is not LibraryAssetRow row) return;
+        if (!CanPreviewInArkive(row.Kind)) OpenWorkshopRowInUmodel(row);
+        else if (OpenModelViewer(row, WorkshopSearchResultsGrid))
+            WorkshopStatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's model viewer.";
+    }
+
+    private void WorkshopUmodelButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (WorkshopUmodelButton.IsEnabled && WorkshopSearchResultsGrid.SelectedItem is LibraryAssetRow row)
+            OpenWorkshopRowInUmodel(row);
+    }
+
+    private void OpenWorkshopRowInUmodel(LibraryAssetRow row)
+    {
+        if (_umodelBridge is null) return;
         try
         {
             _umodelBridge.StartAssetPreview(row.SourcePath, CreateExternalAsset(row));
@@ -226,6 +240,7 @@ public partial class MainWindow : Window
             selected.All(row => CanReconnoitreSkeletalMesh(row.Kind, row.ClassName));
         WorkshopPreviewButton.IsEnabled = (idle || _authoringExtractionCancellation is not null) &&
             _umodelBridge is not null && result is not null;
+        WorkshopUmodelButton.IsEnabled = WorkshopPreviewButton.IsEnabled;
         WorkshopAddHelpText.Text = selected.Length > 1
             ? $"{selected.Length:N0} assets selected. Add selected assets creates a working copy of each. Complete kits require only skeletal meshes. Select one asset to preview it."
             : result?.Kind switch
@@ -573,7 +588,7 @@ public partial class MainWindow : Window
         }
 
         if (_umodelBridge is not null && LibraryGrid.SelectedItem is LibraryAssetRow row && CanPreviewInArkive(row.Kind))
-            OpenModelViewer(row);
+            OpenLibraryModelViewer(row);
         else
             InspectLibrarySelection();
         e.Handled = true;

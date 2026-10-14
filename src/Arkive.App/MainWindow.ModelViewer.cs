@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using Arkive.Core.Assets;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
@@ -14,13 +15,14 @@ public partial class MainWindow
 {
     private ModelViewerSceneService? _modelViewerService;
     private ModelViewerWindow? _modelViewerWindow;
+    private DataGrid? _modelViewerBrowseGrid;
     private readonly SemaphoreSlim _colourBakeGate = new(1, 1);
 
     private static bool CanPreviewInArkive(AssetKind kind) => kind is AssetKind.SkeletalMesh or AssetKind.StaticMesh;
 
     private void LibraryPreviewButton_Click(object sender, RoutedEventArgs e)
     {
-        if (LibraryGrid.SelectedItem is LibraryAssetRow row) OpenModelViewer(row);
+        if (LibraryGrid.SelectedItem is LibraryAssetRow row) OpenLibraryModelViewer(row);
     }
 
     private ModelViewerSceneService ModelViewerService() => _modelViewerService ??= new ModelViewerSceneService(
@@ -74,15 +76,21 @@ public partial class MainWindow
         }
     }
 
-    private void OpenModelViewer(LibraryAssetRow row)
+    private void OpenLibraryModelViewer(LibraryAssetRow row)
     {
-        if (OpenModelViewer(ToModelViewerRequest(row), edits: null))
+        if (OpenModelViewer(row, LibraryGrid))
             StatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's model viewer.";
     }
 
-    private bool OpenModelViewer(ModelViewerRequest request, Func<CancellationToken, Task<ModelViewerEdits?>>? edits)
+    /// <summary>Opens a search result; PgUp/PgDn in the viewer then move through <paramref name="results"/>.</summary>
+    private bool OpenModelViewer(LibraryAssetRow row, DataGrid results) =>
+        OpenModelViewer(ToModelViewerRequest(row), edits: null, results);
+
+    private bool OpenModelViewer(ModelViewerRequest request, Func<CancellationToken, Task<ModelViewerEdits?>>? edits,
+        DataGrid? results = null)
     {
         if (_umodelBridge is null) return false;
+        _modelViewerBrowseGrid = results;
         try
         {
             if (_modelViewerWindow is null || !_modelViewerWindow.IsLoaded)
@@ -213,17 +221,18 @@ public partial class MainWindow
         row.ClassName,
         row.ObjectName);
 
-    /// <summary>PgUp/PgDn in the viewer: moves the library selection to the previous or next mesh result.</summary>
+    /// <summary>PgUp/PgDn in the viewer: moves the opening search's selection to the previous or next mesh result.</summary>
     private ModelViewerRequest? BrowseModelViewer(int delta)
     {
-        var rows = LibraryGrid.Items.OfType<LibraryAssetRow>().ToList();
-        var index = LibraryGrid.SelectedItem is LibraryAssetRow current ? rows.IndexOf(current) : -1;
+        if (_modelViewerBrowseGrid is not { } grid) return null;
+        var rows = grid.Items.OfType<LibraryAssetRow>().ToList();
+        var index = grid.SelectedItem is LibraryAssetRow current ? rows.IndexOf(current) : -1;
         for (var step = 1; step <= rows.Count; step++)
         {
             var candidate = rows[((index + Math.Sign(delta) * step) % rows.Count + rows.Count) % rows.Count];
             if (!CanPreviewInArkive(candidate.Kind)) continue;
-            LibraryGrid.SelectedItem = candidate;
-            LibraryGrid.ScrollIntoView(candidate);
+            grid.SelectedItem = candidate;
+            grid.ScrollIntoView(candidate);
             return ToModelViewerRequest(candidate);
         }
         return null;
