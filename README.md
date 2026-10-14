@@ -41,9 +41,9 @@ Every LOD from Arkive's own decoder, coloured by the game's own compiled shaders
 
 ![Arkive model viewer showing Thaemine, Conqueror of Stars, with the game's shaders and blue glow](docs/screenshots/model-viewer-thaemine.png)
 
-![Arkive model viewer showing Death Incarnate Kazeros with glowing effect wings](docs/screenshots/model-viewer-kazeros.png)
+**Preview with edits** shows a mod's working files on top of the original asset and refreshes when they are saved (below shows a recoloured wing texture for Kazeros and changed hair colour for Serca).
 
-**Preview with edits** shows a mod's working files on top of the original asset and refreshes when they are saved (here a changed hair colour and a recoloured texture).
+![Arkive model viewer showing Death Incarnate Kazeros with glowing effect wings](docs/screenshots/model-viewer-kazeros.png)
 
 ![Arkive model viewer showing a mesh with a mod's edited material values and texture](docs/screenshots/model-viewer-edits.png)
 
