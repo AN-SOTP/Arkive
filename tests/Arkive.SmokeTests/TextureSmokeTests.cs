@@ -2116,6 +2116,64 @@ internal static class TextureSmokeTests
                    image.Manifest.AppendedReplacementVerified &&
                    !image.Manifest.PackageWasModified,
                 $"{pixelFormat} logical image did not pass replay verification");
+
+            // A doubled canvas becomes a larger texture: one new top mip, the original mip kept below it.
+            var doubled = new RgbaImage(edit.Width * 2, edit.Height * 2, new byte[edit.Pixels.Length * 4]);
+            for (var y = 0; y < doubled.Height; y++)
+            for (var x = 0; x < doubled.Width; x++)
+                edit.Pixels.AsSpan(((y / 2) * edit.Width + x / 2) * 4, 4)
+                    .CopyTo(doubled.Pixels.AsSpan((y * doubled.Width + x) * 4, 4));
+            var doubledPath = Path.Combine(fixtureDirectory, $"replacement-{suffix}-edit-2x.png");
+            PngRgbaCodec.WriteAsync(doubledPath, doubled).GetAwaiter().GetResult();
+            var upscaledCandidate = new TextureImportCandidateService()
+                .CreateAsync(new TextureImportCandidateRequest(
+                    native.ManifestPath, doubledPath, Path.Combine(fixtureDirectory, $"replacement-{suffix}-2x-candidate")))
+                .GetAwaiter()
+                .GetResult();
+            Assert(upscaledCandidate.Manifest.UpscaleLevels == 1 &&
+                   upscaledCandidate.Manifest.Width == native.Manifest.Width * 2 &&
+                   upscaledCandidate.Manifest.MipCount == native.Manifest.MipCount + 1,
+                $"{pixelFormat} doubled edit was not imported as a larger texture");
+            var upscaledPayload = new TextureReplacementPayloadService(
+                    layout, new UnityCrunchEncoder(encoderPath!), decoder)
+                .BuildAsync(new TextureReplacementPayloadRequest(
+                    upscaledCandidate.ManifestPath, Path.Combine(fixtureDirectory, $"replacement-{suffix}-2x-payloads")))
+                .GetAwaiter()
+                .GetResult();
+            Assert(upscaledPayload.Manifest.PayloadSetReadyForWriter &&
+                   upscaledPayload.Manifest.Mips.Count == native.Manifest.MipCount + 1 &&
+                   upscaledPayload.Manifest.Mips[0].Width == native.Manifest.Width * 2,
+                $"{pixelFormat} doubled payload set was not ready for the writer");
+            var upscaledAssemblyOutput = Path.Combine(fixtureDirectory, $"replacement-{suffix}-2x-assembly");
+            var upscaledAssembly = new TextureExportAssemblyService(crunchDecoder: decoder)
+                .AssembleAsync(new TextureExportAssemblyRequest(upscaledPayload.ManifestPath, upscaledAssemblyOutput))
+                .GetAwaiter()
+                .GetResult();
+            var upscaledExport = File.ReadAllBytes(Path.Combine(
+                upscaledAssemblyOutput, upscaledAssembly.Manifest.ReplacementExportRelativePath));
+            int PropertyValue(string name) => BinaryPrimitives.ReadInt32LittleEndian(upscaledExport.AsSpan(checked((int)
+                report.Properties.Single(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ValueRelativeOffset)));
+            Assert(upscaledAssembly.Manifest.NoOpExportByteIdentical &&
+                   upscaledAssembly.Manifest.ReplacementBlobReadyForRewritePlan &&
+                   upscaledAssembly.Manifest.Mips.Count == native.Manifest.MipCount + 1 &&
+                   PropertyValue("SizeX") == native.Manifest.Width * 2 &&
+                   PropertyValue("SizeY") == native.Manifest.Height * 2,
+                $"{pixelFormat} doubled export did not carry the new mips and size");
+            var upscaledPlan = new PackageRewritePlanService()
+                .PlanAsync(new PackageRewritePlanRequest(
+                    upscaledAssembly.ManifestPath, Path.Combine(fixtureDirectory, $"replacement-{suffix}-2x-plan")))
+                .GetAwaiter()
+                .GetResult();
+            var upscaledImage = new LogicalPackageImageService()
+                .BuildAsync(new LogicalPackageImageRequest(
+                    upscaledPlan.ManifestPath, Path.Combine(fixtureDirectory, $"replacement-{suffix}-2x-logical-image")))
+                .GetAwaiter()
+                .GetResult();
+            Assert(upscaledPlan.Manifest.BulkOffsetRebases.Count == native.Manifest.MipCount + 1 &&
+                   upscaledImage.Manifest.LogicalImageReadyForPhysicalWriter &&
+                   upscaledImage.Manifest.AllBulkOffsetsRebased &&
+                   upscaledImage.Manifest.AppendedReplacementVerified,
+                $"{pixelFormat} doubled texture did not pass the logical package rewrite");
         }
     }
 

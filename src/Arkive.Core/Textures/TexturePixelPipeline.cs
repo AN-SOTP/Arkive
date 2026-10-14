@@ -96,6 +96,11 @@ public sealed class DdsBlockTexture
     {
         var fullPath = System.IO.Path.GetFullPath(path);
         var bytes = await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
+        return Parse(fullPath, bytes);
+    }
+
+    public static DdsBlockTexture Parse(string path, byte[] bytes)
+    {
         if (bytes.Length < DdsBlockCompressedWriter.HeaderBytes ||
             BinaryPrimitives.ReadUInt32LittleEndian(bytes) != DdsMagic ||
             BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(4)) != 124 ||
@@ -160,7 +165,7 @@ public sealed class DdsBlockTexture
         }
 
         return new DdsBlockTexture(
-            fullPath,
+            path,
             bytes,
             width,
             height,
@@ -387,6 +392,83 @@ public static class TextureEditableImageService
 public static class TextureBlockRebuilder
 {
     private const int EditorRoundTripTolerance = 2;
+
+    /// <summary>
+    /// Returns <paramref name="original"/> with <paramref name="levels"/> larger mips added on top, so an
+    /// upscaled edit can be rebuilt against it: the original mips become the lower levels byte-for-byte, and
+    /// each new level is a nearest-neighbour enlargement of the original top mip (alpha included).
+    /// </summary>
+    public static DdsBlockTexture AddUpscaledTopMips(DdsBlockTexture original, int levels)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentOutOfRangeException.ThrowIfLessThan(levels, 1);
+        var top = original.DecodeMip(0, editableView: false);
+        var width = original.Width << levels;
+        var height = original.Height << levels;
+        var newMips = new List<byte[]>(levels);
+        for (var level = 0; level < levels; level++)
+        {
+            var scale = 1 << (levels - level);
+            newMips.Add(EncodeBlocks(NearestUpscale(top, scale), original.Format, original.BytesPerBlock));
+        }
+
+        var header = original.Bytes.AsSpan(0, DdsBlockCompressedWriter.HeaderBytes).ToArray();
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(12), checked((uint)height));
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(16), checked((uint)width));
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(20), checked((uint)newMips[0].Length));
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(28), checked((uint)(original.MipCount + levels)));
+        var bytes = new byte[header.Length + newMips.Sum(mip => mip.Length) +
+                             original.Bytes.Length - DdsBlockCompressedWriter.HeaderBytes];
+        var offset = 0;
+        foreach (var part in newMips.Prepend(header))
+        {
+            part.CopyTo(bytes, offset);
+            offset += part.Length;
+        }
+        original.Bytes.AsSpan(DdsBlockCompressedWriter.HeaderBytes).CopyTo(bytes.AsSpan(offset));
+        return DdsBlockTexture.Parse(original.Path, bytes);
+    }
+
+    private static RgbaImage NearestUpscale(RgbaImage source, int scale)
+    {
+        var width = source.Width * scale;
+        var height = source.Height * scale;
+        var pixels = new byte[checked(width * height * 4)];
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+            source.Pixels.AsSpan(((y / scale) * source.Width + x / scale) * 4, 4)
+                .CopyTo(pixels.AsSpan((y * width + x) * 4, 4));
+        return new RgbaImage(width, height, pixels);
+    }
+
+    private static byte[] EncodeBlocks(RgbaImage image, BlockTextureFormat format, int bytesPerBlock)
+    {
+        var blocksWide = Math.Max(1, (image.Width + 3) / 4);
+        var blocksHigh = Math.Max(1, (image.Height + 3) / 4);
+        var output = new byte[blocksWide * blocksHigh * bytesPerBlock];
+        Span<byte> pixels = stackalloc byte[64];
+        for (var blockY = 0; blockY < blocksHigh; blockY++)
+        for (var blockX = 0; blockX < blocksWide; blockX++)
+        {
+            CopyPixelBlock(image, blockX, blockY, pixels);
+            var block = output.AsSpan((blockY * blocksWide + blockX) * bytesPerBlock, bytesPerBlock);
+            switch (format)
+            {
+                case BlockTextureFormat.Bc1:
+                    BlockCompression.EncodeBc1(pixels, block, allowTransparency: true);
+                    break;
+                case BlockTextureFormat.Bc3:
+                    BlockCompression.EncodeBc4Channel(pixels, 3, block[..8]);
+                    BlockCompression.EncodeBc1(pixels, block[8..], allowTransparency: false);
+                    break;
+                case BlockTextureFormat.Bc5:
+                    BlockCompression.EncodeBc4Channel(pixels, 0, block[..8]);
+                    BlockCompression.EncodeBc4Channel(pixels, 1, block[8..]);
+                    break;
+            }
+        }
+        return output;
+    }
 
     public static TextureBlockRebuildResult TransplantExactDds(
         DdsBlockTexture original,

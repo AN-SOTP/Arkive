@@ -76,7 +76,8 @@ public sealed record TextureImportCandidateManifest(
     long TouchedBlocks = 0,
     long UnchangedBlocksCopied = 0,
     bool AutomaticNormalization = false,
-    string TextureSemantic = "Colour");
+    string TextureSemantic = "Colour",
+    int UpscaleLevels = 0);
 
 public sealed record TextureImportCandidateResult(
     string OutputDirectory,
@@ -107,6 +108,21 @@ public sealed class TextureImportCandidateRefusalException : NotSupportedExcepti
 public sealed class TextureImportCandidateService
 {
     public const int CurrentManifestSchemaVersion = 2;
+    public const int MaximumUpscaledSize = 4096;
+
+    /// <summary>
+    /// How many times <paramref name="editedWidth"/>x<paramref name="editedHeight"/> doubles the original on both
+    /// sides (0 for the same size), or -1 when it is not a supported size.
+    /// </summary>
+    public static int UpscaleLevels(int width, int height, int editedWidth, int editedHeight)
+    {
+        for (var levels = 0; levels <= 2; levels++)
+        {
+            if (editedWidth == width << levels && editedHeight == height << levels)
+                return levels == 0 || Math.Max(editedWidth, editedHeight) <= MaximumUpscaledSize ? levels : -1;
+        }
+        return -1;
+    }
     public const int MinimumNativeTextureManifestSchemaVersion = 3;
     public const string ManifestFileName = "arkive-texture-import-candidate.json";
 
@@ -338,13 +354,26 @@ public sealed class TextureImportCandidateService
                 "The authoritative DDS dimensions or mip count no longer match its native texture manifest.");
         }
 
-        if (edited.Image.Width != original.Width || edited.Image.Height != original.Height)
+        var upscaleLevels = UpscaleLevels(original.Width, original.Height, edited.Image.Width, edited.Image.Height);
+        if (upscaleLevels < 0)
         {
             Refuse(
                 "TIC014",
                 $"The edited image is {edited.Image.Width}x{edited.Image.Height}; " +
-                $"{nativeManifest.ObjectName} requires {original.Width}x{original.Height}. " +
-                "Keep the exported canvas dimensions; Arkive handles format, alpha, compression, and mips automatically.");
+                $"{nativeManifest.ObjectName} requires {original.Width}x{original.Height}, or that size doubled " +
+                $"or quadrupled on both sides (up to {MaximumUpscaledSize}x{MaximumUpscaledSize}). " +
+                "Arkive handles format, alpha, compression, and mips automatically.");
+        }
+        if (upscaleLevels > 0)
+        {
+            // The original mips become the lower levels of the larger texture, so unchanged areas keep their blocks.
+            original = TextureBlockRebuilder.AddUpscaledTopMips(original, upscaleLevels);
+            compatibleEditedDds = null;
+            checks.Add(new TextureImportPreflightCheck(
+                "TIC_UPSCALED",
+                TextureImportPreflightStatus.Passed,
+                $"The edited image enlarges {nativeManifest.ObjectName} from {nativeManifest.Width}x{nativeManifest.Height} " +
+                $"to {original.Width}x{original.Height}; Arkive will write {original.MipCount} mips and the new size."));
         }
 
         checks.Add(new TextureImportPreflightCheck(
@@ -473,7 +502,8 @@ public sealed class TextureImportCandidateService
             rebuild.TouchedBlocks,
             rebuild.UnchangedBlocksCopied,
             AutomaticNormalization: true,
-            rebuild.Semantic.ToString());
+            rebuild.Semantic.ToString(),
+            upscaleLevels);
         var candidateManifestPath = Path.Combine(outputDirectory, ManifestFileName);
         await SaveJsonAtomicAsync(candidateManifestPath, candidateManifest, cancellationToken)
             .ConfigureAwait(false);

@@ -76,7 +76,11 @@ public sealed record TextureReplacementPayloadManifest(
     long ReplacementStoredBytes,
     IReadOnlyList<TextureLayoutCheck> Checks,
     IReadOnlyList<TextureReplacementMipPayload> Mips,
-    double DurationSeconds);
+    double DurationSeconds)
+{
+    /// <summary>Mip levels added above the source texture by an upscaled edit (Width/Height/MipCount are the new size).</summary>
+    public int UpscaleLevels { get; init; }
+}
 
 public sealed record TextureReplacementPayloadResult(
     string OutputDirectory,
@@ -198,9 +202,11 @@ public sealed class TextureReplacementPayloadService
         var candidateDds = await DdsBlockTexture.ReadAsync(candidateDdsPath, cancellationToken)
             .ConfigureAwait(false);
         var candidateDdsHash = Convert.ToHexString(SHA256.HashData(candidateDds.Bytes));
+        var upscale = candidate.UpscaleLevels;
         if (!candidateDdsHash.Equals(candidate.CandidateDdsSha256, StringComparison.OrdinalIgnoreCase) ||
-            candidateDds.Width != native.Width || candidateDds.Height != native.Height ||
-            candidateDds.MipCount != native.MipCount || candidateDds.FourCc != profile.DdsFourCc)
+            upscale is < 0 or > 2 ||
+            candidateDds.Width != native.Width << upscale || candidateDds.Height != native.Height << upscale ||
+            candidateDds.MipCount != native.MipCount + upscale || candidateDds.FourCc != profile.DdsFourCc)
         {
             Refuse("TRP010", "The candidate DDS no longer matches its manifest/native texture layout.");
         }
@@ -214,7 +220,7 @@ public sealed class TextureReplacementPayloadService
         Directory.CreateDirectory(payloadDirectory);
         Directory.CreateDirectory(workDirectory);
 
-        var mipResults = new List<TextureReplacementMipPayload>(native.MipCount);
+        var mipResults = new List<TextureReplacementMipPayload>(candidateDds.MipCount);
         var checks = new List<TextureLayoutCheck>
         {
             new("TRP_LAYOUT", TextureLayoutCheckStatus.Passed,
@@ -229,16 +235,21 @@ public sealed class TextureReplacementPayloadService
         var lz4Encoded = 0;
         try
         {
-            for (var index = 0; index < native.MipCount; index++)
+            for (var index = 0; index < candidateDds.MipCount; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var source = native.Mips[index];
-                var confirmed = layout.Mips[index];
+                // Levels added by an upscale have no source mip; they reuse the top source mip's storage codec.
+                var added = index < upscale;
+                var sourceIndex = Math.Max(0, index - upscale);
+                var source = native.Mips[sourceIndex];
+                var confirmed = added
+                    ? layout.Mips[0] with { Width = candidateDds.Mips[index].Width, Height = candidateDds.Mips[index].Height }
+                    : layout.Mips[sourceIndex];
                 var candidateMip = candidateDds.Mips[index];
-                var originalMip = originalDds.Mips[index];
+                var originalMip = originalDds.Mips[sourceIndex];
                 var candidateGpu = candidateDds.Bytes.AsSpan(
                     candidateMip.Offset, candidateMip.Length).ToArray();
-                var originalGpu = originalDds.Bytes.AsSpan(
+                var originalGpu = added ? [] : originalDds.Bytes.AsSpan(
                     originalMip.Offset, originalMip.Length).ToArray();
                 var candidateGpuHash = Convert.ToHexString(SHA256.HashData(candidateGpu));
                 var sourceStoredPath = ResolveWithin(
@@ -365,8 +376,8 @@ public sealed class TextureReplacementPayloadService
                     confirmed.Height,
                     confirmed.BulkDataFlags,
                     confirmed.StorageCodec,
-                    sourceStored.Length,
-                    sourceStoredHash,
+                    added ? 0 : sourceStored.Length,
+                    added ? "" : sourceStoredHash,
                     action,
                     relativePath,
                     replacement.Length,
@@ -386,7 +397,7 @@ public sealed class TextureReplacementPayloadService
             if (Directory.Exists(workDirectory)) Directory.Delete(workDirectory, recursive: true);
         }
 
-        var allDecode = mipResults.Count == native.MipCount &&
+        var allDecode = mipResults.Count == candidateDds.MipCount &&
                         mipResults.All(mip => mip.CodecMetadataVerified && mip.DecodeBackVerified);
         var allQuality = mipResults.All(mip => mip.Quality.QualityGatePassed);
         checks.Add(new TextureLayoutCheck(
@@ -422,9 +433,9 @@ public sealed class TextureReplacementPayloadService
             native.ClassName,
             native.ObjectName,
             native.PixelFormat,
-            native.Width,
-            native.Height,
-            native.MipCount,
+            candidateDds.Width,
+            candidateDds.Height,
+            candidateDds.MipCount,
             _crunchEncoder.Name,
             layout.MipPayloadLayoutConfirmed,
             allDecode,
@@ -438,7 +449,10 @@ public sealed class TextureReplacementPayloadService
             mipResults.Sum(mip => (long)mip.ReplacementStoredBytes),
             checks,
             mipResults,
-            watch.Elapsed.TotalSeconds);
+            watch.Elapsed.TotalSeconds)
+        {
+            UpscaleLevels = upscale,
+        };
         var manifestPath = Path.Combine(outputDirectory, ManifestFileName);
         await SaveJsonAtomicAsync(manifestPath, manifest, cancellationToken).ConfigureAwait(false);
         var outputFiles = Directory.EnumerateFiles(outputDirectory, "*", SearchOption.AllDirectories)

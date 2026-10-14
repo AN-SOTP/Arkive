@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Arkive.Core.Archives;
 using Arkive.Core.Assets;
+using Arkive.Core.Inspection;
 using Arkive.Core.Packages;
 
 namespace Arkive.Core.Textures;
@@ -78,7 +79,11 @@ public sealed record TextureExportAssemblyManifest(
     bool PackageWasModified,
     IReadOnlyList<TextureLayoutCheck> Checks,
     IReadOnlyList<TextureExportAssemblyMip> Mips,
-    double DurationSeconds);
+    double DurationSeconds)
+{
+    /// <summary>Mip levels added above the source texture by an upscaled edit.</summary>
+    public int UpscaleLevels { get; init; }
+}
 
 public sealed record TextureExportAssemblyResult(
     string OutputDirectory,
@@ -178,7 +183,8 @@ public sealed class TextureExportAssemblyService
             layoutPath, cancellationToken).ConfigureAwait(false);
         if (!layout.MipPayloadLayoutConfirmed || layout.PackageRewriteConfirmed ||
             !layout.ConfirmationId.Equals(payload.LayoutConfirmationId, StringComparison.OrdinalIgnoreCase) ||
-            layout.NativeExportIndex != payload.NativeExportIndex || layout.Mips.Count != payload.Mips.Count)
+            layout.NativeExportIndex != payload.NativeExportIndex ||
+            payload.UpscaleLevels is < 0 or > 2 || layout.Mips.Count + payload.UpscaleLevels != payload.Mips.Count)
         {
             Refuse("TEA008", "The payload set and layout-confirmation identity/scope disagree.");
         }
@@ -235,6 +241,9 @@ public sealed class TextureExportAssemblyService
             Refuse("TEA018", "The current logical source export no longer matches its native hash.");
         }
 
+        var sizePatches = payload.UpscaleLevels == 0
+            ? []
+            : await SizePatchesAsync(native, layout, payload, cancellationToken).ConfigureAwait(false);
         var payloadDirectory = Path.GetDirectoryName(payloadManifestPath)!;
         var replacementPayloads = new byte[payload.Mips.Count][];
         for (var index = 0; index < payload.Mips.Count; index++)
@@ -255,7 +264,7 @@ public sealed class TextureExportAssemblyService
             replacementPayloads[index] = bytes;
         }
 
-        var noOp = BuildBlob(sourceExport, layout, payload, replacementPayloads, useReplacement: false);
+        var noOp = BuildBlob(sourceExport, layout, payload, replacementPayloads, [], useReplacement: false);
         var noOpHash = Hash(noOp);
         var noOpIdentical = noOp.AsSpan().SequenceEqual(sourceExport);
         if (!noOpIdentical || !noOpHash.Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
@@ -265,7 +274,7 @@ public sealed class TextureExportAssemblyService
         _ = ValidateBlob(noOp, sourceExport, layout, payload, profile, useReplacement: false);
 
         var replacement = BuildBlob(
-            sourceExport, layout, payload, replacementPayloads, useReplacement: true);
+            sourceExport, layout, payload, replacementPayloads, sizePatches, useReplacement: true);
         var validation = ValidateBlob(
             replacement, sourceExport, layout, payload, profile, useReplacement: true);
         var allDescriptors = validation.All(item => item.DescriptorReplayed);
@@ -273,7 +282,8 @@ public sealed class TextureExportAssemblyService
         var allQuality = validation.All(item => item.QualityGateRetained);
         var prefixBytes = checked((int)layout.MipArrayRelativeOffset);
         var suffixBytes = checked((int)(sourceExport.Length - layout.MipArrayEndRelativeOffset));
-        var nonMipPreserved = replacement.AsSpan(0, prefixBytes).SequenceEqual(sourceExport.AsSpan(0, prefixBytes)) &&
+        var expectedPrefix = PatchedPrefix(sourceExport, prefixBytes, sizePatches);
+        var nonMipPreserved = replacement.AsSpan(0, prefixBytes).SequenceEqual(expectedPrefix) &&
                               replacement.AsSpan(replacement.Length - suffixBytes, suffixBytes)
                                   .SequenceEqual(sourceExport.AsSpan(sourceExport.Length - suffixBytes, suffixBytes));
         if (!allDescriptors || !allCodecs || !allQuality || !nonMipPreserved)
@@ -296,7 +306,11 @@ public sealed class TextureExportAssemblyService
             new("TEA_NOOP_IDENTICAL", TextureLayoutCheckStatus.Passed,
                 $"Reconstructed no-op export is byte-identical across {noOp.Length:N0} bytes."),
             new("TEA_NON_MIP_PRESERVED", TextureLayoutCheckStatus.Passed,
-                $"Preserved {prefixBytes:N0} byte(s) before and {suffixBytes:N0} byte(s) after the mip array exactly."),
+                sizePatches.Count == 0
+                    ? $"Preserved {prefixBytes:N0} byte(s) before and {suffixBytes:N0} byte(s) after the mip array exactly."
+                    : $"Preserved {prefixBytes:N0} byte(s) before and {suffixBytes:N0} byte(s) after the mip array exactly, " +
+                      $"except the {string.Join(", ", sizePatches.Select(patch => patch.Name))} values set for the " +
+                      $"{payload.Width}x{payload.Height} upscale."),
             new("TEA_DESCRIPTOR_REPLAY", TextureLayoutCheckStatus.Passed,
                 $"Replayed all {validation.Count:N0} mip descriptors with recalculated sizes and logical payload offsets."),
             new("TEA_DECODE_BACK", TextureLayoutCheckStatus.Passed,
@@ -347,7 +361,10 @@ public sealed class TextureExportAssemblyService
             PackageWasModified: false,
             checks,
             validation,
-            watch.Elapsed.TotalSeconds);
+            watch.Elapsed.TotalSeconds)
+        {
+            UpscaleLevels = payload.UpscaleLevels,
+        };
         var manifestPath = Path.Combine(outputDirectory, ManifestFileName);
         await SaveJsonAtomicAsync(manifestPath, manifest, cancellationToken).ConfigureAwait(false);
         return new TextureExportAssemblyResult(
@@ -365,6 +382,7 @@ public sealed class TextureExportAssemblyService
         TextureLayoutConfirmationManifest layout,
         TextureReplacementPayloadManifest payload,
         IReadOnlyList<byte[]> replacementPayloads,
+        IReadOnlyList<SizePropertyPatch> sizePatches,
         bool useReplacement)
     {
         var capacity = useReplacement
@@ -373,12 +391,13 @@ public sealed class TextureExportAssemblyService
         using var stream = new MemoryStream(capacity);
         using var writer = new BinaryWriter(stream);
         var arrayOffset = checked((int)layout.MipArrayRelativeOffset);
-        writer.Write(source, 0, arrayOffset);
-        writer.Write(layout.MipCount);
-        for (var index = 0; index < layout.Mips.Count; index++)
+        writer.Write(PatchedPrefix(source, arrayOffset, sizePatches));
+        var mipCount = useReplacement ? payload.Mips.Count : layout.MipCount;
+        writer.Write(mipCount);
+        for (var index = 0; index < mipCount; index++)
         {
-            var confirmed = layout.Mips[index];
-            var generated = payload.Mips[index];
+            var confirmed = useReplacement ? TargetMip(layout, payload, index) : layout.Mips[index];
+            var generated = payload.Mips[useReplacement ? index : index + payload.UpscaleLevels];
             var stored = useReplacement
                 ? replacementPayloads[index]
                 : source.AsSpan(checked((int)confirmed.PayloadRelativeOffset), confirmed.StoredBytes).ToArray();
@@ -413,17 +432,18 @@ public sealed class TextureExportAssemblyService
         bool useReplacement)
     {
         var cursor = checked((int)layout.MipArrayRelativeOffset);
-        if (BinaryPrimitives.ReadInt32LittleEndian(blob.AsSpan(cursor)) != layout.MipCount)
+        var mipCount = useReplacement ? payload.Mips.Count : layout.MipCount;
+        if (BinaryPrimitives.ReadInt32LittleEndian(blob.AsSpan(cursor)) != mipCount)
         {
             Refuse("TEA025", "The assembled mip-array count is incorrect.");
         }
         cursor += 4;
-        var results = new List<TextureExportAssemblyMip>(layout.MipCount);
-        for (var index = 0; index < layout.MipCount; index++)
+        var results = new List<TextureExportAssemblyMip>(mipCount);
+        for (var index = 0; index < mipCount; index++)
         {
             if (cursor > blob.Length - 24) Refuse("TEA026", $"Assembled mip {index} is truncated.");
-            var confirmed = layout.Mips[index];
-            var generated = payload.Mips[index];
+            var confirmed = useReplacement ? TargetMip(layout, payload, index) : layout.Mips[index];
+            var generated = payload.Mips[useReplacement ? index : index + payload.UpscaleLevels];
             var header = cursor;
             var flags = BinaryPrimitives.ReadUInt32LittleEndian(blob.AsSpan(cursor));
             var elements = BinaryPrimitives.ReadInt32LittleEndian(blob.AsSpan(cursor + 4));
@@ -504,6 +524,67 @@ public sealed class TextureExportAssemblyService
         var expectedEnd = blob.Length - checked((int)(source.LongLength - layout.MipArrayEndRelativeOffset));
         if (cursor != expectedEnd) Refuse("TEA032", "Assembled mip-array end is inconsistent with the preserved suffix.");
         return results;
+    }
+
+    private sealed record SizePropertyPatch(string Name, int Offset, int Value);
+
+    /// <summary>
+    /// The confirmed source layout of replacement mip <paramref name="index"/>; levels an upscale added on top
+    /// take the top source mip's storage settings at their own size (their source bytes are never read).
+    /// </summary>
+    private static TextureMipLayoutConfirmation TargetMip(
+        TextureLayoutConfirmationManifest layout,
+        TextureReplacementPayloadManifest payload,
+        int index)
+    {
+        if (index >= payload.UpscaleLevels) return layout.Mips[index - payload.UpscaleLevels];
+        var generated = payload.Mips[index];
+        return layout.Mips[0] with { Width = generated.Width, Height = generated.Height };
+    }
+
+    /// <summary>The Texture2D size properties to rewrite so the export describes its upscaled mip chain.</summary>
+    private static async Task<IReadOnlyList<SizePropertyPatch>> SizePatchesAsync(
+        NativeTextureExportManifest native,
+        TextureLayoutConfirmationManifest layout,
+        TextureReplacementPayloadManifest payload,
+        CancellationToken cancellationToken)
+    {
+        var recon = await ReadJsonAsync<TextureReconnaissanceReport>(
+            RequireFile(layout.ReconnaissanceJsonPath, "TEA034", "texture reconnaissance report"),
+            "TEA034", cancellationToken).ConfigureAwait(false);
+        var levels = payload.UpscaleLevels;
+        var patches = new List<SizePropertyPatch>();
+        void Add(string name, Func<long, long> value, bool required)
+        {
+            var property = recon.Properties.SingleOrDefault(item =>
+                item.Name.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                item.Type.Equals("IntProperty", StringComparison.OrdinalIgnoreCase) && item.Size == 4);
+            if (property?.NumericValue is not { } current)
+            {
+                if (required) Refuse("TEA035", $"The source Texture2D has no verified 4-byte {name} property to resize.");
+                return;
+            }
+            if (property.ValueRelativeOffset < 0 || property.ValueRelativeOffset > layout.MipArrayRelativeOffset - 4)
+                Refuse("TEA035", $"The source {name} property is outside the preserved Texture2D prefix.");
+            patches.Add(new(name, checked((int)property.ValueRelativeOffset), checked((int)value(current))));
+        }
+        Add("SizeX", value => value << levels, required: true);
+        Add("SizeY", value => value << levels, required: true);
+        Add("OriginalSizeX", value => value << levels, required: false);
+        Add("OriginalSizeY", value => value << levels, required: false);
+        Add("MipTailBaseIdx", value => value + levels, required: false);
+        if (patches[0].Value != payload.Width || patches[1].Value != payload.Height ||
+            native.Width << levels != payload.Width || native.Height << levels != payload.Height)
+            Refuse("TEA035", "The upscaled size properties disagree with the replacement payload set.");
+        return patches;
+    }
+
+    private static byte[] PatchedPrefix(byte[] source, int length, IReadOnlyList<SizePropertyPatch> patches)
+    {
+        var prefix = source.AsSpan(0, length).ToArray();
+        foreach (var patch in patches)
+            BinaryPrimitives.WriteInt32LittleEndian(prefix.AsSpan(patch.Offset), patch.Value);
+        return prefix;
     }
 
     private static int ReplacementElementCount(
