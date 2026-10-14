@@ -21,6 +21,8 @@ internal readonly record struct SkeletalMeshGlbTriangle(
     uint C,
     string Material);
 
+internal readonly record struct SkeletalMeshGlbTrianglePositions(Vector3 A, Vector3 B, Vector3 C);
+
 internal sealed record SkeletalMeshGlbLod(
     int LodIndex,
     IReadOnlyDictionary<uint, SkeletalMeshGlbVertex> Vertices,
@@ -37,6 +39,7 @@ internal sealed record SkeletalMeshGlbLod(
     public int MaximumInfluenceCount { get; init; }
     public double MaximumSkinWeightSumError { get; init; }
     public int DegenerateTriangleCount { get; init; }
+    public IReadOnlyList<SkeletalMeshGlbTrianglePositions> DegenerateTriangles { get; init; } = [];
     public int FaceOrientationTriangleCount { get; init; }
     public int OpposedFaceNormalTriangleCount { get; init; }
     public SkeletalMeshEditableBounds Bounds { get; init; } = new(0, 0, 0, 0, 0, 0);
@@ -233,6 +236,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         var maximumInfluences = 0;
         var maximumWeightSumError = 0d;
         var degenerateTriangles = 0;
+        var degenerateTrianglePositions = new List<SkeletalMeshGlbTrianglePositions>();
         var orientedTriangles = 0;
         var opposedTriangles = 0;
         string? carrierDescription = null;
@@ -356,6 +360,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
                 if (a == b || b == c || a == c || face.LengthSquared() <= 1e-16f)
                 {
                     degenerateTriangles++;
+                    degenerateTrianglePositions.Add(new(pa, pb, pc));
                 }
                 else
                 {
@@ -383,6 +388,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
             MaximumInfluenceCount = maximumInfluences,
             MaximumSkinWeightSumError = maximumWeightSumError,
             DegenerateTriangleCount = degenerateTriangles,
+            DegenerateTriangles = degenerateTrianglePositions,
             FaceOrientationTriangleCount = orientedTriangles,
             OpposedFaceNormalTriangleCount = opposedTriangles,
             Bounds = bounds,
@@ -428,6 +434,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
             MaximumSkinWeightSumError = Math.Max(
                 left.MaximumSkinWeightSumError, right.MaximumSkinWeightSumError),
             DegenerateTriangleCount = checked(left.DegenerateTriangleCount + right.DegenerateTriangleCount),
+            DegenerateTriangles = [.. left.DegenerateTriangles, .. right.DegenerateTriangles],
             FaceOrientationTriangleCount = checked(
                 left.FaceOrientationTriangleCount + right.FaceOrientationTriangleCount),
             OpposedFaceNormalTriangleCount = checked(

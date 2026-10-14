@@ -324,8 +324,16 @@ public sealed class SkeletalMeshEditPreflightService
                 AddError("SMT027", $"Candidate skin weights differ from a normalized sum by up to {lod.MaximumSkinWeightSumError:G6}.");
             else if (lod.MaximumSkinWeightSumError > 0.002d)
                 AddWarning("SMT028", $"Candidate skin weights require normalization; maximum sum error is {lod.MaximumSkinWeightSumError:G6}.");
-            if (lod.DegenerateTriangleCount > 0)
-                AddError("SMT030", $"Candidate contains {lod.DegenerateTriangleCount:N0} degenerate triangle(s).");
+            // Shipped game meshes contain a few zero-area triangles; ones the source already had are kept as-is.
+            var newDegenerate = lod.DegenerateTriangles
+                .Where(triangle => !sourceLod0.DegenerateTriangles.Any(source => SameTriangle(triangle, source)))
+                .ToArray();
+            if (newDegenerate.Length > 0)
+                AddError("SMT030", $"Candidate contains {newDegenerate.Length:N0} new degenerate triangle(s) " +
+                    $"(zero area), e.g. near {Describe(newDegenerate[0].A)}. Delete or dissolve them before export.");
+            if (lod.DegenerateTriangleCount > newDegenerate.Length)
+                AddWarning("SMT034", $"Kept {lod.DegenerateTriangleCount - newDegenerate.Length:N0} degenerate " +
+                    "triangle(s) that already exist in the original game mesh.");
             var opposedPercent = lod.FaceOrientationTriangleCount == 0 ? 0d :
                 100d * lod.OpposedFaceNormalTriangleCount / lod.FaceOrientationTriangleCount;
             if (opposedPercent > 1d)
@@ -510,6 +518,18 @@ public sealed class SkeletalMeshEditPreflightService
         }
         return true;
     }
+
+    /// <summary>Same corner positions within 0.01 mm, in any order (editors may rotate or flip a triangle's corners).</summary>
+    private static bool SameTriangle(SkeletalMeshGlbTrianglePositions left, SkeletalMeshGlbTrianglePositions right)
+    {
+        const float tolerance = 1e-5f;
+        Vector3[] corners = [right.A, right.B, right.C];
+        return new[] { left.A, left.B, left.C }.All(point =>
+            corners.Any(corner => SkeletalMeshGlbSemanticReader.Near(point, corner, tolerance)));
+    }
+
+    /// <summary>A glTF (Y-up) point as Blender shows it after import (Z-up).</summary>
+    private static string Describe(Vector3 point) => $"Blender X {point.X:N3}, Y {-point.Z:N3}, Z {point.Y:N3} m";
 
     private static HashSet<string> UsedMaterials(SkeletalMeshGlbSemanticDocument document) =>
         document.Lods.Values.SelectMany(lod => lod.UsedMaterials).ToHashSet(StringComparer.OrdinalIgnoreCase);
