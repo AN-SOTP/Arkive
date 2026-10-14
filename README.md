@@ -47,6 +47,22 @@ Every LOD from Arkive's own decoder, coloured by the game's own compiled shaders
 
 ![Arkive model viewer showing a mesh with a mod's edited material values and texture](docs/screenshots/model-viewer-edits.png)
 
+### Live in game example
+
+Mods made with Arkive, running in Lost Ark.
+
+**Cutscene**
+
+https://github.com/user-attachments/assets/1f6c9379-cdef-4ee6-ab5f-9dbd0af5e39a
+
+**Character creator**
+
+https://github.com/user-attachments/assets/d1f532b4-41b6-44d6-9351-42392d6c7d74
+
+**Three cutscenes**
+
+https://github.com/user-attachments/assets/81b639c8-ce7a-41b1-869f-009deb6645c7
+
 ## Contents
 
 - [Install and first run](#install-and-first-run)
