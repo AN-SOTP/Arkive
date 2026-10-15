@@ -200,7 +200,11 @@ public partial class MainWindow : Window
         {
             var json = await File.ReadAllTextAsync(row.Entry.Document.SourceReconnaissancePath);
             var report = JsonSerializer.Deserialize<MaterialInstanceReconnaissanceReport>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ??
+                new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+                }) ??
                          throw new InvalidDataException("The material reconnaissance report was empty.");
             _currentMaterialEdit = row.Entry;
             _currentMaterialReconnaissance = new MaterialInstanceReconnaissanceEntry(
