@@ -719,9 +719,10 @@ public sealed class SkeletalMeshTopologyCompilerService
                         names[nativeSection.MaterialIndex] = oracleSection.Material;
                 }
             }
-        if (names.GroupBy(name => name, StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
+        var slotNames = SkeletalMeshGlbSemanticReader.WithBlenderSuffixes(names);
+        if (slotNames.GroupBy(name => name, StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
             Refuse("SMC073", "The source material table contains ambiguous duplicate names.");
-        return names;
+        return slotNames;
     }
 
     private static void ValidateIdentity(

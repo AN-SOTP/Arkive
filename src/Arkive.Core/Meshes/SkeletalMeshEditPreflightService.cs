@@ -288,17 +288,11 @@ public sealed class SkeletalMeshEditPreflightService
             if (ignoredUnskinned > 0)
                 AddWarning("SMI011", $"Ignored {ignoredUnskinned:N0} unskinned helper mesh(es) added by the editor.");
 
-            var duplicateSourceMaterials = original.MaterialNames.GroupBy(name => name, StringComparer.OrdinalIgnoreCase)
-                .Where(group => group.Count() > 1).Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var allowedMaterials = original.MaterialNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var unknownMaterials = lod.UsedMaterials.Where(material => !allowedMaterials.Contains(material)).ToArray();
-            var ambiguousMaterials = lod.UsedMaterials.Where(duplicateSourceMaterials.Contains).ToArray();
             if (unknownMaterials.Length > 0)
                 AddError("SMT013", "Candidate uses material names that do not map to original slots: " +
                     string.Join(", ", unknownMaterials.Order()));
-            if (ambiguousMaterials.Length > 0)
-                AddError("SMT014", "Candidate material names are ambiguous in the source slot table: " +
-                    string.Join(", ", ambiguousMaterials.Order()));
             var unused = allowedMaterials.Where(material => !lod.UsedMaterials.Contains(material)).ToArray();
             if (unused.Length > 0)
                 AddWarning("SMT015", $"Candidate does not use {unused.Length:N0} original material slot name(s); their package references will remain available.");

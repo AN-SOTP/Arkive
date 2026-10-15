@@ -79,6 +79,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
     private readonly JsonElement _views;
     private readonly JsonElement _nodes;
     private readonly JsonElement _materials;
+    private readonly IReadOnlyList<string> _materialNames;
     private readonly int[] _parents;
     private readonly IReadOnlyDictionary<int, SkeletalMeshEditableLodManifest> _sourceLods;
     private readonly SkeletalMeshGlbReadProfile _profile;
@@ -97,6 +98,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         _materials = root.TryGetProperty("materials", out var materials)
             ? materials
             : default;
+        _materialNames = ReadMaterialNames();
         _sourceLods = sourceLods;
         _profile = profile;
         _parents = Enumerable.Repeat(-1, _nodes.GetArrayLength()).ToArray();
@@ -215,7 +217,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
             Math.Max(0, ignored))
         {
             MeshNodeTransformsIdentity = meshNodeTransformsIdentity,
-            MaterialNames = ReadMaterialNames(),
+            MaterialNames = _materialNames,
         };
     }
 
@@ -471,10 +473,24 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
     private IReadOnlyList<string> ReadMaterialNames()
     {
         if (_materials.ValueKind != JsonValueKind.Array) return [];
-        return _materials.EnumerateArray().Select((material, index) =>
+        return WithBlenderSuffixes(_materials.EnumerateArray().Select((material, index) =>
             material.TryGetProperty("name", out var name) && !string.IsNullOrWhiteSpace(name.GetString())
                 ? name.GetString()!
-                : $"material_{index}").ToArray();
+                : $"material_{index}").ToArray());
+    }
+
+    // Some game meshes give several slots the same material (pc_sp_av_236b_dress_sk uses
+    // pc_sp_av_base_body_mi twice). Blender imports the repeats as name.001, name.002, ..., so each
+    // repeated slot is known by that name and maps back to its own slot.
+    internal static IReadOnlyList<string> WithBlenderSuffixes(IReadOnlyList<string> names)
+    {
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        return names.Select(name =>
+        {
+            var count = seen.GetValueOrDefault(name);
+            seen[name] = count + 1;
+            return count == 0 ? name : $"{name}.{count:D3}";
+        }).ToArray();
     }
 
     private static bool NodeTransformIsIdentity(JsonElement node)
@@ -711,12 +727,9 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
     {
         if (!primitive.TryGetProperty("material", out var materialElement)) return "<no material>";
         var index = materialElement.GetInt32();
-        if (_materials.ValueKind != JsonValueKind.Array || index < 0 || index >= _materials.GetArrayLength())
+        if (index < 0 || index >= _materialNames.Count)
             throw Error("SMI152", $"Primitive material {index} is out of range.");
-        var material = _materials[index];
-        return material.TryGetProperty("name", out var name) && !string.IsNullOrWhiteSpace(name.GetString())
-            ? name.GetString()!
-            : $"material_{index}";
+        return _materialNames[index];
     }
 
     private AccessorView Accessor(int accessorIndex, string expectedType)
