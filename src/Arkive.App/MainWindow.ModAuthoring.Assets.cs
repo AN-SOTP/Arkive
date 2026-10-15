@@ -255,7 +255,7 @@ public partial class MainWindow : Window
             $"{SafeObjectFileName(row.ObjectName)}-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}-{Guid.NewGuid():N}");
         var kit = await Task.Run(() => _skeletalMeshAssetKitService!.ExtractFromEditableAsync(
             entry.Manifest.SourceManifestPath, output, row.GameMetadata.Select(item => item.DisplayName).ToArray(),
-            cancellationToken), cancellationToken);
+            libraryRoot, cancellationToken), cancellationToken);
         Log($"Authoring reference kit exported: object={row.ObjectName}, dependencies={kit.Manifest.Dependencies.Count}, " +
             $"duration={kit.Duration.TotalSeconds:N2}s, manifest={kit.ManifestPath}.");
         if (metadata is null || libraryRoot is null)
@@ -266,6 +266,15 @@ public partial class MainWindow : Window
         var dependencies = kit.Manifest.Dependencies.Where(dependency =>
             dependency.ClassName.Equals("Texture2D", StringComparison.OrdinalIgnoreCase) ||
             dependency.ClassName.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (dependencies.Length == 0)
+        {
+            var missing = kit.Manifest.Diagnostics.Where(line => line.Contains("was not found", StringComparison.OrdinalIgnoreCase)).ToArray();
+            foreach (var line in missing) Log($"Kit dependency not found by UModel: {row.ObjectName}: {line}");
+            AuthoringStatusText.Text = missing.Length > 0
+                ? $"Mesh added, but UModel could not load {missing.Length} of its linked materials, so no textures or materials were added. Diagnostics lists them."
+                : "Mesh added. It links no textures or materials that Arkive can edit.";
+            return;
+        }
         ReportAuthoringExtraction("Resolving exact dependencies from their packages", 0, dependencies.Length);
         var packages = await Task.Run(() => _packageIndexStore.LoadPackagesByAliasAsync(libraryRoot,
             dependencies.Select(dependency => dependency.PackageName).Distinct(StringComparer.OrdinalIgnoreCase),

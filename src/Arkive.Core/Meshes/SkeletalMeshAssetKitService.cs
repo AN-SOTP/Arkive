@@ -12,7 +12,8 @@ public sealed record SkeletalMeshAssetKitRequest(
     SkeletalMeshReconnaissanceEntry Reconnaissance,
     SkeletalMeshEditableExportResult EditableExport,
     string OutputDirectory,
-    IReadOnlyList<string>? InGameNames = null);
+    IReadOnlyList<string>? InGameNames = null,
+    string? PackageSearchRoot = null);
 
 public sealed record SkeletalMeshAssetKitFile(
     string RelativePath,
@@ -80,9 +81,11 @@ public sealed class SkeletalMeshAssetKitService
     public SkeletalMeshAssetKitService(UmodelBridge bridge) =>
         _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
 
+    /// <param name="packageSearchRoot">The game's Packages folder, where the mesh's linked packages live. The mesh
+    /// itself may come from a clean backup elsewhere when a mod is installed over it.</param>
     public async Task<SkeletalMeshAssetKitResult> ExtractFromEditableAsync(
         string editableManifestPath, string outputDirectory, IReadOnlyList<string>? inGameNames = null,
-        CancellationToken cancellationToken = default)
+        string? packageSearchRoot = null, CancellationToken cancellationToken = default)
     {
         var manifestPath = Path.GetFullPath(editableManifestPath);
         var editable = await ReadAsync<SkeletalMeshEditableExportManifest>(manifestPath, cancellationToken).ConfigureAwait(false);
@@ -104,7 +107,8 @@ public sealed class SkeletalMeshAssetKitService
             Path.Combine(reconDirectory, "arkive-skeletalmesh-recon.txt"), File.Exists(oraclePath) ? oraclePath : null, report);
         var export = new SkeletalMeshEditableExportResult(directory, glbPath, manifestPath, editable, inspection,
             TimeSpan.FromSeconds(editable.DurationSeconds));
-        return await ExtractAsync(new SkeletalMeshAssetKitRequest(recon, export, outputDirectory, inGameNames), cancellationToken)
+        return await ExtractAsync(new SkeletalMeshAssetKitRequest(recon, export, outputDirectory, inGameNames, packageSearchRoot),
+                cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -164,7 +168,7 @@ public sealed class SkeletalMeshAssetKitService
             report.SerialSize,
             report.ClassName,
             report.ObjectName);
-        var packageRoot = Path.GetDirectoryName(report.PackagePath) ??
+        var packageRoot = request.PackageSearchRoot ?? Path.GetDirectoryName(report.PackagePath) ??
                           throw new InvalidDataException("The source package has no parent directory.");
         var exported = await _bridge.ExportInPackageRootAsync(
             report.PackagePath,
