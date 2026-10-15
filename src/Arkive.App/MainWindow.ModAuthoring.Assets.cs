@@ -13,6 +13,7 @@ using Arkive.Core.Meshes;
 using Arkive.Core.Mods;
 using Arkive.Core.StaticMeshes;
 using Arkive.Core.Textures;
+using Arkive.Core.Viewer;
 using Microsoft.Win32;
 
 namespace Arkive.App;
@@ -318,7 +319,7 @@ public partial class MainWindow : Window
 
     private async void AuthoringPreviewButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!AuthoringPreviewButton.IsEnabled || AuthoringAssetsGrid.SelectedItem is not AuthoringAssetRow { Edit: { } edit } || _umodelBridge is null) return;
+        if (!AuthoringPreviewButton.IsEnabled || AuthoringAssetsGrid.SelectedItem is not AuthoringAssetRow { Edit: { } edit } row || _umodelBridge is null) return;
         try
         {
             var clean = await _arkiveModApply.ResolveCleanPackageAsync(edit.SourcePackagePath);
@@ -326,6 +327,16 @@ public partial class MainWindow : Window
             var match = catalogue.Assets.SingleOrDefault(asset => asset.ObjectName.Equals(edit.ObjectName, StringComparison.OrdinalIgnoreCase) &&
                 asset.ClassName.Equals(edit.Kind.ToString(), StringComparison.OrdinalIgnoreCase));
             if (match is null) throw new InvalidOperationException("The original asset is unavailable or ambiguous in its clean package.");
+            // Meshes open in Arkive's own viewer, as everywhere else; textures and materials still use UModel.
+            if (edit.Kind is UnifiedPackageAssetKind.SkeletalMesh or UnifiedPackageAssetKind.StaticMesh)
+            {
+                var request = new ModelViewerRequest(clean, row.Package,
+                    _libraryRootPath ?? Path.GetDirectoryName(edit.SourcePackagePath), match.ExportIndex, match.SerialOffset,
+                    match.SerialSize, match.ClassName, match.ObjectName);
+                if (OpenModelViewer(request, edits: null))
+                    AuthoringStatusText.Text = $"Showing the original {edit.ObjectName} in Arkive's model viewer.";
+                return;
+            }
             _umodelBridge.StartAssetPreview(clean, new UmodelAssetEntry(match.ExportIndex, match.SerialOffset,
                 match.SerialSize, match.ClassName, match.ObjectName));
         }
