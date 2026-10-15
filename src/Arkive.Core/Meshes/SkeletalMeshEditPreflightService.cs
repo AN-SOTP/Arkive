@@ -128,6 +128,8 @@ public sealed class SkeletalMeshEditPreflightService
         var skeletonCandidate = importProfile == SkeletalMeshImportProfile.TopologyPreserving
             ? stableCandidate
             : topologyCandidate;
+        if (skeletonCandidate?.Lods.Values.Sum(lod => lod.IgnoredMorphTargetCount) is int ignoredMorphTargets and > 0)
+            AddWarning("SMI038", $"Ignored {ignoredMorphTargets:N0} shape key target(s); Arkive imports the base shape only.");
         if (sourceDocument is not null && skeletonCandidate is not null)
         {
             var sourceIdentity = SkeletalMeshSkeletonCompatibilityService.SourceIdentity(source);
@@ -305,13 +307,18 @@ public sealed class SkeletalMeshEditPreflightService
             if (!lod.HasNormals) AddError("SMT022", "Candidate LOD0 has no vertex normals.");
             if (!lod.HasTangents)
                 AddWarning("SMT023", "Candidate LOD0 has no tangents; the native compiler must reconstruct them from normals and UV0.");
-            if (lod.TextureCoordinateCount != sourceLod0.TextureCoordinateCount)
-                AddError("SMT024",
-                    $"Candidate LOD0 has {lod.TextureCoordinateCount} editable UV set(s); source LOD0 requires {sourceLod0.TextureCoordinateCount}.");
-            if (lod.HasColours != sourceLod0.HasColours)
-                AddError("SMT025", sourceLod0.HasColours
-                    ? "Candidate LOD0 omitted the source vertex-colour stream."
-                    : "Candidate LOD0 added vertex colours, but the source native profile has no colour buffer.");
+            if (lod.TextureCoordinateCount == 0 && sourceLod0.TextureCoordinateCount > 0)
+                AddError("SMT024", "Candidate LOD0 has no UV map. Unwrap the mesh before export.");
+            else if (lod.TextureCoordinateCount < sourceLod0.TextureCoordinateCount)
+                AddWarning("SMT024",
+                    $"Candidate LOD0 has {lod.TextureCoordinateCount} UV map(s); the game mesh uses {sourceLod0.TextureCoordinateCount}. Arkive copies the first UV map into the missing one(s).");
+            else if (lod.TextureCoordinateCount > sourceLod0.TextureCoordinateCount)
+                AddWarning("SMT024",
+                    $"Candidate LOD0 has {lod.TextureCoordinateCount} UV map(s); the game mesh uses {sourceLod0.TextureCoordinateCount}. Arkive keeps the first {sourceLod0.TextureCoordinateCount}.");
+            if (lod.HasColours != sourceLod0.HasColours || (lod.HasColours && lod.Vertices.Values.Any(vertex => vertex.Colour is null)))
+                AddWarning("SMT025", sourceLod0.HasColours
+                    ? "Some or all of the candidate has no vertex colours. Arkive gives those vertices the colour of the nearest vertex in the game mesh."
+                    : "Candidate LOD0 has vertex colours, but the game mesh has none. Arkive leaves them out.");
             if (lod.MaximumInfluenceCount is < 1 or > 4)
                 AddError("SMT026", $"Candidate uses an unsupported maximum of {lod.MaximumInfluenceCount} influences per vertex.");
             if (lod.MaximumSkinWeightSumError > 0.05d)
@@ -330,10 +337,13 @@ public sealed class SkeletalMeshEditPreflightService
                     "triangle(s) that already exist in the original game mesh.");
             var opposedPercent = lod.FaceOrientationTriangleCount == 0 ? 0d :
                 100d * lod.OpposedFaceNormalTriangleCount / lod.FaceOrientationTriangleCount;
-            if (opposedPercent > 1d)
+            // Measured against the game mesh, which can have opposed faces of its own (double-sided parts).
+            var sourceOpposedPercent = sourceLod0.FaceOrientationTriangleCount == 0 ? 0d :
+                100d * sourceLod0.OpposedFaceNormalTriangleCount / sourceLod0.FaceOrientationTriangleCount;
+            if (opposedPercent > sourceOpposedPercent + 1d)
                 AddError("SMT031",
                     $"Candidate winding opposes its vertex normals on {lod.OpposedFaceNormalTriangleCount:N0} of " +
-                    $"{lod.FaceOrientationTriangleCount:N0} checked triangles ({opposedPercent:N3}%).");
+                    $"{lod.FaceOrientationTriangleCount:N0} checked triangles ({opposedPercent:N3}%; the game mesh has {sourceOpposedPercent:N3}%). Recalculate normals outside, or flip the faces that point inward.");
             else if (lod.OpposedFaceNormalTriangleCount > 0)
                 AddWarning("SMT032",
                     $"Candidate has {lod.OpposedFaceNormalTriangleCount:N0} locally opposed face(s) ({opposedPercent:N3}%).");
@@ -495,7 +505,6 @@ public sealed class SkeletalMeshEditPreflightService
                 original.Vertices.Keys.Except(edited.Vertices.Keys).Any(referenced.Contains) ||
                 !DictionariesEqual(original.Triangles, edited.Triangles) ||
                 original.TextureCoordinateCount != edited.TextureCoordinateCount ||
-                original.HasColours != edited.HasColours ||
                 edited.MaximumSkinWeightSumError > 0.002d) return false;
             foreach (var id in original.Vertices.Keys.Intersect(edited.Vertices.Keys))
             {
@@ -507,7 +516,8 @@ public sealed class SkeletalMeshEditPreflightService
                     !SkeletalMeshGlbSemanticReader.WeightsNear(before.SkinWeights, after.SkinWeights, 2e-4f)) return false;
                 if (before.Colour is { } left && after.Colour is { } right &&
                     !SkeletalMeshGlbSemanticReader.Near(left, right, 1f / 255f + 1e-5f)) return false;
-                if (before.Colour is null != (after.Colour is null)) return false;
+                // Colours an exporter left out, or added to a mesh without a colour stream, keep the edit
+                // topology-preserving: the game's own colours are kept either way.
             }
         }
         return true;

@@ -316,6 +316,17 @@ internal static class MeshSmokeTests
                topologyPreflight.Issues.Any(issue => issue.Code == "SMT099"),
             "changed SkeletalMesh topology did not pass the bounded LOD0 replacement contract: " +
             string.Join(" | ", topologyPreflight.Issues.Select(issue => $"{issue.Code}:{issue.Message}")));
+        var blenderStyleEdit = Path.Combine(entry.DirectoryPath, "synthetic-blender-style-topology-edit.glb");
+        WriteSkeletalMeshBlenderStyleExport(topologyEdit, blenderStyleEdit);
+        var blenderStylePreflight = new SkeletalMeshEditPreflightService()
+            .InspectAsync(editableSnapshot.Entries[0], blenderStyleEdit)
+            .GetAwaiter().GetResult();
+        Assert(blenderStylePreflight.Readiness == SkeletalMeshEditReadiness.ReadyForTopologyCompilation &&
+               blenderStylePreflight.ErrorCount == 0 &&
+               new[] { "SMI038", "SMT023", "SMT024" }.All(code => blenderStylePreflight.Issues.Any(issue =>
+                   issue.Code == code && issue.Severity == SkeletalMeshEditIssueSeverity.Warning)),
+            "a shape key, an extra UV map or missing tangents stopped a topology edit: " +
+            string.Join(" | ", blenderStylePreflight.Issues.Select(issue => $"{issue.Code}:{issue.Message}")));
         var stableIdentityEdit = Path.Combine(entry.DirectoryPath, "synthetic-no-stable-identity.glb");
         WriteSkeletalMeshStableIdentityRemoval(editable.GlbPath, stableIdentityEdit);
         var stableIdentityPreflight = new SkeletalMeshEditPreflightService()
@@ -567,6 +578,15 @@ internal static class MeshSmokeTests
                File.Exists(topologyCompilation.DecodedProofGlbPath),
             "topology compiler did not produce and independently decode a variable-size native LOD: " +
             JsonSerializer.Serialize(topologyCompilation.Manifest));
+        var blenderStyleCompilation = new SkeletalMeshTopologyCompilerService()
+            .CompileAsync(new SkeletalMeshTopologyCompilationRequest(
+                topologyWorkspace.RegisterAsync(editableSnapshot.Entries[0], blenderStyleEdit, "Blender-style topology")
+                    .GetAwaiter().GetResult().Entry,
+                Path.Combine(entry.DirectoryPath, "blender-style-topology-compilation")))
+            .GetAwaiter().GetResult();
+        Assert(blenderStyleCompilation.Manifest.DecodeBackPassed &&
+               blenderStyleCompilation.Manifest.Lods is [{ CompiledTriangleCount: 2, TriangleMaterialTopologyMatches: true }],
+            "the compiler did not fit a Blender-style export to the game mesh's UV streams");
         var loadedTopologyCompilation = SkeletalMeshTopologyCompilerService
             .LoadManifestAsync(topologyCompilation.ManifestPath).GetAwaiter().GetResult();
         Assert(loadedTopologyCompilation.CompilationId == topologyCompilation.Manifest.CompilationId,

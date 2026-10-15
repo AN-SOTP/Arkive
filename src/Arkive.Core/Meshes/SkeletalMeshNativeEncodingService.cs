@@ -423,8 +423,11 @@ public sealed class SkeletalMeshNativeEncodingService
     {
         var tangent = new Vector3(value.X, value.Y, value.Z);
         tangent -= normal * Vector3.Dot(normal, tangent);
+        // Editors leave a zero tangent on collapsed UV islands; any tangent along the surface serves there.
         if (!TryNormalize(tangent, out tangent))
-            Refuse("SMN062", $"LOD {lodIndex} stable vertex {stableId} has no usable tangent.");
+            tangent = Vector3.Normalize(MathF.Abs(normal.Z) < 0.999f
+                ? Vector3.Cross(Vector3.UnitZ, normal)
+                : Vector3.Cross(Vector3.UnitY, normal));
         return new Vector4(tangent, value.W < 0f ? -1f : 1f);
     }
 

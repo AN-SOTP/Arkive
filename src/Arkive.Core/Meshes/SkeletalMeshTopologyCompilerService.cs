@@ -141,6 +141,7 @@ public sealed class SkeletalMeshTopologyCompilerService
             edit.EditedGlbPath, sourceManifest, SkeletalMeshGlbReadProfile.TopologyCandidate);
         if (!candidateDocument.Lods.TryGetValue(0, out var candidate))
             Refuse("SMC020", "The topology candidate has no compiled LOD0.");
+        candidate = FitCandidateToSource(candidate, layout, sourceBytes);
         var materialNames = BuildMaterialNames(recon, layout);
         var materialSlots = materialNames
             .Select((name, index) => (name, index))
@@ -253,11 +254,6 @@ public sealed class SkeletalMeshTopologyCompilerService
         IReadOnlyDictionary<string, int> materialSlots,
         SkeletalMeshReconnaissanceReport recon)
     {
-        if (source.TextureCoordinateCount != candidate.TextureCoordinateCount)
-            Refuse("SMC040", $"Source LOD {source.LodIndex} has {source.TextureCoordinateCount} UV sets, " +
-                              $"but candidate LOD0 has {candidate.TextureCoordinateCount}; this target profile cannot duplicate it.");
-        if ((source.VertexColorBuffer is not null) != candidate.HasColours)
-            Refuse("SMC041", $"Source LOD {source.LodIndex}'s colour-stream shape differs from candidate LOD0.");
         if (source.AdjacencyBuffer.ElementCount != 0)
             Refuse("SMC042", $"Source LOD {source.LodIndex} has a non-empty adjacency buffer; adjacency generation is not proven.");
         var legacyRange = source.Ranges.SingleOrDefault(range =>
@@ -324,10 +320,11 @@ public sealed class SkeletalMeshTopologyCompilerService
                 maximumInfluences = Math.Max(maximumInfluences, quantized.Count);
                 if (quantized.Count == 1) rigid++; else soft++;
                 var normal = Normalize(vertex.Normal ?? default, "normal", source.LodIndex, id);
-                var tangent = OrthonormalizeTangent(normal, tangentFrames[id], source.LodIndex, id);
-                var color = vertex.Colour is null ? null : EncodeColour(vertex.Colour.Value);
+                var tangent = OrthonormalizeTangent(normal, tangentFrames[id]);
+                // FitCandidateToSource gave every vertex a colour when the game mesh has a colour stream.
+                var color = source.VertexColorBuffer is null || vertex.Colour is null ? null : EncodeColour(vertex.Colour.Value);
                 var compiled = new CompiledVertex(id, vertex.Position, normal, tangent,
-                    vertex.TextureCoordinates, quantized, color);
+                    FitTextureCoordinates(vertex.TextureCoordinates, source.TextureCoordinateCount), quantized, color);
                 compiledByCandidate[id] = checked((uint)compiledVertices.Count);
                 compiledVertices.Add(compiled);
             }
@@ -593,14 +590,123 @@ public sealed class SkeletalMeshTopologyCompilerService
             decoded.Evidence.VertexBuffer.DataSha256, decoded.Evidence.VertexColorBuffer?.DataSha256);
     }
 
+    /// <summary>
+    /// Fits an editor's export to the game mesh's vertex streams: every vertex gets the
+    /// candidate's full set of UV maps (copying the first into any it lacks), and, when the game
+    /// mesh has vertex colours, a vertex without one takes the colour of the nearest game vertex.
+    /// </summary>
+    private static SkeletalMeshGlbLod FitCandidateToSource(
+        SkeletalMeshGlbLod candidate,
+        SkeletalMeshNativeLayoutEvidence layout,
+        byte[] sourceBytes)
+    {
+        var uvCount = candidate.TextureCoordinateCount;
+        if (uvCount == 0 && layout.Lods.Any(lod => lod.TextureCoordinateCount > 0))
+            Refuse("SMC040", "The edited mesh has no UV map. Unwrap it in your editor before export.");
+        var needsColours = layout.Lods.Any(lod => lod.VertexColorBuffer is not null) &&
+                           candidate.Vertices.Values.Any(vertex => vertex.Colour is null);
+        if (!needsColours && candidate.Vertices.Values.All(vertex => vertex.TextureCoordinates.Count == uvCount))
+            return candidate;
+
+        var nearest = needsColours ? NearestSourceColour.Create(sourceBytes, layout) : null;
+        var vertices = candidate.Vertices.ToDictionary(pair => pair.Key, pair => pair.Value with
+        {
+            TextureCoordinates = FitTextureCoordinates(pair.Value.TextureCoordinates, uvCount),
+            Colour = pair.Value.Colour ?? nearest?.Find(pair.Value.Position),
+        });
+        return candidate with { Vertices = vertices, HasColours = candidate.HasColours || needsColours };
+    }
+
+    private static IReadOnlyList<Vector2> FitTextureCoordinates(IReadOnlyList<Vector2> uvs, int count)
+    {
+        if (uvs.Count == count) return uvs;
+        var first = uvs.Count > 0 ? uvs[0] : Vector2.Zero;
+        return Enumerable.Range(0, count).Select(index => index < uvs.Count ? uvs[index] : first).ToArray();
+    }
+
+    /// <summary>Finds the colour of the game mesh's LOD0 vertex nearest to a position, on a uniform grid.</summary>
+    private sealed class NearestSourceColour
+    {
+        private const int CellsPerAxis = 64;
+        private const int MaximumRing = 4;
+        private readonly Vector3[] _positions;
+        private readonly byte[] _colours;
+        private readonly Dictionary<(int, int, int), List<int>> _cells = [];
+        private readonly Vector3 _minimum;
+        private readonly float _cellSize;
+
+        private NearestSourceColour(Vector3[] positions, byte[] colours)
+        {
+            _positions = positions;
+            _colours = colours;
+            _minimum = positions.Aggregate(new Vector3(float.MaxValue), Vector3.Min);
+            var extent = positions.Aggregate(new Vector3(float.MinValue), Vector3.Max) - _minimum;
+            _cellSize = Math.Max(1e-4f, Math.Max(extent.X, Math.Max(extent.Y, extent.Z)) / CellsPerAxis);
+            for (var index = 0; index < positions.Length; index++)
+            {
+                var cell = Cell(positions[index]);
+                if (!_cells.TryGetValue(cell, out var members)) _cells[cell] = members = [];
+                members.Add(index);
+            }
+        }
+
+        public static NearestSourceColour? Create(byte[] sourceBytes, SkeletalMeshNativeLayoutEvidence layout)
+        {
+            var lod = new SkeletalMeshSemanticDecoder().Decode(sourceBytes, layout)
+                .Where(item => item.Colors is not null && item.Positions.Length > 0)
+                .MinBy(item => item.Evidence.LodIndex);
+            return lod is null ? null : new NearestSourceColour(lod.Positions, lod.Colors!);
+        }
+
+        public Vector4 Find(Vector3 position)
+        {
+            var (x, y, z) = Cell(position);
+            var best = -1;
+            var bestDistance = float.MaxValue;
+            // Search shells of cells outwards; a vertex in a further shell is at least ring cells away.
+            for (var ring = 0; ring <= MaximumRing; ring++)
+            {
+                for (var dx = -ring; dx <= ring; dx++)
+                for (var dy = -ring; dy <= ring; dy++)
+                for (var dz = -ring; dz <= ring; dz++)
+                {
+                    if (Math.Max(Math.Abs(dx), Math.Max(Math.Abs(dy), Math.Abs(dz))) != ring ||
+                        !_cells.TryGetValue((x + dx, y + dy, z + dz), out var members)) continue;
+                    foreach (var index in members)
+                    {
+                        var distance = Vector3.DistanceSquared(position, _positions[index]);
+                        if (distance < bestDistance) (best, bestDistance) = (index, distance);
+                    }
+                }
+                if (bestDistance <= ring * _cellSize * (ring * _cellSize)) break;
+            }
+            // Far from every game vertex (new geometry outside the original's shape): check them all.
+            if (best < 0)
+            {
+                for (var index = 0; index < _positions.Length; index++)
+                {
+                    var distance = Vector3.DistanceSquared(position, _positions[index]);
+                    if (distance < bestDistance) (best, bestDistance) = (index, distance);
+                }
+            }
+            var colour = _colours.AsSpan(best * 4, 4);
+            return new Vector4(colour[0], colour[1], colour[2], colour[3]) / 255f;
+        }
+
+        private (int, int, int) Cell(Vector3 position)
+        {
+            var offset = (position - _minimum) / _cellSize;
+            return ((int)MathF.Floor(offset.X), (int)MathF.Floor(offset.Y), (int)MathF.Floor(offset.Z));
+        }
+    }
+
     private static IReadOnlyDictionary<uint, Vector4> BuildTangentFrames(SkeletalMeshGlbLod candidate)
     {
         var normals = candidate.Vertices.ToDictionary(pair => pair.Key,
             pair => Normalize(pair.Value.Normal ?? default, "normal", candidate.LodIndex, pair.Key));
         if (candidate.HasTangents)
             return candidate.Vertices.ToDictionary(pair => pair.Key,
-                pair => OrthonormalizeTangent(normals[pair.Key], pair.Value.Tangent ?? default,
-                    candidate.LodIndex, pair.Key));
+                pair => OrthonormalizeTangent(normals[pair.Key], pair.Value.Tangent ?? default));
         var tangents = candidate.Vertices.Keys.ToDictionary(id => id, _ => Vector3.Zero);
         var bitangents = candidate.Vertices.Keys.ToDictionary(id => id, _ => Vector3.Zero);
         foreach (var (triangle, multiplicity) in candidate.Triangles)
@@ -627,13 +733,7 @@ public sealed class SkeletalMeshTopologyCompilerService
         {
             var normal = normals[id];
             var tangent = tangents[id] - normal * Vector3.Dot(normal, tangents[id]);
-            if (!TryNormalize(tangent, out tangent))
-            {
-                tangent = MathF.Abs(normal.Z) < 0.999f
-                    ? Vector3.Cross(Vector3.UnitZ, normal)
-                    : Vector3.Cross(Vector3.UnitY, normal);
-                tangent = Normalize(tangent, "tangent", candidate.LodIndex, id);
-            }
+            if (!TryNormalize(tangent, out tangent)) tangent = AnyPerpendicular(normal);
             var sign = Vector3.Dot(Vector3.Cross(normal, tangent), bitangents[id]) < 0f ? -1f : 1f;
             return new Vector4(tangent, sign);
         });
@@ -752,14 +852,18 @@ public sealed class SkeletalMeshTopologyCompilerService
         return result;
     }
 
-    private static Vector4 OrthonormalizeTangent(Vector3 normal, Vector4 value, int lod, uint vertex)
+    private static Vector4 OrthonormalizeTangent(Vector3 normal, Vector4 value)
     {
         var tangent = new Vector3(value.X, value.Y, value.Z);
         tangent -= normal * Vector3.Dot(normal, tangent);
-        if (!TryNormalize(tangent, out tangent))
-            Refuse("SMC091", $"LOD {lod} vertex {vertex} has no usable tangent.");
+        // Editors leave a zero tangent on collapsed UV islands; any tangent along the surface serves there.
+        if (!TryNormalize(tangent, out tangent)) tangent = AnyPerpendicular(normal);
         return new Vector4(tangent, value.W < 0f ? -1f : 1f);
     }
+
+    private static Vector3 AnyPerpendicular(Vector3 normal) => Vector3.Normalize(MathF.Abs(normal.Z) < 0.999f
+        ? Vector3.Cross(Vector3.UnitZ, normal)
+        : Vector3.Cross(Vector3.UnitY, normal));
 
     private static bool TryNormalize(Vector3 value, out Vector3 normalized)
     {

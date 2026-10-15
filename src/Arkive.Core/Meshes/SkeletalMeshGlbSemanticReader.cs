@@ -39,6 +39,7 @@ internal sealed record SkeletalMeshGlbLod(
     public int MaximumInfluenceCount { get; init; }
     public double MaximumSkinWeightSumError { get; init; }
     public int DegenerateTriangleCount { get; init; }
+    public int IgnoredMorphTargetCount { get; init; }
     public IReadOnlyList<SkeletalMeshGlbTrianglePositions> DegenerateTriangles { get; init; } = [];
     public int FaceOrientationTriangleCount { get; init; }
     public int OpposedFaceNormalTriangleCount { get; init; }
@@ -246,13 +247,17 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         bool? hasNormals = null;
         bool? hasTangents = null;
         bool? hasColours = null;
+        var morphTargets = 0;
+        // Objects joined from different sources may differ in UV maps, colours and tangents;
+        // the topology compiler fits every vertex to the game mesh's streams.
+        var topologyCandidate = _profile == SkeletalMeshGlbReadProfile.TopologyCandidate;
         foreach (var primitive in primitives.EnumerateArray())
         {
             if (primitive.TryGetProperty("mode", out var mode) && mode.GetInt32() != 4)
                 throw Error("SMI121", $"LOD {lodIndex} contains a non-triangle primitive.");
-            if (primitive.TryGetProperty("targets", out var targets) &&
-                targets.ValueKind == JsonValueKind.Array && targets.GetArrayLength() > 0)
-                throw Error("SMI122", $"LOD {lodIndex} contains morph targets; this bounded import profile refuses them.");
+            // Shape keys have no counterpart in the game mesh: the base shape is imported and they are ignored.
+            if (primitive.TryGetProperty("targets", out var targets) && targets.ValueKind == JsonValueKind.Array)
+                morphTargets += targets.GetArrayLength();
             var attributes = primitive.GetProperty("attributes");
             if (attributes.TryGetProperty("JOINTS_1", out _) ||
                 attributes.TryGetProperty("WEIGHTS_1", out _))
@@ -276,18 +281,19 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
                                    !property.Name.Equals(reservedCarrierKey, StringComparison.Ordinal))
                 .OrderBy(property => TextureCoordinateNumber(property.Name))
                 .ToArray();
-            uvCount = uvCount < 0 ? uvKeys.Length : uvCount;
-            if (uvCount != uvKeys.Length)
+            if (uvCount >= 0 && uvCount != uvKeys.Length && !topologyCandidate)
                 throw Error("SMI124", $"LOD {lodIndex} primitives have inconsistent UV channel counts.");
+            uvCount = Math.Max(uvCount, uvKeys.Length);
             var primitiveHasNormals = attributes.TryGetProperty("NORMAL", out var normalAccessor);
             var primitiveHasTangents = attributes.TryGetProperty("TANGENT", out var tangentAccessor);
             var primitiveHasColours = attributes.TryGetProperty("COLOR_0", out var colourAccessor);
-            hasNormals ??= primitiveHasNormals;
-            hasTangents ??= primitiveHasTangents;
-            hasColours ??= primitiveHasColours;
-            if (hasNormals != primitiveHasNormals || hasTangents != primitiveHasTangents ||
-                hasColours != primitiveHasColours)
+            if ((hasNormals is { } normalsSoFar && normalsSoFar != primitiveHasNormals) ||
+                (!topologyCandidate && ((hasTangents is { } tangentsSoFar && tangentsSoFar != primitiveHasTangents) ||
+                                        (hasColours is { } coloursSoFar && coloursSoFar != primitiveHasColours))))
                 throw Error("SMI125", $"LOD {lodIndex} primitives have inconsistent semantic attributes.");
+            hasNormals ??= primitiveHasNormals;
+            hasTangents = (hasTangents ?? true) && primitiveHasTangents;
+            hasColours = (hasColours ?? false) || primitiveHasColours;
             var jointAccessor = RequiredAttribute(attributes, "JOINTS_0", lodIndex);
             var weightAccessor = RequiredAttribute(attributes, "WEIGHTS_0", lodIndex);
             var jointMap = ReadJointMap(skin);
@@ -391,6 +397,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
             MaximumSkinWeightSumError = maximumWeightSumError,
             DegenerateTriangleCount = degenerateTriangles,
             DegenerateTriangles = degenerateTrianglePositions,
+            IgnoredMorphTargetCount = morphTargets,
             FaceOrientationTriangleCount = orientedTriangles,
             OpposedFaceNormalTriangleCount = opposedTriangles,
             Bounds = bounds,
@@ -410,11 +417,9 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         SkeletalMeshGlbLod left,
         SkeletalMeshGlbLod right)
     {
-        if (left.TextureCoordinateCount != right.TextureCoordinateCount ||
-            left.HasNormals != right.HasNormals || left.HasTangents != right.HasTangents ||
-            left.HasColours != right.HasColours)
+        if (left.HasNormals != right.HasNormals)
             throw Error("SMI133",
-                $"LOD {left.LodIndex} skinned objects use incompatible vertex semantics and cannot be compiled together.");
+                $"LOD {left.LodIndex} joins skinned objects where only some have vertex normals; export normals for every object.");
         var vertices = left.Vertices.Concat(right.Vertices).ToDictionary(pair => pair.Key, pair => pair.Value);
         var triangles = left.Triangles.ToDictionary(pair => pair.Key, pair => pair.Value);
         foreach (var pair in right.Triangles)
@@ -426,10 +431,10 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
             checked(left.TriangleCount + right.TriangleCount),
             checked(left.PrimitiveCount + right.PrimitiveCount),
             "compiler-local candidate identities",
-            left.TextureCoordinateCount,
+            Math.Max(left.TextureCoordinateCount, right.TextureCoordinateCount),
             left.HasNormals,
-            left.HasTangents,
-            left.HasColours,
+            left.HasTangents && right.HasTangents,
+            left.HasColours || right.HasColours,
             materials)
         {
             MaximumInfluenceCount = Math.Max(left.MaximumInfluenceCount, right.MaximumInfluenceCount),
@@ -437,6 +442,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
                 left.MaximumSkinWeightSumError, right.MaximumSkinWeightSumError),
             DegenerateTriangleCount = checked(left.DegenerateTriangleCount + right.DegenerateTriangleCount),
             DegenerateTriangles = [.. left.DegenerateTriangles, .. right.DegenerateTriangles],
+            IgnoredMorphTargetCount = checked(left.IgnoredMorphTargetCount + right.IgnoredMorphTargetCount),
             FaceOrientationTriangleCount = checked(
                 left.FaceOrientationTriangleCount + right.FaceOrientationTriangleCount),
             OpposedFaceNormalTriangleCount = checked(

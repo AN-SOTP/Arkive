@@ -706,6 +706,37 @@ internal static class SmokeTestSupport
         File.WriteAllBytes(destinationPath, bytes);
     }
 
+    /// <summary>
+    /// Rewrites a GLB the way a typical Blender export differs from Arkive's: a shape key on the
+    /// first primitive, a second UV map, and no tangents.
+    /// </summary>
+    internal static void WriteSkeletalMeshBlenderStyleExport(string sourcePath, string destinationPath)
+    {
+        var bytes = File.ReadAllBytes(sourcePath);
+        var jsonLength = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(12)));
+        var root = JsonNode.Parse(bytes.AsSpan(20, jsonLength))!.AsObject();
+        foreach (var primitive in root["meshes"]!.AsArray().SelectMany(mesh => mesh!["primitives"]!.AsArray()))
+        {
+            var attributes = primitive!["attributes"]!.AsObject();
+            attributes.Remove("TANGENT");
+            attributes["TEXCOORD_7"] = attributes["TEXCOORD_0"]!.GetValue<int>();
+            primitive["targets"] = new JsonArray(new JsonObject { ["POSITION"] = attributes["NORMAL"]!.GetValue<int>() });
+        }
+        var json = Encoding.UTF8.GetBytes(root.ToJsonString());
+        var paddedJsonLength = (json.Length + 3) & ~3;
+        var binaryChunk = bytes.AsSpan(20 + jsonLength);
+        var output = new byte[20 + paddedJsonLength + binaryChunk.Length];
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(0, 4), 0x46546C67);
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(4, 4), 2);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(8, 4), output.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(12, 4), paddedJsonLength);
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(16, 4), 0x4E4F534A);
+        output.AsSpan(20, paddedJsonLength).Fill(0x20);
+        json.CopyTo(output, 20);
+        binaryChunk.CopyTo(output.AsSpan(20 + paddedJsonLength));
+        File.WriteAllBytes(destinationPath, output);
+    }
+
     internal static void WriteSkeletalMeshNormalEdit(string sourcePath, string destinationPath, float deltaX)
     {
         var bytes = File.ReadAllBytes(sourcePath);
