@@ -243,6 +243,48 @@ public sealed partial class PackageIndexStore
             routedPackageCount = candidates.Count;
             routingPreparationSeconds = routing.Duration.TotalSeconds;
         }
+
+        // Object-name and all-field searches can't be routed through the game database, so a
+        // per-package name filter skips the documents that can't hold every query term.
+        var nameFilterTerms = usedRoutingIndex
+            ? null
+            : PackageNameFilter.PlanTerms(query, searchScope);
+        PackageNameFilter? nameFilter = null;
+        Dictionary<string, FileInfo>? nameFilterMisses = null;
+        string[] liveCacheFileNames = [];
+        if (nameFilterTerms is not null)
+        {
+            nameFilter = await LoadNameFilterAsync(cancellationToken).ConfigureAwait(false);
+            var metadataCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (gameMetadata is not null && metadataSearchPlan is { IsEmpty: false })
+            {
+                // Game-database text only matches through the search plan's routed packages.
+                var routing = await PrepareSearchRoutingAsync(
+                    rootPath,
+                    gameMetadata,
+                    routingProgress,
+                    cancellationToken).ConfigureAwait(false);
+                metadataCandidates.UnionWith(routing.Index.Resolve(metadataSearchPlan, _cacheDirectory)
+                    .Select(path => Path.GetFileName(path)));
+                routingIndexBuilt = routing.WasBuilt;
+                routingPreparationSeconds = routing.Duration.TotalSeconds;
+            }
+
+            var cacheFileInfos = EnumerateCacheFileInfos().ToArray();
+            liveCacheFileNames = cacheFileInfos.Select(file => file.Name).ToArray();
+            nameFilterMisses = cacheFileInfos
+                .Where(file => !nameFilter.HasCurrentEntry(file))
+                .ToDictionary(file => file.FullName, StringComparer.OrdinalIgnoreCase);
+            var candidates = cacheFileInfos
+                .Where(file => metadataCandidates.Contains(file.Name) ||
+                               nameFilter.MayContain(file, nameFilterTerms))
+                .Select(file => file.FullName)
+                .ToArray();
+            searchCacheFiles = candidates;
+            usedRoutingIndex = true;
+            routedPackageCount = candidates.Length;
+        }
+
         var matches = new List<PackageIndexMatch>();
         var totalMatches = 0;
         var packageCount = 0;
@@ -272,6 +314,12 @@ public sealed partial class PackageIndexStore
                     // Ignore an interrupted, corrupt, or obsolete cache entry. Index health
                     // reports it and a rebuild replaces it.
                     return;
+                }
+
+                if (document is not null &&
+                    nameFilterMisses?.TryGetValue(cacheFile, out var cacheFileInfo) == true)
+                {
+                    nameFilter!.Add(cacheFileInfo, document);
                 }
 
                 if (document is null ||
@@ -397,6 +445,12 @@ public sealed partial class PackageIndexStore
                     }
                 }
             }).ConfigureAwait(false);
+
+        if (nameFilter?.IsDirty == true)
+        {
+            await SaveNameFilterAsync(nameFilter, liveCacheFileNames, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         if (gameMetadata is not null)
         {
@@ -1183,6 +1237,15 @@ public sealed partial class PackageIndexStore
                 .Where(path => !Path.GetFileName(path).Equals(
                     ManifestFileName,
                     StringComparison.OrdinalIgnoreCase)));
+
+    private IEnumerable<FileInfo> EnumerateCacheFileInfos()
+    {
+        var directory = new DirectoryInfo(_cacheDirectory);
+        return directory.EnumerateFiles("*.json.gz")
+            .Where(file => !file.Name.Equals(SearchRoutingFileName, StringComparison.OrdinalIgnoreCase))
+            .Concat(directory.EnumerateFiles("*.json")
+                .Where(file => !file.Name.Equals(ManifestFileName, StringComparison.OrdinalIgnoreCase)));
+    }
 
     private static bool TryParseCompressedCacheFileName(
         string path,

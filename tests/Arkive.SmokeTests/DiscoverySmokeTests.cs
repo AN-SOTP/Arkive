@@ -9,6 +9,7 @@ internal static class DiscoverySmokeTests
         new("audits playable-character texture families without NPC leakage", TestCharacterTextureCoverageAudit),
         new("limits indexed searches to selected fields", TestPackageIndexSearchScopes),
         new("searches a compressed package index", TestCompressedPackageIndexSearch),
+        new("skips packages that cannot match an object-name search", TestPackageNameFilter),
         new("reports package index health", TestPackageIndexHealth),
         new("resolves localized game names to assets", TestGameAssetMetadata),
         new("ranks and qualifies evidence-backed asset discovery", TestAssetDiscovery),
@@ -255,13 +256,17 @@ internal static class DiscoverySmokeTests
         var metadataIndex = GameAssetMetadataIndex.Load(metadataPath);
         var store = new PackageIndexStore(cache);
 
+        var allFieldsBuiltRouting = false;
         foreach (var query in new[] { "raid_package", "raid_package.upk", "echidna_package.upk", "boss_snake", "Echidna" })
         {
             var allFields = store.SearchAsync(root, query, null, metadataIndex,
                 PackageIndexSearchScope.AllFields).GetAwaiter().GetResult();
             Assert(allFields.TotalMatches == 1 && allFields.Matches[0].ObjectName == "boss_snake_sk",
                 $"all-fields search did not match package, filename, object, or game name: {query}");
+            allFieldsBuiltRouting |= allFields.RoutingIndexBuilt;
         }
+        // A game-name term in an all-field search is routed through the game database too.
+        Assert(allFieldsBuiltRouting, "the all-field search for a game name did not build routing");
 
         var objectOnly = store.SearchAsync(
                 root,
@@ -293,7 +298,7 @@ internal static class DiscoverySmokeTests
             .GetResult();
         Assert(gameNameOnly.TotalMatches == 1, "in-game-name-only search did not match the display name");
         Assert(gameNameOnly.UsedRoutingIndex, "in-game-name-only search did not use routing");
-        Assert(gameNameOnly.RoutingIndexBuilt, "first in-game-name search did not build routing");
+        Assert(!gameNameOnly.RoutingIndexBuilt, "the in-game-name search rebuilt routing it could reuse");
         Assert(gameNameOnly.RoutedPackageCount == 1, "routing did not exclude the unrelated package");
         Assert(File.Exists(store.SearchRoutingPath), "routing sidecar was not persisted");
         var dependencyPackages = store.LoadPackagesByAliasAsync(root, ["RAID_PACKAGE"], metadataIndex)
@@ -399,6 +404,53 @@ internal static class DiscoverySmokeTests
             .GetResult();
         Assert(result.TotalMatches == 1, "compressed cached asset was not found");
         Assert(result.Matches[0].PackageAssetCount == 1, "package asset count was not attached to the match");
+    }
+
+    private static void TestPackageNameFilter()
+    {
+        var root = Path.Combine(fixtureDirectory, "name-filter-root");
+        var cache = Path.Combine(fixtureDirectory, "name-filter-cache");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(cache);
+        void WritePackage(int index, params string[] objects)
+        {
+            var source = Path.Combine(root, $"package_{index}.upk");
+            File.WriteAllBytes(source, []);
+            var document = new PackageIndexDocument(
+                source, $"PHYS{index}", $"package_{index}", 0, 0, DateTimeOffset.UtcNow,
+                objects.Select((name, export) => new IndexedAsset(export, AssetKind.Texture, "Texture2D", name, 20, 4)).ToArray(),
+                Error: null);
+            File.WriteAllText(Path.Combine(cache, $"package_{index}.json"), JsonSerializer.Serialize(document));
+        }
+        for (var index = 0; index < 20; index++) WritePackage(index, $"filler_{index}_d", $"filler_{index}_n");
+        WritePackage(20, "boss_snake_d", "boss_snake_n");
+        WritePackage(21, "boss_spider_d");
+
+        PackageIndexSearchResult Search(PackageIndexStore store, string query, PackageIndexSearchScope scope) =>
+            store.SearchAsync(root, query, null, searchScope: scope).GetAwaiter().GetResult();
+        var first = Search(new PackageIndexStore(cache), "boss_snake", PackageIndexSearchScope.ObjectName);
+        Assert(first.TotalMatches == 2 && first.PackageCount == 22, "the first search did not read every package to build the filter");
+
+        // A fresh store loads the saved filter and reads only packages that can contain every term.
+        var store = new PackageIndexStore(cache);
+        var routed = Search(store, "boss_snake", PackageIndexSearchScope.ObjectName);
+        Assert(routed.TotalMatches == 2 && routed.UsedRoutingIndex && routed.PackageCount == 1,
+            $"the name filter did not skip unrelated packages: read {routed.PackageCount}");
+        Assert(Search(store, "BOSS -spider", PackageIndexSearchScope.ObjectName) is { TotalMatches: 2, PackageCount: 2 },
+            "case-insensitive or excluded terms were filtered wrongly");
+        Assert(Search(store, "package_21", PackageIndexSearchScope.AllFields) is { TotalMatches: 1, PackageCount: 1 },
+            "an all-field search did not match through the package name");
+        Assert(Search(store, "_d", PackageIndexSearchScope.ObjectName) is { TotalMatches: 22, PackageCount: 22 },
+            "a term shorter than a trigram was filtered");
+        Assert(Search(store, "snake texture", PackageIndexSearchScope.AllFields).TotalMatches == 2,
+            "an asset-kind term was filtered out of an all-field search");
+
+        // A rewritten package has a new length, so its stale entry is ignored until it is read again.
+        WritePackage(5, "filler_5_d", "boss_snake_s");
+        var changed = Search(store, "boss_snake", PackageIndexSearchScope.ObjectName);
+        Assert(changed.TotalMatches == 3 && changed.PackageCount == 2, "a changed package was skipped by its stale filter entry");
+        Assert(Search(new PackageIndexStore(cache), "boss_snake", PackageIndexSearchScope.ObjectName).PackageCount == 2,
+            "the refreshed filter entry was not saved");
     }
 
     private static void TestPackageIndexHealth()
