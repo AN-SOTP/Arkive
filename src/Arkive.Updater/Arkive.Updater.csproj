@@ -2,8 +2,12 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
+    <!-- The helper replaces the installed app, so it ships self-contained. Trimming and
+         linking only the update policy (not all of Arkive.Core) keep that copy small. -->
+    <PublishTrimmed>true</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../Arkive.Core/Arkive.Core.csproj" />
+    <Compile Include="../Arkive.Core/Updates/ArkiveRelease.cs" Link="Shared/ArkiveRelease.cs" />
+    <Compile Include="../Arkive.Core/Updates/ArkiveUpdateFailure.cs" Link="Shared/ArkiveUpdateFailure.cs" />
   </ItemGroup>
 </Project>

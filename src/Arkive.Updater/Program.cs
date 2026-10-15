@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using Arkive.Core.External;
 using Arkive.Core.Updates;
+
+// Same file name as ArkiveRuntimePaths.InstallationMarker, which the helper doesn't link.
+const string InstallationMarker = "arkive-installation.json";
 
 return await RunAsync(args);
 
@@ -18,7 +20,7 @@ static async Task<int> RunAsync(string[] arguments)
         var applicationDirectory = Path.GetFullPath(arguments[3]);
         var dataRoot = Path.GetFullPath(arguments[4]);
         executable = Path.Combine(applicationDirectory, "Arkive.App.exe");
-        if (!File.Exists(executable) || !File.Exists(Path.Combine(applicationDirectory, ArkiveRuntimePaths.InstallationMarker)) ||
+        if (!File.Exists(executable) || !File.Exists(Path.Combine(applicationDirectory, InstallationMarker)) ||
             !File.Exists(installer) || !Path.GetFileName(installer).StartsWith("Arkive-Setup-", StringComparison.Ordinal) ||
             !Path.GetExtension(installer).Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
             new FileInfo(installer).Length > ArkiveReleasePolicy.MaximumInstallerSize)
