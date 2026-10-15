@@ -19,6 +19,19 @@ public partial class MainWindow
     private static HttpClient CreateUpdateClient() => new(new HttpClientHandler { AllowAutoRedirect = false })
     { Timeout = TimeSpan.FromMinutes(10) };
 
+    private async Task CleanUpUpdateDownloadsAsync()
+    {
+        try
+        {
+            var result = await Task.Run(() => UpdateDownloadCleanup.CleanUp(
+                Path.Combine(_projectRoot, "updates"), ArkiveReleasePolicy.CurrentVersion));
+            if (result.DeletedFolders + result.KeptFolders > 0)
+                Log($"Old update downloads cleaned: deleted={result.DeletedFolders}, kept={result.KeptFolders}, freedBytes={result.FreedBytes}.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { Log($"Old update downloads could not be cleaned: {exception.Message}"); }
+    }
+
     // Never throws: every failure is explained to the user (interactive) or the session log (startup).
     private async Task<string> CheckApplicationUpdatesAsync(bool interactive)
     {

@@ -12,6 +12,7 @@ internal static class UpdateSmokeTests
         new("rejects untrusted redirects, wrong hashes and oversized update downloads", TestUnsafeDownloads),
         new("keeps installed Arkive data outside the application folder", TestDataRoot),
         new("explains every update failure with a reason and a next step", TestFailureExplanations),
+        new("deletes used update downloads and keeps one that did not install", TestUpdateDownloadCleanup),
     ];
 
     private static void TestMetadata()
@@ -94,6 +95,32 @@ internal static class UpdateSmokeTests
         Assert(ArkiveRuntimePaths.ResolveDataRoot(null, app, "project", data, "current") == Path.Combine(data, "Arkive"), "installed data used the application folder");
         Assert(ArkiveRuntimePaths.ResolveDataRoot(fixtureDirectory, app, null, data, "current") == fixtureDirectory, "explicit existing data root was ignored");
         Assert(ArkiveRuntimePaths.ResolveDataRoot(null, fixtureDirectory, fixtureDirectory, data, "current") == fixtureDirectory, "source checkout compatibility changed");
+    }
+
+    private static void TestUpdateDownloadCleanup()
+    {
+        var updates = Path.Combine(fixtureDirectory, "update-downloads");
+        string Download(string name, string? installer)
+        {
+            var folder = Path.Combine(updates, name);
+            Directory.CreateDirectory(folder);
+            File.WriteAllBytes(Path.Combine(folder, "Arkive.Updater.exe"), new byte[100]);
+            if (installer is not null) File.WriteAllBytes(Path.Combine(folder, installer), new byte[1000]);
+            return folder;
+        }
+        var installed = Download("installed", "Arkive-Setup-0.2.4-win-x64.exe");
+        var current = Download("current", "Arkive-Setup-0.2.5-win-x64.exe");
+        var pending = Download("pending", "Arkive-Setup-0.3.0-win-x64.exe");
+        var interrupted = Download("interrupted", installer: null);
+
+        var result = UpdateDownloadCleanup.CleanUp(updates, new Version(0, 2, 5, 0));
+        Assert(!Directory.Exists(installed) && !Directory.Exists(current) && !Directory.Exists(interrupted),
+            "installed or interrupted update downloads were kept");
+        Assert(Directory.Exists(pending), "an update that has not installed yet was deleted");
+        Assert(result is { DeletedFolders: 3, KeptFolders: 1, FreedBytes: 3 * 100 + 2 * 1000 },
+            $"cleanup reported the wrong outcome: {result}");
+        Assert(UpdateDownloadCleanup.CleanUp(Path.Combine(fixtureDirectory, "no-updates"), new Version(0, 2, 5)).DeletedFolders == 0,
+            "a missing updates folder was not ignored");
     }
 
     private static void TestFailureExplanations()
