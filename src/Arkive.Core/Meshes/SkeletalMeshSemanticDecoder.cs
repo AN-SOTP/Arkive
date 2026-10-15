@@ -176,6 +176,8 @@ internal sealed class SkeletalMeshSemanticDecoder
         var checkedTriangles = 0;
         var degenerateTriangles = 0;
         var opposedTriangles = 0;
+        var checkedArea = 0d;
+        var opposedArea = 0d;
         for (var index = 0; index + 2 < indices.Count; index += 3)
         {
             var a = checked((int)indices[index]);
@@ -188,7 +190,8 @@ internal sealed class SkeletalMeshSemanticDecoder
                 degenerateTriangles++;
                 continue;
             }
-            face /= MathF.Sqrt(faceLengthSquared);
+            var faceLength = MathF.Sqrt(faceLengthSquared);
+            face /= faceLength;
             var vertexNormal = normals[a] + normals[b] + normals[c];
             if (!TryNormalize(vertexNormal, out vertexNormal))
             {
@@ -196,15 +199,25 @@ internal sealed class SkeletalMeshSemanticDecoder
                 continue;
             }
             checkedTriangles++;
-            if (Vector3.Dot(face, vertexNormal) < 0f) opposedTriangles++;
+            checkedArea += faceLength;
+            if (Vector3.Dot(face, vertexNormal) < 0f)
+            {
+                opposedTriangles++;
+                opposedArea += faceLength;
+            }
         }
         if (checkedTriangles == 0)
             Refuse("SME146", $"LOD {lodIndex} contains no non-degenerate triangle with a usable normal.");
+        // Shipped reduced LODs contain clusters of sub-millimetre triangles whose faces
+        // no longer follow their inherited normals. A real winding error covers the surface,
+        // so only refuse when the opposed faces also cover a meaningful share of its area.
         var maximumOpposed = Math.Max(2, (int)Math.Ceiling(checkedTriangles * 0.005));
-        if (opposedTriangles > maximumOpposed)
+        var opposedAreaShare = opposedArea / checkedArea;
+        if (opposedTriangles > maximumOpposed && opposedAreaShare > 0.005)
             Refuse("SME147",
                 $"LOD {lodIndex} face winding disagrees with decoded normals for " +
-                $"{opposedTriangles:N0}/{checkedTriangles:N0} triangles; maximum tolerated is {maximumOpposed:N0}.");
+                $"{opposedTriangles:N0}/{checkedTriangles:N0} triangles covering {opposedAreaShare:P2} of its area; " +
+                $"maximum tolerated is {maximumOpposed:N0} triangles or 0.50% of the area.");
         return new FaceOrientationEvidence(
             checkedTriangles, degenerateTriangles, opposedTriangles);
     }
