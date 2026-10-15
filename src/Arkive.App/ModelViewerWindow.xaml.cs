@@ -37,7 +37,7 @@ public partial class ModelViewerWindow : Window
     private BakeJob? _bake;
 
     /// <summary>A texture baked in texture space from one material, as the viewer shows it.</summary>
-    public sealed record BakedTexture(int Slot, string Material, string Name, string Source, int Size, string File);
+    public sealed record BakedTexture(int Slot, string Material, string Name, string Source, int Size, string File, string? NormalFile);
 
     private sealed class BakeJob(string requestId, string directory)
     {
@@ -194,7 +194,7 @@ public partial class ModelViewerWindow : Window
         await using var registration = cancellationToken.Register(() => job.Completion.TrySetCanceled());
         var textures = await job.Completion.Task.WaitAsync(TimeSpan.FromMinutes(10), cancellationToken);
         File.WriteAllText(Path.Combine(directory, "materials.json"), JsonSerializer.Serialize(
-            textures.Select(texture => new { material = texture.Material, name = texture.Name, file = texture.File, source = texture.Source, size = texture.Size }),
+            textures.Select(texture => new { material = texture.Material, name = texture.Name, file = texture.File, normal = texture.NormalFile, source = texture.Source, size = texture.Size }),
             new JsonSerializerOptions { WriteIndented = true }));
         return textures;
     }
@@ -210,8 +210,15 @@ public partial class ModelViewerWindow : Window
         var safe = new string(name.Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
         var file = $"{slot:D2}_{safe}.png";
         File.WriteAllBytes(Path.Combine(job.Directory, file), Convert.FromBase64String(data[prefix.Length..]));
+        string? normalFile = null;
+        if (root.TryGetProperty("normalDataUrl", out var normal) && normal.GetString() is { } normalData &&
+            normalData.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            normalFile = $"{slot:D2}_{safe}_normal.png";
+            File.WriteAllBytes(Path.Combine(job.Directory, normalFile), Convert.FromBase64String(normalData[prefix.Length..]));
+        }
         job.Textures.Add(new BakedTexture(slot, root.GetProperty("material").GetString() ?? name, name,
-            root.GetProperty("source").GetString() ?? "", root.GetProperty("size").GetInt32(), file));
+            root.GetProperty("source").GetString() ?? "", root.GetProperty("size").GetInt32(), file, normalFile));
     }
 
     private async Task BakeToChosenFolderAsync()

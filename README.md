@@ -248,6 +248,28 @@ The built-in Western/global protection profile is `western-global-steam-v1`. It 
 
 Verified paths cover BC1/DXT1, BC3/DXT5, BC5/ATI2, supported Unity-Crunch and UE3 bulk mips. Native manifests retain format/dimension/mip contracts and alpha policy. An edited image keeps the original size, or is exactly 2× or 4× it on both sides (up to 4096×4096): Arkive then adds the larger mip levels above the original ones and updates the texture's size properties. Other sizes are refused. Arkive rebuilds required mip payloads and validates decoded results. Preserve normal-map semantics; colour changes do not permit arbitrary compression/layout changes.
 
+#### Texture maps for artists
+
+What each kind of game texture holds, so you know what to paint. A material instance names its textures by parameter (shown in the model viewer's material panel), and file names usually end in a matching suffix. Rows marked *inferred* come from Arkive's colour recipes and have not been checked against the game's compiled shaders yet; treat them as a strong hint, not a rule.
+
+| Parameter | Usual suffix | What it holds |
+| --- | --- | --- |
+| `texture_diffuse`, `texture_basecolor` | `_d` | Base colour (sRGB). Alpha is opacity on masked and translucent materials. |
+| `texture_normal` | `_n` | Tangent-space normal map, DirectX style (green points down). |
+| `texture_specular` | `_s` | Specular strength; brighter reads as shinier. *Inferred.* |
+| `texture_orm` | `_orm` | Occlusion in red, roughness in green, metalness in blue. *Inferred.* |
+| `texture_mask_variation` | `_cm`, `_m` | Colour-variation mask: red, green and blue each pick a region that the material's `diffusecolor_a`, `_b` and `_c` tint. *Inferred.* |
+| `texture_emissive` | `_e` | Glow colour, added on top of lighting. *Inferred.* |
+
+**Hair is different.** Two-tone hair materials (`npc_hair_fur_*`, `pc_hair_fur_*`) don't store colour in their diffuse texture. Red is the shading, blue is the two-tone mask and alpha is opacity; the colours come from the material's hair colour parameters. Paint those channels as greyscale masks and recolour the hair through the material instead. NPC hair is verified; player hair is inferred.
+
+**Painting tips:**
+
+- Keep the original size, or exactly 2× or 4× it on both sides (up to 4096×4096). Other sizes are refused.
+- Keep alpha where the original has it: removing it makes masked parts solid.
+- Keep normal maps DirectX style. When you open a mesh in Blender, Arkive gives it an OpenGL-style copy of the normal map (green flipped) so it shades correctly there; that copy is only for viewing. Flip green back before using a normal map baked in Blender as a game texture.
+- Colour edits keep the original compression. A texture with a colour-variation mask can often be recoloured by editing the material's tint parameters instead of repainting it.
+
 Supported `MaterialInstanceConstant` edits cover proven scalar/vector parameters, compatible texture references and supported parent/reference fields. Arkive is not a shader compiler or arbitrary material graph importer. An emissive recolour may also need a material-tint edit. Particle effects and animation events are separate.
 
 ### Meshes, skeletons, cloth and morphs

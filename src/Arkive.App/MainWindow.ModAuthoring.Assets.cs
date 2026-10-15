@@ -42,7 +42,8 @@ public partial class MainWindow : Window
 
     // Blender treats a file passed on its command line as a .blend, so a .glb has to go through its glTF importer.
     // After importing, connect the game colours Arkive baked next to the GLB (<name>.arkive-colours) to
-    // each material's Base Color, so the mesh looks as it does in game. The GLB itself is unchanged.
+    // each material's Base Color, and its normal map through a Normal Map node, so the mesh looks as it
+    // does in game. The GLB itself is unchanged.
     private const string BlenderGlbImportScript =
         "import bpy, sys, os, json, re\n" +
         "glb = sys.argv[sys.argv.index('--') + 1]\n" +
@@ -61,7 +62,16 @@ public partial class MainWindow : Window
         "        m.node_tree.links.new(node.outputs['Color'], bsdf.inputs['Base Color'])\n" +
         "        m.node_tree.links.new(node.outputs['Alpha'], bsdf.inputs['Alpha'])\n" +
         "        try: m.blend_method = 'HASHED'\n" +
-        "        except Exception: pass\n";
+        "        except Exception: pass\n" +
+        "        if not entry.get('normal'): continue\n" +
+        "        image = m.node_tree.nodes.new('ShaderNodeTexImage')\n" +
+        "        image.image = bpy.data.images.load(os.path.join(folder, entry['normal']), check_existing=True)\n" +
+        "        image.image.colorspace_settings.name = 'Non-Color'\n" +
+        "        image.location = (bsdf.location.x - 700, bsdf.location.y - 320)\n" +
+        "        normal = m.node_tree.nodes.new('ShaderNodeNormalMap')\n" +
+        "        normal.location = (bsdf.location.x - 400, bsdf.location.y - 320)\n" +
+        "        m.node_tree.links.new(image.outputs['Color'], normal.inputs['Color'])\n" +
+        "        m.node_tree.links.new(normal.outputs['Normal'], bsdf.inputs['Normal'])\n";
 
     private void OpenGlbInBlender(string blender, string glb)
     {

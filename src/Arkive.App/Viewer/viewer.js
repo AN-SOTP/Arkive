@@ -993,6 +993,28 @@ function encodePng(pixels, size) {
   return canvas.toDataURL('image/png');
 }
 
+/// The material's normal map as a PNG for Blender, whose normal maps are OpenGL-style (green up).
+async function bakeNormal(info) {
+  const parameter = info.recipe?.normalTextureParameter;
+  const url = parameter && info.textureUrls[parameter];
+  if (!url) return null;
+  const image = new Image();
+  image.crossOrigin = 'anonymous';
+  image.src = state.base + url;
+  await image.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext('2d');
+  context.drawImage(image, 0, 0);
+  if (info.recipe.flipNormalGreen) {
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 1; i < pixels.data.length; i += 4) pixels.data[i] = 255 - pixels.data[i];
+    context.putImageData(pixels, 0, 0);
+  }
+  return canvas.toDataURL('image/png');
+}
+
 async function bakeTextures(requestId) {
   const lod = Math.min(...state.lods.keys());
   const bySlot = new Map();
@@ -1012,8 +1034,9 @@ async function bakeTextures(requestId) {
     const coverage = renderBake(meshes, coverageMaterial, size);
     material.dispose();
     dilate(colour, coverage, size, 8);
+    const normalDataUrl = await bakeNormal(info).catch(() => null);
     post({ type: 'baked', requestId, slot, material: info.reference ?? info.name, name: info.name, source: game ? 'game shader' : info.recipe.familyId,
-      size, dataUrl: encodePng(colour, size) });
+      size, dataUrl: encodePng(colour, size), normalDataUrl });
     count++;
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
