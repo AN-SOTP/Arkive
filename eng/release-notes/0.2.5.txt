@@ -1,0 +1,7 @@
+Kits find their textures and materials again for outfits you have already modded, and fewer game meshes are refused.
+
+- Add mesh + textures/materials no longer adds only the mesh when a mod is already installed over its package. The linked textures and materials are found in the game folder again.
+- If a kit still finds no textures or materials, the status line says why instead of staying silent, and the slow "Resolving exact dependencies" step is skipped.
+- Meshes such as pc_sp_av_237a_dress_sk are no longer refused with SME147. Tiny leftover triangles in the game's lower LODs no longer count as a winding error unless they cover a real share of the surface.
+- Material projects open again instead of failing with a JsonException.
+- The session log now starts with the Arkive version, Windows and .NET versions, and lists each mod with the packages it changes. Attach it when reporting a problem.
