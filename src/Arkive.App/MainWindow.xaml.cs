@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -424,6 +426,9 @@ public partial class MainWindow : Window
             AppearanceManager.ApplyWindowChrome(this, _effectiveAppearanceTheme);
         ApplyRestoredSettings(_restoredSettings);
         Log($"Arkive session started. Log file: {_sessionLog.FilePath}");
+        Log($"Arkive {typeof(MainWindow).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown"} " +
+            $"from {AppContext.BaseDirectory}; {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}; " +
+            $"{RuntimeInformation.FrameworkDescription}.");
         Log(
             $"Chunk protection provider selected: {_protectionProvider.Name}; " +
             $"profile={ChunkProtectionProviderFactory.WesternGlobalProfileId}. " +

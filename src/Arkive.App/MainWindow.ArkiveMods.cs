@@ -10,6 +10,7 @@ namespace Arkive.App;
 public partial class MainWindow : Window
 {
     private readonly ArkiveModLibrary _arkiveModLibrary;
+    private string? _loggedModLibraryState;
     private readonly ArkiveModEditWorkspaces _arkiveModEdits;
     private readonly ArkiveModApplyContext _arkiveModContext;
     private readonly ArkiveModAuthoringService _arkiveModAuthoring;
@@ -115,6 +116,16 @@ public partial class MainWindow : Window
             Log($"Mod library refreshed: trigger={trigger}, mods={rows.Length}, enabled={enabled}, " +
                 $"inGame={inGame}, ties={ties}, registered={scan.RegisteredModIds.Count}, " +
                 $"refreshed={scan.RefreshedModIds.Count}, released={scan.Released.Count}.");
+            // Bug reports carry the session log, so record which mods and packages are in game whenever that changes.
+            var state = string.Join(Environment.NewLine, rows.Select(row =>
+                $"Mod: {row.Entry.Manifest.Name} {row.Entry.Manifest.Version}, enabled={row.Enabled}, " +
+                $"priority={row.Entry.Priority}, inGame={row.Status.InGame}, assets={row.Entry.Manifest.Assets.Count}, " +
+                $"packages={string.Join(" ", row.Entry.Manifest.PhysicalPackageNames)}"));
+            if (state != _loggedModLibraryState)
+            {
+                _loggedModLibraryState = state;
+                foreach (var line in state.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)) Log(line);
+            }
             if (scan.Released.Count > 0) await RefreshGuidedTextureModsAsync("mod file updated");
             await RefreshModAuthoringAsync();
         }
