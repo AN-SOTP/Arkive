@@ -1,0 +1,10 @@
+Faster object-name searches, fewer refused Blender exports, and a smaller install.
+
+- Object-name and All fields searches no longer read the whole library index every time. After the first such search builds a small filter, a search that took 40 to 60 seconds takes a few seconds.
+- Blender exports are accepted in more cases. Shape keys are ignored, a different number of UV maps is fitted to the game mesh, missing vertex colours are taken from the nearest point of the original, and missing or broken tangents are rebuilt, each with a warning instead of an error.
+- An edit exported without vertex colours keeps the game's own colours and LODs instead of being treated as a new topology.
+- Game meshes with double-sided parts are no longer refused with SME147.
+- Open edited file now also connects the game's normal map in Blender, so meshes shade as they do in game. The README has a new guide to what each kind of game texture holds.
+- Preview original opens meshes in Arkive's model viewer instead of UModel.
+- Old update downloads are deleted when Arkive starts. Each update used to leave about 170 MB behind.
+- The update helper is about 70 MB smaller.
