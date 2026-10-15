@@ -30,7 +30,7 @@ public sealed class ArkiveModAuthoringService
     {
         ArgumentNullException.ThrowIfNull(edit);
         var id = assetId ?? Guid.NewGuid().ToString("N");
-        return edit.Entry switch
+        var captured = edit.Entry switch
         {
             GuidedTextureModProjectEntry texture => await CaptureTextureAsync(edit, texture, id, cancellationToken)
                 .ConfigureAwait(false),
@@ -41,6 +41,13 @@ public sealed class ArkiveModAuthoringService
             MaterialInstanceEditEntry material => await CaptureMaterialAsync(edit, material, id, cancellationToken)
                 .ConfigureAwait(false),
             _ => throw new ArkiveModRefusalException("AUT001", $"{edit.DisplayName} is not a supported edit."),
+        };
+        return edit.ObjectPath is null ? captured : captured with
+        {
+            Descriptor = captured.Descriptor with
+            {
+                Target = captured.Descriptor.Target with { ObjectPath = edit.ObjectPath },
+            },
         };
     }
 

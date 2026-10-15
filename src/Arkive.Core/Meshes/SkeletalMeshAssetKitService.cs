@@ -25,7 +25,8 @@ public sealed record SkeletalMeshAssetKitDependency(
     string ObjectName,
     string ClassName,
     string Evidence,
-    IReadOnlyList<string> RelativeFiles);
+    IReadOnlyList<string> RelativeFiles,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ObjectPath = null);
 
 public sealed record SkeletalMeshAssetKitManifest(
     int SchemaVersion,
@@ -176,14 +177,27 @@ public sealed class SkeletalMeshAssetKitService
             dependencyDirectory,
             report.ObjectName,
             exported.OutputFiles);
-        var dependencies = targets.Select(target => new SkeletalMeshAssetKitDependency(
+        // UModel's glTF names materials without their group; the mesh's own slot references carry it.
+        var materialPaths = (report.Oracle?.Materials ?? [])
+            .Select(ReferencePath)
+            .GroupBy(NormalizeObjectReference, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                StringComparer.OrdinalIgnoreCase);
+        var dependencies = targets
+            .SelectMany(target => target.ObjectPath is null &&
+                                  target.ClassName.Contains("Material", StringComparison.OrdinalIgnoreCase) &&
+                                  materialPaths.TryGetValue(target.ObjectName, out var paths)
+                ? paths.Select(path => target with { ObjectPath = path })
+                : [target])
+            .Select(target => new SkeletalMeshAssetKitDependency(
                 target.PackageName,
                 target.ObjectName,
                 target.ClassName,
                 target.ClassName.Contains("Material", StringComparison.OrdinalIgnoreCase)
                     ? "Material name is used by the selected mesh's glTF material table."
                     : "Texture2D is referenced by one of the selected mesh's direct material property exports.",
-                FindDependencyFiles(dependencyDirectory, exported.OutputFiles, target)))
+                FindDependencyFiles(dependencyDirectory, exported.OutputFiles, target),
+                target.ObjectPath))
             .ToArray();
 
         var materialSlots = (report.Oracle?.Materials ?? [])
@@ -302,11 +316,17 @@ public sealed class SkeletalMeshAssetKitService
 
     private static string NormalizeObjectReference(string value)
     {
-        var quote = value.IndexOf('\'');
-        var endQuote = value.LastIndexOf('\'');
-        var objectPath = quote >= 0 && endQuote > quote ? value[(quote + 1)..endQuote] : value;
+        var objectPath = ReferencePath(value);
         var dot = objectPath.LastIndexOf('.');
         return dot >= 0 ? objectPath[(dot + 1)..] : objectPath;
+    }
+
+    /// <summary>MaterialInstanceConstant'mat.name' -> mat.name</summary>
+    private static string ReferencePath(string value)
+    {
+        var quote = value.IndexOf('\'');
+        var endQuote = value.LastIndexOf('\'');
+        return quote >= 0 && endQuote > quote ? value[(quote + 1)..endQuote] : value;
     }
 
     private static string RenderSummary(SkeletalMeshAssetKitManifest manifest)

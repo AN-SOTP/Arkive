@@ -24,8 +24,11 @@ public sealed record ArkiveModLocalEdit(
     bool Included,
     object Entry)
 {
+    /// <summary>The target's path inside its package when its name is not unique there; see ArkiveModObjectPath.</summary>
+    public string? ObjectPath { get; init; } = ArkiveModObjectPath.Read(ManifestPath);
+
     public ArkiveModTargetKey TargetKey => ArkiveModTargetKey.From(
-        Path.GetFileName(SourcePackagePath), Kind, ObjectName);
+        Path.GetFileName(SourcePackagePath), Kind, ObjectPath ?? ObjectName);
 }
 
 public sealed class ArkiveModEditSnapshot

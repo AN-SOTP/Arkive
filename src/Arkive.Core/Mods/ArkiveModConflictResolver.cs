@@ -9,7 +9,7 @@ public readonly record struct ArkiveModTargetKey(
     public static ArkiveModTargetKey From(ArkiveModFileAsset asset)
     {
         ArgumentNullException.ThrowIfNull(asset);
-        return From(asset.Target.PhysicalPackageName, asset.Kind, asset.Target.ObjectName);
+        return From(asset.Target.PhysicalPackageName, asset.Kind, asset.Target.ObjectPath ?? asset.Target.ObjectName);
     }
 
     public static ArkiveModTargetKey From(

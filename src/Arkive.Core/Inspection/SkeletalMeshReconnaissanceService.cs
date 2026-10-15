@@ -70,7 +70,15 @@ public sealed class SkeletalMeshReconnaissanceService
                         request.ObjectName),
                     cancellationToken).ConfigureAwait(false);
                 oracle = ParseSkeletalMeshDump(dump.RawOutput, dump.Duration, dump.Asset.ClassName);
-                if (oracle.Lods.Count == 0 || oracle.BoneCount <= 0)
+                if (oracle.Lods.GroupBy(lod => lod.LodIndex).Any(group => group.Count() > 1))
+                {
+                    // UModel selects objects by name, so a package with two meshes of this name dumps both.
+                    oracle = null;
+                    issues.Add(new SkeletalMeshReconnaissanceIssue(
+                        "Warning", "SKM304",
+                        $"The package holds more than one mesh named {request.ObjectName}, so UModel's independent check could not tell them apart and was skipped."));
+                }
+                else if (oracle.Lods.Count == 0 || oracle.BoneCount <= 0)
                 {
                     issues.Add(new SkeletalMeshReconnaissanceIssue(
                         "Warning", "SKM301",

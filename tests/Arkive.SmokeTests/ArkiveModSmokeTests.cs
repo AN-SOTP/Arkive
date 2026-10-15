@@ -16,6 +16,7 @@ internal static class ArkiveModSmokeTests
         new("rebuilds .arkive mods after unchanged and breaking client updates", TestArkiveClientUpdate),
         new("updates an installed .arkive mod to a newer version of the same mod", TestArkiveModVersionUpdate),
         new("reinstalls the previous build when an .arkive asset cannot be set up", TestArkiveFailedSetupKeepsPreviousBuild),
+        new("keeps same-named package objects apart by their object path", TestArkiveSameNamedObjectPaths),
     ];
 
     private static readonly JsonSerializerOptions ManifestJson = new()
@@ -650,6 +651,72 @@ internal static class ArkiveModSmokeTests
         };
         return new ArkiveModLibraryEntry(manifest.ModId, name + ".arkive", new string('0', 64), 1,
             DateTimeOffset.UtcNow, enabled, priority, ArkiveModOrigin.Imported, manifest, []);
+    }
+
+    private static void TestArkiveSameNamedObjectPaths()
+    {
+        // pc_dl_av_214 holds both pc_dl_av_214_head_orm and tex.pc_dl_av_214_head_orm.
+        var root = new AssetCatalogEntry(47, "head_orm", "VC2NJ32NY12NE7SF0LEHM7EH.head_orm", "Texture2D",
+            AssetKind.Texture, 240_640, 17_618_191);
+        var grouped = new AssetCatalogEntry(55, "head_orm", "VC2NJ32NY12NE7SF0LEHM7EH.tex.head_orm", "Texture2D",
+            AssetKind.Texture, 247_389, 18_888_832);
+        var unique = new AssetCatalogEntry(56, "head_d", "VC2NJ32NY12NE7SF0LEHM7EH.tex.head_d", "Texture2D",
+            AssetKind.Texture, 1, 2);
+        AssetCatalogEntry[] catalogue = [root, grouped, unique];
+        Assert(ArkiveModObjectPath.Select(catalogue, "tex.head_orm").Single() == grouped &&
+               ArkiveModObjectPath.Select(catalogue, "head_orm").Single() == root &&
+               ArkiveModObjectPath.Select(catalogue, "TEX.HEAD_ORM").Single() == grouped &&
+               ArkiveModObjectPath.Select(catalogue, "mat.head_orm").Length == 0,
+            "object paths did not pick the exact same-named export");
+        Assert(ArkiveModObjectPath.IfAmbiguous(catalogue, grouped) == "tex.head_orm" &&
+               ArkiveModObjectPath.IfAmbiguous(catalogue, root) == "head_orm" &&
+               ArkiveModObjectPath.IfAmbiguous(catalogue, unique) is null,
+            "an object path was recorded for a unique name, or missed for a repeated one");
+        Assert(ArkiveModObjectPath.IsValid("tex.head_orm", "head_orm") && ArkiveModObjectPath.IsValid("head_orm", "head_orm") &&
+               !ArkiveModObjectPath.IsValid("tex.head_d", "head_orm") && !ArkiveModObjectPath.IsValid("tex..head_orm", "head_orm"),
+            "object path validation accepted or refused the wrong paths");
+
+        var directory = Path.Combine(fixtureDirectory, "arkive-same-named");
+        Directory.CreateDirectory(directory);
+        var image = Path.Combine(directory, "edit.png");
+        File.WriteAllBytes(image, Enumerable.Range(0, 512).Select(index => (byte)index).ToArray());
+        var physical = "VC2NJ32NY12NE7SF0LEHM7EH.upk";
+        var first = TextureDescriptor(physical, "head_orm");
+        first = first with { Target = first.Target with { ObjectPath = "head_orm" } };
+        var second = TextureDescriptor(physical, "head_orm");
+        second = second with { Target = second.Target with { ObjectPath = "tex.head_orm" } };
+        var plain = TextureDescriptor(physical, "head_d");
+        Assert(ArkiveModTargetKey.From(first) != ArkiveModTargetKey.From(second) &&
+               ArkiveModTargetKey.From(plain) == ArkiveModTargetKey.From(physical, UnifiedPackageAssetKind.Texture2D, "head_d"),
+            "same-named targets shared a key, or a plain target's key changed");
+        var manifest = ArkiveModAuthoringService.CreateManifest(
+            NewId(), new ArkiveModMetadata("Same-named smoke mod", "1.0.0"), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var output = Path.Combine(directory, "same-named.arkive");
+        ArkiveModFileService.WriteAsync(output, manifest,
+            new[] { first, second, plain }.Select((asset, index) => new ArkiveModPackAsset(asset,
+                [new ArkiveModPackFile(ArkiveModFileFormat.ImageRole, image, $"edit-{index}.png")])).ToArray())
+            .GetAwaiter().GetResult();
+        var read = ArkiveModFileService.ReadAsync(output).GetAwaiter().GetResult();
+        Assert(read.Manifest.Assets.Select(asset => asset.Target.ObjectPath)
+                   .SequenceEqual(["head_orm", "tex.head_orm", null]),
+            ".arkive files did not keep object paths");
+        using (var archive = System.IO.Compression.ZipFile.OpenRead(output))
+        using (var reader = new StreamReader(archive.GetEntry(ArkiveModFileFormat.ManifestEntryName)!.Open()))
+            Assert(System.Text.RegularExpressions.Regex.Matches(reader.ReadToEnd(), "\"objectPath\"").Count == 2,
+                "a plain target wrote an object path, so older Arkive versions would see a changed file");
+
+        var broken = TextureDescriptor(physical, "head_orm");
+        broken = broken with { Target = broken.Target with { ObjectPath = "tex.head_d" } };
+        try
+        {
+            ArkiveModFileService.WriteAsync(Path.Combine(directory, "broken.arkive"), manifest,
+                [new ArkiveModPackAsset(broken, [new ArkiveModPackFile(ArkiveModFileFormat.ImageRole, image, "edit.png")])])
+                .GetAwaiter().GetResult();
+            throw new InvalidOperationException("an object path naming another object was accepted");
+        }
+        catch (ArkiveModRefusalException exception) when (exception.Code == "ARK039")
+        {
+        }
     }
 
     private static ArkiveModFileAsset TextureDescriptor(string physical, string objectName) => new(

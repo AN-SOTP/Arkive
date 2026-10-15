@@ -522,6 +522,14 @@ public sealed class ClientUpdateCompatibilityService
                 ClientAssetCompatibilityState.Missing,
                 "The object no longer exists under the same class and name.");
         if (matches.Length > 1)
+        {
+            // Same-named exports in one package are told apart by content while they are unchanged.
+            using var logical = new LogicalPackageStream(summary, _protectionProvider);
+            var identical = matches.Where(asset => logical.HashRangeSha256(asset.SerialOffset, asset.SerialSize, cancellationToken)
+                .Equals(expectedHash, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (identical.Length == 1) matches = identical;
+        }
+        if (matches.Length > 1)
             return new ClientAssetCompatibility(id, kind, className, objectName,
                 previousIndex, null, null, null, expectedHash, null,
                 ClientAssetCompatibilityState.Ambiguous,

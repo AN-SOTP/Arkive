@@ -373,6 +373,8 @@ public static class ArkiveModFileService
             Refuse("ARK039", $"'{target.PhysicalPackageName}' is not a plain .upk file name.");
         RequireText(target.ClassName, 200, "ARK039", "class name");
         RequireText(target.ObjectName, 400, "ARK039", "object name");
+        if (target.ObjectPath is not null && !ArkiveModObjectPath.IsValid(target.ObjectPath, target.ObjectName))
+            Refuse("ARK039", $"Asset {asset.AssetId} has a malformed object path.");
         if (target.NativeExportIndex is <= 0)
             Refuse("ARK039", $"Asset {asset.AssetId} declares an invalid native export index.");
         if (!IsSha256(target.SourcePackageSha256) || !IsSha256(target.SourceExportSha256))

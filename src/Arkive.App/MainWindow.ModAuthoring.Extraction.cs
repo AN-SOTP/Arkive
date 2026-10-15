@@ -27,7 +27,8 @@ public partial class MainWindow
         var snapshot = await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits, cancellationToken);
         var existing = new Dictionary<string, ArkiveModLocalEdit>(StringComparer.OrdinalIgnoreCase);
         foreach (var id in _authoringDraft!.EditIds.Concat(_authoringDraft.ReferenceEditIds))
-            if (snapshot.Find(id) is { } edit) existing.TryAdd(AuthoringAssetKey(edit.SourcePackagePath, edit.ObjectName), edit);
+            if (snapshot.Find(id) is { } edit)
+                existing.TryAdd(AuthoringAssetKey(edit.SourcePackagePath, edit.ObjectPath ?? edit.ObjectName), edit);
         return new(cancellationToken, existing, new(StringComparer.OrdinalIgnoreCase));
     }
 

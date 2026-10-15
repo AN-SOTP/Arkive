@@ -33,7 +33,9 @@ public sealed record ArkiveModAssetTarget(
     string ObjectName,
     int? NativeExportIndex,
     string SourcePackageSha256,
-    string SourceExportSha256);
+    string SourceExportSha256,
+    // Set only when the package holds another object with this name and class; see ArkiveModObjectPath.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ObjectPath = null);
 
 public sealed record ArkiveModFileEntry(
     string Role,

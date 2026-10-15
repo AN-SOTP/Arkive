@@ -25,8 +25,13 @@ public sealed record ArkiveModTargetCheck(
     AssetCatalogEntry? Export,
     string Message);
 
+/// <summary>
+/// <paramref name="ObjectPath"/> or <paramref name="SerialOffset"/> pick one of several same-named objects;
+/// see ArkiveModObjectPath.
+/// </summary>
 public sealed record ArkiveModAssetSelection(
-    string PackagePath, string PackageAlias, string ClassName, string ObjectName);
+    string PackagePath, string PackageAlias, string ClassName, string ObjectName,
+    string? ObjectPath = null, long? SerialOffset = null);
 
 public sealed record ArkiveModAssetProgress(string Stage, string ObjectName);
 
@@ -83,6 +88,8 @@ public sealed class ArkiveModMaterializationService
                 entry.ObjectName.Equals(asset.Target.ObjectName, StringComparison.OrdinalIgnoreCase) &&
                 ArkiveModFileService.KindMatches(asset.Kind, entry.ClassName))
             .ToArray();
+        if (asset.Target.ObjectPath is { } objectPath)
+            matches = ArkiveModObjectPath.Select(matches, objectPath);
         if (matches.Length == 0)
             return new ArkiveModTargetCheck(ArkiveModTargetState.Missing, path, packageHash, null,
                 $"{asset.Target.ObjectName} no longer exists in {asset.Target.PhysicalPackageName}.");
@@ -117,6 +124,10 @@ public sealed class ArkiveModMaterializationService
         var matches = catalogue.Assets.Where(asset =>
             asset.ObjectName.Equals(selection.ObjectName, StringComparison.OrdinalIgnoreCase) &&
             asset.ClassName.Equals(selection.ClassName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (matches.Length > 1 && selection.ObjectPath is { } objectPath)
+            matches = ArkiveModObjectPath.Select(matches, objectPath);
+        if (matches.Length > 1 && selection.SerialOffset is { } offset)
+            matches = matches.Where(asset => asset.SerialOffset == offset).ToArray();
         if (matches.Length != 1) Refuse("AMM050", "The selected asset is missing or ambiguous in the clean package.");
         var export = matches[0];
         var hash = await ArkiveModEditSnapshot.HashFileCachedAsync(selection.PackagePath, cancellationToken)
@@ -216,6 +227,7 @@ public sealed class ArkiveModMaterializationService
             default:
                 throw new ArkiveModRefusalException("AMM051", "This asset type cannot be edited.");
         }
+        ArkiveModObjectPath.Write(manifestPath, ArkiveModObjectPath.IfAmbiguous(catalogue.Assets, export));
         var local = new ArkiveModLocalEdit(kind, editId, manifestPath, export.ObjectName,
             selection.PackagePath, export.ObjectName, false, entry);
         // A completed working copy must stay excluded even if cancellation arrives at this checkpoint.
@@ -244,11 +256,12 @@ public sealed class ArkiveModMaterializationService
                 $"{asset.DisplayName}: {check.Message} Use 'Update for this game version' to revalidate it.");
         var work = _library.CreateWorkingDirectory(mod.ModId, asset.AssetId, asset.Kind.ToString().ToLowerInvariant());
         string editId;
+        string manifestPath;
         try
         {
             var files = await ArkiveModFileService.ExtractAssetFilesAsync(
                 arkivePath, asset, Path.Combine(work, "source"), cancellationToken).ConfigureAwait(false);
-            editId = asset.Kind switch
+            (editId, manifestPath) = asset.Kind switch
             {
                 UnifiedPackageAssetKind.Texture2D => await MaterializeTextureAsync(
                     asset, check, files, work, cancellationToken).ConfigureAwait(false),
@@ -266,6 +279,7 @@ public sealed class ArkiveModMaterializationService
             TryDeleteDirectory(work);
             throw;
         }
+        ArkiveModObjectPath.Write(manifestPath, asset.Target.ObjectPath);
         TryDeleteDirectory(Path.Combine(work, "source"));
         TryDeleteDirectory(Path.Combine(work, "import-check"));
         if (!Directory.EnumerateFileSystemEntries(work).Any()) TryDeleteDirectory(work);
@@ -274,7 +288,7 @@ public sealed class ArkiveModMaterializationService
             check.State);
     }
 
-    private async Task<string> MaterializeTextureAsync(
+    private async Task<(string EditId, string ManifestPath)> MaterializeTextureAsync(
         ArkiveModFileAsset asset,
         ArkiveModTargetCheck check,
         IReadOnlyDictionary<string, string> files,
@@ -311,10 +325,10 @@ public sealed class ArkiveModMaterializationService
             native.Manifest.Width, native.Manifest.Height, native.ManifestPath, image, texture.AlphaPolicy,
             cancellationToken).ConfigureAwait(false);
         await _edits.Textures.SetIncludedAsync(project.ManifestPath, false, cancellationToken).ConfigureAwait(false);
-        return project.Manifest.ProjectId;
+        return (project.Manifest.ProjectId, project.ManifestPath);
     }
 
-    private async Task<string> MaterializeSkeletalMeshAsync(
+    private async Task<(string EditId, string ManifestPath)> MaterializeSkeletalMeshAsync(
         ArkiveModFileAsset asset,
         ArkiveModTargetCheck check,
         IReadOnlyDictionary<string, string> files,
@@ -349,10 +363,10 @@ public sealed class ArkiveModMaterializationService
                 FirstError(registration.Preflight.Issues.Select(issue => (issue.Severity.ToString(), issue.Message))));
         }
         await _edits.SkeletalMeshEdits.SetIncludedAsync(registration.Entry, false, cancellationToken).ConfigureAwait(false);
-        return registration.Entry.Manifest.EditId;
+        return (registration.Entry.Manifest.EditId, registration.Entry.ManifestPath);
     }
 
-    private async Task<string> MaterializeStaticMeshAsync(
+    private async Task<(string EditId, string ManifestPath)> MaterializeStaticMeshAsync(
         ArkiveModFileAsset asset,
         ArkiveModTargetCheck check,
         IReadOnlyDictionary<string, string> files,
@@ -384,10 +398,10 @@ public sealed class ArkiveModMaterializationService
                 string.Join(" | ", registered.Manifest.Preflight.Issues.Take(3)));
         }
         await _edits.StaticMeshEdits.SetIncludedAsync(registered, false, cancellationToken).ConfigureAwait(false);
-        return registered.Manifest.EditId;
+        return (registered.Manifest.EditId, registered.ManifestPath);
     }
 
-    private async Task<string> MaterializeMaterialAsync(
+    private async Task<(string EditId, string ManifestPath)> MaterializeMaterialAsync(
         ArkiveModFileAsset asset,
         ArkiveModTargetCheck check,
         CancellationToken cancellationToken)
@@ -415,7 +429,7 @@ public sealed class ArkiveModMaterializationService
             if (candidate.Manifest.ChangedByteCount <= 0)
                 Refuse("AMM041", $"{asset.DisplayName} makes no change to this client's {export.ObjectName}.");
             await _edits.MaterialEdits.RecordCandidateAsync(saved, candidate, cancellationToken).ConfigureAwait(false);
-            return saved.Document.EditId;
+            return (saved.Document.EditId, saved.DocumentPath);
         }
         catch
         {

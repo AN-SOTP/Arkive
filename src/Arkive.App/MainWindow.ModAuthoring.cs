@@ -105,7 +105,7 @@ public partial class MainWindow : Window
             rows.Add(new AuthoringAssetRow(edit?.DisplayName ?? asset?.DisplayName ?? "Missing working asset",
                 edit?.Kind.ToString() ?? asset?.Kind.ToString() ?? "—",
                 asset?.Target.PackageAlias ?? Path.GetFileNameWithoutExtension(edit?.SourcePackagePath ?? string.Empty),
-                edit?.ObjectName ?? asset?.Target.ObjectName ?? "—",
+                edit?.ObjectPath ?? edit?.ObjectName ?? asset?.Target.ObjectPath ?? asset?.Target.ObjectName ?? "—",
                 edit is null ? "Prepare for editing" : changed ? "Unsaved edits" : asset is null ? "Draft" : "Saved",
                 _authoringDraft.EditIds.Contains(id), edit, asset?.AssetId, id));
         }
@@ -252,11 +252,13 @@ public partial class MainWindow : Window
     private void AuthoringAddAssetsButton_Click(object sender, RoutedEventArgs e)
     { AuthoringSearchExpander.IsExpanded = true; WorkshopSearchTextBox.Focus(); }
 
-    private async Task<ArkiveModLocalEdit> AddAuthoringAssetAsync(LibraryAssetRow row, AuthoringAddSession session, bool reference = false)
+    /// <param name="objectPath">Picks one of several same-named objects in the package; see ArkiveModObjectPath.</param>
+    private async Task<ArkiveModLocalEdit> AddAuthoringAssetAsync(LibraryAssetRow row, AuthoringAddSession session,
+        bool reference = false, string? objectPath = null)
     {
         if (_authoringDraft is null) throw new InvalidOperationException("Create or select a mod first.");
         session.CancellationToken.ThrowIfCancellationRequested();
-        var key = AuthoringAssetKey(row.SourcePath, row.ObjectName);
+        var key = AuthoringAssetKey(row.SourcePath, objectPath ?? row.ObjectName);
         if (session.Existing.TryGetValue(key, out var duplicate))
         {
             if (!reference && _authoringDraft.ReferenceEditIds.Contains(duplicate.EditId))
@@ -278,12 +280,12 @@ public partial class MainWindow : Window
                 ReportAuthoringExtraction($"{item.Stage}: {item.ObjectName}");
         });
         var created = await Task.Run(() => _modMaterializer.CreateEditableAsync(
-            new ArkiveModAssetSelection(clean, row.PackageAlias, row.ClassName, row.ObjectName),
+            new ArkiveModAssetSelection(clean, row.PackageAlias, row.ClassName, row.ObjectName, objectPath, row.SerialOffset),
             session.CancellationToken, progress), session.CancellationToken);
         _authoringDraft = await _modAuthoringWorkspace.SaveAsync(reference
             ? _authoringDraft with { ReferenceEditIds = _authoringDraft.ReferenceEditIds.Append(created.EditId).ToArray() }
             : _authoringDraft with { EditIds = _authoringDraft.EditIds.Append(created.EditId).ToArray() });
-        session.Existing.Add(key, created);
+        session.Existing.TryAdd(AuthoringAssetKey(row.SourcePath, created.ObjectPath ?? created.ObjectName), created);
         AuthoringStatusText.Text = $"Added {row.ObjectName}. Open its working file to edit it, then save the mod.";
         if (CanPreviewInArkive(row.Kind) && EditablePath(created) is { } glb &&
             Path.GetExtension(glb).Equals(".glb", StringComparison.OrdinalIgnoreCase))

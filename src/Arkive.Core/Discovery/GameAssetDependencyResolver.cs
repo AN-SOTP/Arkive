@@ -414,7 +414,8 @@ public sealed partial class GameAssetDependencyResolver
             .Where(item => IsMaterialClass(item.ClassName) &&
                            directMaterialNames.Contains(item.ObjectName))
             .ToArray();
-        var textureNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Texture name -> the paths the materials used for it; one package can hold two textures of that name.
+        var textureNames = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var material in directMaterials.Where(item =>
                      item.Path.EndsWith(".props.txt", StringComparison.OrdinalIgnoreCase)))
         {
@@ -423,8 +424,11 @@ public sealed partial class GameAssetDependencyResolver
                 var properties = File.ReadAllText(material.Path);
                 foreach (Match match in TextureReferenceRegex().Matches(properties))
                 {
-                    textureNames.Add(GameAssetMetadataIndex.NormalizeObjectName(
-                        match.Groups["reference"].Value));
+                    var reference = match.Groups["reference"].Value;
+                    var name = GameAssetMetadataIndex.NormalizeObjectName(reference);
+                    if (!textureNames.TryGetValue(name, out var paths))
+                        textureNames[name] = paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    paths.Add(reference);
                 }
             }
             catch (IOException)
@@ -440,16 +444,18 @@ public sealed partial class GameAssetDependencyResolver
                 item.ClassName))
             .Concat(files
                 .Where(item => item.ClassName.Equals("Texture2D", StringComparison.OrdinalIgnoreCase) &&
-                               textureNames.Contains(item.ObjectName))
-                .Select(item => new GameAssetDependencyTarget(
+                               textureNames.ContainsKey(item.ObjectName))
+                .SelectMany(item => textureNames[item.ObjectName].Select(path => new GameAssetDependencyTarget(
                     item.PackageName,
                     item.ObjectName,
-                    item.ClassName)))
+                    item.ClassName,
+                    path))))
             .DistinctBy(item => new
             {
                 Package = item.PackageName.ToUpperInvariant(),
                 Object = item.ObjectName.ToUpperInvariant(),
                 Class = item.ClassName.ToUpperInvariant(),
+                Path = item.ObjectPath?.ToUpperInvariant(),
             })
             .OrderBy(item => item.PackageName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.ObjectName, StringComparer.OrdinalIgnoreCase)

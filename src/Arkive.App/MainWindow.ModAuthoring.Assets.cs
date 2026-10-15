@@ -281,19 +281,30 @@ public partial class MainWindow : Window
                     .SelectMany(package => package.Assets.Where(asset => asset.ObjectName.Equals(dependency.ObjectName, StringComparison.OrdinalIgnoreCase) &&
                         asset.ClassName.Equals(dependency.ClassName, StringComparison.OrdinalIgnoreCase)).Select(asset => (Package: package, Asset: asset)))
                     .ToArray();
-                if (exact.Length != 1) { skipped.Add(dependency.ObjectName); continue; }
+                // Two objects can share this name in one package (pc_dl_av_214_head_orm); the material's
+                // reference path then picks the one the mesh uses.
+                if (exact.Length == 0 || exact.Length > 1 && dependency.ObjectPath is null)
+                {
+                    skipped.Add(dependency.ObjectName);
+                    Log($"Kit dependency not added: {dependency.PackageName}.{dependency.ObjectName}: " + (exact.Length == 0
+                        ? "it is not in the library index."
+                        : $"its package has {exact.Length} {dependency.ClassName} objects with this name and the material did not say which."));
+                    continue;
+                }
                 var (package, asset) = exact[0];
                 await AddAuthoringAssetAsync(new LibraryAssetRow(package.SourcePath, package.PackageAlias,
                     package.PhysicalPackageName, package.Assets.Count, asset.ExportIndex, asset.Kind,
                     asset.ClassName, asset.ObjectName, asset.SerialSize, asset.SerialOffset,
-                    metadata.Find(package.PackageAlias, package.PhysicalPackageName, asset.ObjectName)), session, reference: true);
+                    metadata.Find(package.PackageAlias, package.PhysicalPackageName, asset.ObjectName)), session, reference: true,
+                    objectPath: exact.Length > 1 ? dependency.ObjectPath : null);
             }
             catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
             { skipped.Add(dependency.ObjectName); Log($"Kit dependency could not be prepared: {dependency.ObjectName}: {exception.Message}"); }
             finally { ReportAuthoringExtraction($"Processed reference: {dependency.ObjectName}", ++completed); }
         }
         AuthoringStatusText.Text = "Mesh and optional reference assets added. Tick the references you intend to change." +
-            (skipped.Count > 0 ? $" {skipped.Count} dependencies remain in the exported kit; see Diagnostics." : string.Empty);
+            (skipped.Count > 0 ? $" Not added, but kept in the exported kit: {string.Join(", ", skipped.Take(3))}" +
+                (skipped.Count > 3 ? $" and {skipped.Count - 3} more" : string.Empty) + ". Diagnostics says why." : string.Empty);
     }
 
     private async void AuthoringPreviewButton_Click(object sender, RoutedEventArgs e)

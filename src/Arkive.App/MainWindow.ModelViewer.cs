@@ -46,6 +46,8 @@ public partial class MainWindow
     {
         if (_umodelBridge is null) return;
         var folder = Path.Combine(Path.GetDirectoryName(glb)!, Path.GetFileNameWithoutExtension(glb) + ".arkive-colours");
+        // A complete kit reports its references after this bake starts; keep that newer message.
+        var status = AuthoringStatusText.Text;
         await _colourBakeGate.WaitAsync();
         ModelViewerWindow? window = null;
         try
@@ -62,7 +64,8 @@ public partial class MainWindow
             await window.ShowObjectAsync(ToModelViewerRequest(row));
             var textures = await window.BakeAsync(folder);
             Log($"Baked {textures.Count} game colour texture(s) for {row.ObjectName}: {folder}");
-            AuthoringStatusText.Text = $"Baked {row.ObjectName}'s game colours for Blender. Open edited file shows them.";
+            if (AuthoringStatusText.Text == status)
+                AuthoringStatusText.Text = $"Baked {row.ObjectName}'s game colours for Blender. Open edited file shows them.";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or TimeoutException
                                               or InvalidOperationException or OperationCanceledException)

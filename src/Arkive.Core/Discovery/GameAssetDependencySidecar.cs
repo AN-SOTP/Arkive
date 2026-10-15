@@ -1,12 +1,15 @@
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Arkive.Core.Discovery;
 
+/// <param name="ObjectPath">The reference's path inside its package (tex.name), when the material named one.</param>
 public sealed record GameAssetDependencyTarget(
     string PackageName,
     string ObjectName,
-    string ClassName);
+    string ClassName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ObjectPath = null);
 
 public sealed record GameAssetDependencyProbe(
     string SourcePackagePath,
