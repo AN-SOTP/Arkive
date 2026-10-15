@@ -867,7 +867,10 @@ public sealed partial class PackageIndexStore
         foreach (var path in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            bytes += new FileInfo(path).Length;
+            var info = new FileInfo(path);
+            // An index build running at the same time can replace a cache document after it was listed.
+            if (!info.Exists) continue;
+            bytes += info.Length;
             var parsedFileName = TryParseCompressedCacheFileName(
                 path,
                 out var assetCount,
