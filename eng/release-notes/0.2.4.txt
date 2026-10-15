@@ -1,0 +1,11 @@
+Outfits that reuse a material in two slots can be replaced, and kits add textures and materials whose names are shared within their package.
+
+- Replacing a mesh that uses one material in two slots (for example pc_sp_av_236b_dress_sk) no longer fails with SMT014. Blender's name.001 copies map back to their own slots.
+- Some packages hold two textures or materials with the same name. Add assets and Add mesh + textures/materials can now add either one, and mods remember which one they change.
+- Meshes whose package holds a second mesh with the same name can be added again instead of failing with "Sequence contains more than one matching element".
+- When a kit cannot add a texture or material, the status line names it and the session log says why, instead of only giving a count.
+
+Also includes the 0.2.3 changes:
+- Edited texture images can be 2x or 4x their original size (up to 4096x4096).
+- Outfits are no longer refused after a plain Blender round trip because of tiny triangles that were already in the game's model.
+- Preview original opens meshes in Arkive's model viewer, Open in UModel opens any asset in UModel, and PgUp/PgDn steps through the list.
