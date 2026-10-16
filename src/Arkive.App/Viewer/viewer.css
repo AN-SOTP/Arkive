@@ -110,3 +110,5 @@ details > div { padding: 2px 8px 8px; }
 .zone.unused { opacity: 0.45; }
 .zone.changed label::after { content: ' \2022'; color: var(--accent); }
 .proportionActions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.zoneGroup { margin: 4px 0; }
+.zoneGroup > summary { cursor: pointer; font-weight: 600; padding: 6px 2px; border-bottom: 1px solid var(--line); }

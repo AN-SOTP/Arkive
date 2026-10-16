@@ -7,19 +7,24 @@ internal static class ProportionSmokeTests
 {
     public static IReadOnlyList<SmokeTestCase> Cases { get; } =
     [
-        new("lists only player bodies and outfit pieces for proportion editing", TestPlayerPieceNames),
+        new("lists only player outfit pieces and the tuned NPCs for proportion editing", TestPlayerPieceNames),
         new("reshapes a player mesh by body area and keeps unaffected vertices", TestBodyAreas),
     ];
 
     private static void TestPlayerPieceNames()
     {
-        Assert(BodyProfiles.IsPlayerBodyOrOutfit("pc_wr_f_av_226a_upper_sk"), "a Slayer top is a player outfit piece");
-        Assert(BodyProfiles.IsPlayerBodyOrOutfit("pc_sp_av_236b_dress_sk"), "a one-piece outfit is a player outfit piece");
-        Assert(BodyProfiles.IsPlayerBodyOrOutfit("pc_sp_av_108-1_lower_sk"), "a variant bottom is a player outfit piece");
-        Assert(!BodyProfiles.IsPlayerBodyOrOutfit("pc_wr_f_av_226a_head_sk"), "headwear is not offered");
-        Assert(!BodyProfiles.IsPlayerBodyOrOutfit("pc_sp_av_213c_face1_sk"), "faces are not offered");
-        Assert(!BodyProfiles.IsPlayerBodyOrOutfit("np_lrsa_01_sk"), "NPCs are not offered");
-        Assert(!BodyProfiles.IsPlayerBodyOrOutfit("mn_bogg_00_sk"), "monsters are not offered");
+        Assert(BodyProfiles.IsReshapeable("pc_wr_f_av_226a_upper_sk"), "a Slayer top is a player outfit piece");
+        Assert(BodyProfiles.IsReshapeable("pc_sp_av_236b_dress_sk"), "a one-piece outfit is a player outfit piece");
+        Assert(BodyProfiles.IsReshapeable("pc_sp_av_108-1_lower_sk"), "a variant bottom is a player outfit piece");
+        Assert(!BodyProfiles.IsReshapeable("pc_wr_f_av_226a_head_sk"), "headwear is not offered");
+        Assert(!BodyProfiles.IsReshapeable("pc_sp_av_213c_face1_sk"), "faces are not offered");
+        Assert(!BodyProfiles.IsReshapeable("np_lrsa_01_sk"), "other NPCs are not offered");
+        Assert(BodyProfiles.IsReshapeable("mn_sden_00_sk") && BodyProfiles.ForObjectName("mn_sden_00_sk")?.Id == "npc-echidna",
+            "Echidna is offered with her own tuning");
+        Assert(BodyProfiles.IsReshapeable("mn_cuas_00-5_sk"), "a Brelshaza variant is offered");
+        Assert(!BodyProfiles.IsReshapeable("mn_cuas_00_sk_fx") && !BodyProfiles.IsReshapeable("mn_sden_00_wing_sk"),
+            "effect and wing meshes of those NPCs are not offered");
+        Assert(!BodyProfiles.IsReshapeable("mn_bogg_00_sk"), "monsters are not offered");
         Assert(BodyProfiles.ForObjectName("pc_wbk_f_av_137_upper_sk")?.Id == "female-warrior", "Slayer outfits use the female warrior body");
         Assert(BodyProfiles.ForObjectName("pc_gn_f_av_141a_dress_sk")?.Id == "female-assassin", "female gunners share the assassin body");
         Assert(BodyProfiles.ForObjectName("pc_ft_m_av_008_upper_sk")?.Id == "male-gunner", "male martial artists share the male gunner body");

@@ -12,7 +12,7 @@ using Arkive.Core.Proportions;
 namespace Arkive.App;
 
 /// <summary>
-/// Body proportions tab: finds player bodies and outfit pieces (and nothing else), opens them in the proportion
+/// Simple upscale tab: finds player bodies and outfit pieces and the tuned NPCs (and nothing else), opens them in the proportion
 /// editor and saves the reshaped pieces as a new mod through the normal mod authoring route.
 /// </summary>
 public partial class MainWindow
@@ -34,7 +34,7 @@ public partial class MainWindow
 
     private void InitializeBodyProportionsTab()
     {
-        ProportionBodyComboBox.ItemsSource = new[] { "All player bodies" }.Concat(BodyProfiles.All.Select(profile => profile.DisplayName)).ToArray();
+        ProportionBodyComboBox.ItemsSource = new[] { "All bodies" }.Concat(BodyProfiles.All.Select(profile => profile.DisplayName)).ToArray();
         ProportionBodyComboBox.SelectedIndex = 0;
     }
 
@@ -65,7 +65,7 @@ public partial class MainWindow
         }
         _proportionBusy = true;
         UpdateProportionActions();
-        ProportionStatusText.Text = $"Searching player outfits for {query}…";
+        ProportionStatusText.Text = $"Searching player outfits and supported NPCs for {query}…";
         try
         {
             var technical = query.Contains('_') || query.Any(char.IsDigit);
@@ -78,10 +78,10 @@ public partial class MainWindow
                 result = await _packageIndexStore.SearchAsync(_libraryRootPath, query, "SkeletalMesh", _gameMetadataIndex, scope, null,
                     resultLimit: 2000);
             }
-            // Only player bodies and outfit pieces are reachable from this tab.
+            // Only player bodies, outfit pieces and the tuned NPCs are reachable from this tab.
             _proportionResults = _assetDiscoveryService.Rank(result.Matches, query, scope)
                 .Where(item => CanReconnoitreSkeletalMesh(item.Match.Kind, item.Match.ClassName) &&
-                               BodyProfiles.IsPlayerBodyOrOutfit(item.Match.ObjectName))
+                               BodyProfiles.IsReshapeable(item.Match.ObjectName))
                 .Select(item => new ProportionRow(new LibraryAssetRow(
                     item.Match.SourcePath, item.Match.PackageAlias, item.Match.PhysicalPackageName, item.Match.PackageAssetCount,
                     item.Match.ExportIndex, item.Match.Kind, item.Match.ClassName, item.Match.ObjectName, item.Match.SerialSize,
@@ -113,9 +113,9 @@ public partial class MainWindow
         ProportionResultsGrid.SelectedItem = rows.FirstOrDefault();
         ProportionStatusText.Text = rows.Length == 0
             ? _proportionResults.Length == 0
-                ? "No player bodies or outfit pieces matched. Try a shorter name or an object name such as pc_wr_f_av."
-                : "No pieces of that body matched. Choose All player bodies to see the others."
-            : $"Found {rows.Length:N0} player outfit piece(s). Select one and choose Open in proportion editor.";
+                ? "No player outfit pieces or supported NPCs matched. Try a shorter name or an object name such as pc_wr_f_av."
+                : "No pieces of that body matched. Choose All bodies to see the others."
+            : $"Found {rows.Length:N0} piece(s). Select one and choose Open in proportion editor.";
     }
 
     private void ProportionResultsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateProportionActions();
@@ -165,7 +165,7 @@ public partial class MainWindow
                     var catalogue = await Task.Run(() => new AssetCatalogReader(_reader, _protectionProvider).Read(clean));
                     names.AddRange(catalogue.Assets
                         .Where(asset => asset.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase) &&
-                                        BodyProfiles.IsPlayerBodyOrOutfit(asset.ObjectName) &&
+                                        BodyProfiles.IsReshapeable(asset.ObjectName) &&
                                         BodyProfiles.OutfitStem(asset.ObjectName) is { } stem && stems.Contains(stem))
                         .Select(asset => asset.ObjectName));
                 }

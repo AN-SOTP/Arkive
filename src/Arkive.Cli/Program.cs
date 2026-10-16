@@ -1034,7 +1034,8 @@ static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string
         values[parts[0]] = value;
     }
     var bytes = File.ReadAllBytes(glbPath);
-    var model = BodyProportionEngine.Build(bytes, looseClothing);
+    // Editable exports are named OBJECT.arkive-edit.glb; the object name identifies tuned NPCs.
+    var model = BodyProportionEngine.Build(bytes, looseClothing, objectName: Path.GetFileName(glbPath).Split('.')[0]);
     var unknown = values.Keys.Where(key => model.Profile.Zones.All(zone => !zone.Id.Equals(key, StringComparison.OrdinalIgnoreCase))).ToArray();
     if (unknown.Length > 0)
         throw new ArgumentException($"Unknown area(s) {string.Join(", ", unknown)}; this body has {string.Join(", ", model.Profile.Zones.Select(zone => zone.Id))}.");

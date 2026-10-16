@@ -32,11 +32,12 @@ public static partial class BodyProportionEngine
 {
     public sealed class UnknownBodyException(string message) : Exception(message);
 
-    public static BodyProportionModel Build(byte[] glb, bool looseClothingFollows, BodyProfile? profile = null)
+    /// <param name="objectName">The mesh's object name, which identifies tuned NPCs.</param>
+    public static BodyProportionModel Build(byte[] glb, bool looseClothingFollows, BodyProfile? profile = null, string? objectName = null)
     {
         var container = GlbContainer.Parse(glb);
         var (bones, jointNames) = RestBones(container);
-        profile ??= BodyProfiles.Detect(bones)
+        profile ??= BodyProfiles.Detect(bones, objectName)
             ?? throw new UnknownBodyException("This mesh's skeleton is not one of the player bodies Arkive has tuned.");
         var meshes = new List<BodyProportionMeshBasis>();
         var seen = new HashSet<int>();
@@ -186,19 +187,47 @@ public static partial class BodyProportionEngine
                 [$"bip001-{side}-upperarm", $"b_upperarmtwist_{side}_01", $"b_upperarmtwist_{side}_02", $"b_shoulder_{side}_01"])),
             "forearms" => Sides(side => Girth(vertex, $"bip001-{side}-forearm", $"bip001-{side}-hand",
                 [$"bip001-{side}-forearm", $"b_forearmtwist_{side}_01", $"b_forearmtwist_{side}_02", $"b_elbow_{side}_01"])),
-            "chest" => Sides(side => Landmark(vertex, profile.Chest, side, depth: profile.Female ? 1.5f : 1.1f)),
-            "waist" => Waist(vertex),
-            "belly" => Landmark(vertex, profile.Belly, null, depth: 1.2f),
+            "chest" => Chest(vertex, Shape.Size),
+            "chestWidth" => Chest(vertex, Shape.Width),
+            "chestProjection" => Chest(vertex, Shape.Projection),
+            "chestHeight" => Chest(vertex, Shape.Height),
+            "chestLift" => Chest(vertex, Shape.Lift),
+            "chestSpacing" => Chest(vertex, Shape.Spacing),
+            "chestSag" => Chest(vertex, Shape.Sag),
+            "waist" => Waist(vertex, new Vector3(1, 0, 1)),
+            "waistWidth" => Waist(vertex, Vector3.UnitZ),
+            "waistDepth" => Waist(vertex, Vector3.UnitX),
+            "belly" => Landmark(vertex, profile.Belly, null, depth: 1.2f, Shape.Size),
             "hips" => Hips(vertex),
-            "buttocks" => Sides(side => Landmark(vertex, profile.Buttocks, side, depth: 1.3f)) + LooseRing(vertex,
+            "buttocks" => Buttocks(vertex, Shape.Size) + LooseRing(vertex,
                 Bone("bip001-pelvis").Y + (float)profile.Buttocks.Up * _height, 0.07f, 0.04f, backOnly: true),
-            "thighs" => Sides(side => Girth(vertex, $"bip001-{side}-thigh", $"bip001-{side}-calf",
-                [$"bip001-{side}-thigh", $"b_thightwist_{side}_01", $"b_hip_{side}_01"])) +
-                LooseRing(vertex, Bone("bip001-l-thigh").Y - 0.11f * _height, 0.1f, 0.04f),
+            "buttocksWidth" => Buttocks(vertex, Shape.Width),
+            "buttocksProjection" => Buttocks(vertex, Shape.Projection),
+            "buttocksLift" => Buttocks(vertex, Shape.Lift),
+            "buttocksSag" => Buttocks(vertex, Shape.Sag),
+            "thighs" => Thighs(vertex, Vector3.One) + LooseRing(vertex, Bone("bip001-l-thigh").Y - 0.11f * _height, 0.1f, 0.04f),
+            "thighWidth" => Thighs(vertex, Vector3.UnitZ),
+            "thighDepth" => Thighs(vertex, Vector3.UnitX),
             "calves" => Sides(side => Girth(vertex, $"bip001-{side}-calf", $"bip001-{side}-foot",
                 [$"bip001-{side}-calf", $"b_calftwist_{side}_01", $"b_{side}_calf01"])),
             _ => Vector3.Zero,
         };
+
+        /// <summary>
+        /// What a landmark slider does: grow or shrink (all directions, or one), move the area, or let it hang lower.
+        /// Every one of them is a fixed offset per vertex times the slider, so they add up freely.
+        /// </summary>
+        private enum Shape { Size, Width, Projection, Height, Lift, Spacing, Sag }
+
+        private Vector3 Chest(Vertex vertex, Shape shape) =>
+            Sides(side => Landmark(vertex, profile.Chest, side, depth: profile.Female ? 1.5f : 1.1f, shape));
+
+        private Vector3 Buttocks(Vertex vertex, Shape shape) =>
+            Sides(side => Landmark(vertex, profile.Buttocks, side, depth: 1.3f, shape));
+
+        private Vector3 Thighs(Vertex vertex, Vector3 axes) =>
+            Sides(side => Girth(vertex, $"bip001-{side}-thigh", $"bip001-{side}-calf",
+                [$"bip001-{side}-thigh", $"b_thightwist_{side}_01", $"b_hip_{side}_01"])) * axes;
 
         private Vector3 Bone(string name) => bones.TryGetValue(name, out var position) ? position : Vector3.Zero;
 
@@ -208,6 +237,8 @@ public static partial class BodyProportionEngine
         [
             "bip001-pelvis", "bip001-spine", "bip001-spine1", "bip001-spine2", "bip001-l-clavicle", "bip001-r-clavicle",
             "bip001-l-thigh", "bip001-r-thigh", "b_thightwist_l_01", "b_thightwist_r_01", "b_hip_l_01", "b_hip_r_01",
+            // Some NPCs (Echidna) have breast bones of their own.
+            "b_l_breast_00", "b_l_breast_01", "b_l_breast_02", "b_r_breast_00", "b_r_breast_01", "b_r_breast_02",
         ];
 
         /// <summary>
@@ -251,28 +282,52 @@ public static partial class BodyProportionEngine
             return falloff < 0.002f ? Vector3.Zero : (vertex.Position - pivot) * (weight * falloff);
         }
 
-        /// <summary>Swells the area around a landmark outwards from a point behind it, inside the body.</summary>
-        private Vector3 Landmark(Vertex vertex, BodyLandmark landmark, string? side, float depth)
+        /// <summary>
+        /// Shapes the area around a landmark: swells it outwards from a point behind it, inside the body (all
+        /// directions or one), moves it, or swings it down around its top edge (sag).
+        /// </summary>
+        private Vector3 Landmark(Vertex vertex, BodyLandmark landmark, string? side, float depth, Shape shape)
         {
             var sign = side switch { "l" => -1f, "r" => 1f, _ => 0f };
             var origin = Bone(landmark.Bone);
+            var radius = (float)landmark.Radius * _height;
             var centre = origin + new Vector3((float)landmark.Forward, (float)landmark.Up, sign * (float)landmark.Side) * _height;
-            var inward = landmark.Forward >= 0 ? -1f : 1f;
-            var pivot = centre + new Vector3(inward * depth * (float)landmark.Radius * _height, 0, 0);
-            return Bulge(vertex, centre, (float)landmark.Radius, pivot, null);
+            var outwards = landmark.Forward >= 0 ? 1f : -1f;
+            var pivot = centre - new Vector3(outwards * depth * radius, 0, 0);
+            var weight = TorsoWeight(vertex) * Falloff(vertex.Position - centre, radius);
+            if (weight < 0.002f) return Vector3.Zero;
+            switch (shape)
+            {
+                case Shape.Size: return (vertex.Position - pivot) * weight;
+                case Shape.Width: return (vertex.Position - pivot) * Vector3.UnitZ * weight;
+                case Shape.Projection: return (vertex.Position - pivot) * Vector3.UnitX * weight;
+                case Shape.Height: return (vertex.Position - pivot) * Vector3.UnitY * weight;
+                // +100% moves the area by its radius.
+                case Shape.Lift: return Vector3.UnitY * (radius * weight);
+                case Shape.Spacing: return new Vector3(0, 0, sign * radius * weight);
+                case Shape.Sag:
+                    // Swings the area about a hinge at its top edge (+100% is about 35 degrees), so the lower part drops most.
+                    var hinge = centre + new Vector3(-outwards * radius * 0.6f, radius * 0.9f, 0);
+                    var arm = vertex.Position - hinge;
+                    // Only what hangs below the hinge swings; the skin above it stays put.
+                    var below = arm.Y >= 0 ? MathF.Exp(-MathF.Pow(arm.Y / (0.3f * radius), 2)) : 1f;
+                    var turn = new Vector3(outwards * arm.Y, -outwards * arm.X, 0);
+                    return (turn * 0.6f - Vector3.UnitY * (0.15f * radius)) * (weight * below);
+                default: return Vector3.Zero;
+            }
         }
 
         /// <summary>Narrower or wider at the waist, around the spine, fading out above and below.</summary>
-        private Vector3 Waist(Vertex vertex)
+        private Vector3 Waist(Vertex vertex, Vector3 axes)
         {
             var pelvis = Bone("bip001-pelvis");
-            var chest = Bone("bip001-spine2");
+            var chest = bones.TryGetValue("bip001-spine2", out var upper) ? upper : Bone("bip001-spine1");
             var height = pelvis.Y + (chest.Y - pelvis.Y) * 0.55f;
             var band = Band(vertex.Position.Y, height, 0.055f * _height);
             if (band < 0.002f) return Vector3.Zero;
             var axis = Bone("bip001-spine");
-            var outward = new Vector3(vertex.Position.X - axis.X, 0, vertex.Position.Z - axis.Z);
-            return outward * (TorsoWeight(vertex) * band) + LooseRing(vertex, height, 0.055f, 0.05f);
+            var outward = new Vector3(vertex.Position.X - axis.X, 0, vertex.Position.Z - axis.Z) * axes;
+            return outward * (TorsoWeight(vertex) * band) + LooseRing(vertex, height, 0.055f, 0.05f) * axes;
         }
 
         /// <summary>Wider or narrower hips, side to side, around the pelvis height.</summary>

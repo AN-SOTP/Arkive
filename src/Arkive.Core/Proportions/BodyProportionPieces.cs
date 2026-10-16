@@ -71,7 +71,8 @@ public sealed class BodyProportionPieceService(
             try { Directory.Delete(temporary, recursive: true); }
             catch (IOException) { }
         }
-        var profile = BodyProportionEngine.Build(await File.ReadAllBytesAsync(glb, cancellationToken).ConfigureAwait(false), false).Profile;
+        var profile = BodyProportionEngine.Build(await File.ReadAllBytesAsync(glb, cancellationToken).ConfigureAwait(false), false,
+            objectName: export.ObjectName).Profile;
         return new BodyProportionPiece(request, glb, viewerRequest, profile);
     }
 }

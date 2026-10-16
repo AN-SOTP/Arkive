@@ -59,8 +59,8 @@ public partial class ProportionEditorWindow : Window
         _save = save;
         _log = log;
         InitializeComponent();
-        Title = $"Arkive body proportions · {requests[0].PackageAlias}";
-        ModNameTextBox.Text = $"{requests[0].PackageAlias} proportions";
+        Title = $"Arkive simple upscale · {requests[0].PackageAlias}";
+        ModNameTextBox.Text = $"{requests[0].PackageAlias} upscale";
         SourceInitialized += (_, _) => AppearanceManager.ApplyWindowChrome(this, effectiveTheme);
         Loaded += async (_, _) => await StartAsync();
         Closed += (_, _) =>
@@ -170,7 +170,7 @@ public partial class ProportionEditorWindow : Window
             keepTab,
             bodyName = profile.DisplayName,
             pieces = _pieces.Select(piece => piece.Request.ObjectName),
-            zones = profile.Zones.Select(zone => new { zone.Id, zone.Label, zone.Description, zone.Minimum, zone.Maximum }),
+            zones = profile.Zones.Select(zone => new { zone.Id, zone.Group, zone.Label, zone.Description, zone.Minimum, zone.Maximum }),
             values = _values,
             loose,
             looseVertices = models.Sum(model => model.LooseVertexCount),

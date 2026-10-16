@@ -830,15 +830,15 @@
                         </Grid>
                     </DockPanel>
                 </TabItem>
-                <TabItem x:Name="BodyProportionsTab" Header="Body proportions">
+                <TabItem x:Name="BodyProportionsTab" Header="Simple upscale">
                     <DockPanel Margin="8">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                            <TextBlock Text="Reshape a player outfit" FontSize="20" Margin="0,0,0,6" />
+                            <TextBlock Text="Simple upscale" FontSize="20" Margin="0,0,0,6" />
                             <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
-                                       Text="Search player character bodies and outfits, open one in the proportion editor, move the sliders and save the result as a mod. Only player bodies and outfit pieces are listed here; faces, hair, headwear, weapons, NPCs and objects are left out." />
+                                       Text="Reshape a player outfit or a supported NPC: search, open it in the proportion editor, move the sliders and save the result as a mod. Only player bodies and outfit pieces, and the NPCs Brelshaza, Echidna, Nineveh, Serca and Beatrice, are listed here; faces, hair, headwear, weapons, other NPCs and objects are left out." />
                             <WrapPanel>
                                 <TextBox x:Name="ProportionSearchTextBox" Width="240" KeyDown="ProportionSearchTextBox_KeyDown"
-                                         ToolTip="An outfit's in-game name, a class name or part of an object name, for example pc_wr_f_av or 226a." />
+                                         ToolTip="An outfit's or NPC's in-game name, or part of an object name, for example pc_wr_f_av, 226a or Echidna." />
                                 <Button Content="Search" Click="ProportionSearchButton_Click" />
                                 <ComboBox x:Name="ProportionBodyComboBox" Width="250" SelectionChanged="ProportionBodyComboBox_SelectionChanged"
                                           ToolTip="Show only one base body" />
@@ -852,7 +852,7 @@
                                 <Button x:Name="ProportionPreviewButton" Content="Preview original" IsEnabled="False" Click="ProportionPreviewButton_Click" />
                             </WrapPanel>
                             <TextBlock x:Name="ProportionStatusText" Margin="0,6,0,0" TextWrapping="Wrap"
-                                       Text="Search for a player outfit to begin." />
+                                       Text="Search for a player outfit or one of the supported NPCs to begin." />
                         </StackPanel>
                         <DataGrid x:Name="ProportionResultsGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                   CanUserAddRows="False" CanUserResizeColumns="True" SelectionMode="Extended" SelectionUnit="FullRow"

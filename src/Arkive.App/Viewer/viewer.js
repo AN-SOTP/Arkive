@@ -1003,7 +1003,15 @@ function renderProportions() {
       <input type="checkbox" id="looseClothing" ${message.loose ? 'checked' : ''}> Loose clothing follows the body
       <span class="muted">${message.looseVertices ? `(${message.looseVertices.toLocaleString()} loose vertices)` : '(none in this outfit)'}</span></label>
     <div class="proportionActions"><button id="proportionReset">Reset all</button></div>`;
+  // Sliders come in groups (arms, breasts or chest, waist, hips, legs); each group folds away.
+  let group = null;
   for (const zone of proportions.zones) {
+    if (zone.group !== group) {
+      if (group !== null) html += '</details>';
+      group = zone.group;
+      const open = proportions.openGroups?.has(group) ?? true;
+      html += `<details class="zoneGroup" data-group="${escapeHtml(group)}" ${open ? 'open' : ''}><summary>${escapeHtml(group)}</summary>`;
+    }
     const value = proportions.values[zone.id] ?? 0;
     const unused = !used.has(zone.id);
     html += `<div class="zone ${unused ? 'unused' : ''}" data-zone="${zone.id}" title="${escapeHtml(zone.description)}">
@@ -1013,6 +1021,7 @@ function renderProportions() {
       ${unused ? '<span class="muted">Not part of these pieces</span>' : ''}
     </div>`;
   }
+  if (group !== null) html += '</details>';
   const tab = $('tab-proportions');
   tab.innerHTML = html;
   tab.querySelectorAll('.zone').forEach((row) => {
@@ -1021,6 +1030,11 @@ function renderProportions() {
     row.querySelector('input[type=number]').addEventListener('change', (e) => setZone(id, Number(e.target.value), 'number'));
     row.querySelector('label').addEventListener('dblclick', () => setZone(id, 0));
   });
+  tab.querySelectorAll('.zoneGroup').forEach((details) => details.addEventListener('toggle', () => {
+    proportions.openGroups ??= new Set(proportions.zones.map((z) => z.group));
+    if (details.open) proportions.openGroups.add(details.dataset.group);
+    else proportions.openGroups.delete(details.dataset.group);
+  }));
   $('looseClothing').addEventListener('change', (e) => post({ type: 'proportionLoose', value: e.target.checked }));
   $('proportionReset').addEventListener('click', () => {
     for (const zone of proportions.zones) proportions.values[zone.id] = 0;
