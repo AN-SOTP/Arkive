@@ -140,6 +140,12 @@ static int Run(string[] arguments)
                 new BodyProportionFollow(arguments.Contains("--loose-clothing", StringComparer.OrdinalIgnoreCase),
                     arguments.Contains("--hair", StringComparer.OrdinalIgnoreCase)),
                 json),
+            "model-viewer-animations" => ModelViewerAnimations(
+                target,
+                ReadTextOption(arguments, "--animset") ?? throw new ArgumentException("model-viewer-animations requires --animset NAME."),
+                ReadTextOption(arguments, "--cache"),
+                arguments.Contains("--all", StringComparer.OrdinalIgnoreCase),
+                json),
             "skeletal-mesh-preflight" => SkeletalMeshPreflight(
                 target,
                 ReadTextOption(arguments, "--edited"),
@@ -1063,6 +1069,24 @@ static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string
     Console.WriteLine($"Loose cloth:   {model.LooseVertexCount:N0} vertices{(follow.LooseClothing ? " (follow the body)" : " (unchanged)")}");
     Console.WriteLine($"Hair:          {model.HairVertexCount:N0} vertices{(follow.Hair ? " (follows the body)" : " (unchanged)")}");
     if (outPath is not null) Console.WriteLine($"Reshaped GLB:  {Path.GetFullPath(outPath)}");
+    return 0;
+}
+
+static int ModelViewerAnimations(string packagePath, string animSet, string? cacheRoot, bool keepAll, bool json)
+{
+    var umodel = UmodelLocator.FindExecutable() ?? throw new InvalidOperationException("UModel was not found.");
+    var service = new ModelViewerAnimationService(new UmodelBridge(umodel),
+        cacheRoot ?? Path.Combine(Path.GetTempPath(), "arkive-animations"));
+    var set = service.PrepareAsync(packagePath, animSet, keepAll).GetAwaiter().GetResult();
+    if (json)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(set, new JsonSerializerOptions { WriteIndented = true }));
+        return 0;
+    }
+    Console.WriteLine($"AnimSet:     {set.AnimSetName}");
+    Console.WriteLine($"Bones:       {set.Bones.Count:N0}");
+    Console.WriteLine($"Animations:  {set.Animations.Count:N0} ({string.Join(", ", set.Animations.GroupBy(item => item.Group).Select(group => $"{group.Key} {group.Count()}"))})");
+    Console.WriteLine($"Folder:      {set.Directory}");
     return 0;
 }
 
@@ -3314,6 +3338,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive skeletal-mesh-reconstruct-noop <arkive-skeletalmesh-recon.json> [--out DIR] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-export-editable <arkive-skeletalmesh-recon.json> [--out DIR] [--json]");
     Console.WriteLine("  arkive body-proportions <player-mesh.arkive-edit.glb> [--set AREA=PERCENT ...] [--loose-clothing] [--hair] [--out FILE.glb] [--json]");
+    Console.WriteLine("  arkive model-viewer-animations <package.upk> --animset NAME [--cache DIR] [--all] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-preflight <arkive-editable-skeletalmesh.json> --edited FILE.glb [--json]");
     Console.WriteLine("  arkive skeletal-mesh-compare-skeletons <target-arkive-editable-skeletalmesh.json> --donor DONOR-MANIFEST [--json]");
     Console.WriteLine("  arkive skeletal-mesh-create-retarget <target-arkive-editable-skeletalmesh.json> --donor DONOR-MANIFEST [--name TEXT] [--out DIR] [--json]");

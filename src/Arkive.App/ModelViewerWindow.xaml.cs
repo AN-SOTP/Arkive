@@ -36,6 +36,13 @@ public partial class ModelViewerWindow : Window
     private TaskCompletionSource<bool> _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private BakeJob? _bake;
 
+    /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
+    public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationSet?>>? Animations { get; init; }
+
+    private string SceneCacheRoot => _service.Cache.RootDirectory;
+
+    private void AnimationsLog(string text) => _log(text);
+
     /// <summary>A texture baked in texture space from one material, as the viewer shows it.</summary>
     public sealed record BakedTexture(int Slot, string Material, string Name, string Source, int Size, string File, string? NormalFile);
 
@@ -117,6 +124,7 @@ public partial class ModelViewerWindow : Window
                  $"materials={result.Scene.Materials.Count}, seconds={result.Scene.PreparationSeconds}.");
             if (_pageReady) Browser.CoreWebView2.PostWebMessageAsJson(message);
             else _pendingLoadMessage = message;
+            if (!keepView) _ = OfferAnimationsAsync(request, loading.Token);
         }
         catch (OperationCanceledException) when (loading.IsCancellationRequested)
         {
@@ -126,6 +134,43 @@ public partial class ModelViewerWindow : Window
             _log($"Model viewer preparation failed: object={request.ObjectName}, error={exception}");
             Post(new { type = "error", text = $"Arkive could not prepare {request.ObjectName}: {exception.Message}" });
             _sceneLoaded.TrySetException(exception);
+        }
+    }
+
+    /// <summary>
+    /// Prepares the shown character's animations in the background and offers them to the page. The first time for a
+    /// class takes a while (UModel exports every animation once); later views read the cache.
+    /// </summary>
+    private async Task OfferAnimationsAsync(ModelViewerRequest request, CancellationToken cancellationToken)
+    {
+        if (Animations is null) return;
+        try
+        {
+            Post(new { type = "animationsStatus", text = "Preparing animations…" });
+            var set = await Animations(request, cancellationToken);
+            if (cancellationToken.IsCancellationRequested) return;
+            if (set is null)
+            {
+                Post(new { type = "animationsStatus", text = "" });
+                return;
+            }
+            var folder = Path.GetRelativePath(SceneCacheRoot, set.Directory).Replace('\\', '/');
+            Post(new
+            {
+                type = "animations",
+                baseUrl = $"https://{SceneHost}/{folder}/",
+                animSet = set.AnimSetName,
+                bones = set.Bones,
+                animations = set.Animations.Select(item => new { name = item.Name, group = item.Group, frames = item.Frames, rate = item.Rate, file = item.File }),
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Post(new { type = "animationsStatus", text = "Animations unavailable" });
+            AnimationsLog($"Viewer animations failed: object={request.ObjectName}, error={exception.Message}");
         }
     }
 

@@ -36,7 +36,10 @@ public partial class MainWindow
         Path.Combine(_projectRoot, "cache", "webview2"),
         _effectiveAppearanceTheme,
         browse,
-        Log);
+        Log)
+    {
+        Animations = FindViewerAnimationsAsync,
+    };
 
     /// <summary>
     /// Bakes the game colours of a newly added mesh next to its working GLB (<c>name.arkive-colours</c>), so

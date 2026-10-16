@@ -55,6 +55,12 @@
       <button id="bakeButton" title="Save each material's colours, as shown, as textures laid out on UV set 0 (for Blender or reference)">Export colours</button>
       <button id="umodelButton" title="Open the same object in UModel">Open in UModel</button>
     </div>
+    <div class="group" id="animationGroup" hidden>
+      <label class="field">Animation <select id="animationSelect" title="Play one of this character's own game animations, to check clipping in motion"><option value="">Rest pose</option></select></label>
+      <button id="animationPlay" title="Pause or play the animation">Pause</button>
+      <label class="field">Speed <select id="animationSpeed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option></select></label>
+      <span id="animationStatus" class="muted"></span>
+    </div>
   </header>
   <main>
     <aside id="panel">

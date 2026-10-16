@@ -861,6 +861,8 @@ async function load(message) {
   for (const m of state.materialCache.values()) m.dispose();
   if (state.model) world.remove(state.model);
   clearHelpers();
+  resetAnimation();
+  $('animationSelect').value = '';
   Object.assign(state, { scene: message.scene, base: message.baseUrl, model: null, lod: 0, uvSet: 0, isolatedSection: null, selectedMaterial: null });
   state.lods = new Map();
   state.textures = new Map();
@@ -1158,6 +1160,148 @@ host?.addEventListener('message', (event) => {
   }
 });
 window.arkiveProportions = { proportions, setZone };
+
+// Animation preview: plays the character's own game animations (prepared by Arkive from its AnimSet) on every
+// skeleton in the view, so clipping shows in motion. Rest pose puts every bone back where the mesh binds it.
+const animation = { base: '', list: [], clip: null, playing: true, time: 0, speed: 1, rest: null, last: 0 };
+
+function animationBones() {
+  const byName = new Map();
+  state.model?.traverse((object) => {
+    if (!object.isBone) return;
+    const name = object.name.replace(/__ARKIVE_\d+$/, '');
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(object);
+  });
+  return byName;
+}
+
+function rememberRestPose() {
+  if (animation.rest) return;
+  animation.rest = [];
+  state.model?.traverse((object) => {
+    if (object.isBone) animation.rest.push([object, object.quaternion.clone(), object.position.clone()]);
+  });
+}
+
+function restorePose() {
+  for (const [bone, quaternion, position] of animation.rest ?? []) { bone.quaternion.copy(quaternion); bone.position.copy(position); }
+  requestRender();
+}
+
+function parseClip(buffer, info) {
+  const view = new DataView(buffer);
+  const frames = view.getInt32(0, true), count = view.getInt32(4, true);
+  let offset = 8;
+  const tracks = [];
+  for (let b = 0; b < count; b++) {
+    const flags = view.getUint8(offset); offset += 1;
+    const rotations = flags & 1 ? frames : 1;
+    const rotation = new Float32Array(rotations * 4);
+    for (let i = 0; i < rotations * 4; i++) { rotation[i] = view.getInt16(offset, true) / 32767; offset += 2; }
+    const positions = flags & 2 ? frames : 1;
+    const position = new Float32Array(positions * 3);
+    for (let i = 0; i < positions * 3; i++) { position[i] = view.getFloat32(offset, true); offset += 4; }
+    tracks.push({ rotation, position, rotations, positions });
+  }
+  return { name: info.name, frames, rate: info.rate || 30, tracks };
+}
+
+const poseA = new THREE.Quaternion(), poseB = new THREE.Quaternion();
+
+function poseAt(time) {
+  const clip = animation.clip;
+  if (!clip) return;
+  const position = (time * clip.rate) % Math.max(1, clip.frames - 1);
+  const frame = Math.floor(position), next = Math.min(frame + 1, clip.frames - 1), blend = position - frame;
+  for (const [index, track] of clip.tracks.entries()) {
+    const bones = clip.bones[index];
+    if (!bones) continue;
+    const r = track.rotation, p = track.position;
+    const a = track.rotations > 1 ? frame : 0, b = track.rotations > 1 ? next : 0;
+    poseA.set(r[a * 4], r[a * 4 + 1], r[a * 4 + 2], r[a * 4 + 3]).normalize();
+    poseB.set(r[b * 4], r[b * 4 + 1], r[b * 4 + 2], r[b * 4 + 3]).normalize();
+    poseA.slerp(poseB, blend);
+    const pa = track.positions > 1 ? frame : 0, pb = track.positions > 1 ? next : 0;
+    const x = p[pa * 3] + (p[pb * 3] - p[pa * 3]) * blend;
+    const y = p[pa * 3 + 1] + (p[pb * 3 + 1] - p[pa * 3 + 1]) * blend;
+    const z = p[pa * 3 + 2] + (p[pb * 3 + 2] - p[pa * 3 + 2]) * blend;
+    for (const bone of bones) { bone.quaternion.copy(poseA); bone.position.set(x, y, z); }
+  }
+  requestRender();
+}
+
+function animationTick(now) {
+  if (animation.clip && animation.playing) {
+    const delta = animation.last ? Math.min(0.1, (now - animation.last) / 1000) : 0;
+    animation.time += delta * animation.speed;
+    poseAt(animation.time);
+  }
+  animation.last = now;
+  requestAnimationFrame(animationTick);
+}
+requestAnimationFrame(animationTick);
+
+async function playAnimation(file) {
+  const info = animation.list.find((item) => item.file === file);
+  if (!info) {
+    animation.clip = null;
+    restorePose();
+    $('animationStatus').textContent = '';
+    return;
+  }
+  $('animationStatus').textContent = `Loading ${info.name}…`;
+  const clip = parseClip(await (await fetch(animation.base + file)).arrayBuffer(), info);
+  rememberRestPose();
+  const byName = animationBones();
+  clip.bones = (animation.bones ?? []).map((name) => byName.get(name) ?? null);
+  animation.clip = clip;
+  animation.time = 0;
+  $('animationStatus').textContent = `${info.frames} frames · ${(info.frames / (info.rate || 30)).toFixed(1)} s`;
+  poseAt(0);
+}
+
+function resetAnimation() {
+  animation.clip = null;
+  animation.rest = null;
+  animation.time = 0;
+}
+
+function showAnimations(message) {
+  animation.base = message.baseUrl;
+  animation.list = message.animations;
+  animation.bones = message.bones;
+  const select = $('animationSelect');
+  const groups = new Map();
+  for (const item of message.animations) {
+    if (!groups.has(item.group)) groups.set(item.group, []);
+    groups.get(item.group).push(item);
+  }
+  select.innerHTML = '<option value="">Rest pose</option>' + [...groups].map(([group, items]) =>
+    `<optgroup label="${escapeHtml(group)}">${items.map((item) =>
+      `<option value="${escapeHtml(item.file)}">${escapeHtml(item.name)}</option>`).join('')}</optgroup>`).join('');
+  $('animationGroup').hidden = false;
+  $('animationStatus').textContent = `${message.animations.length} animations`;
+}
+
+$('animationSelect').addEventListener('change', (e) => playAnimation(e.target.value).catch((error) => {
+  $('animationStatus').textContent = `Could not play it: ${error.message}`;
+}));
+$('animationPlay').addEventListener('click', () => {
+  animation.playing = !animation.playing;
+  $('animationPlay').textContent = animation.playing ? 'Pause' : 'Play';
+});
+$('animationSpeed').addEventListener('change', (e) => { animation.speed = Number(e.target.value); });
+
+host?.addEventListener('message', (event) => {
+  const message = event.data;
+  if (message?.type === 'animations') showAnimations(message);
+  if (message?.type === 'animationsStatus') {
+    $('animationGroup').hidden = !message.text && !animation.list.length;
+    if (!animation.list.length) $('animationStatus').textContent = message.text;
+  }
+});
+window.arkiveAnimation = { animation, playAnimation, poseAt };
 
 // Outside Arkive (for development): viewer.html?scene=<url of scene.json>
 const sceneUrl = new URLSearchParams(location.search).get('scene');

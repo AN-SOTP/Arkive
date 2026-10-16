@@ -242,6 +242,28 @@ public sealed partial class UmodelBridge
             CollectDiagnostics(result), stopwatch.Elapsed, false);
     }
 
+    /// <summary>
+    /// Exports an AnimSet as an ActorX .psa file (raw keys for every sequence). Unlike other exports this loads
+    /// animation classes, which every other command skips.
+    /// </summary>
+    public async Task<string> ExportAnimSetAsync(
+        string packagePath,
+        string animSetName,
+        string outputDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(animSetName);
+        var fullPackagePath = ValidatePackage(packagePath);
+        var fullOutputDirectory = Path.GetFullPath(outputDirectory);
+        Directory.CreateDirectory(fullOutputDirectory);
+        var result = await RunAsync(
+            ["-export", "-game=lostark", "-na", $"-out={fullOutputDirectory}", fullPackagePath, animSetName],
+            DefaultTimeout, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0) throw CreateProcessException($"export animations {animSetName}", result);
+        return Directory.EnumerateFiles(fullOutputDirectory, "*.psa", SearchOption.AllDirectories).FirstOrDefault()
+            ?? throw new UmodelBridgeException($"UModel did not export the animations of {animSetName}.");
+    }
+
     public Process StartPreview(string packagePath)
     {
         var fullPackagePath = ValidatePackage(packagePath);

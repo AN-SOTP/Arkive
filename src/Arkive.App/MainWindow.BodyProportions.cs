@@ -250,6 +250,7 @@ public partial class MainWindow
                 Path.Combine(_projectRoot, "cache", "webview2"), _effectiveAppearanceTheme, SaveProportionModAsync,
                 BodyProportionPresets(), Log)
             {
+                Animations = FindViewerAnimationsAsync,
                 Owner = this,
             };
             window.Show();

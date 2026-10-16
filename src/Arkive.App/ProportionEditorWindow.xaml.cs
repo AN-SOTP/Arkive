@@ -33,6 +33,19 @@ public partial class ProportionEditorWindow : Window
     private readonly Func<ProportionSaveRequest, Task<string>> _save;
     private readonly Action<string> _log;
     private readonly BodyProportionPresetStore _presets;
+
+    /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
+    public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationSet?>>? Animations { get; init; }
+
+    private string SceneCacheRoot => _scenes.Cache.RootDirectory;
+
+    private void AnimationsLog(string text) => _log(text);
+
+    private void Post(object message)
+    {
+        if (Browser.CoreWebView2 is not null)
+            Browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
     private bool _loadingPresets;
     private readonly CancellationTokenSource _closing = new();
     private readonly TaskCompletionSource _pageReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -118,6 +131,7 @@ public partial class ProportionEditorWindow : Window
             await SendProportionsAsync(keepTab: false);
             SaveButton.IsEnabled = true;
             PresetComboBox.IsEnabled = SavePresetButton.IsEnabled = true;
+            _ = OfferAnimationsAsync(pieces[0].ViewerRequest, token);
             LoadPresets(null);
             Status($"{profiles[0].DisplayName} · {pieces.Count} piece(s). Move the sliders, then save as a mod.");
             _log($"Proportion editor ready: body={profiles[0].Id}, pieces={string.Join(", ", pieces.Select(piece => piece.Request.ObjectName))}.");
@@ -227,6 +241,44 @@ public partial class ProportionEditorWindow : Window
     }
 
     private void Status(string text) => StatusText.Text = text;
+
+    /// <summary>
+    /// Prepares the shown character's animations in the background and offers them to the page. The first time for a
+    /// class takes a while (UModel exports every animation once); later views read the cache.
+    /// </summary>
+    private async Task OfferAnimationsAsync(ModelViewerRequest request, CancellationToken cancellationToken)
+    {
+        if (Animations is null) return;
+        try
+        {
+            Post(new { type = "animationsStatus", text = "Preparing animations…" });
+            var set = await Animations(request, cancellationToken);
+            if (cancellationToken.IsCancellationRequested) return;
+            if (set is null)
+            {
+                Post(new { type = "animationsStatus", text = "" });
+                return;
+            }
+            var folder = Path.GetRelativePath(SceneCacheRoot, set.Directory).Replace('\\', '/');
+            Post(new
+            {
+                type = "animations",
+                baseUrl = $"https://{SceneHost}/{folder}/",
+                animSet = set.AnimSetName,
+                bones = set.Bones,
+                animations = set.Animations.Select(item => new { name = item.Name, group = item.Group, frames = item.Frames, rate = item.Rate, file = item.File }),
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Post(new { type = "animationsStatus", text = "Animations unavailable" });
+            AnimationsLog($"Viewer animations failed: object={request.ObjectName}, error={exception.Message}");
+        }
+    }
+
 
     private void LoadPresets(string? select)
     {

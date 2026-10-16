@@ -139,6 +139,20 @@ public static partial class BodyProfiles
 
     public static readonly IReadOnlyList<BodyProfile> All = [.. Players, .. Npcs];
 
+    /// <summary>The AnimSet holding a player body's animations (in its class's base package), or null for NPCs.</summary>
+    public static string? AnimSetName(BodyProfile profile) => profile.Id switch
+    {
+        "female-warrior" => "pc_wr_f_00_ani",
+        "male-warrior" => "pc_wr_00_ani",
+        "female-assassin" => "pc_dl_00_ani",
+        "female-mage" => "pc_mg_00_ani",
+        "female-martial-artist" => "pc_ft_00_ani",
+        "male-gunner" => "pc_gn_00_ani",
+        "female-specialist" => "pc_sp_00_ani",
+        "male-specialist" => "pc_sp_m_00_ani",
+        _ => null,
+    };
+
     /// <summary>
     /// The profile for a mesh: a named NPC by its mesh name, otherwise the player body whose rest pose matches the
     /// skeleton. Null for a body Arkive has not tuned.
