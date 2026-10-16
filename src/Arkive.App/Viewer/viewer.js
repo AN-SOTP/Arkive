@@ -999,9 +999,12 @@ function renderProportions() {
     <div class="muted">${escapeHtml(message.pieces.join(', '))}</div>
     <div class="row muted" style="cursor:default">Percent change from the game's shape. Double-click a name to reset it.
       Heights and limb lengths stay as they are: the game's skeleton sets them.</div>
-    <label class="row" title="Skirts, capes and coat tails hang from their own bones. When ticked they widen with the waist, hips, thighs and buttocks. Tight clothing always follows the body.">
+    <label class="row" title="Skirts, capes, coat tails, sashes and drapes hang from bones of their own. When ticked they move with the body surface nearest to them. Tight clothing always follows the body.">
       <input type="checkbox" id="looseClothing" ${message.loose ? 'checked' : ''}> Loose clothing follows the body
       <span class="muted">${message.looseVertices ? `(${message.looseVertices.toLocaleString()} loose vertices)` : '(none in this outfit)'}</span></label>
+    <label class="row" title="Hair hangs from bones of its own. When ticked it moves with the body surface nearest to it, so the body does not grow through it.">
+      <input type="checkbox" id="hairFollows" ${message.hair ? 'checked' : ''}> Hair follows the body
+      <span class="muted">${message.hairVertices ? `(${message.hairVertices.toLocaleString()} hair vertices)` : '(no hair in these pieces)'}</span></label>
     <div class="proportionActions"><button id="proportionReset">Reset all</button></div>`;
   // Sliders come in groups (arms, breasts or chest, waist, hips, legs); each group folds away.
   let group = null;
@@ -1036,6 +1039,7 @@ function renderProportions() {
     else proportions.openGroups.delete(details.dataset.group);
   }));
   $('looseClothing').addEventListener('change', (e) => post({ type: 'proportionLoose', value: e.target.checked }));
+  $('hairFollows').addEventListener('change', (e) => post({ type: 'proportionHair', value: e.target.checked }));
   $('proportionReset').addEventListener('click', () => {
     for (const zone of proportions.zones) proportions.values[zone.id] = 0;
     renderProportions();

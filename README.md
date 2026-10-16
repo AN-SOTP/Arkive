@@ -155,9 +155,9 @@ Drag dividers to resize working/search tables and mod/detail panes. Collapse Add
 The model changes as you move them. **Save as mod** creates a new mod with a working copy of each piece, reshaped with the same values, and saves it; enable it in **Mods** to apply it like any other mod.
 
 - Each area is found from the bones that move it, so tight clothing and the body under it change together, and an outfit's pieces keep meeting at their seams. Arkive recognises eight base player bodies from their skeletons (female specialist, mage, martial artist, warrior and assassin/gunner; male specialist, gunner/martial artist and warrior); every class of a body shares its tuning. Each supported NPC has tuning of its own.
-- **Loose clothing follows the body** also moves skirts, capes and coat tails, which hang from their own bones, out with the waist, hips, thighs and buttocks.
+- **Loose clothing follows the body** and **Hair follows the body** (both on by default) move skirts, capes, coat tails, sashes, drapes and hair, which hang from bones of their own, with the body surface nearest to them, so the body does not grow through them. The fade-out of each area is measured across the body, not in depth, so every layer over a spot (skin, a top, a coat) moves together.
 - Thickness, shape and placement change; height and limb length do not, because the game's skeleton and animations set them. Every LOD is reshaped, vertices only move, and saving runs the usual skeleton and animation stress checks.
-- A mod replaces the outfit (or NPC) for every character you see wearing it. Very large or combined values can make pieces overlap, and hair or capes that hang from their own bones stay where they are.
+- A mod replaces the outfit (or NPC) for every character you see wearing it. Very large or combined values can still make pieces overlap.
 
 ### Import, priorities and deployment
 

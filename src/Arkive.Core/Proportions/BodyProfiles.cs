@@ -111,6 +111,7 @@ public static partial class BodyProfiles
     ];
 
     // NPCs have their own skeletons; each is tuned from its own meshes and offered only for those meshes.
+    // Echidna's mn_sden_02 is a 12 m cinematic copy whose clothing materials do not render, so it is left out.
     // Brelshaza's and Nineveh's skeletons have no upper-chest bone, so their chest is measured from spine1.
     public static readonly IReadOnlyList<BodyProfile> Npcs =
     [
@@ -125,7 +126,7 @@ public static partial class BodyProfiles
         new("npc-echidna", "Echidna (NPC)", true, 1.414, 2.173,
             new("bip001-spine2", 0.054, 0.020, 0.035, 0.046),
             new("bip001-pelvis", -0.074, 0.010, 0.040, 0.058),
-            new("bip001-spine", 0.056, -0.010, 0.0, 0.060), @"^mn_sden_\d+[a-z]?(-\d+)?_sk$"),
+            new("bip001-spine", 0.056, -0.010, 0.0, 0.060), @"^mn_sden_(00|01|05)(-\d+)?_sk$"),
         new("npc-serca", "Serca (NPC)", true, 1.276, 1.988,
             new("bip001-spine2", 0.062, -0.005, 0.035, 0.046),
             new("bip001-pelvis", -0.076, 0.000, 0.040, 0.058),

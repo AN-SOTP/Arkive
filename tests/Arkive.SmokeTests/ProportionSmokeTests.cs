@@ -42,7 +42,7 @@ internal static class ProportionSmokeTests
              ("bip001-head", new(0, 1.152f, 0)), ("bip001-l-thigh", new(0, 0.734f, -0.06f)), ("bip001-l-calf", new(0, 0.40f, -0.06f)),
              ("bip001-l-foot", new(0, 0.07f, -0.06f))],
             [(new(0.10f, 0.948f, -0.044f), 2), (new(0, 0.55f, -0.12f), 4), (new(0.02f, 0.05f, -0.06f), 6)]);
-        var model = BodyProportionEngine.Build(glb, looseClothingFollows: false);
+        var model = BodyProportionEngine.Build(glb, default);
         Assert(model.Profile.Id == "female-warrior", $"the skeleton was detected as {model.Profile.Id}");
         Assert(model.AffectedZones.Contains("chest") && model.AffectedZones.Contains("thighs"), "chest and thighs are affected");
 

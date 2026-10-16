@@ -137,7 +137,8 @@ static int Run(string[] arguments)
                 target,
                 ReadTextOption(arguments, "--out"),
                 ReadTextOptions(arguments, "--set"),
-                arguments.Contains("--loose-clothing", StringComparer.OrdinalIgnoreCase),
+                new BodyProportionFollow(arguments.Contains("--loose-clothing", StringComparer.OrdinalIgnoreCase),
+                    arguments.Contains("--hair", StringComparer.OrdinalIgnoreCase)),
                 json),
             "skeletal-mesh-preflight" => SkeletalMeshPreflight(
                 target,
@@ -1022,7 +1023,7 @@ static int SkeletalMeshExportEditable(string reconPath, string? outputPath, bool
     return result.Manifest.GlbInspectionErrors == 0 ? 0 : 1;
 }
 
-static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string> settings, bool looseClothing, bool json)
+static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string> settings, BodyProportionFollow follow, bool json)
 {
     var values = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
     foreach (var setting in settings)
@@ -1035,7 +1036,7 @@ static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string
     }
     var bytes = File.ReadAllBytes(glbPath);
     // Editable exports are named OBJECT.arkive-edit.glb; the object name identifies tuned NPCs.
-    var model = BodyProportionEngine.Build(bytes, looseClothing, objectName: Path.GetFileName(glbPath).Split('.')[0]);
+    var model = BodyProportionEngine.Build(bytes, follow, objectName: Path.GetFileName(glbPath).Split('.')[0]);
     var unknown = values.Keys.Where(key => model.Profile.Zones.All(zone => !zone.Id.Equals(key, StringComparison.OrdinalIgnoreCase))).ToArray();
     if (unknown.Length > 0)
         throw new ArgumentException($"Unknown area(s) {string.Join(", ", unknown)}; this body has {string.Join(", ", model.Profile.Zones.Select(zone => zone.Id))}.");
@@ -1046,8 +1047,10 @@ static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string
         Console.WriteLine(JsonSerializer.Serialize(new
         {
             profile = model.Profile.Id,
-            looseClothing,
+            looseClothing = follow.LooseClothing,
+            hair = follow.Hair,
             looseVertices = model.LooseVertexCount,
+            hairVertices = model.HairVertexCount,
             areas = model.AffectedZones,
             meshes = model.Meshes.Select(mesh => new { mesh.MeshName, mesh.VertexCount, areas = mesh.Offsets.Keys }),
             output = outPath,
@@ -1057,7 +1060,8 @@ static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string
     Console.WriteLine($"Body:          {model.Profile.DisplayName}");
     Console.WriteLine($"Meshes (LODs): {model.Meshes.Count} ({string.Join(", ", model.Meshes.Select(mesh => $"{mesh.MeshName} {mesh.VertexCount:N0}"))})");
     Console.WriteLine($"Areas:         {string.Join(", ", model.Profile.Zones.Where(zone => model.AffectedZones.Contains(zone.Id)).Select(zone => zone.Id))}");
-    Console.WriteLine($"Loose cloth:   {model.LooseVertexCount:N0} vertices{(looseClothing ? " (follow the body)" : " (unchanged)")}");
+    Console.WriteLine($"Loose cloth:   {model.LooseVertexCount:N0} vertices{(follow.LooseClothing ? " (follow the body)" : " (unchanged)")}");
+    Console.WriteLine($"Hair:          {model.HairVertexCount:N0} vertices{(follow.Hair ? " (follows the body)" : " (unchanged)")}");
     if (outPath is not null) Console.WriteLine($"Reshaped GLB:  {Path.GetFullPath(outPath)}");
     return 0;
 }
@@ -3309,7 +3313,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive material-build-candidate <arkive-material-edit.json> [--out DIR] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-reconstruct-noop <arkive-skeletalmesh-recon.json> [--out DIR] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-export-editable <arkive-skeletalmesh-recon.json> [--out DIR] [--json]");
-    Console.WriteLine("  arkive body-proportions <player-mesh.arkive-edit.glb> [--set AREA=PERCENT ...] [--loose-clothing] [--out FILE.glb] [--json]");
+    Console.WriteLine("  arkive body-proportions <player-mesh.arkive-edit.glb> [--set AREA=PERCENT ...] [--loose-clothing] [--hair] [--out FILE.glb] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-preflight <arkive-editable-skeletalmesh.json> --edited FILE.glb [--json]");
     Console.WriteLine("  arkive skeletal-mesh-compare-skeletons <target-arkive-editable-skeletalmesh.json> --donor DONOR-MANIFEST [--json]");
     Console.WriteLine("  arkive skeletal-mesh-create-retarget <target-arkive-editable-skeletalmesh.json> --donor DONOR-MANIFEST [--name TEXT] [--out DIR] [--json]");

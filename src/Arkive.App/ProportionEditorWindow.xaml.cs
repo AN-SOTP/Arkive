@@ -14,7 +14,7 @@ public sealed record ProportionSaveRequest(
     BodyProfile Profile,
     IReadOnlyList<BodyProportionPieceRequest> Pieces,
     IReadOnlyDictionary<string, double> Settings,
-    bool LooseClothingFollows);
+    BodyProportionFollow Follow);
 
 /// <summary>
 /// Arkive's model viewer with body proportion sliders: shows every chosen piece of an outfit together, reshapes
@@ -37,7 +37,8 @@ public partial class ProportionEditorWindow : Window
     private TaskCompletionSource _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private IReadOnlyList<BodyProportionPiece> _pieces = [];
     private Dictionary<string, double> _values = new(StringComparer.Ordinal);
-    private bool _loose;
+    // Loose cloth and hair follow the body unless the user turns it off.
+    private BodyProportionFollow _follow = BodyProportionFollow.All;
     private bool _busy;
     private string? _workDirectory;
     private int _basesVersion;
@@ -132,12 +133,13 @@ public partial class ProportionEditorWindow : Window
     private async Task SendProportionsAsync(bool keepTab)
     {
         var token = _closing.Token;
-        var loose = _loose;
+        var follow = _follow;
         var models = await Task.Run(async () =>
         {
             var built = new List<BodyProportionModel>();
             foreach (var piece in _pieces)
-                built.Add(BodyProportionEngine.Build(await File.ReadAllBytesAsync(piece.EditableGlbPath, token), loose, piece.Profile));
+                built.Add(BodyProportionEngine.Build(await File.ReadAllBytesAsync(piece.EditableGlbPath, token), follow, piece.Profile,
+                    piece.Request.ObjectName));
             return built;
         }, token);
         var layout = new List<object>();
@@ -172,8 +174,10 @@ public partial class ProportionEditorWindow : Window
             pieces = _pieces.Select(piece => piece.Request.ObjectName),
             zones = profile.Zones.Select(zone => new { zone.Id, zone.Group, zone.Label, zone.Description, zone.Minimum, zone.Maximum }),
             values = _values,
-            loose,
+            loose = follow.LooseClothing,
+            hair = follow.Hair,
             looseVertices = models.Sum(model => model.LooseVertexCount),
+            hairVertices = models.Sum(model => model.HairVertexCount),
             layout,
             basesUrl = $"https://{SceneHost}/{Path.GetFileName(_workDirectory)}/{Path.GetFileName(file)}",
         };
@@ -201,7 +205,7 @@ public partial class ProportionEditorWindow : Window
         try
         {
             var result = await _save(new ProportionSaveRequest(name, _pieces[0].Profile,
-                _pieces.Select(piece => piece.Request).ToArray(), new Dictionary<string, double>(_values), _loose));
+                _pieces.Select(piece => piece.Request).ToArray(), new Dictionary<string, double>(_values), _follow));
             Status(result);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -268,8 +272,10 @@ public partial class ProportionEditorWindow : Window
                     .Where(property => property.Value.ValueKind == JsonValueKind.Number)
                     .ToDictionary(property => property.Name, property => property.Value.GetDouble(), StringComparer.Ordinal);
                 break;
-            case "proportionLoose":
-                _loose = root.GetProperty("value").GetBoolean();
+            case "proportionLoose" or "proportionHair":
+                _follow = type.GetString() == "proportionHair"
+                    ? _follow with { Hair = root.GetProperty("value").GetBoolean() }
+                    : _follow with { LooseClothing = root.GetProperty("value").GetBoolean() };
                 try { await SendProportionsAsync(keepTab: true); }
                 catch (Exception exception) when (exception is IOException or InvalidDataException or OperationCanceledException)
                 {

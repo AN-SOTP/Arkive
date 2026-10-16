@@ -10,12 +10,21 @@ namespace Arkive.Core.Proportions;
 /// </summary>
 public sealed record BodyProportionMeshBasis(int MeshIndex, string MeshName, int VertexCount, IReadOnlyDictionary<string, float[]> Offsets);
 
+/// <summary>Which hanging parts follow the body under them instead of staying where they are.</summary>
+/// <param name="LooseClothing">Skirts, capes, coat tails, sashes and ribbons (cloth with bones of its own).</param>
+/// <param name="Hair">Hair.</param>
+public readonly record struct BodyProportionFollow(bool LooseClothing, bool Hair)
+{
+    public static BodyProportionFollow All => new(true, true);
+}
+
 /// <summary>The proportion offsets of one editable skeletal mesh GLB.</summary>
 public sealed record BodyProportionModel(
     BodyProfile Profile,
-    bool LooseClothingFollows,
+    BodyProportionFollow Follow,
     IReadOnlyList<BodyProportionMeshBasis> Meshes,
-    int LooseVertexCount)
+    int LooseVertexCount,
+    int HairVertexCount)
 {
     /// <summary>The areas this mesh has vertices in; sliders for other areas change nothing on it.</summary>
     public IReadOnlyCollection<string> AffectedZones =>
@@ -23,25 +32,26 @@ public sealed record BodyProportionModel(
 }
 
 /// <summary>
-/// Reshapes a player mesh by moving its vertices in the skeleton's rest pose. Each body area is found from the
-/// bones that move it (the same skin weights the game uses), so tight clothing and the body under it move
-/// together and pieces of one outfit keep meeting at their seams. Bones never move, so animations still fit.
-/// Nothing is made longer: the skeleton is the game's and lengths belong to it.
+/// Reshapes a player or NPC mesh by moving its vertices in the skeleton's rest pose. Each body area is found from
+/// the bones that move it (the same skin weights the game uses) and from where it sits, so tight clothing and the
+/// body under it move together and pieces of one outfit keep meeting at their seams. Cloth and hair that hang from
+/// bones of their own can follow the nearest body surface. Bones never move, so animations still fit. Nothing is
+/// made longer: the skeleton is the game's and lengths belong to it.
 /// </summary>
 public static partial class BodyProportionEngine
 {
     public sealed class UnknownBodyException(string message) : Exception(message);
 
     /// <param name="objectName">The mesh's object name, which identifies tuned NPCs.</param>
-    public static BodyProportionModel Build(byte[] glb, bool looseClothingFollows, BodyProfile? profile = null, string? objectName = null)
+    public static BodyProportionModel Build(byte[] glb, BodyProportionFollow follow, BodyProfile? profile = null, string? objectName = null)
     {
         var container = GlbContainer.Parse(glb);
         var (bones, jointNames) = RestBones(container);
         profile ??= BodyProfiles.Detect(bones, objectName)
-            ?? throw new UnknownBodyException("This mesh's skeleton is not one of the player bodies Arkive has tuned.");
+            ?? throw new UnknownBodyException("This mesh's skeleton is not one of the bodies Arkive has tuned.");
         var meshes = new List<BodyProportionMeshBasis>();
         var seen = new HashSet<int>();
-        var looseVertices = 0;
+        int looseVertices = 0, hairVertices = 0;
         var meshArray = container.Json["meshes"]?.AsArray() ?? [];
         for (var meshIndex = 0; meshIndex < meshArray.Count; meshIndex++)
         {
@@ -51,18 +61,23 @@ public static partial class BodyProportionEngine
             var positionAccessor = (int)attributes["POSITION"]!;
             if (!seen.Add(positionAccessor)) continue;
             var vertices = ReadVertices(container, attributes, jointNames);
-            var shaper = new Shaper(profile, bones, vertices, looseClothingFollows);
             looseVertices += vertices.Count(vertex => vertex.Loose > 0.01f);
+            hairVertices += vertices.Count(vertex => vertex.Hair > 0.01f);
+            var shaper = new Shaper(profile, bones, vertices);
+            var followers = vertices.Select(vertex => Math.Min(1f, (follow.LooseClothing ? vertex.Loose : 0) + (follow.Hair ? vertex.Hair : 0))).ToArray();
+            var transfer = followers.Any(weight => weight > 0.01f) ? new FollowTransfer(vertices, followers, shaper.Height) : null;
             var offsets = new Dictionary<string, float[]>(StringComparer.Ordinal);
             foreach (var zone in profile.Zones)
             {
                 var offset = shaper.Offsets(zone.Id);
-                if (offset is not null) offsets[zone.Id] = offset;
+                if (offset is null) continue;
+                transfer?.Apply(offset);
+                offsets[zone.Id] = offset;
             }
             meshes.Add(new BodyProportionMeshBasis(meshIndex, (string?)mesh["name"] ?? $"mesh {meshIndex}", vertices.Length, offsets));
         }
         if (meshes.Count == 0) throw new InvalidDataException("The GLB has no skinned meshes to reshape.");
-        return new BodyProportionModel(profile, looseClothingFollows, meshes, looseVertices);
+        return new BodyProportionModel(profile, follow, meshes, looseVertices, hairVertices);
     }
 
     /// <summary>Returns the GLB with every LOD reshaped by <paramref name="settings"/> (percent per area).</summary>
@@ -129,7 +144,7 @@ public static partial class BodyProportionEngine
     // Arkive's GLBs make repeated bone names unique with a __ARKIVE_n suffix.
     private static string BoneName(string node) => ArkiveSuffix().Replace(node, "");
 
-    private sealed record Vertex(Vector3 Position, (string Bone, float Weight)[] Influences, float Loose);
+    private sealed record Vertex(Vector3 Position, (string Bone, float Weight)[] Influences, float Loose, float Hair);
 
     private static Vertex[] ReadVertices(GlbContainer container, JsonObject attributes, string[] jointNames)
     {
@@ -140,7 +155,7 @@ public static partial class BodyProportionEngine
         for (var vertex = 0; vertex < vertices.Length; vertex++)
         {
             var influences = new List<(string, float)>(4);
-            var loose = 0f;
+            float loose = 0, hair = 0;
             for (var slot = 0; slot < 4; slot++)
             {
                 var weight = container.ReadWeight(weights, vertex, slot);
@@ -149,18 +164,99 @@ public static partial class BodyProportionEngine
                 if (joint >= jointNames.Length) continue;
                 var bone = jointNames[joint];
                 influences.Add((bone, weight));
-                if (LooseBone().IsMatch(bone)) loose += weight;
+                if (HairBone().IsMatch(bone)) hair += weight;
+                else if (LooseBone().IsMatch(bone)) loose += weight;
             }
             vertices[vertex] = new Vertex(new Vector3(container.ReadFloat(positions, vertex, 0),
-                container.ReadFloat(positions, vertex, 1), container.ReadFloat(positions, vertex, 2)), influences.ToArray(), loose);
+                container.ReadFloat(positions, vertex, 1), container.ReadFloat(positions, vertex, 2)), influences.ToArray(), loose, hair);
         }
         return vertices;
     }
 
-    /// <summary>Computes each area's offsets for one mesh. Arkive's GLBs face +X with +Y up; the left side is -Z.</summary>
-    private sealed class Shaper(BodyProfile profile, IReadOnlyDictionary<string, Vector3> bones, Vertex[] vertices, bool loose)
+    /// <summary>
+    /// Moves cloth and hair that hang from their own bones with the body surface nearest to them: each such vertex
+    /// takes the distance-weighted average offset of its closest body vertices, fading out the further it hangs
+    /// from the body. Being a fixed average of other offsets, it keeps every slider linear.
+    /// </summary>
+    private sealed class FollowTransfer
     {
-        private readonly float _height = bones.TryGetValue("bip001-head", out var head) ? head.Y : 1f;
+        private const int Neighbours = 8;
+        private readonly float[] _followers;
+        private readonly (int Vertex, float Weight)[][] _sources;
+
+        public FollowTransfer(Vertex[] vertices, float[] followers, float height)
+        {
+            _followers = followers;
+            _sources = new (int, float)[vertices.Length][];
+            var cell = 0.03f * height;
+            var grid = new Dictionary<(int, int, int), List<int>>();
+            (int, int, int) Key(Vector3 position) =>
+                ((int)MathF.Floor(position.X / cell), (int)MathF.Floor(position.Y / cell), (int)MathF.Floor(position.Z / cell));
+            for (var index = 0; index < vertices.Length; index++)
+            {
+                if (followers[index] > 0.5f) continue;
+                var key = Key(vertices[index].Position);
+                if (!grid.TryGetValue(key, out var list)) grid[key] = list = [];
+                list.Add(index);
+            }
+            var reach = 0.25f * height;
+            var maximumRings = (int)MathF.Ceiling(reach / cell);
+            var nearest = new List<(int Vertex, float Distance)>();
+            for (var index = 0; index < vertices.Length; index++)
+            {
+                if (followers[index] <= 0.01f) continue;
+                var position = vertices[index].Position;
+                var (x, y, z) = Key(position);
+                nearest.Clear();
+                // Widen the search ring by ring until enough body vertices are found (or the reach runs out).
+                for (var ring = 0; ring <= maximumRings && (nearest.Count < Neighbours || ring <= 1); ring++)
+                {
+                    for (var dx = -ring; dx <= ring; dx++)
+                    for (var dy = -ring; dy <= ring; dy++)
+                    for (var dz = -ring; dz <= ring; dz++)
+                    {
+                        if (Math.Max(Math.Abs(dx), Math.Max(Math.Abs(dy), Math.Abs(dz))) != ring) continue;
+                        if (!grid.TryGetValue((x + dx, y + dy, z + dz), out var list)) continue;
+                        foreach (var candidate in list) nearest.Add((candidate, Vector3.Distance(position, vertices[candidate].Position)));
+                    }
+                }
+                if (nearest.Count == 0) { _sources[index] = []; continue; }
+                nearest.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+                var closest = nearest.Take(Neighbours).ToArray();
+                var spread = Math.Max(closest[0].Distance * 1.5f, 0.01f * height);
+                var fade = MathF.Exp(-MathF.Pow(closest[0].Distance / (0.12f * height), 2));
+                var weights = closest.Select(item => MathF.Exp(-MathF.Pow(item.Distance / spread, 2))).ToArray();
+                var total = weights.Sum();
+                _sources[index] = closest.Select((item, i) => (item.Vertex, weights[i] / total * fade)).ToArray();
+            }
+        }
+
+        /// <summary>Replaces each follower's own offset by the blend of its own and its body neighbours' offsets.</summary>
+        public void Apply(float[] offsets)
+        {
+            var source = (float[])offsets.Clone();
+            for (var index = 0; index < _followers.Length; index++)
+            {
+                var follow = _followers[index];
+                if (follow <= 0.01f || _sources[index] is not { } sources) continue;
+                var moved = Vector3.Zero;
+                foreach (var (vertex, weight) in sources)
+                    moved += new Vector3(source[vertex * 3], source[vertex * 3 + 1], source[vertex * 3 + 2]) * weight;
+                var own = new Vector3(source[index * 3], source[index * 3 + 1], source[index * 3 + 2]);
+                var blended = own * (1 - follow) + moved * follow;
+                offsets[index * 3] = blended.X;
+                offsets[index * 3 + 1] = blended.Y;
+                offsets[index * 3 + 2] = blended.Z;
+            }
+        }
+    }
+
+    /// <summary>Computes each area's offsets for one mesh. Arkive's GLBs face +X with +Y up; the left side is -Z.</summary>
+    private sealed class Shaper(BodyProfile profile, IReadOnlyDictionary<string, Vector3> bones, Vertex[] vertices)
+    {
+        public float Height { get; } = bones.TryGetValue("bip001-head", out var head) ? head.Y : 1f;
+
+        private readonly bool _breastBones = bones.ContainsKey("b_l_breast_00") && bones.ContainsKey("b_r_breast_00");
 
         public float[]? Offsets(string zone)
         {
@@ -181,12 +277,15 @@ public static partial class BodyProportionEngine
         private Vector3 Offset(string zone, Vertex vertex) => zone switch
         {
             "neck" => Girth(vertex, "bip001-neck", "bip001-head", ["bip001-neck", "b_necktwist_01", "b_neck_01"]),
-            "shoulders" => Sides(side => Bulge(vertex, Bone($"bip001-{side}-upperarm"), 0.07f, Bone($"bip001-{side}-upperarm"),
-                [$"bip001-{side}-clavicle", $"bip001-{side}-upperarm", $"b_shoulder_{side}_01", $"b_upperarmtwist_{side}_01"])),
+            "shoulders" => Sides(side => Bulge(vertex, Bone($"bip001-{side}-upperarm"), 0.07f,
+                [$"bip001-{side}-clavicle", $"bip001-{side}-upperarm", $"b_shoulder_{side}_01", $"b_upperarmtwist_{side}_01",
+                 $"bone-{side}-upperarm-twist"])),
             "upperArms" => Sides(side => Girth(vertex, $"bip001-{side}-upperarm", $"bip001-{side}-forearm",
-                [$"bip001-{side}-upperarm", $"b_upperarmtwist_{side}_01", $"b_upperarmtwist_{side}_02", $"b_shoulder_{side}_01"])),
+                [$"bip001-{side}-upperarm", $"b_upperarmtwist_{side}_01", $"b_upperarmtwist_{side}_02", $"b_shoulder_{side}_01",
+                 $"bone-{side}-upperarm-twist"])),
             "forearms" => Sides(side => Girth(vertex, $"bip001-{side}-forearm", $"bip001-{side}-hand",
-                [$"bip001-{side}-forearm", $"b_forearmtwist_{side}_01", $"b_forearmtwist_{side}_02", $"b_elbow_{side}_01"])),
+                [$"bip001-{side}-forearm", $"b_forearmtwist_{side}_01", $"b_forearmtwist_{side}_02", $"b_elbow_{side}_01",
+                 $"bone-{side}-forearm-twist"])),
             "chest" => Chest(vertex, Shape.Size),
             "chestWidth" => Chest(vertex, Shape.Width),
             "chestProjection" => Chest(vertex, Shape.Projection),
@@ -199,13 +298,12 @@ public static partial class BodyProportionEngine
             "waistDepth" => Waist(vertex, Vector3.UnitX),
             "belly" => Landmark(vertex, profile.Belly, null, depth: 1.2f, Shape.Size),
             "hips" => Hips(vertex),
-            "buttocks" => Buttocks(vertex, Shape.Size) + LooseRing(vertex,
-                Bone("bip001-pelvis").Y + (float)profile.Buttocks.Up * _height, 0.07f, 0.04f, backOnly: true),
+            "buttocks" => Buttocks(vertex, Shape.Size),
             "buttocksWidth" => Buttocks(vertex, Shape.Width),
             "buttocksProjection" => Buttocks(vertex, Shape.Projection),
             "buttocksLift" => Buttocks(vertex, Shape.Lift),
             "buttocksSag" => Buttocks(vertex, Shape.Sag),
-            "thighs" => Thighs(vertex, Vector3.One) + LooseRing(vertex, Bone("bip001-l-thigh").Y - 0.11f * _height, 0.1f, 0.04f),
+            "thighs" => Thighs(vertex, Vector3.One),
             "thighWidth" => Thighs(vertex, Vector3.UnitZ),
             "thighDepth" => Thighs(vertex, Vector3.UnitX),
             "calves" => Sides(side => Girth(vertex, $"bip001-{side}-calf", $"bip001-{side}-foot",
@@ -220,7 +318,9 @@ public static partial class BodyProportionEngine
         private enum Shape { Size, Width, Projection, Height, Lift, Spacing, Sag }
 
         private Vector3 Chest(Vertex vertex, Shape shape) =>
-            Sides(side => Landmark(vertex, profile.Chest, side, depth: profile.Female ? 1.5f : 1.1f, shape));
+            Sides(side => _breastBones
+                ? BreastBones(vertex, side, shape)
+                : Landmark(vertex, profile.Chest, side, depth: profile.Female ? 1.5f : 1.1f, shape));
 
         private Vector3 Buttocks(Vertex vertex, Shape shape) =>
             Sides(side => Landmark(vertex, profile.Buttocks, side, depth: 1.3f, shape));
@@ -237,7 +337,6 @@ public static partial class BodyProportionEngine
         [
             "bip001-pelvis", "bip001-spine", "bip001-spine1", "bip001-spine2", "bip001-l-clavicle", "bip001-r-clavicle",
             "bip001-l-thigh", "bip001-r-thigh", "b_thightwist_l_01", "b_thightwist_r_01", "b_hip_l_01", "b_hip_r_01",
-            // Some NPCs (Echidna) have breast bones of their own.
             "b_l_breast_00", "b_l_breast_01", "b_l_breast_02", "b_r_breast_00", "b_r_breast_01", "b_r_breast_02",
         ];
 
@@ -246,10 +345,11 @@ public static partial class BodyProportionEngine
         /// hem to the spine, the trousers' waistband to the pelvis), so any clear trunk weight counts in full and
         /// trunk areas are shaped by place alone; that keeps overlapping pieces moving together.
         /// </summary>
-        private float TorsoWeight(Vertex vertex)
+        private static float TorsoWeight(Vertex vertex) => Smooth(Weight(vertex, TorsoBones), 0.05f, 0.5f);
+
+        private static float Smooth(float value, float from, float to)
         {
-            var weight = Weight(vertex, TorsoBones);
-            var t = Math.Clamp((weight - 0.05f) / 0.45f, 0f, 1f);
+            var t = Math.Clamp((value - from) / (to - from), 0f, 1f);
             return t * t * (3 - 2 * t);
         }
 
@@ -273,46 +373,80 @@ public static partial class BodyProportionEngine
             return (vertex.Position - nearest) * weight;
         }
 
-        /// <summary>Swells a round area around a centre, fading out over its radius (in body heights).</summary>
-        private Vector3 Bulge(Vertex vertex, Vector3 centre, float radius, Vector3 pivot, IReadOnlyList<string>? zoneBones)
+        /// <summary>Swells a round area around a point, fading out over its radius (in body heights).</summary>
+        private Vector3 Bulge(Vertex vertex, Vector3 centre, float radius, IReadOnlyList<string> zoneBones)
         {
-            var weight = zoneBones is null ? TorsoWeight(vertex) : Weight(vertex, zoneBones);
+            var weight = Weight(vertex, zoneBones);
             if (weight <= 0) return Vector3.Zero;
-            var falloff = Falloff(vertex.Position - centre, radius * _height);
-            return falloff < 0.002f ? Vector3.Zero : (vertex.Position - pivot) * (weight * falloff);
+            var falloff = Falloff(vertex.Position - centre, radius * Height);
+            return falloff < 0.002f ? Vector3.Zero : (vertex.Position - centre) * (weight * falloff);
         }
 
         /// <summary>
         /// Shapes the area around a landmark: swells it outwards from a point behind it, inside the body (all
-        /// directions or one), moves it, or swings it down around its top edge (sag).
+        /// directions or one), moves it, or lets it hang (sag). The fade-out is measured across the body only, not in
+        /// depth, so every layer stacked over the spot (skin, a top, a coat) gets the same share and outer layers move
+        /// a little more than inner ones; clothing stays outside the body.
         /// </summary>
         private Vector3 Landmark(Vertex vertex, BodyLandmark landmark, string? side, float depth, Shape shape)
         {
             var sign = side switch { "l" => -1f, "r" => 1f, _ => 0f };
             var origin = Bone(landmark.Bone);
-            var radius = (float)landmark.Radius * _height;
-            var centre = origin + new Vector3((float)landmark.Forward, (float)landmark.Up, sign * (float)landmark.Side) * _height;
+            var radius = (float)landmark.Radius * Height;
+            var centre = origin + new Vector3((float)landmark.Forward, (float)landmark.Up, sign * (float)landmark.Side) * Height;
             var outwards = landmark.Forward >= 0 ? 1f : -1f;
-            var pivot = centre - new Vector3(outwards * depth * radius, 0, 0);
-            var weight = TorsoWeight(vertex) * Falloff(vertex.Position - centre, radius);
+            var across = vertex.Position - centre;
+            across.X = 0;
+            // The underside ends sooner than the top (the fold under the buttocks, the crease under the breasts),
+            // so a skirt or top hanging below does not flare out with them.
+            if (across.Y < 0) across.Y /= outwards < 0 ? 0.65f : 0.85f;
+            // Only the facing side of the body: in front of the spine for the chest, behind the hips for the buttocks.
+            var facing = Smooth((vertex.Position.X - origin.X) * outwards, 0, 0.6f * radius);
+            var weight = TorsoWeight(vertex) * Falloff(across, radius) * facing;
             if (weight < 0.002f) return Vector3.Zero;
+            var pivot = centre - new Vector3(outwards * depth * radius, 0, 0);
+            return Shaped(vertex.Position, centre, pivot, outwards, sign, radius, depth, weight, shape);
+        }
+
+        /// <summary>
+        /// Bodies with breast bones (Echidna): each breast is exactly what its bones move, so the chest and shoulders
+        /// around it stay as they are. The root bone sits inside the chest and serves as the pivot.
+        /// </summary>
+        private Vector3 BreastBones(Vertex vertex, string side, Shape shape)
+        {
+            var root = Bone($"b_{side}_breast_00");
+            var tip = bones.TryGetValue($"b_{side}_breast_02", out var end) ? end : Bone($"b_{side}_breast_01");
+            var weight = Smooth(Weight(vertex, [$"b_{side}_breast_00", $"b_{side}_breast_01", $"b_{side}_breast_02"]), 0, 0.6f);
+            if (weight < 0.002f) return Vector3.Zero;
+            var radius = Math.Max(Vector3.Distance(root, tip), 0.02f * Height);
+            var sign = side == "l" ? -1f : 1f;
+            var depth = 1.0f;
+            var centre = root + new Vector3(depth * radius, 0, 0);
+            return Shaped(vertex.Position, centre, root, 1f, sign, radius, depth, weight, shape);
+        }
+
+        private static Vector3 Shaped(Vector3 position, Vector3 centre, Vector3 pivot, float outwards, float sign, float radius,
+            float depth, float weight, Shape shape)
+        {
             switch (shape)
             {
-                case Shape.Size: return (vertex.Position - pivot) * weight;
-                case Shape.Width: return (vertex.Position - pivot) * Vector3.UnitZ * weight;
-                case Shape.Projection: return (vertex.Position - pivot) * Vector3.UnitX * weight;
-                case Shape.Height: return (vertex.Position - pivot) * Vector3.UnitY * weight;
+                case Shape.Size: return (position - pivot) * weight;
+                case Shape.Width: return (position - pivot) * Vector3.UnitZ * weight;
+                case Shape.Projection: return (position - pivot) * Vector3.UnitX * weight;
+                case Shape.Height: return (position - pivot) * Vector3.UnitY * weight;
                 // +100% moves the area by its radius.
                 case Shape.Lift: return Vector3.UnitY * (radius * weight);
                 case Shape.Spacing: return new Vector3(0, 0, sign * radius * weight);
                 case Shape.Sag:
-                    // Swings the area about a hinge at its top edge (+100% is about 35 degrees), so the lower part drops most.
-                    var hinge = centre + new Vector3(-outwards * radius * 0.6f, radius * 0.9f, 0);
-                    var arm = vertex.Position - hinge;
-                    // Only what hangs below the hinge swings; the skin above it stays put.
-                    var below = arm.Y >= 0 ? MathF.Exp(-MathF.Pow(arm.Y / (0.3f * radius), 2)) : 1f;
-                    var turn = new Vector3(outwards * arm.Y, -outwards * arm.X, 0);
-                    return (turn * 0.6f - Vector3.UnitY * (0.15f * radius)) * (weight * below);
+                {
+                    // Hanging: the further a point stands out from the body, the further it drops, so the tip and lower
+                    // curve sink while the base stays attached; the upper slope flattens a little.
+                    var standOut = Math.Clamp((position.X - pivot.X) * outwards / (depth * radius), 0f, 1.25f);
+                    var drop = 0.55f * radius * standOut * standOut;
+                    var above = Smooth((position.Y - centre.Y) / radius, 0, 1);
+                    var flatten = 0.25f * radius * standOut * above;
+                    return new Vector3(-outwards * flatten, -drop, 0) * weight;
+                }
                 default: return Vector3.Zero;
             }
         }
@@ -323,40 +457,20 @@ public static partial class BodyProportionEngine
             var pelvis = Bone("bip001-pelvis");
             var chest = bones.TryGetValue("bip001-spine2", out var upper) ? upper : Bone("bip001-spine1");
             var height = pelvis.Y + (chest.Y - pelvis.Y) * 0.55f;
-            var band = Band(vertex.Position.Y, height, 0.055f * _height);
+            var band = Band(vertex.Position.Y, height, 0.055f * Height);
             if (band < 0.002f) return Vector3.Zero;
             var axis = Bone("bip001-spine");
             var outward = new Vector3(vertex.Position.X - axis.X, 0, vertex.Position.Z - axis.Z) * axes;
-            return outward * (TorsoWeight(vertex) * band) + LooseRing(vertex, height, 0.055f, 0.05f) * axes;
+            return outward * (TorsoWeight(vertex) * band);
         }
 
         /// <summary>Wider or narrower hips, side to side, around the pelvis height.</summary>
         private Vector3 Hips(Vertex vertex)
         {
             var pelvis = Bone("bip001-pelvis");
-            var band = Band(vertex.Position.Y, pelvis.Y + 0.02f * _height, 0.085f * _height);
+            var band = Band(vertex.Position.Y, pelvis.Y + 0.02f * Height, 0.085f * Height);
             if (band < 0.002f) return Vector3.Zero;
-            return new Vector3(0, 0, (vertex.Position.Z - pelvis.Z) * TorsoWeight(vertex) * band) +
-                   LooseRing(vertex, pelvis.Y + 0.02f * _height, 0.085f, 0.06f, sideways: true);
-        }
-
-        /// <summary>
-        /// With "loose clothing follows", skirts and coat tails (which hang from their own bones) move out from the
-        /// body's centre line by about as much as the body under them grows (<paramref name="reach"/>, in body
-        /// heights at +100%), however wide the skirt is, instead of staying put.
-        /// </summary>
-        private Vector3 LooseRing(Vertex vertex, float height, float spread, float reach, bool backOnly = false, bool sideways = false)
-        {
-            if (!loose || vertex.Loose <= 0) return Vector3.Zero;
-            var pelvis = Bone("bip001-pelvis");
-            if (backOnly && vertex.Position.X > pelvis.X) return Vector3.Zero;
-            var band = Band(vertex.Position.Y, height, spread * _height);
-            var outward = new Vector3(sideways ? 0 : vertex.Position.X - pelvis.X, 0, vertex.Position.Z - pelvis.Z);
-            var length = outward.Length();
-            if (length < 1e-4f) return Vector3.Zero;
-            // Cloth near the centre line moves less, so a skirt's front and back stay where they were.
-            var share = Math.Min(1f, length / (0.08f * _height));
-            return outward / length * (reach * _height * vertex.Loose * band * share);
+            return new Vector3(0, 0, (vertex.Position.Z - pelvis.Z) * TorsoWeight(vertex) * band);
         }
 
         private static float Falloff(Vector3 offset, float radius) => MathF.Exp(-offset.LengthSquared() / (radius * radius));
@@ -367,7 +481,10 @@ public static partial class BodyProportionEngine
     [GeneratedRegex(@"__ARKIVE_\d+$")]
     private static partial Regex ArkiveSuffix();
 
-    // Bones of hanging cloth: skirts, capes, coat tails, neck cloths and belt plates.
-    [GeneratedRegex(@"skirt|cape|capat|cloth|pelat|coat|robe|ribbon|mantle|cloak", RegexOptions.IgnoreCase)]
+    // Bones of hanging cloth: skirts, capes, coat tails, neck cloths, belt plates, sashes and ribbons.
+    [GeneratedRegex(@"skirt|cape|capat|cloth|pelat|coat|robe|ribbon|mantle|cloak|duandai|sash", RegexOptions.IgnoreCase)]
     private static partial Regex LooseBone();
+
+    [GeneratedRegex(@"hair", RegexOptions.IgnoreCase)]
+    private static partial Regex HairBone();
 }

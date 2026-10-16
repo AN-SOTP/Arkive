@@ -221,7 +221,8 @@ public partial class MainWindow
         var changes = request.Profile.Zones.Where(zone => request.Settings.TryGetValue(zone.Id, out var value) && value != 0)
             .Select(zone => $"{zone.Label} {request.Settings[zone.Id]:+0;-0}%");
         var description = $"Body proportions for {request.Profile.DisplayName}: {string.Join(", ", changes)}" +
-                          (request.LooseClothingFollows ? "; loose clothing follows the body" : "") +
+                          (request.Follow.LooseClothing ? "; loose clothing follows the body" : "") +
+                          (request.Follow.Hair ? "; hair follows the body" : "") +
                           $". Pieces: {string.Join(", ", request.Pieces.Select(piece => piece.ObjectName))}.";
         _authoringDraft = await _modAuthoringWorkspace.CreateAsync(new ArkiveModMetadata(request.ModName, "1.0.0", "", description));
         LoadAuthoringMetadata();
@@ -234,7 +235,7 @@ public partial class MainWindow
             await Task.Run(async () =>
             {
                 var bytes = await File.ReadAllBytesAsync(glb);
-                var model = BodyProportionEngine.Build(bytes, request.LooseClothingFollows, request.Profile);
+                var model = BodyProportionEngine.Build(bytes, request.Follow, request.Profile, piece.ObjectName);
                 await File.WriteAllBytesAsync(glb, BodyProportionEngine.Apply(bytes, model, request.Settings));
             });
             _authoringDraft = await _modAuthoringWorkspace.SaveAsync(_authoringDraft with
@@ -245,7 +246,7 @@ public partial class MainWindow
         var saved = await SaveAuthoringAsync();
         Log($"Proportion mod saved: name={request.ModName}, body={request.Profile.Id}, pieces={request.Pieces.Count}, " +
             $"settings={string.Join(", ", request.Settings.Where(pair => pair.Value != 0).Select(pair => $"{pair.Key}={pair.Value}"))}, " +
-            $"loose={request.LooseClothingFollows}.");
+            $"follow={request.Follow}.");
         return saved;
     }
 }
