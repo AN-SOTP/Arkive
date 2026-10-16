@@ -142,6 +142,15 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 
 Drag dividers to resize working/search tables and mod/detail panes. Collapse Add assets, metadata or library setup when unnecessary. Pane sizes, density, theme and random/fixed banner preferences persist.
 
+### Body proportions
+
+**Body proportions** reshapes player bodies and outfits without Blender. Its search lists only player character bodies and outfit pieces (tops, bottoms, one-piece outfits, arms and shoulders); faces, hair, headwear, weapons, NPCs and objects are left out. **Open in proportion editor** shows the selected piece and, with **Open the whole outfit** ticked, the outfit's other pieces, in Arkive's model viewer with game colours and a **Proportions** panel: a slider and a number box for the neck, shoulders, upper arms, forearms, breasts (chest on male bodies), waist, belly, hips, buttocks, thighs and calves. The outfit changes as you move them. **Save as mod** creates a new mod with a working copy of each piece, reshaped with the same values, and saves it; enable it in **Mods** to apply it like any other mod.
+
+- Each area is found from the bones that move it, so tight clothing and the body under it change together, and an outfit's pieces keep meeting at their seams. Arkive recognises eight base bodies from their skeletons (female specialist, mage, martial artist, warrior and assassin/gunner; male specialist, gunner/martial artist and warrior); every class of a body shares its tuning.
+- **Loose clothing follows the body** also moves skirts, capes and coat tails, which hang from their own bones, out with the waist, hips, thighs and buttocks.
+- Thickness and shape change; height and limb length do not, because the game's skeleton and animations set them. Every LOD is reshaped, vertices only move, and saving runs the usual skeleton and animation stress checks.
+- A mod replaces the outfit for every character you see wearing it. Very large values can make some outfits' pieces overlap.
+
 ### Import, priorities and deployment
 
 Use **Mods → Import**, or open a `.arkive` file with Arkive. Import never installs automatically. Review, enable, set priority, preview the plan, then confirm **Apply changes**.
@@ -223,6 +232,8 @@ The CLI exposes native project stages rather than the GUI's interactive named dr
 & $cli texture-export-native "$packages\PACKAGE.upk" --object OBJECT --alias ALIAS --out "$data\staging\manual\texture"
 & $cli texture-project-create 'PATH\arkive-native-texture.json' --edited 'PATH\edit.png' --workspace "$data\staging\texture-mods" --name 'Example texture' --alpha preserve-original
 
+# Body proportions: reshape an editable player mesh GLB by area (percent), optionally moving loose cloth too:
+& $cli body-proportions 'PATH\editable.glb' --set chest=20 --set hips=10 --loose-clothing --out 'PATH\edit.glb'
 # Skeletal mesh: recon, editable export, external GLB edit, validation/registration:
 & $cli skeletal-mesh-recon "$packages\PACKAGE.upk" --object OBJECT --alias ALIAS --out "$data\staging\manual\mesh"
 & $cli skeletal-mesh-export-editable 'PATH\arkive-skeletalmesh-recon.json' --out 'PATH\editable'

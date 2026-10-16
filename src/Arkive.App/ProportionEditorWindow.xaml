@@ -1,0 +1,38 @@
+<Window x:Class="Arkive.App.ProportionEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Arkive body proportions"
+        Width="1500"
+        Height="900"
+        MinWidth="900"
+        MinHeight="560"
+        Background="{DynamicResource AppBackgroundBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterOwner">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <wv2:WebView2 x:Name="Browser" />
+        <Border x:Name="UnavailablePanel" Visibility="Collapsed" Padding="24"
+                Background="{DynamicResource AppBackgroundBrush}">
+            <TextBlock x:Name="UnavailableText" MaxWidth="560" VerticalAlignment="Center" TextWrapping="Wrap" />
+        </Border>
+        <Border Grid.Row="1" Padding="10,8" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerBrush}" Background="{DynamicResource SurfaceBrush}">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Mod name" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox x:Name="ModNameTextBox" Width="260" VerticalAlignment="Center" />
+                    <Button x:Name="SaveButton" Content="Save as mod" Margin="8,0,0,0" IsEnabled="False"
+                            Style="{StaticResource PrimaryButtonStyle}" Click="SaveButton_Click"
+                            ToolTip="Saves the reshaped outfit as a new mod in your mod library. Game files stay unchanged until you apply it in Mods." />
+                </StackPanel>
+                <TextBlock x:Name="StatusText" Margin="14,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextSecondaryBrush}" Text="Preparing the outfit…" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

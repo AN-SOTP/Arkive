@@ -388,8 +388,27 @@ function focus() {
 async function loadModel() {
   const scene = state.scene;
   if (!scene.modelUrl) return;
-  const gltf = await new GLTFLoader().loadAsync(state.base + scene.modelUrl);
-  const root = gltf.scene;
+  // A whole outfit (proportion editor): one GLB per piece, each with its own run of materials.
+  const parts = scene.parts?.length ? scene.parts : [{ modelUrl: scene.modelUrl, materialOffset: 0, materialCount: scene.materials.length }];
+  const root = new THREE.Group();
+  for (const [partIndex, part] of parts.entries()) {
+    const gltf = await new GLTFLoader().loadAsync(state.base + part.modelUrl);
+    root.add(gltf.scene);
+    if (!scene.parts?.length) continue;
+    gltf.scene.traverse((object) => {
+      if (!object.isMesh) return;
+      const original = object.material;
+      let local = original?.userData?.arkiveMaterialSlot;
+      if (local === undefined) {
+        const name = original?.name?.replace(/\.\d{3}$/, '');
+        local = scene.materials.slice(part.materialOffset, part.materialOffset + part.materialCount)
+          .findIndex((m) => m.name === name || m.reference === name || m.name === original?.name);
+      }
+      object.userData.slot = local < 0 ? -1 : local + part.materialOffset;
+      object.userData.part = partIndex;
+      object.userData.gltfMesh = gltf.parser.associations.get(object)?.meshes;
+    });
+  }
   if (scene.geometryUnits === 'unreal') {
     // UModel's glTF is in Unreal centimetres with Z up.
     root.scale.setScalar(0.01);
@@ -899,6 +918,124 @@ host?.addEventListener('message', (event) => {
   if (message?.type === 'progress') { $('loading').hidden = false; $('loading').textContent = message.text; }
   if (message?.type === 'error') { $('loading').hidden = false; $('loading').textContent = message.text; }
 });
+
+// Proportion editor: each slider moves the outfit's vertices by its precomputed offsets (per +100%), live.
+// Arkive applies the same offsets when it saves the mod, so the preview is what the game gets.
+const proportions = { zones: [], values: {}, layout: [], bases: null, targets: [], timer: 0, message: null };
+// Each position buffer's game positions, kept so offsets always apply to the original shape.
+const originalPositions = new WeakMap();
+
+async function setProportions(message) {
+  Object.assign(proportions, { zones: message.zones, values: { ...message.values }, layout: message.layout, message });
+  proportions.bases = new Float32Array(await (await fetch(message.basesUrl)).arrayBuffer());
+  proportions.targets = [];
+  const seen = new Set();
+  for (const meshes of state.lods.values()) {
+    for (const mesh of meshes) {
+      const entry = proportions.layout.find((e) => e.part === mesh.userData.part && e.mesh === mesh.userData.gltfMesh);
+      const attribute = mesh.geometry.attributes.position;
+      if (!entry || seen.has(attribute) || attribute.count !== entry.vertexCount) continue;
+      seen.add(attribute);
+      if (!originalPositions.has(attribute)) {
+        const original = new Float32Array(attribute.count * 3);
+        for (let i = 0; i < attribute.count; i++) {
+          original[i * 3] = attribute.getX(i);
+          original[i * 3 + 1] = attribute.getY(i);
+          original[i * 3 + 2] = attribute.getZ(i);
+        }
+        originalPositions.set(attribute, original);
+      }
+      proportions.targets.push({ attribute, entry });
+    }
+  }
+  // Buttons that act on one game object (UModel, colour export) do not apply to a reshaped outfit.
+  $('umodelButton').hidden = true;
+  $('bakeButton').hidden = true;
+  $('statusbar').textContent = `${message.bodyName} · ${message.pieces.join(', ')} · ${state.scene.materials.length} materials · proportion editor`;
+  const tabButton = document.querySelector('[data-tab="proportions"]');
+  tabButton.hidden = false;
+  if (!message.keepTab) tabButton.click();
+  renderProportions();
+  applyProportions();
+  post({ type: 'proportionsShown', meshes: proportions.targets.length });
+}
+
+function applyProportions() {
+  const bases = proportions.bases;
+  for (const { attribute, entry } of proportions.targets) {
+    const moved = originalPositions.get(attribute).slice();
+    for (const [zone, offset] of Object.entries(entry.zones)) {
+      const scale = (proportions.values[zone] ?? 0) / 100;
+      if (!scale) continue;
+      for (let i = 0; i < moved.length; i++) moved[i] += scale * bases[offset + i];
+    }
+    for (let i = 0; i < attribute.count; i++) attribute.setXYZ(i, moved[i * 3], moved[i * 3 + 1], moved[i * 3 + 2]);
+    if (attribute.isInterleavedBufferAttribute) attribute.data.needsUpdate = true;
+    else attribute.needsUpdate = true;
+  }
+  requestRender();
+  for (const zone of proportions.zones) {
+    document.querySelector(`.zone[data-zone="${zone.id}"]`)?.classList.toggle('changed', !!proportions.values[zone.id]);
+  }
+}
+
+function setZone(id, value, source) {
+  const zone = proportions.zones.find((z) => z.id === id);
+  if (!zone || Number.isNaN(value)) return;
+  value = Math.max(zone.minimum, Math.min(zone.maximum, Math.round(value)));
+  proportions.values[id] = value;
+  const row = document.querySelector(`.zone[data-zone="${id}"]`);
+  if (row && source !== 'range') row.querySelector('input[type=range]').value = value;
+  if (row && source !== 'number') row.querySelector('input[type=number]').value = value;
+  applyProportions();
+  clearTimeout(proportions.timer);
+  proportions.timer = setTimeout(() => post({ type: 'proportionValues', values: proportions.values }), 150);
+}
+
+function renderProportions() {
+  const message = proportions.message;
+  const used = new Set(proportions.layout.flatMap((e) => Object.keys(e.zones)));
+  let html = `<h3>${escapeHtml(message.bodyName)}</h3>
+    <div class="muted">${escapeHtml(message.pieces.join(', '))}</div>
+    <div class="row muted" style="cursor:default">Percent change from the game's shape. Double-click a name to reset it.
+      Heights and limb lengths stay as they are: the game's skeleton sets them.</div>
+    <label class="row" title="Skirts, capes and coat tails hang from their own bones. When ticked they widen with the waist, hips, thighs and buttocks. Tight clothing always follows the body.">
+      <input type="checkbox" id="looseClothing" ${message.loose ? 'checked' : ''}> Loose clothing follows the body
+      <span class="muted">${message.looseVertices ? `(${message.looseVertices.toLocaleString()} loose vertices)` : '(none in this outfit)'}</span></label>
+    <div class="proportionActions"><button id="proportionReset">Reset all</button></div>`;
+  for (const zone of proportions.zones) {
+    const value = proportions.values[zone.id] ?? 0;
+    const unused = !used.has(zone.id);
+    html += `<div class="zone ${unused ? 'unused' : ''}" data-zone="${zone.id}" title="${escapeHtml(zone.description)}">
+      <label for="zone-${zone.id}">${escapeHtml(zone.label)}</label>
+      <input type="number" min="${zone.minimum}" max="${zone.maximum}" step="1" value="${value}" aria-label="${escapeHtml(zone.label)} percent">
+      <input type="range" id="zone-${zone.id}" min="${zone.minimum}" max="${zone.maximum}" step="1" value="${value}">
+      ${unused ? '<span class="muted">Not part of these pieces</span>' : ''}
+    </div>`;
+  }
+  const tab = $('tab-proportions');
+  tab.innerHTML = html;
+  tab.querySelectorAll('.zone').forEach((row) => {
+    const id = row.dataset.zone;
+    row.querySelector('input[type=range]').addEventListener('input', (e) => setZone(id, Number(e.target.value), 'range'));
+    row.querySelector('input[type=number]').addEventListener('change', (e) => setZone(id, Number(e.target.value), 'number'));
+    row.querySelector('label').addEventListener('dblclick', () => setZone(id, 0));
+  });
+  $('looseClothing').addEventListener('change', (e) => post({ type: 'proportionLoose', value: e.target.checked }));
+  $('proportionReset').addEventListener('click', () => {
+    for (const zone of proportions.zones) proportions.values[zone.id] = 0;
+    renderProportions();
+    applyProportions();
+    post({ type: 'proportionValues', values: proportions.values });
+  });
+}
+
+host?.addEventListener('message', (event) => {
+  if (event.data?.type === 'proportions') {
+    setProportions(event.data).catch((error) => { $('statusbar').textContent = `Could not prepare the sliders: ${error.message}`; });
+  }
+});
+window.arkiveProportions = { proportions, setZone };
 
 // Outside Arkive (for development): viewer.html?scene=<url of scene.json>
 const sceneUrl = new URLSearchParams(location.search).get('scene');

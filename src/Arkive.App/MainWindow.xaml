@@ -830,6 +830,44 @@
                         </Grid>
                     </DockPanel>
                 </TabItem>
+                <TabItem x:Name="BodyProportionsTab" Header="Body proportions">
+                    <DockPanel Margin="8">
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <TextBlock Text="Reshape a player outfit" FontSize="20" Margin="0,0,0,6" />
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                       Text="Search player character bodies and outfits, open one in the proportion editor, move the sliders and save the result as a mod. Only player bodies and outfit pieces are listed here; faces, hair, headwear, weapons, NPCs and objects are left out." />
+                            <WrapPanel>
+                                <TextBox x:Name="ProportionSearchTextBox" Width="240" KeyDown="ProportionSearchTextBox_KeyDown"
+                                         ToolTip="An outfit's in-game name, a class name or part of an object name, for example pc_wr_f_av or 226a." />
+                                <Button Content="Search" Click="ProportionSearchButton_Click" />
+                                <ComboBox x:Name="ProportionBodyComboBox" Width="250" SelectionChanged="ProportionBodyComboBox_SelectionChanged"
+                                          ToolTip="Show only one base body" />
+                                <CheckBox x:Name="ProportionWholeOutfitCheckBox" Content="Open the whole outfit" IsChecked="True"
+                                          VerticalAlignment="Center" Margin="8,0,0,0"
+                                          ToolTip="Also open the outfit's other pieces (top, bottom, arms…), so they are reshaped together and keep meeting at their seams." />
+                            </WrapPanel>
+                            <WrapPanel Margin="0,6,0,0">
+                                <Button x:Name="ProportionOpenButton" Content="Open in proportion editor" IsEnabled="False"
+                                        Style="{StaticResource PrimaryButtonStyle}" Click="ProportionOpenButton_Click" />
+                                <Button x:Name="ProportionPreviewButton" Content="Preview original" IsEnabled="False" Click="ProportionPreviewButton_Click" />
+                            </WrapPanel>
+                            <TextBlock x:Name="ProportionStatusText" Margin="0,6,0,0" TextWrapping="Wrap"
+                                       Text="Search for a player outfit to begin." />
+                        </StackPanel>
+                        <DataGrid x:Name="ProportionResultsGrid" IsReadOnly="True" AutoGenerateColumns="False"
+                                  CanUserAddRows="False" CanUserResizeColumns="True" SelectionMode="Extended" SelectionUnit="FullRow"
+                                  SelectionChanged="ProportionResultsGrid_SelectionChanged"
+                                  MouseDoubleClick="ProportionResultsGrid_MouseDoubleClick">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Body" Binding="{Binding Body}" Width="210" />
+                                <DataGridTextColumn Header="Piece" Binding="{Binding Piece}" Width="90" />
+                                <DataGridTextColumn Header="In-game name" Binding="{Binding Row.InGameNames}" Width="2*" MinWidth="150" />
+                                <DataGridTextColumn Header="Asset" Binding="{Binding Row.ObjectName}" Width="2*" MinWidth="180" />
+                                <DataGridTextColumn Header="Package" Binding="{Binding Row.PackageAlias}" Width="*" MinWidth="130" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
                 <TabItem x:Name="EntityBrowserTab" Header="Characters &amp; NPCs" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,7">

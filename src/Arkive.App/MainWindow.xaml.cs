@@ -423,6 +423,7 @@ public partial class MainWindow : Window
         BannerArtworkManager.ApplyPalette(_activeBannerArtwork, _effectiveAppearanceTheme);
 
         InitializeComponent();
+        InitializeBodyProportionsTab();
         ApplyBannerArtwork(_activeBannerArtwork);
         SourceInitialized += (_, _) =>
             AppearanceManager.ApplyWindowChrome(this, _effectiveAppearanceTheme);
