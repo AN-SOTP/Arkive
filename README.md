@@ -167,7 +167,16 @@ Use **Mods → Import**, or open a `.arkive` file with Arkive. Import never inst
 - Edits to different assets within a UPK are composed into one package.
 - Equal-priority competing edits block Apply. Change priority or use **Make this mod win**.
 - Resolved ownership is not proof of animation/material compatibility; dependency and source checks still run.
-- Enable/priority edits are desired state. Only confirmed Apply changes the game. Disable mods and apply to restore packages no longer contributed by enabled mods.
+- Enable/priority edits are desired state. Only confirmed Apply changes the game.
+
+#### Restoring the original game files
+
+There is no separate restore button for a mod: the **On** ticks say which mods should be in the game, and **Apply changes** makes the game match them.
+
+- **Restore one or more mods:** untick **On** for those mods and choose **Apply changes**. The plan marks the affected packages **Restore**: a package no enabled mod changes any more is put back from its verified backup, and a package another enabled mod still changes is rebuilt without the unticked ones. The mods stay in the library, so ticking them and applying again reinstalls them.
+- **Restore everything:** **More actions → Restore all game files** puts back every package Arkive installed and keeps your ticks, so a later **Apply changes** reinstalls the ticked mods. To turn everything off for good, untick every mod and apply instead.
+- **Changes pending** and "0 fully in game" in the status line mean ticked mods are not in the game yet; nothing changes until you apply.
+- Removing a mod from the library or deleting its `.arkive` file does not restore the game. Restore first.
 
 Assets, Conflicts, Details and Apply plan panes explain the effective result. **Advanced → Package projects** retains per-package rebuild, inspection, bulk install/restore, source evidence and cleanup. Prefer the named-mod workflow for normal use.
 
@@ -320,7 +329,7 @@ Enabled winners targeting one UPK are composed from a verified clean package, va
 
 Steam reinstall changes game bytes but does not clear Arkive's library. If a mod remains marked installed/outdated, inspect current hashes and receipts; do not delete recovery evidence to silence a warning. Unknown bytes require verified restore or client repair. Keep backups until clean state is confirmed. Steam repair restores stock files, not edit contracts.
 
-**Restore all active** in advanced Package projects restores verified active deployments. Normal named-mod restore is disabling mods and applying the plan. Deleting a library archive is not restoring the game.
+**Mods → More actions → Restore all game files** restores every verified active deployment (see [Restoring the original game files](#restoring-the-original-game-files)); **Restore all active** in advanced Package projects does the same for package projects. Deleting a library archive is not restoring the game.
 
 ## Application updates
 
