@@ -39,6 +39,7 @@ public partial class MainWindow
         Log)
     {
         Animations = FindViewerAnimationsAsync,
+        Environments = FindViewerEnvironmentsAsync,
     };
 
     /// <summary>

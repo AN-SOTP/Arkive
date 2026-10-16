@@ -87,6 +87,8 @@ grid.material.opacity = 0.35;
 world.add(grid);
 
 function applyLighting() {
+  if (state.light === 'game') { applyGameLighting(); return; }
+  restoreStudioKey();
   const studio = state.light === 'studio';
   lights.hemi.visible = lights.key.visible = lights.fill.visible = lights.rim.visible = studio;
   lights.head.visible = state.light === 'headlight';
@@ -1302,6 +1304,178 @@ host?.addEventListener('message', (event) => {
   }
 });
 window.arkiveAnimation = { animation, playAnimation, poseAt };
+
+// Game environment lighting: one of the game's own environment cubemaps (the reflections and sky light it uses for
+// characters) lights the model and can be shown as the background, with a sun that can be moved, recoloured and
+// dimmed. Shift-drag in the view moves the sun.
+const lighting = {
+  environments: [], base: '', name: '', background: false, blur: 0.35, rotation: 0, brightness: 1,
+  sunAzimuth: 45, sunElevation: 40, sunIntensity: 1.7, sunColour: '#fff4e6', texture: null, cubes: new Map(), pending: 0,
+};
+const pmrem = new THREE.PMREMGenerator(renderer);
+const environmentScene = new THREE.Scene();
+const environmentMaterial = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  depthWrite: false,
+  uniforms: { map: { value: null }, rotation: { value: 0 }, brightness: { value: 1 } },
+  vertexShader: 'varying vec3 vDirection; void main() { vDirection = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform samplerCube map; uniform float rotation; uniform float brightness; varying vec3 vDirection;
+    void main() {
+      vec3 d = normalize(vDirection);
+      float c = cos(rotation), s = sin(rotation);
+      d = vec3(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
+      gl_FragColor = vec4(textureCube(map, d).rgb * brightness, 1.0);
+    }`,
+});
+environmentScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 64, 32), environmentMaterial));
+
+const lightingPresets = {
+  daylight: { label: 'Daylight', name: 'pbr_cubemap_env_00', sunAzimuth: 45, sunElevation: 45, sunIntensity: 1.7, sunColour: '#fff4e6', brightness: 1 },
+  overcast: { label: 'Overcast', name: 'pbr_cubemap_env_01', sunAzimuth: 30, sunElevation: 60, sunIntensity: 0.7, sunColour: '#e8eef5', brightness: 1.2 },
+  evening: { label: 'Evening', name: 'pbr_cubemap_env_02', sunAzimuth: 110, sunElevation: 12, sunIntensity: 1.4, sunColour: '#ffc58a', brightness: 0.8 },
+  interior: { label: 'Interior', name: 'pbr_incubemap_00', sunAzimuth: 20, sunElevation: 55, sunIntensity: 0.9, sunColour: '#ffe9cc', brightness: 1.1 },
+};
+
+function cubeFor(name) {
+  if (lighting.cubes.has(name)) return Promise.resolve(lighting.cubes.get(name));
+  const entry = lighting.environments.find((item) => item.name === name);
+  if (!entry) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const texture = new THREE.CubeTextureLoader().load(entry.faces.map((face) => lighting.base + face), () => {
+      lighting.cubes.set(name, texture);
+      resolve(texture);
+    }, undefined, reject);
+    texture.colorSpace = THREE.SRGBColorSpace;
+  });
+}
+
+async function rebuildEnvironment() {
+  const ticket = ++lighting.pending;
+  const cube = lighting.name ? await cubeFor(lighting.name) : null;
+  if (ticket !== lighting.pending) return;
+  lighting.texture?.dispose();
+  lighting.texture = null;
+  if (cube) {
+    environmentMaterial.uniforms.map.value = cube;
+    environmentMaterial.uniforms.rotation.value = THREE.MathUtils.degToRad(lighting.rotation);
+    environmentMaterial.uniforms.brightness.value = lighting.brightness;
+    lighting.texture = pmrem.fromScene(environmentScene, 0, 0.1, 100).texture;
+  }
+  applyLighting();
+  requestRender();
+}
+
+function sunDirection() {
+  const azimuth = THREE.MathUtils.degToRad(lighting.sunAzimuth), elevation = THREE.MathUtils.degToRad(lighting.sunElevation);
+  return new THREE.Vector3(Math.cos(elevation) * Math.cos(azimuth), Math.sin(elevation), Math.cos(elevation) * Math.sin(azimuth)).multiplyScalar(5);
+}
+
+function applyGameLighting() {
+  lights.hemi.visible = lights.fill.visible = lights.rim.visible = lights.head.visible = lights.ambient.visible = false;
+  lights.key.visible = lighting.sunIntensity > 0;
+  lights.key.intensity = lighting.sunIntensity;
+  lights.key.color.set(lighting.sunColour);
+  lights.key.position.copy(sunDirection());
+  world.environment = lighting.texture ?? environment;
+  world.background = lighting.background && lighting.texture ? lighting.texture : null;
+  world.backgroundBlurriness = lighting.blur;
+}
+
+function restoreStudioKey() {
+  lights.key.intensity = 2.2;
+  lights.key.color.set(0xffffff);
+  lights.key.position.set(2, 3, 4);
+  world.background = null;
+}
+
+function setLighting(changes, source) {
+  Object.assign(lighting, changes);
+  if (state.light !== 'game') {
+    state.light = 'game';
+    $('lightSelect').value = 'game';
+  }
+  renderLighting(source);
+  if ('name' in changes || 'rotation' in changes || 'brightness' in changes) rebuildEnvironment();
+  else { applyLighting(); requestRender(); }
+}
+
+function renderLighting(source) {
+  const tab = $('tab-lighting');
+  if (source === 'input' && tab.innerHTML) {
+    for (const [key, value] of Object.entries(lighting)) {
+      const input = tab.querySelector(`[data-light="${key}"]`);
+      if (input && document.activeElement !== input) input.type === 'checkbox' ? (input.checked = value) : (input.value = value);
+    }
+    return;
+  }
+  const options = ['<option value="">Studio (Arkive)</option>'].concat(lighting.environments.map((item) =>
+    `<option value="${escapeHtml(item.name)}" ${item.name === lighting.name ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)).join('');
+  const slider = (key, label, min, max, step, unit) => `<div class="zone"><label>${label}</label>
+      <input type="number" data-light="${key}" min="${min}" max="${max}" step="${step}" value="${lighting[key]}" aria-label="${label}${unit ? ` (${unit})` : ''}">
+      <input type="range" data-light="${key}" min="${min}" max="${max}" step="${step}" value="${lighting[key]}"></div>`;
+  tab.innerHTML = `<h3>Game environment</h3>
+    <div class="muted">${lighting.environments.length ? 'The game’s own environment maps light the model and its reflections.' : 'Preparing the game’s environment maps…'}</div>
+    <div class="proportionActions">${Object.entries(lightingPresets).map(([id, preset]) => `<button data-preset="${id}">${preset.label}</button>`).join('')}
+      <button data-preset="studio">Studio</button></div>
+    <label class="row">Environment <select data-light="name">${options}</select></label>
+    <label class="row"><input type="checkbox" data-light="background" ${lighting.background ? 'checked' : ''}> Show it as the background</label>
+    ${slider('blur', 'Background blur', 0, 1, 0.05)}
+    ${slider('rotation', 'Rotate environment', 0, 360, 1, 'degrees')}
+    ${slider('brightness', 'Environment brightness', 0, 3, 0.05)}
+    <h3>Sun</h3>
+    <div class="muted">Shift-drag in the view to move the sun.</div>
+    ${slider('sunAzimuth', 'Direction', 0, 360, 1, 'degrees')}
+    ${slider('sunElevation', 'Height', -10, 90, 1, 'degrees')}
+    ${slider('sunIntensity', 'Brightness', 0, 6, 0.05)}
+    <label class="row">Colour <input type="color" data-light="sunColour" value="${lighting.sunColour}"></label>`;
+  tab.querySelectorAll('[data-light]').forEach((input) => {
+    const key = input.dataset.light;
+    const read = () => input.type === 'checkbox' ? input.checked : input.type === 'range' || input.type === 'number' ? Number(input.value) : input.value;
+    input.addEventListener(input.type === 'range' || input.type === 'color' ? 'input' : 'change', () => setLighting({ [key]: read() }, 'input'));
+  });
+  tab.querySelectorAll('[data-preset]').forEach((button) => button.addEventListener('click', () => {
+    const id = button.dataset.preset;
+    if (id === 'studio') {
+      state.light = 'studio';
+      $('lightSelect').value = 'studio';
+      restoreStudioKey();
+      applyLighting();
+      requestRender();
+      return;
+    }
+    const preset = { ...lightingPresets[id] };
+    delete preset.label;
+    if (!lighting.environments.some((item) => item.name === preset.name)) preset.name = lighting.environments[0]?.name ?? '';
+    setLighting(preset);
+  }));
+}
+
+// Shift-drag moves the sun instead of the camera.
+let sunDrag = null;
+canvas.addEventListener('pointerdown', (e) => {
+  if (!e.shiftKey) return;
+  sunDrag = { x: e.clientX, y: e.clientY, azimuth: lighting.sunAzimuth, elevation: lighting.sunElevation };
+  controls.enabled = false;
+  canvas.setPointerCapture(e.pointerId);
+  e.preventDefault();
+}, true);
+canvas.addEventListener('pointermove', (e) => {
+  if (!sunDrag) return;
+  setLighting({
+    sunAzimuth: (sunDrag.azimuth + (e.clientX - sunDrag.x) * 0.5 + 360) % 360,
+    sunElevation: Math.max(-10, Math.min(90, sunDrag.elevation - (e.clientY - sunDrag.y) * 0.3)),
+  }, 'input');
+});
+canvas.addEventListener('pointerup', () => { if (sunDrag) { sunDrag = null; controls.enabled = true; } });
+
+host?.addEventListener('message', (event) => {
+  if (event.data?.type !== 'environments') return;
+  lighting.environments = event.data.environments;
+  lighting.base = event.data.baseUrl;
+  renderLighting();
+});
+renderLighting();
+window.arkiveLighting = { lighting, setLighting, rebuildEnvironment };
 
 // Outside Arkive (for development): viewer.html?scene=<url of scene.json>
 const sceneUrl = new URLSearchParams(location.search).get('scene');

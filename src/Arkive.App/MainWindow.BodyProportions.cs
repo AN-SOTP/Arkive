@@ -251,6 +251,7 @@ public partial class MainWindow
                 BodyProportionPresets(), Log)
             {
                 Animations = FindViewerAnimationsAsync,
+                Environments = FindViewerEnvironmentsAsync,
                 Owner = this,
             };
             window.Show();

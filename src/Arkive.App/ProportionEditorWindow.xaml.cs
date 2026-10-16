@@ -34,6 +34,9 @@ public partial class ProportionEditorWindow : Window
     private readonly Action<string> _log;
     private readonly BodyProportionPresetStore _presets;
 
+    /// <summary>Prepares the game's environment cubemaps (null when unavailable); set by Arkive's main window.</summary>
+    public Func<CancellationToken, Task<ModelViewerEnvironmentSet?>>? Environments { get; init; }
+
     /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
     public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationSet?>>? Animations { get; init; }
 
@@ -242,6 +245,28 @@ public partial class ProportionEditorWindow : Window
 
     private void Status(string text) => StatusText.Text = text;
 
+    /// <summary>Offers the game's environment cubemaps to the page's Lighting panel, once they are prepared.</summary>
+    private async Task OfferEnvironmentsAsync()
+    {
+        if (Environments is null) return;
+        try
+        {
+            var set = await Environments(CancellationToken.None);
+            if (set is null || set.Environments.Count == 0) return;
+            var folder = Path.GetRelativePath(SceneCacheRoot, set.Directory).Replace('\\', '/');
+            Post(new
+            {
+                type = "environments",
+                baseUrl = $"https://{SceneHost}/{folder}/",
+                environments = set.Environments.Select(item => new { name = item.Name, label = item.Label, faces = item.Faces }),
+            });
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            AnimationsLog($"Viewer environments could not be offered: {exception.Message}");
+        }
+    }
+
     /// <summary>
     /// Prepares the shown character's animations in the background and offers them to the page. The first time for a
     /// class takes a while (UModel exports every animation once); later views read the cache.
@@ -279,6 +304,12 @@ public partial class ProportionEditorWindow : Window
         }
     }
 
+
+    private static bool SameSettings(IReadOnlyDictionary<string, double> a, IReadOnlyDictionary<string, double> b)
+    {
+        var keys = a.Keys.Concat(b.Keys).Distinct(StringComparer.Ordinal);
+        return keys.All(key => Math.Abs(a.GetValueOrDefault(key) - b.GetValueOrDefault(key)) < 1e-6);
+    }
 
     private void LoadPresets(string? select)
     {
@@ -383,6 +414,7 @@ public partial class ProportionEditorWindow : Window
         {
             case "ready":
                 _pageReady.TrySetResult();
+                _ = OfferEnvironmentsAsync();
                 break;
             case "loaded":
                 _sceneLoaded.TrySetResult();
@@ -391,6 +423,16 @@ public partial class ProportionEditorWindow : Window
                 _values = root.GetProperty("values").EnumerateObject()
                     .Where(property => property.Value.ValueKind == JsonValueKind.Number)
                     .ToDictionary(property => property.Name, property => property.Value.GetDouble(), StringComparer.Ordinal);
+                // Once the sliders move away from the chosen preset, choosing it again should apply it again.
+                if (PresetComboBox.SelectedItem is BodyProportionPreset chosen && !SameSettings(chosen.Settings, _values))
+                {
+                    // An editable combo box reselects an item whose name is typed in, so the name is cleared too.
+                    _loadingPresets = true;
+                    PresetComboBox.SelectedItem = null;
+                    PresetComboBox.Text = "";
+                    _loadingPresets = false;
+                    Status($"Sliders changed since preset {chosen.Name}. Choose it again to go back to it.");
+                }
                 break;
             case "proportionLoose" or "proportionHair":
                 _follow = type.GetString() == "proportionHair"

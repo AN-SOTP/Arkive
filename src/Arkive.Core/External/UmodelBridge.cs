@@ -264,6 +264,25 @@ public sealed partial class UmodelBridge
             ?? throw new UmodelBridgeException($"UModel did not export the animations of {animSetName}.");
     }
 
+    /// <summary>Exports one object by name (textures and cubemap faces as PNG) and returns the files written.</summary>
+    public async Task<IReadOnlyList<string>> ExportNamedObjectAsync(
+        string packagePath,
+        string objectName,
+        string outputDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(objectName);
+        var fullPackagePath = ValidatePackage(packagePath);
+        var fullOutputDirectory = Path.GetFullPath(outputDirectory);
+        Directory.CreateDirectory(fullOutputDirectory);
+        var result = await RunAsync(
+            ["-export", .. CommonArguments(resolvePackageNames: false), $"-out={fullOutputDirectory}", "-png", fullPackagePath, objectName],
+            DefaultTimeout, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0) throw CreateProcessException($"export {objectName}", result);
+        return Directory.EnumerateFiles(fullOutputDirectory, "*", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     public Process StartPreview(string packagePath)
     {
         var fullPackagePath = ValidatePackage(packagePath);

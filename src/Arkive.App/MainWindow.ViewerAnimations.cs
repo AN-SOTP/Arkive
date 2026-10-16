@@ -17,6 +17,47 @@ public partial class MainWindow
     private ModelViewerAnimationService ViewerAnimations() => _viewerAnimations ??= new ModelViewerAnimationService(
         _umodelBridge!, Path.Combine(ModelViewerService().Cache.RootDirectory, "animations"));
 
+    private ModelViewerEnvironmentService? _viewerEnvironments;
+    private Task<ModelViewerEnvironmentSet?>? _viewerEnvironmentSet;
+
+    /// <summary>
+    /// The game's environment cubemaps (package efpbrenvcubemaps), prepared once per session for the viewer's
+    /// lighting and backgrounds. Null when the package is not in the indexed library.
+    /// </summary>
+    private Task<ModelViewerEnvironmentSet?> FindViewerEnvironmentsAsync(CancellationToken cancellationToken) =>
+        _viewerEnvironmentSet ??= PrepareViewerEnvironmentsAsync();
+
+    private async Task<ModelViewerEnvironmentSet?> PrepareViewerEnvironmentsAsync()
+    {
+        try
+        {
+            if (_umodelBridge is null || string.IsNullOrWhiteSpace(_libraryRootPath)) return null;
+            const string probe = "pbr_cubemap_00";
+            var found = await _packageIndexStore.SearchAsync(_libraryRootPath, probe, null, _gameMetadataIndex,
+                PackageIndexSearchScope.ObjectName, null, resultLimit: 50);
+            var match = found.Matches.FirstOrDefault(item => item.ObjectName.Equals(probe, StringComparison.OrdinalIgnoreCase) &&
+                                                             item.ClassName.Equals("TextureCube", StringComparison.OrdinalIgnoreCase));
+            if (match is null || !File.Exists(match.SourcePath)) return null;
+            var catalogue = await Task.Run(() => new AssetCatalogReader(_reader, _protectionProvider).Read(match.SourcePath));
+            var names = catalogue.Assets
+                .Where(asset => asset.ClassName.Equals("TextureCube", StringComparison.OrdinalIgnoreCase) &&
+                                asset.ObjectName.StartsWith("pbr_", StringComparison.OrdinalIgnoreCase))
+                .Select(asset => asset.ObjectName).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            _viewerEnvironments ??= new ModelViewerEnvironmentService(_umodelBridge,
+                Path.Combine(ModelViewerService().Cache.RootDirectory, "environments"));
+            var set = await _viewerEnvironments.PrepareAsync(match.SourcePath, names);
+            Log($"Viewer environments ready: {set.Environments.Count} game cubemaps in {set.Directory}.");
+            return set;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Log($"Viewer environments unavailable: {exception.Message}");
+            _viewerEnvironmentSet = null;
+            return null;
+        }
+    }
+
     /// <summary>Null when the mesh has no animations Arkive can find.</summary>
     private async Task<ModelViewerAnimationSet?> FindViewerAnimationsAsync(ModelViewerRequest request, CancellationToken cancellationToken)
     {

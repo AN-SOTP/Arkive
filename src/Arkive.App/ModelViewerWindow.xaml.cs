@@ -36,6 +36,9 @@ public partial class ModelViewerWindow : Window
     private TaskCompletionSource<bool> _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private BakeJob? _bake;
 
+    /// <summary>Prepares the game's environment cubemaps (null when unavailable); set by Arkive's main window.</summary>
+    public Func<CancellationToken, Task<ModelViewerEnvironmentSet?>>? Environments { get; init; }
+
     /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
     public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationSet?>>? Animations { get; init; }
 
@@ -134,6 +137,28 @@ public partial class ModelViewerWindow : Window
             _log($"Model viewer preparation failed: object={request.ObjectName}, error={exception}");
             Post(new { type = "error", text = $"Arkive could not prepare {request.ObjectName}: {exception.Message}" });
             _sceneLoaded.TrySetException(exception);
+        }
+    }
+
+    /// <summary>Offers the game's environment cubemaps to the page's Lighting panel, once they are prepared.</summary>
+    private async Task OfferEnvironmentsAsync()
+    {
+        if (Environments is null) return;
+        try
+        {
+            var set = await Environments(CancellationToken.None);
+            if (set is null || set.Environments.Count == 0) return;
+            var folder = Path.GetRelativePath(SceneCacheRoot, set.Directory).Replace('\\', '/');
+            Post(new
+            {
+                type = "environments",
+                baseUrl = $"https://{SceneHost}/{folder}/",
+                environments = set.Environments.Select(item => new { name = item.Name, label = item.Label, faces = item.Faces }),
+            });
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            AnimationsLog($"Viewer environments could not be offered: {exception.Message}");
         }
     }
 
@@ -331,6 +356,7 @@ public partial class ModelViewerWindow : Window
         {
             case "ready":
                 _pageReady = true;
+                _ = OfferEnvironmentsAsync();
                 if (_pendingLoadMessage is not null)
                 {
                     Browser.CoreWebView2.PostWebMessageAsJson(_pendingLoadMessage);
