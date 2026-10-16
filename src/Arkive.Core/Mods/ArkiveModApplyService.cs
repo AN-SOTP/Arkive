@@ -231,15 +231,20 @@ public sealed class ArkiveModApplyService
     private readonly ArkiveModApplyContext _context;
     private readonly ArkiveModMaterializationService _materializer;
     private readonly UnifiedPackageComposerService? _composer;
+    private readonly string _rebuildUnavailable;
 
+    /// <param name="composerUnavailableReason">Why <paramref name="composer"/> is null, shown when a rebuild is needed.</param>
     public ArkiveModApplyService(
         ArkiveModApplyContext context,
         ArkiveModMaterializationService materializer,
-        UnifiedPackageComposerService? composer)
+        UnifiedPackageComposerService? composer,
+        string? composerUnavailableReason = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _materializer = materializer ?? throw new ArgumentNullException(nameof(materializer));
         _composer = composer;
+        _rebuildUnavailable = "Package rebuilding is unavailable in this session: " +
+            (composerUnavailableReason ?? "UModel or the texture pipeline is missing").TrimEnd('.') + ".";
     }
 
     public static async Task<IReadOnlyList<ArkiveModStatus>> DescribeAsync(
@@ -517,7 +522,7 @@ public sealed class ArkiveModApplyService
         }
 
         if (plans.Any(plan => plan.Action == ArkiveModPackageAction.Rebuild) && _composer is null)
-            problems.Add("Package rebuilding is unavailable in this session (UModel or the texture pipeline is missing).");
+            problems.Add(_rebuildUnavailable);
         return new ArkiveModApplyPlan(resolution, plans, problems.Distinct().ToArray(), warnings);
     }
 
@@ -817,7 +822,7 @@ public sealed class ArkiveModApplyService
         ArkiveModPackagePlan plan,
         CancellationToken cancellationToken)
     {
-        if (_composer is null) return (null, "Package rebuilding is unavailable in this session.");
+        if (_composer is null) return (null, _rebuildUnavailable);
         var package = await _context.Packages.GetOrCreateAsync(
             plan.PackageAlias, plan.PhysicalPackageName, plan.SourcePackagePath!, cancellationToken).ConfigureAwait(false);
         var snapshot = await ArkiveModEditSnapshot.LoadAsync(_context.Edits, cancellationToken).ConfigureAwait(false);

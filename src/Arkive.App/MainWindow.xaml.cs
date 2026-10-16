@@ -407,7 +407,9 @@ public partial class MainWindow : Window
                     _staticMeshEditableExportService,
                     _materialReconnaissanceService, _materialWorkspaceStore, _materialEditService,
                     Path.Combine(_projectRoot, "staging", "material-candidates")));
-        _arkiveModApply = new ArkiveModApplyService(_arkiveModContext, _modMaterializer, _unifiedPackageComposerService);
+        _arkiveModApply = new ArkiveModApplyService(_arkiveModContext, _modMaterializer, _unifiedPackageComposerService,
+            _umodelBridge is null ? @"UModel was not found in the Arkive folder's tools\external folder"
+                : _textureReplacementUnavailableReason ?? _nativeTextureExportUnavailableReason);
         _restoredSettings = _settingsStore.Load();
 
         _appearanceTheme = AppearanceManager.NormalizeTheme(_restoredSettings.Theme);

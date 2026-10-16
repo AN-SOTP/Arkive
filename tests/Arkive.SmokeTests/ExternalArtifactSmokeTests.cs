@@ -6,6 +6,7 @@ internal static class ExternalArtifactSmokeTests
     [
         new("builds an isolated UModel physical-package shadow", TestUmodelPackageShadow),
         new("parses UModel list output", TestUmodelListOutput),
+        new("finds pinned tools in an installed folder without a source checkout", TestInstalledToolLookup),
         new("records isolated export workspace sessions", TestExportWorkspace),
         new("inspects DDS headers and mip payloads", TestDdsArtifactInspection),
         new("inspects glTF structure and dependencies", TestGltfArtifactInspection),
@@ -55,6 +56,25 @@ internal static class ExternalArtifactSmokeTests
             refused = true;
         }
         Assert(refused, "UModel shadow accepted a model that never loaded the target texture package.");
+    }
+
+    private static void TestInstalledToolLookup()
+    {
+        var installed = Path.Combine(fixtureDirectory, "installed-tools");
+        var tool = Path.Combine(installed, "tools", "external", "arkive-installed-tool-check.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(tool)!);
+        File.WriteAllBytes(tool, []);
+        var previous = Environment.CurrentDirectory;
+        try
+        {
+            Environment.CurrentDirectory = installed;
+            Assert(UmodelLocator.FindTool("arkive-installed-tool-check.exe") == Path.GetFullPath(tool),
+                "a tool beside an installed copy (no Arkive.slnx) was not found");
+        }
+        finally
+        {
+            Environment.CurrentDirectory = previous;
+        }
     }
 
     private static void TestUmodelListOutput()

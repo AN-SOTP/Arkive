@@ -32,13 +32,8 @@ public static class CrunchEncoderLocator
     public const string ExpectedSha256 =
         "8AE949BFC3E3E4A1717DCA8845CE8ED480638DE68CBF1D7CBE912E99E35CE06F";
 
-    public static string? FindExecutable()
-    {
-        var root = UmodelLocator.FindProjectRoot();
-        if (root is null) return null;
-        var path = Path.Combine(root, "tools", "external", ExecutableFileName);
-        return File.Exists(path) ? Path.GetFullPath(path) : null;
-    }
+    // Installed copies have no Arkive.slnx, so the encoder is looked up beside the application too.
+    public static string? FindExecutable() => UmodelLocator.FindTool(ExecutableFileName);
 }
 
 /// <summary>

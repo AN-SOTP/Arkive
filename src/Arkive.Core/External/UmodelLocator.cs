@@ -33,6 +33,24 @@ public static class UmodelLocator
         return null;
     }
 
+    /// <summary>
+    /// Finds a pinned tool in tools/external beside the application, as installed, or in a
+    /// source checkout above it.
+    /// </summary>
+    public static string? FindTool(string fileName)
+    {
+        foreach (var root in CandidateRoots())
+        {
+            var path = Path.Combine(root, "tools", "external", fileName);
+            if (File.Exists(path))
+            {
+                return Path.GetFullPath(path);
+            }
+        }
+
+        return null;
+    }
+
     public static string? FindProjectRoot()
     {
         foreach (var root in CandidateRoots())
