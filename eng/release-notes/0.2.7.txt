@@ -1,0 +1,4 @@
+Save and apply works again in installed copies of Arkive.
+
+- Save and apply no longer stops with "Package rebuilding is unavailable in this session" when a mod's package has to be rebuilt. Installed copies could not find their texture encoder (crunch_x64.exe), even though it was in the Arkive folder.
+- If a tool Arkive needs really is missing, the message now says which one.
