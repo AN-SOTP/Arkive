@@ -1,0 +1,8 @@
+New Simple upscale tab: reshape player outfits and five NPCs with sliders and save the result as a mod.
+
+- Search lists only player bodies and outfit pieces (tops, bottoms, one-piece outfits, arms and shoulders) and the NPCs Brelshaza, Echidna, Nineveh, Serca and Beatrice.
+- Open in proportion editor shows the whole outfit in Arkive's model viewer with game colours. Sliders with number boxes reshape it as you drag: neck, shoulders and arms; breast or chest size, width, projection, height, lift, spacing and sag; waist and belly; hips and buttocks size, width, projection, lift and sag; thighs and calves.
+- Tight clothing changes with the body under it, and an outfit's pieces keep meeting at their seams. Skirts, capes, sashes, drapes and hair can follow the body too (on by default).
+- Eight base player bodies are recognised from their skeletons, so every class of a body shares its tuning; each supported NPC has tuning of its own.
+- Save as mod creates a normal mod that you enable in Mods. Heights and limb lengths do not change, because the game's skeleton sets them.
+- The command line has a matching body-proportions command.
