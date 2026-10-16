@@ -71,8 +71,17 @@ public partial class MainWindow : Window
             var library = scan.Library;
             _arkiveModLibraryManifest = library;
             var snapshot = await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
+            IReadOnlyList<ArkiveModOutsideChange> outside = [];
+            try { outside = await _arkiveModApply.FindOutsideChangesAsync(); }
+            catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+            { Log($"Checking game files for outside changes failed: {exception.Message}"); }
+            foreach (var change in outside)
+                Log($"Game file changed outside this Arkive: {change.PhysicalPackageName} ({change.PackageAlias}), " +
+                    $"sha256={change.GameSha256}, changed objects={string.Join(", ", change.ChangedObjects)}.");
+            _outsideChanges = outside;
             var statuses = await ArkiveModApplyService.DescribeAsync(
-                _arkiveModLibrary, library, snapshot, ActiveRevisionsByPhysicalName());
+                _arkiveModLibrary, library, snapshot, ActiveRevisionsByPhysicalName(),
+                outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray());
             var previous = selectModId ?? (ModLibraryGrid.SelectedItem as ModLibraryRow)?.Entry.ModId;
             var drafts = (await _modAuthoringWorkspace.LoadAsync()).Where(draft => draft.ModId is not null)
                 .ToDictionary(draft => draft.ModId!, StringComparer.OrdinalIgnoreCase);
@@ -100,7 +109,10 @@ public partial class MainWindow : Window
                                             row.Status.WinningCount > 0 && row.Status.TiedCount == 0);
             var disabledActive = rows.Count(row => !row.Enabled && row.HasActiveAssets);
             var unsaved = rows.Count(row => row.Enabled && (row.Status.ModifiedLocally || row.AuthoringPending));
-            ModLibraryPendingText.Text = rows.Length == 0 ? string.Empty : ties > 0
+            ModLibraryPendingText.Text = rows.Length == 0 ? string.Empty : outside.Count > 0
+                ? $"{outside.Count:N0} game file(s) were changed outside this Arkive (another Arkive data folder, another tool or a game patch). " +
+                  "Restore them with More actions → Restore from another Arkive folder… or Steam's Verify integrity before applying."
+                : ties > 0
                 ? $"{ties:N0} conflict(s) need a choice before applying. Select a mod and review Conflicts."
                 : pending + disabledActive + unsaved > 0
                     ? "Changes pending · Apply changes will save edits, review the plan, and update the game."
@@ -206,6 +218,7 @@ public partial class MainWindow : Window
         ModLibraryEditAssetButton.IsEnabled = idle && hasRow && assetCount == 1;
         ModLibraryPreviewButton.IsEnabled = idle;
         ModLibraryRestoreAllButton.IsEnabled = idle;
+        ModLibraryRestoreOtherFolderButton.IsEnabled = idle;
         ModLibraryImportButton.IsEnabled = idle;
         ModLibraryGameFolderButton.IsEnabled = idle;
         ModLibraryRefreshButton.IsEnabled = idle;
@@ -659,6 +672,68 @@ public partial class MainWindow : Window
 
     private async void ModLibraryApplyButton_Click(object sender, RoutedEventArgs e) =>
         await RunModApplyAsync(previewOnly: false);
+
+    private IReadOnlyList<ArkiveModOutsideChange> _outsideChanges = [];
+
+    /// <summary>
+    /// Puts back game files that another Arkive data folder changed, from that folder's verified backups. Only files
+    /// this Arkive did not install and whose original is found by hash are touched; each replaced file is kept.
+    /// </summary>
+    private async void ModLibraryRestoreOtherFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ModLibraryIdle) return;
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Choose the other Arkive data folder (the one holding its backups folder)",
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        _modLibraryBusy = true;
+        UpdateModLibraryActionState();
+        try
+        {
+            ModLibraryStatusText.Text = "Looking for verified originals in that folder…";
+            var plan = await _arkiveModApply.PlanRestoreFromOtherFolderAsync(dialog.FolderName);
+            Log($"Restore from another Arkive folder planned: folder={plan.OtherDataFolder}, restorable={plan.Items.Count}, " +
+                $"unresolved={plan.Unresolved.Count}.");
+            if (plan.Items.Count == 0)
+            {
+                var none = plan.Unresolved.Count == 0
+                    ? "No game file needs restoring: every file your mods target is either the original or installed by this Arkive."
+                    : $"That folder has no verified originals for the {plan.Unresolved.Count:N0} changed game file(s) " +
+                      $"({string.Join(", ", plan.Unresolved.Select(change => change.PackageAlias))}). " +
+                      "Choose the data folder of the Arkive that installed them, or use Steam's Verify integrity of game files.";
+                ModLibraryStatusText.Text = none;
+                MessageBox.Show(this, none, "Restore from another Arkive folder", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var list = string.Join("\n", plan.Items.Select(item => $"  • {item.PackageAlias} ({item.PhysicalPackageName})"));
+            var rest = plan.Unresolved.Count == 0 ? "" :
+                $"\n\n{plan.Unresolved.Count:N0} other changed file(s) have no original in that folder and are left as they are.";
+            if (MessageBox.Show(this,
+                    $"Restore {plan.Items.Count:N0} game file(s) to their originals from {plan.OtherDataFolder}?\n\n{list}{rest}\n\n" +
+                    "Each original is checked by its SHA-256 first, and the files being replaced are kept in Arkive's backups folder. " +
+                    "Lost Ark must be closed.",
+                    "Restore from another Arkive folder", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+            var result = await _arkiveModApply.RestoreFromOtherFolderAsync(plan);
+            ModLibraryStatusText.Text = $"Restored {result.Restored.Count:N0} game file(s) to their originals. " +
+                                        $"The replaced files are kept in {result.SafetyCopyDirectory}. Apply changes to install your enabled mods.";
+            Log($"Restored from another Arkive folder: files={string.Join(", ", result.Restored.Select(item => item.PhysicalPackageName))}, " +
+                $"safety copies={result.SafetyCopyDirectory}.");
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            ModLibraryStatusText.Text = exception is ArkiveModRefusalException refusal
+                ? refusal.Message[(refusal.Code.Length + 2)..] : exception.Message;
+            Log($"Restore from another Arkive folder failed: {exception}");
+        }
+        finally
+        {
+            _modLibraryBusy = false;
+            UpdateModLibraryActionState();
+            await RefreshArkiveModsAsync("restore from another folder");
+        }
+    }
 
     private async void ModLibraryRestoreAllButton_Click(object sender, RoutedEventArgs e)
     {

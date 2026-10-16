@@ -17,6 +17,7 @@ internal static class ArkiveModSmokeTests
         new("updates an installed .arkive mod to a newer version of the same mod", TestArkiveModVersionUpdate),
         new("reinstalls the previous build when an .arkive asset cannot be set up", TestArkiveFailedSetupKeepsPreviousBuild),
         new("keeps same-named package objects apart by their object path", TestArkiveSameNamedObjectPaths),
+        new("detects game files changed by another Arkive data folder and restores them from its backups", TestArkiveOutsideChanges),
     ];
 
     private static readonly JsonSerializerOptions ManifestJson = new()
@@ -479,6 +480,57 @@ internal static class ArkiveModSmokeTests
                !snapshot.Find(draft.Document.EditId)!.Included &&
                library.FindOwner(draft.Document.EditId) is null,
             "a re-exported draft did not replace the mod's asset in place and retire the previous working copy");
+    }
+
+    private static void TestArkiveOutsideChanges()
+    {
+        var root = Path.Combine(fixtureDirectory, "arkive-outside");
+        var packagePath = CreateMaterialClient(root, out var originalHash);
+        var arkive = AuthorMaterialMod(root, packagePath, "Gloss from elsewhere", roughness: 0.8f, blue: null);
+        var gameDirectory = Path.GetDirectoryName(packagePath)!;
+
+        // An older Arkive with its own data folder installs the mod.
+        var old = CreateEnvironment(Path.Combine(root, "old-data"));
+        var oldMod = old.Library.ImportAsync(arkive).GetAwaiter().GetResult().Entry;
+        old.Library.SetEnabledAsync(oldMod.ModId, true).GetAwaiter().GetResult();
+        Assert(CreateApplyService(old, gameDirectory).ApplyAsync().GetAwaiter().GetResult().Succeeded &&
+               Sha(packagePath) != originalHash, "the old Arkive did not install the mod");
+        var installedHash = Sha(packagePath);
+
+        // A new data folder gets only the .arkive file and sees a changed game file it never touched.
+        var fresh = CreateEnvironment(Path.Combine(root, "new-data"));
+        var mod = fresh.Library.ImportAsync(arkive).GetAwaiter().GetResult().Entry;
+        fresh.Library.SetEnabledAsync(mod.ModId, true).GetAwaiter().GetResult();
+        var service = CreateApplyService(fresh, gameDirectory);
+        var outside = service.FindOutsideChangesAsync().GetAwaiter().GetResult();
+        Assert(outside is [{ GameSha256: var seen }] && seen.Equals(installedHash, StringComparison.OrdinalIgnoreCase),
+            "a game file changed by another Arkive data folder was not reported");
+        var plan = service.PlanAsync().GetAwaiter().GetResult();
+        Assert(!plan.CanApply && plan.BlockingProblems.Any(problem =>
+                   problem.Contains("Restore from another Arkive folder", StringComparison.Ordinal)),
+            "Apply would have built on a game file changed outside this Arkive: " + plan.Summary);
+        var statuses = ArkiveModApplyService.DescribeAsync(fresh.Library, fresh.Library.LoadAsync().GetAwaiter().GetResult(),
+            ArkiveModEditSnapshot.LoadAsync(fresh.Edits).GetAwaiter().GetResult(),
+            outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray()).GetAwaiter().GetResult();
+        Assert(statuses.Single().State == "Game file changed outside Arkive",
+            "the mod list still offered a changed game file as ready to apply");
+
+        var empty = service.PlanRestoreFromOtherFolderAsync(Path.Combine(root, "nowhere")).GetAwaiter().GetResult();
+        Assert(empty.Items.Count == 0 && empty.Unresolved.Count == 1, "a folder without backups offered a restore");
+        var restorePlan = service.PlanRestoreFromOtherFolderAsync(old.Root).GetAwaiter().GetResult();
+        Assert(restorePlan.Items is [{ OriginalSha256: var original }] &&
+               original.Equals(originalHash, StringComparison.OrdinalIgnoreCase),
+            "the verified original in the old data folder was not found");
+        var restored = service.RestoreFromOtherFolderAsync(restorePlan).GetAwaiter().GetResult();
+        Assert(Sha(packagePath) == originalHash &&
+               File.Exists(Path.Combine(restored.SafetyCopyDirectory, Path.GetFileName(packagePath))) &&
+               Sha(Path.Combine(restored.SafetyCopyDirectory, Path.GetFileName(packagePath))) == installedHash,
+            "restoring from the old data folder did not put the original back and keep the replaced file");
+        Assert(service.FindOutsideChangesAsync().GetAwaiter().GetResult().Count == 0,
+            "the restored game file was still reported as changed");
+        Assert(service.ApplyAsync().GetAwaiter().GetResult().Succeeded &&
+               ReadMaterial(packagePath).ScalarParameters.Single().Value == 0.8f,
+            "the new Arkive could not install the mod after the restore");
     }
 
     private static void TestArkiveClientUpdate()

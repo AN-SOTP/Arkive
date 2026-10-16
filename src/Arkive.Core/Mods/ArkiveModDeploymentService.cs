@@ -166,6 +166,9 @@ public sealed class ArkiveModDeploymentService
         _processGuard = processGuard ?? new LostArkProcessGuard();
     }
 
+    /// <summary>The game, launcher or anti-cheat processes that must be closed before game files change.</summary>
+    public IReadOnlyList<string> FindBlockingProcesses() => _processGuard.FindBlockingProcesses();
+
     public async Task<ModDeploymentInspection> InspectAsync(
         ArkiveModDeploymentRequest request,
         CancellationToken cancellationToken = default)

@@ -148,6 +148,9 @@ public sealed record ArkiveModStatus(
 
     public bool ModifiedLocally => Assets.Any(asset => asset.ModifiedLocally);
 
+    /// <summary>A game package this mod targets was changed outside this Arkive (see FindOutsideChangesAsync).</summary>
+    public bool OutsideChange { get; init; }
+
     private IEnumerable<ArkiveModAssetStatus> Winners =>
         Assets.Where(asset => asset.Outcome == ArkiveModAssetOutcome.Winning);
 
@@ -163,6 +166,7 @@ public sealed record ArkiveModStatus(
             if (TiedCount > 0) return "Conflict needs a choice";
             if (WinningCount == 0) return "Fully overridden";
             if (ModifiedLocally) return "Unsaved edits";
+            if (OutsideChange && !InGame) return "Game file changed outside Arkive";
             if (Winners.Any(asset => asset.Setup != ArkiveModSetupState.Ready)) return "Ready to apply";
             return InGame ? OverriddenCount > 0 ? "Applied · partially overridden" : "Applied" : "Ready to apply";
         }
@@ -252,7 +256,8 @@ public sealed class ArkiveModApplyService
         ArkiveModLibraryManifest manifest,
         ArkiveModEditSnapshot snapshot,
         IReadOnlyDictionary<string, GuidedTexturePackageRevision?>? activeRevisionsByPhysicalName = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<string>? outsideChangedPackages = null)
     {
         ArgumentNullException.ThrowIfNull(library);
         ArgumentNullException.ThrowIfNull(manifest);
@@ -290,7 +295,12 @@ public sealed class ArkiveModApplyService
                     asset, resolution.OutcomeFor(mod.ModId, asset.AssetId),
                     resolution.StrongestCompetitor(mod.ModId, asset.AssetId), binding, edit, setup, modified, inGame));
             }
-            statuses.Add(new ArkiveModStatus(mod, !File.Exists(library.GetModFilePath(mod)), assets));
+            statuses.Add(new ArkiveModStatus(mod, !File.Exists(library.GetModFilePath(mod)), assets)
+            {
+                OutsideChange = outsideChangedPackages is not null && mod.Manifest.Assets.Any(asset =>
+                    outsideChangedPackages.Contains(ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName),
+                        StringComparer.OrdinalIgnoreCase)),
+            });
         }
         return statuses;
     }
@@ -458,6 +468,21 @@ public sealed class ArkiveModApplyService
                     $"More than one checked draft replaces {duplicate.First().ObjectName} in {physical}. Keep one.");
             if (drafts.Count > 0)
                 warnings.Add($"{physical} also includes {drafts.Count:N0} checked draft edit(s) that belong to no mod.");
+
+            // Mods set up from their .arkive files must start from the clean package they were made for. A package
+            // this Arkive never changed but whose target objects differ was changed elsewhere; building on it would
+            // keep those changes and later back them up as the "original".
+            if (active is null)
+            {
+                foreach (var setup in setups.Where(setup =>
+                             !setup.Asset.Target.SourcePackageSha256.Equals(cleanHash, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var check = await _materializer.CheckTargetAsync(setup.Asset, cleanPath, cleanHash, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (check.State == ArkiveModTargetState.Exact) continue;
+                    packageProblems.Add(OutsideChangeMessage(physical, alias, setup.ModName, setup.Asset.Target.ObjectName));
+                }
+            }
 
             var contributors = Contributors(winners, drafts);
             if (packageProblems.Count > 0)
@@ -859,6 +884,120 @@ public sealed class ArkiveModApplyService
             catch (IOException) { }
             return (null, exception.Message);
         }
+    }
+
+    internal static string OutsideChangeMessage(string physical, string alias, string modName, string objectName) =>
+        $"{physical} ({alias}) is not the game file {modName} was made for: its {objectName} differs, and this Arkive " +
+        "has no record of changing it. If you installed mods with Arkive from another data folder, restore that file " +
+        "with More actions → Restore from another Arkive folder…; otherwise use Steam's Verify integrity of game files. " +
+        "If a game patch changed it, select the mod and choose 'Update for this game version'.";
+
+    /// <summary>
+    /// Game packages that mods in the library target, which are not the clean versions those mods were made for and
+    /// which this Arkive has not installed: changed by another Arkive data folder, another tool or a game patch.
+    /// Packages whose target objects are all unchanged are not reported.
+    /// </summary>
+    public async Task<IReadOnlyList<ArkiveModOutsideChange>> FindOutsideChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (library.GamePackagesDirectory is not { } gameDirectory || !Directory.Exists(gameDirectory)) return [];
+        var packages = await _context.Packages.LoadAsync(cancellationToken).ConfigureAwait(false);
+        var changes = new List<ArkiveModOutsideChange>();
+        foreach (var group in library.Mods.SelectMany(mod => mod.Manifest.Assets)
+                     .GroupBy(asset => ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName),
+                         StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = Path.Combine(gameDirectory, group.Key);
+            if (!File.Exists(path)) continue;
+            var project = FindPackageProject(group.Key, gameDirectory, packages);
+            if (project is not null &&
+                await _context.FindActiveDeploymentAsync(project, cancellationToken).ConfigureAwait(false) is not null)
+                continue;
+            var hash = await ArkiveModEditSnapshot.HashFileCachedAsync(path, cancellationToken).ConfigureAwait(false);
+            var clean = group.Select(asset => asset.Target.SourcePackageSha256.ToUpperInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (clean.Contains(hash, StringComparer.OrdinalIgnoreCase)) continue;
+            var changed = new List<string>();
+            foreach (var asset in group.DistinctBy(asset => asset.Target.ObjectName, StringComparer.OrdinalIgnoreCase))
+            {
+                var check = await _materializer.CheckTargetAsync(asset, path, hash, cancellationToken).ConfigureAwait(false);
+                if (check.State != ArkiveModTargetState.Exact) changed.Add(asset.Target.ObjectName);
+            }
+            if (changed.Count > 0)
+                changes.Add(new ArkiveModOutsideChange(group.Key, group.First().Target.PackageAlias, path, hash, clean, changed));
+        }
+        return changes;
+    }
+
+    /// <summary>
+    /// Finds, in another Arkive data folder's backups, the verified originals of game packages changed outside this
+    /// Arkive. Backups are kept under backups\packages\SHA-256-of-the-original\, so each candidate is matched to the
+    /// clean version the mods were made for and its bytes are hashed before it is offered.
+    /// </summary>
+    public async Task<ArkiveModOutsideRestorePlan> PlanRestoreFromOtherFolderAsync(
+        string otherDataFolder, CancellationToken cancellationToken = default)
+    {
+        var root = Path.GetFullPath(otherDataFolder);
+        var backups = Path.Combine(root, "backups", "packages");
+        if (!Directory.Exists(backups) && Path.GetFileName(root).Equals("packages", StringComparison.OrdinalIgnoreCase))
+            backups = root;
+        var changes = await FindOutsideChangesAsync(cancellationToken).ConfigureAwait(false);
+        var items = new List<ArkiveModOutsideRestoreItem>();
+        var unresolved = new List<ArkiveModOutsideChange>();
+        foreach (var change in changes)
+        {
+            ArkiveModOutsideRestoreItem? found = null;
+            foreach (var clean in change.CleanSha256s)
+            {
+                var candidate = Path.Combine(backups, clean, change.PhysicalPackageName);
+                if (!File.Exists(candidate)) continue;
+                var hash = await ArkiveModEditSnapshot.HashFileCachedAsync(candidate, cancellationToken).ConfigureAwait(false);
+                if (!hash.Equals(clean, StringComparison.OrdinalIgnoreCase)) continue;
+                found = new ArkiveModOutsideRestoreItem(change.PhysicalPackageName, change.PackageAlias, change.GamePath, candidate, clean);
+                break;
+            }
+            if (found is null) unresolved.Add(change);
+            else items.Add(found);
+        }
+        return new ArkiveModOutsideRestorePlan(root, items, unresolved);
+    }
+
+    /// <summary>
+    /// Puts the planned originals back into the game folder. The game must be closed. Each replaced game file is kept
+    /// in this data folder's backups\replaced-outside-arkive folder first, and each original is copied beside the game
+    /// file and hashed before it replaces it.
+    /// </summary>
+    public async Task<ArkiveModOutsideRestoreResult> RestoreFromOtherFolderAsync(
+        ArkiveModOutsideRestorePlan plan, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        var blocking = _context.Deployment.FindBlockingProcesses();
+        if (blocking.Count > 0)
+            Refuse("APL040", $"Close {string.Join(", ", blocking)} before restoring game files.");
+        var safety = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_context.BackupRootDirectory))!,
+            "replaced-outside-arkive", DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+        var restored = new List<ArkiveModOutsideRestoreItem>();
+        foreach (var item in plan.Items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var backupHash = await ArkiveModEditSnapshot.HashFileCachedAsync(item.BackupPath, cancellationToken).ConfigureAwait(false);
+            if (!backupHash.Equals(item.OriginalSha256, StringComparison.OrdinalIgnoreCase))
+                Refuse("APL041", $"The backup of {item.PhysicalPackageName} changed since it was checked.");
+            Directory.CreateDirectory(safety);
+            File.Copy(item.GamePath, Path.Combine(safety, item.PhysicalPackageName), overwrite: true);
+            var temporary = item.GamePath + ".arkive-restore.tmp";
+            File.Copy(item.BackupPath, temporary, overwrite: true);
+            var copied = await ArkiveModEditSnapshot.HashFileCachedAsync(temporary, cancellationToken).ConfigureAwait(false);
+            if (!copied.Equals(item.OriginalSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                File.Delete(temporary);
+                Refuse("APL042", $"Copying the original of {item.PhysicalPackageName} did not verify; the game file was not changed.");
+            }
+            File.Move(temporary, item.GamePath, overwrite: true);
+            restored.Add(item);
+        }
+        return new ArkiveModOutsideRestoreResult(restored, safety);
     }
 
     public static GuidedTexturePackageEntry? FindPackageProject(

@@ -2556,6 +2556,9 @@
                                                     <Separator />
                                                     <MenuItem x:Name="ModLibraryRestoreAllButton" Header="Restore all game files" Click="ModLibraryRestoreAllButton_Click"
                                                               ToolTip="Restore originals while keeping your enabled mod selection." />
+                                                    <MenuItem x:Name="ModLibraryRestoreOtherFolderButton" Header="Restore from another Arkive folder…"
+                                                              Click="ModLibraryRestoreOtherFolderButton_Click"
+                                                              ToolTip="Put back game files that an Arkive using a different data folder installed mods into, from that folder's verified backups." />
                                                     <MenuItem Header="Open mods folder" Click="ModLibraryOpenFolderButton_Click" />
                                                     <MenuItem x:Name="ModLibraryGameFolderButton" Header="Game folder…" Click="ModLibraryGameFolderButton_Click" />
                                                     <MenuItem x:Name="ModLibraryRefreshButton" Header="Refresh" Click="ModLibraryRefreshButton_Click" />
