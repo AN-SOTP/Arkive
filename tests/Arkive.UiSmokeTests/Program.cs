@@ -52,8 +52,8 @@ internal static class Program
         await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == 3);
         var tabs = Control<TabControl>(window, "MainTabControl");
         Check(tabs.Items.OfType<TabItem>().Where(tab => tab.Visibility == Visibility.Visible)
-                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset library", "Create mod", "Edit mods", "Mods"]),
-            "The main navigation should expose Asset library, Create mod, Edit mods, and Mods.");
+                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset library", "Create mod", "Edit mods", "Simple upscale", "Mods"]),
+            "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, and Mods.");
         Check(tabs.SelectedItem == Control<TabItem>(window, "ModifiedUpksTab"), "Mods was not the initial destination.");
         Check(Control<Button>(window, "ModLibraryNewButton").IsVisible, "The initial mod library has no visible content.");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");
