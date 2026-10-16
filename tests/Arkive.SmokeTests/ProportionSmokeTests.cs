@@ -9,6 +9,7 @@ internal static class ProportionSmokeTests
     [
         new("lists only player outfit pieces and the tuned NPCs for proportion editing", TestPlayerPieceNames),
         new("reshapes a player mesh by body area and keeps unaffected vertices", TestBodyAreas),
+        new("saves, reloads and limits body proportion presets per body", TestPresets),
     ];
 
     private static void TestPlayerPieceNames()
@@ -32,6 +33,26 @@ internal static class ProportionSmokeTests
             "a top and bottom of one outfit share a stem");
         Assert(BodyProfiles.OutfitStem("pc_sp_av_108-1_upper_sk") != BodyProfiles.OutfitStem("pc_sp_av_108-2_upper_sk"),
             "alternative versions of an outfit do not share a stem");
+    }
+
+    private static void TestPresets()
+    {
+        var store = new BodyProportionPresetStore(Path.Combine(fixtureDirectory, "presets"));
+        var saved = store.Save(new BodyProportionPreset(" My Slayer ", "female-warrior",
+            new Dictionary<string, double> { ["chest"] = 30, ["thighs"] = 500, ["neck"] = 0, ["nonsense"] = 5 },
+            LooseClothingFollows: true, HairFollows: false, DateTimeOffset.Now));
+        store.Save(new BodyProportionPreset("Other body", "male-warrior", new Dictionary<string, double> { ["chest"] = 10 },
+            true, true, DateTimeOffset.Now));
+        var loaded = store.Load("female-warrior");
+        Assert(loaded is [{ Name: "My Slayer" } preset] && preset.Settings.Count == 2 && preset.Settings["thighs"] == 60 &&
+               preset.Follow == new BodyProportionFollow(true, false),
+            "a preset was not saved trimmed, limited to its sliders and with its follow options");
+        Assert(store.Load().Count == 2, "presets of other bodies were lost");
+        store.Save(saved with { Settings = new Dictionary<string, double> { ["chest"] = 45 } });
+        Assert(store.Load("female-warrior") is [{ } updated] && updated.Settings["chest"] == 45,
+            "saving under the same name did not replace the preset");
+        store.Delete(saved);
+        Assert(store.Load("female-warrior").Count == 0, "deleting a preset left it behind");
     }
 
     private static void TestBodyAreas()

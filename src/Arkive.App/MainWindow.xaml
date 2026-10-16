@@ -850,6 +850,13 @@
                                 <Button x:Name="ProportionOpenButton" Content="Open in proportion editor" IsEnabled="False"
                                         Style="{StaticResource PrimaryButtonStyle}" Click="ProportionOpenButton_Click" />
                                 <Button x:Name="ProportionPreviewButton" Content="Preview original" IsEnabled="False" Click="ProportionPreviewButton_Click" />
+                                <TextBlock Text="Preset" VerticalAlignment="Center" Margin="14,0,6,0" />
+                                <ComboBox x:Name="ProportionPresetComboBox" Width="220" VerticalAlignment="Center"
+                                          SelectionChanged="ProportionPresetComboBox_SelectionChanged"
+                                          ToolTip="Presets saved in the proportion editor for the selected body." />
+                                <Button x:Name="ProportionApplyPresetButton" Content="Apply preset to selected outfits" IsEnabled="False"
+                                        Click="ProportionApplyPresetButton_Click"
+                                        ToolTip="Reshape every selected outfit (and, with Open the whole outfit, its other pieces) with the chosen preset and save them all as one new mod." />
                             </WrapPanel>
                             <TextBlock x:Name="ProportionStatusText" Margin="0,6,0,0" TextWrapping="Wrap"
                                        Text="Search for a player outfit or one of the supported NPCs to begin." />

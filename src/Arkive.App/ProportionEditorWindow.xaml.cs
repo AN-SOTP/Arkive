@@ -32,6 +32,8 @@ public partial class ProportionEditorWindow : Window
     private readonly string _theme;
     private readonly Func<ProportionSaveRequest, Task<string>> _save;
     private readonly Action<string> _log;
+    private readonly BodyProportionPresetStore _presets;
+    private bool _loadingPresets;
     private readonly CancellationTokenSource _closing = new();
     private readonly TaskCompletionSource _pageReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -50,6 +52,7 @@ public partial class ProportionEditorWindow : Window
         string webViewDataFolder,
         string effectiveTheme,
         Func<ProportionSaveRequest, Task<string>> save,
+        BodyProportionPresetStore presets,
         Action<string> log)
     {
         _scenes = scenes;
@@ -58,6 +61,7 @@ public partial class ProportionEditorWindow : Window
         _webViewDataFolder = webViewDataFolder;
         _theme = effectiveTheme.Equals("Light", StringComparison.OrdinalIgnoreCase) ? "light" : "dark";
         _save = save;
+        _presets = presets;
         _log = log;
         InitializeComponent();
         Title = $"Arkive simple upscale · {requests[0].PackageAlias}";
@@ -113,6 +117,8 @@ public partial class ProportionEditorWindow : Window
             await _sceneLoaded.Task.WaitAsync(TimeSpan.FromMinutes(5), token);
             await SendProportionsAsync(keepTab: false);
             SaveButton.IsEnabled = true;
+            PresetComboBox.IsEnabled = SavePresetButton.IsEnabled = true;
+            LoadPresets(null);
             Status($"{profiles[0].DisplayName} · {pieces.Count} piece(s). Move the sliders, then save as a mod.");
             _log($"Proportion editor ready: body={profiles[0].Id}, pieces={string.Join(", ", pieces.Select(piece => piece.Request.ObjectName))}.");
         }
@@ -221,6 +227,68 @@ public partial class ProportionEditorWindow : Window
     }
 
     private void Status(string text) => StatusText.Text = text;
+
+    private void LoadPresets(string? select)
+    {
+        _loadingPresets = true;
+        var presets = _presets.Load(_pieces[0].Profile.Id);
+        PresetComboBox.ItemsSource = presets;
+        PresetComboBox.SelectedItem = presets.FirstOrDefault(preset => preset.Name == select);
+        if (select is not null) PresetComboBox.Text = select;
+        _loadingPresets = false;
+    }
+
+    /// <summary>Choosing a preset sets every slider (and the follow options) to its values.</summary>
+    private async void PresetComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_loadingPresets || PresetComboBox.SelectedItem is not BodyProportionPreset preset || _pieces.Count == 0) return;
+        _values = new Dictionary<string, double>(preset.Settings, StringComparer.Ordinal);
+        try
+        {
+            if (preset.Follow != _follow)
+            {
+                _follow = preset.Follow;
+                await SendProportionsAsync(keepTab: true);
+            }
+            else
+                Browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(
+                    new { type = "setProportionValues", values = _values }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            Status($"Preset {preset.Name} applied. Adjust the sliders or save as a mod.");
+            _log($"Proportion preset applied in the editor: {preset.Name} ({preset.ProfileId}).");
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or OperationCanceledException)
+        {
+            Status($"Could not apply the preset: {exception.Message}");
+        }
+    }
+
+    private void SavePresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        var name = PresetComboBox.Text.Trim();
+        if (name.Length == 0)
+        {
+            Status("Type a name for the preset in the Preset box first.");
+            PresetComboBox.Focus();
+            return;
+        }
+        if (BodyProportionEngine.IsNeutral(_values))
+        {
+            Status("Every slider is at 0, so there is nothing to save as a preset.");
+            return;
+        }
+        try
+        {
+            var saved = _presets.Save(new BodyProportionPreset(name, _pieces[0].Profile.Id, new Dictionary<string, double>(_values),
+                _follow.LooseClothing, _follow.Hair, DateTimeOffset.Now));
+            LoadPresets(saved.Name);
+            Status($"Saved preset {saved.Name} for {_pieces[0].Profile.DisplayName}.");
+            _log($"Proportion preset saved: {saved.Name} ({saved.ProfileId}), settings={saved.Settings.Count}.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            Status($"The preset was not saved: {exception.Message}");
+        }
+    }
 
     private async Task<bool> InitializeBrowserAsync()
     {

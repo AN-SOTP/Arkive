@@ -24,6 +24,12 @@
         <Border Grid.Row="1" Padding="10,8" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerBrush}" Background="{DynamicResource SurfaceBrush}">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Preset" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox x:Name="PresetComboBox" Width="200" IsEditable="True" VerticalAlignment="Center" IsEnabled="False"
+                              SelectionChanged="PresetComboBox_SelectionChanged"
+                              ToolTip="Choose a saved preset for this body to set every slider, or type a name and choose Save preset." />
+                    <Button x:Name="SavePresetButton" Content="Save preset" Margin="6,0,18,0" IsEnabled="False" Click="SavePresetButton_Click"
+                            ToolTip="Saves the current sliders and follow options under the typed name, for this body. Presets can be applied to many outfits at once from the Simple upscale tab." />
                     <TextBlock Text="Mod name" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <TextBox x:Name="ModNameTextBox" Width="260" VerticalAlignment="Center" />
                     <Button x:Name="SaveButton" Content="Save as mod" Margin="8,0,0,0" IsEnabled="False"

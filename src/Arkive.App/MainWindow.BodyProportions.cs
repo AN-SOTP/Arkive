@@ -118,11 +118,100 @@ public partial class MainWindow
             : $"Found {rows.Length:N0} piece(s). Select one and choose Open in proportion editor.";
     }
 
-    private void ProportionResultsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateProportionActions();
+    private void ProportionResultsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        RefreshProportionPresets();
+        UpdateProportionActions();
+    }
 
     private void ProportionResultsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton == MouseButton.Left && ProportionResultsGrid.SelectedItem is ProportionRow) OpenProportionEditor();
+    }
+
+    /// <summary>
+    /// The pieces to reshape for the selected rows, read from clean packages (a mod already applied to a package must
+    /// not be reshaped again) and, with Open the whole outfit, joined by each outfit's other pieces.
+    /// </summary>
+    private async Task<List<BodyProportionPieceRequest>> ProportionRequestsAsync(IReadOnlyList<ProportionRow> rows)
+    {
+        var requests = new List<BodyProportionPieceRequest>();
+        foreach (var package in rows.GroupBy(row => row.Row.SourcePath, StringComparer.OrdinalIgnoreCase))
+        {
+            var clean = await _arkiveModApply.ResolveCleanPackageAsync(package.Key);
+            var names = package.Select(row => row.Row.ObjectName).ToList();
+            if (ProportionWholeOutfitCheckBox.IsChecked == true)
+            {
+                var stems = names.Select(BodyProfiles.OutfitStem).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var catalogue = await Task.Run(() => new AssetCatalogReader(_reader, _protectionProvider).Read(clean));
+                names.AddRange(catalogue.Assets
+                    .Where(asset => asset.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase) &&
+                                    BodyProfiles.IsReshapeable(asset.ObjectName) &&
+                                    BodyProfiles.OutfitStem(asset.ObjectName) is { } stem && stems.Contains(stem))
+                    .Select(asset => asset.ObjectName));
+            }
+            foreach (var name in names.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
+                requests.Add(new BodyProportionPieceRequest(clean, package.First().Row.PackageAlias, name));
+        }
+        return requests;
+    }
+
+    private BodyProportionPresetStore? _bodyProportionPresets;
+
+    private BodyProportionPresetStore BodyProportionPresets() =>
+        _bodyProportionPresets ??= new BodyProportionPresetStore(Path.Combine(_projectRoot, "presets", "body-proportions"));
+
+    /// <summary>Lists the selected body's presets (or every preset when nothing is selected).</summary>
+    private void RefreshProportionPresets()
+    {
+        if (ProportionPresetComboBox is null) return;
+        var profile = ProportionResultsGrid.SelectedItems.OfType<ProportionRow>().Select(row => row.Profile).Distinct().SingleOrDefault();
+        var previous = (ProportionPresetComboBox.SelectedItem as BodyProportionPreset)?.Name;
+        var presets = BodyProportionPresets().Load(profile?.Id);
+        ProportionPresetComboBox.ItemsSource = presets;
+        ProportionPresetComboBox.SelectedItem = presets.FirstOrDefault(preset => preset.Name == previous) ?? presets.FirstOrDefault();
+    }
+
+    private void ProportionPresetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateProportionActions();
+
+    /// <summary>
+    /// Reshapes every selected outfit with one preset and saves them as a single new mod, without opening the editor.
+    /// </summary>
+    private async void ProportionApplyPresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = ProportionResultsGrid.SelectedItems.OfType<ProportionRow>().ToArray();
+        if (selected.Length == 0 || _proportionBusy || ProportionPresetComboBox.SelectedItem is not BodyProportionPreset preset) return;
+        var profile = selected.Select(row => row.Profile).Distinct().ToArray();
+        if (profile.Length != 1 || profile[0].Id != preset.ProfileId)
+        {
+            ProportionStatusText.Text = "Select outfits of the body the preset was made for.";
+            return;
+        }
+        _proportionBusy = true;
+        UpdateProportionActions();
+        try
+        {
+            ProportionStatusText.Text = "Finding the outfits' pieces…";
+            var requests = await ProportionRequestsAsync(selected);
+            var outfits = requests.Select(request => request.PackageAlias).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var name = $"{preset.Name} · {(outfits == 1 ? requests[0].PackageAlias : $"{outfits} outfits")}";
+            ProportionStatusText.Text = $"Reshaping {requests.Count:N0} piece(s) of {outfits:N0} outfit(s) with {preset.Name}. " +
+                                        "Each piece is checked against the game's animations, which takes a few seconds per piece…";
+            var result = await SaveProportionModAsync(new ProportionSaveRequest(name, profile[0], requests,
+                new Dictionary<string, double>(preset.Settings), preset.Follow));
+            ProportionStatusText.Text = result;
+            Log($"Proportion preset applied to outfits: preset={preset.Name}, outfits={outfits}, pieces={requests.Count}.");
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception) || exception is InvalidOperationException)
+        {
+            ProportionStatusText.Text = $"The preset was not applied: {exception.Message}";
+            Log($"Proportion preset batch failed: {exception}");
+        }
+        finally
+        {
+            _proportionBusy = false;
+            UpdateProportionActions();
+        }
     }
 
     private void UpdateProportionActions()
@@ -131,6 +220,9 @@ public partial class MainWindow
         var selected = ProportionResultsGrid.SelectedItems.OfType<ProportionRow>().ToArray();
         ProportionOpenButton.IsEnabled = !_proportionBusy && _umodelBridge is not null && selected.Length > 0;
         ProportionPreviewButton.IsEnabled = !_proportionBusy && _umodelBridge is not null && selected.Length == 1;
+        ProportionApplyPresetButton.IsEnabled = !_proportionBusy && selected.Length > 0 &&
+            ProportionPresetComboBox.SelectedItem is BodyProportionPreset preset &&
+            selected.All(row => row.Profile.Id == preset.ProfileId);
     }
 
     private void ProportionPreviewButton_Click(object sender, RoutedEventArgs e)
@@ -153,27 +245,10 @@ public partial class MainWindow
         UpdateProportionActions();
         try
         {
-            var requests = new List<BodyProportionPieceRequest>();
-            foreach (var package in selected.GroupBy(row => row.Row.SourcePath, StringComparer.OrdinalIgnoreCase))
-            {
-                // A mod already applied to this package must not be reshaped again: read its clean copy.
-                var clean = await _arkiveModApply.ResolveCleanPackageAsync(package.Key);
-                var names = package.Select(row => row.Row.ObjectName).ToList();
-                if (ProportionWholeOutfitCheckBox.IsChecked == true)
-                {
-                    var stems = names.Select(BodyProfiles.OutfitStem).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var catalogue = await Task.Run(() => new AssetCatalogReader(_reader, _protectionProvider).Read(clean));
-                    names.AddRange(catalogue.Assets
-                        .Where(asset => asset.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase) &&
-                                        BodyProfiles.IsReshapeable(asset.ObjectName) &&
-                                        BodyProfiles.OutfitStem(asset.ObjectName) is { } stem && stems.Contains(stem))
-                        .Select(asset => asset.ObjectName));
-                }
-                foreach (var name in names.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
-                    requests.Add(new BodyProportionPieceRequest(clean, package.First().Row.PackageAlias, name));
-            }
+            var requests = await ProportionRequestsAsync(selected);
             var window = new ProportionEditorWindow(ModelViewerService(), BodyProportionPieces(), requests,
-                Path.Combine(_projectRoot, "cache", "webview2"), _effectiveAppearanceTheme, SaveProportionModAsync, Log)
+                Path.Combine(_projectRoot, "cache", "webview2"), _effectiveAppearanceTheme, SaveProportionModAsync,
+                BodyProportionPresets(), Log)
             {
                 Owner = this,
             };

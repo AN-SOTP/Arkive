@@ -1146,6 +1146,13 @@ function renderProportions() {
 }
 
 host?.addEventListener('message', (event) => {
+  if (event.data?.type === 'setProportionValues' && proportions.message) {
+    proportions.values = { ...event.data.values };
+    proportions.message.values = proportions.values;
+    renderProportions();
+    applyProportions();
+    return;
+  }
   if (event.data?.type === 'proportions') {
     setProportions(event.data).catch((error) => { $('statusbar').textContent = `Could not prepare the sliders: ${error.message}`; });
   }
