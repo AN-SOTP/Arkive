@@ -945,7 +945,9 @@ async function setProportions(message) {
         }
         originalPositions.set(attribute, original);
       }
-      proportions.targets.push({ attribute, entry });
+      // Every mesh section drawing from this buffer contributes its triangles, for turning normals.
+      const sections = meshes.filter((other) => other.geometry.attributes.position === attribute);
+      proportions.targets.push({ attribute, entry, shading: shadingFor(attribute, sections) });
     }
   }
   // Buttons that act on one game object (UModel, colour export) do not apply to a reshaped outfit.
@@ -960,9 +962,103 @@ async function setProportions(message) {
   post({ type: 'proportionsShown', meshes: proportions.targets.length });
 }
 
+// Normals and tangents turn with the reshaped surface, the same way Arkive does when it saves the mod, so the
+// preview's lighting matches the game's. Split vertices share one surface direction per position.
+function shadingFor(attribute, sections) {
+  const geometry = sections[0].geometry;
+  const normal = geometry.attributes.normal;
+  if (!normal) return null;
+  const tangent = geometry.attributes.tangent ?? null;
+  const original = originalPositions.get(attribute);
+  const groups = new Int32Array(attribute.count);
+  const keys = new Map();
+  for (let i = 0; i < attribute.count; i++) {
+    const key = `${Math.round(original[i * 3] * 1e5)},${Math.round(original[i * 3 + 1] * 1e5)},${Math.round(original[i * 3 + 2] * 1e5)}`;
+    let group = keys.get(key);
+    if (group === undefined) { group = keys.size; keys.set(key, group); }
+    groups[i] = group;
+  }
+  const triangles = [];
+  for (const section of sections) {
+    const index = section.geometry.index;
+    if (!index) continue;
+    for (let i = 0; i + 2 < index.count; i += 3) triangles.push(index.getX(i), index.getX(i + 1), index.getX(i + 2));
+  }
+  const copy = (source, size) => {
+    const values = new Float32Array(source.count * size);
+    for (let i = 0; i < source.count; i++) {
+      values[i * size] = source.getX(i); values[i * size + 1] = source.getY(i); values[i * size + 2] = source.getZ(i);
+      if (size === 4) values[i * size + 3] = source.getW(i);
+    }
+    return values;
+  };
+  const shading = { normal, tangent, groups, groupCount: keys.size, triangles: Uint32Array.from(triangles),
+    normals: copy(normal, 3), tangents: tangent ? copy(tangent, 4) : null };
+  shading.oldSurface = surfaceDirections(shading, original);
+  return shading;
+}
+
+function surfaceDirections(shading, positions) {
+  const sums = new Float32Array(shading.groupCount * 3);
+  const { triangles, groups } = shading;
+  for (let t = 0; t < triangles.length; t += 3) {
+    const a = triangles[t] * 3, b = triangles[t + 1] * 3, c = triangles[t + 2] * 3;
+    const ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = positions[b + 2] - positions[a + 2];
+    const vx = positions[c] - positions[a], vy = positions[c + 1] - positions[a + 1], vz = positions[c + 2] - positions[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    for (const corner of [triangles[t], triangles[t + 1], triangles[t + 2]]) {
+      const g = groups[corner] * 3;
+      sums[g] += nx; sums[g + 1] += ny; sums[g + 2] += nz;
+    }
+  }
+  return sums;
+}
+
+const turnFrom = new THREE.Vector3(), turnTo = new THREE.Vector3(), turnVector = new THREE.Vector3();
+const turnQuaternion = new THREE.Quaternion(), identity = new THREE.Quaternion();
+
+function turnNormals(shading, positions) {
+  const newSurface = surfaceDirections(shading, positions);
+  const { oldSurface, groups, normal, tangent, normals, tangents } = shading;
+  const turns = new Array(shading.groupCount);
+  for (let i = 0; i < normal.count; i++) {
+    const g = groups[i];
+    let turn = turns[g];
+    if (turn === undefined) {
+      turnFrom.set(oldSurface[g * 3], oldSurface[g * 3 + 1], oldSurface[g * 3 + 2]);
+      turnTo.set(newSurface[g * 3], newSurface[g * 3 + 1], newSurface[g * 3 + 2]);
+      turn = null;
+      if (turnFrom.lengthSq() > 1e-20 && turnTo.lengthSq() > 1e-20) {
+        turnFrom.normalize(); turnTo.normalize();
+        const dot = turnFrom.dot(turnTo);
+        // As when saving: folded faces stay as they were and no turn exceeds 45 degrees.
+        if (dot >= 0 && dot < 0.999999) {
+          turn = new THREE.Quaternion().setFromUnitVectors(turnFrom, turnTo);
+          const angle = Math.acos(Math.min(1, dot));
+          if (angle > Math.PI / 4) turn.slerpQuaternions(identity, turn.clone(), (Math.PI / 4) / angle);
+        }
+      }
+      turns[g] = turn;
+    }
+    if (turn) turnVector.set(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]).applyQuaternion(turn).normalize();
+    else turnVector.set(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+    normal.setXYZ(i, turnVector.x, turnVector.y, turnVector.z);
+    if (tangent) {
+      turnVector.set(tangents[i * 4], tangents[i * 4 + 1], tangents[i * 4 + 2]);
+      if (turn) turnVector.applyQuaternion(turn).normalize();
+      tangent.setXYZW(i, turnVector.x, turnVector.y, turnVector.z, tangents[i * 4 + 3]);
+    }
+  }
+  for (const attribute of [normal, tangent]) {
+    if (!attribute) continue;
+    if (attribute.isInterleavedBufferAttribute) attribute.data.needsUpdate = true;
+    else attribute.needsUpdate = true;
+  }
+}
+
 function applyProportions() {
   const bases = proportions.bases;
-  for (const { attribute, entry } of proportions.targets) {
+  for (const { attribute, entry, shading } of proportions.targets) {
     const moved = originalPositions.get(attribute).slice();
     for (const [zone, offset] of Object.entries(entry.zones)) {
       const scale = (proportions.values[zone] ?? 0) / 100;
@@ -972,6 +1068,7 @@ function applyProportions() {
     for (let i = 0; i < attribute.count; i++) attribute.setXYZ(i, moved[i * 3], moved[i * 3 + 1], moved[i * 3 + 2]);
     if (attribute.isInterleavedBufferAttribute) attribute.data.needsUpdate = true;
     else attribute.needsUpdate = true;
+    if (shading) turnNormals(shading, moved);
   }
   requestRender();
   for (const zone of proportions.zones) {

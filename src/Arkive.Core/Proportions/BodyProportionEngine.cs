@@ -100,12 +100,16 @@ public static partial class BodyProportionEngine
             if (active.Length == 0) continue;
             var minimum = new Vector3(float.MaxValue);
             var maximum = new Vector3(float.MinValue);
+            var before = new Vector3[view.Count];
+            var after = new Vector3[view.Count];
             for (var vertex = 0; vertex < view.Count; vertex++)
             {
                 var position = new Vector3(container.ReadFloat(view, vertex, 0), container.ReadFloat(view, vertex, 1),
                     container.ReadFloat(view, vertex, 2));
+                before[vertex] = position;
                 foreach (var (offsets, scale) in active)
                     position += new Vector3(offsets[vertex * 3], offsets[vertex * 3 + 1], offsets[vertex * 3 + 2]) * scale;
+                after[vertex] = position;
                 container.WriteFloat(view, vertex, 0, position.X);
                 container.WriteFloat(view, vertex, 1, position.Y);
                 container.WriteFloat(view, vertex, 2, position.Z);
@@ -114,8 +118,111 @@ public static partial class BodyProportionEngine
             }
             view.Accessor["min"] = new JsonArray(minimum.X, minimum.Y, minimum.Z);
             view.Accessor["max"] = new JsonArray(maximum.X, maximum.Y, maximum.Z);
+            TurnNormals(container, meshArray[basis.MeshIndex]!.AsObject(), before, after);
         }
         return container.ToBytes();
+    }
+
+    /// <summary>
+    /// Turns each moved vertex's normal and tangent with the surface around it, so lighting and shadows follow the
+    /// new shape. The surface direction is taken from the faces around each position (split vertices along UV seams
+    /// and hard edges share it), and the stored normal is turned by the same amount the surface turned, which keeps
+    /// the game's own smoothing, hard edges and normal-map alignment.
+    /// </summary>
+    private static void TurnNormals(GlbContainer container, JsonObject mesh, Vector3[] before, Vector3[] after)
+    {
+        var primitives = mesh["primitives"]!.AsArray();
+        var attributes = primitives[0]!["attributes"]!.AsObject();
+        if (attributes["NORMAL"] is null) return;
+        var normals = container.Accessor((int)attributes["NORMAL"]!);
+        var tangents = attributes["TANGENT"] is null ? null : container.Accessor((int)attributes["TANGENT"]!);
+        if (normals.ComponentType != 5126 || normals.Count != before.Length) return;
+        if (tangents is not null && (tangents.ComponentType != 5126 || tangents.Count != before.Length)) tangents = null;
+
+        // Split vertices share a position; give them one surface direction.
+        var groups = new int[before.Length];
+        var keys = new Dictionary<(int, int, int), int>();
+        for (var vertex = 0; vertex < before.Length; vertex++)
+        {
+            var p = before[vertex];
+            var key = ((int)MathF.Round(p.X * 1e5f), (int)MathF.Round(p.Y * 1e5f), (int)MathF.Round(p.Z * 1e5f));
+            if (!keys.TryGetValue(key, out var group)) keys[key] = group = keys.Count;
+            groups[vertex] = group;
+        }
+        var oldSurface = new Vector3[keys.Count];
+        var newSurface = new Vector3[keys.Count];
+        var moved = new bool[keys.Count];
+        for (var vertex = 0; vertex < before.Length; vertex++)
+            if (Vector3.DistanceSquared(before[vertex], after[vertex]) > 1e-12f) moved[groups[vertex]] = true;
+        foreach (var primitive in primitives)
+        {
+            if (primitive?["indices"] is null) continue;
+            var indices = container.Accessor((int)primitive["indices"]!);
+            for (var corner = 0; corner + 2 < indices.Count; corner += 3)
+            {
+                var a = container.ReadInt(indices, corner, 0);
+                var b = container.ReadInt(indices, corner + 1, 0);
+                var c = container.ReadInt(indices, corner + 2, 0);
+                if (a >= before.Length || b >= before.Length || c >= before.Length) continue;
+                if (!moved[groups[a]] && !moved[groups[b]] && !moved[groups[c]]) continue;
+                // Area-weighted face directions.
+                var oldFace = Vector3.Cross(before[b] - before[a], before[c] - before[a]);
+                var newFace = Vector3.Cross(after[b] - after[a], after[c] - after[a]);
+                foreach (var corner3 in new[] { a, b, c })
+                {
+                    oldSurface[groups[corner3]] += oldFace;
+                    newSurface[groups[corner3]] += newFace;
+                }
+            }
+        }
+        for (var vertex = 0; vertex < before.Length; vertex++)
+        {
+            var group = groups[vertex];
+            if (!moved[group]) continue;
+            var from = oldSurface[group];
+            var to = newSurface[group];
+            if (from.LengthSquared() < 1e-20f || to.LengthSquared() < 1e-20f) continue;
+            from = Vector3.Normalize(from);
+            to = Vector3.Normalize(to);
+            // Tiny or folded faces (stitching, buckles) can flip while barely moving; leave those as they were and
+            // limit any turn to 45 degrees.
+            var dot = Vector3.Dot(from, to);
+            if (dot < 0) continue;
+            var turn = Quaternion.Slerp(Quaternion.Identity, Turn(from, to), Math.Min(1f, (MathF.PI / 4) / MathF.Acos(Math.Min(1f, dot)) ));
+            var normal = new Vector3(container.ReadFloat(normals, vertex, 0), container.ReadFloat(normals, vertex, 1),
+                container.ReadFloat(normals, vertex, 2));
+            if (normal.LengthSquared() > 1e-12f)
+            {
+                normal = Vector3.Normalize(Vector3.Transform(normal, turn));
+                container.WriteFloat(normals, vertex, 0, normal.X);
+                container.WriteFloat(normals, vertex, 1, normal.Y);
+                container.WriteFloat(normals, vertex, 2, normal.Z);
+            }
+            if (tangents is null) continue;
+            var tangent = new Vector3(container.ReadFloat(tangents, vertex, 0), container.ReadFloat(tangents, vertex, 1),
+                container.ReadFloat(tangents, vertex, 2));
+            if (tangent.LengthSquared() <= 1e-12f) continue;
+            tangent = Vector3.Normalize(Vector3.Transform(tangent, turn));
+            container.WriteFloat(tangents, vertex, 0, tangent.X);
+            container.WriteFloat(tangents, vertex, 1, tangent.Y);
+            container.WriteFloat(tangents, vertex, 2, tangent.Z);
+        }
+    }
+
+    /// <summary>The smallest rotation that turns unit vector <paramref name="from"/> onto <paramref name="to"/>.</summary>
+    private static Quaternion Turn(Vector3 from, Vector3 to)
+    {
+        var dot = Vector3.Dot(from, to);
+        if (dot > 0.999999f) return Quaternion.Identity;
+        if (dot < -0.999999f)
+        {
+            // Opposite directions: any axis at right angles to them.
+            var axis = Vector3.Cross(Vector3.UnitX, from);
+            if (axis.LengthSquared() < 1e-6f) axis = Vector3.Cross(Vector3.UnitY, from);
+            return Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), MathF.PI);
+        }
+        var cross = Vector3.Cross(from, to);
+        return Quaternion.Normalize(new Quaternion(cross, 1 + dot));
     }
 
     /// <summary>True when every setting is zero, so applying them would change nothing.</summary>
