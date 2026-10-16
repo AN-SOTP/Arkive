@@ -336,6 +336,16 @@ internal static class ViewerSmokeTests
         var key = ModelViewerCache.Key(package, 5, "mesh_sk", 1);
         File.SetLastWriteTimeUtc(package, DateTime.UtcNow.AddMinutes(1));
         Assert(key != ModelViewerCache.Key(package, 5, "mesh_sk", 1), "the cache key ignored a changed package");
+        var moved = ModelViewerCache.Key(package, 5, "mesh_sk", 1);
+        Assert(moved == ModelViewerCache.Key(package, 5, "mesh_sk", 1, fixtureDirectory),
+            "searching the package's own folder changed the cache key");
+        Assert(moved != ModelViewerCache.Key(package, 5, "mesh_sk", 1, Path.Combine(fixtureDirectory, "game", "Packages")),
+            "the cache key ignored a different folder for linked packages");
+        Assert(ModelViewerEnvironmentService.SkyLabel("lv_dynamicskypack03_02_d") == "Sky 3-2" &&
+               ModelViewerEnvironmentService.SkyLabel("lv_auroraskies_04_d") == "Aurora 4" &&
+               ModelViewerEnvironmentService.SkyLabel("lv_chaotic_skies_iii_02_d") == "Chaotic III 2" &&
+               ModelViewerEnvironmentService.SkyLabel("lv_chaotic_sky_ii_01") == "Chaotic II 1",
+            "game skies were not given readable names");
         var cache = new ModelViewerCache(root, 64L << 20);
         for (var i = 0; i < 3; i++)
         {

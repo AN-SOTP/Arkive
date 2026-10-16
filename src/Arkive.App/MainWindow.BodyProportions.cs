@@ -151,7 +151,7 @@ public partial class MainWindow
                     .Select(asset => asset.ObjectName));
             }
             foreach (var name in names.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
-                requests.Add(new BodyProportionPieceRequest(clean, package.First().Row.PackageAlias, name));
+                requests.Add(new BodyProportionPieceRequest(clean, package.First().Row.PackageAlias, name, Path.GetDirectoryName(package.Key)));
         }
         return requests;
     }

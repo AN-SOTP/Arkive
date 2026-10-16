@@ -97,7 +97,7 @@ public sealed class ModelViewerSceneService
         IProgress<ModelViewerProgress>? progress,
         CancellationToken cancellationToken)
     {
-        var key = ModelViewerCache.Key(request.PackagePath, request.ExportIndex, request.ObjectName, CurrentSchemaVersion);
+        var key = ModelViewerCache.Key(request.PackagePath, request.ExportIndex, request.ObjectName, CurrentSchemaVersion, request.PackageSearchRoot);
         var directory = _cache.DirectoryFor(key);
         var scenePath = Path.Combine(directory, "scene.json");
         if (_cache.IsReady(key))
@@ -134,7 +134,7 @@ public sealed class ModelViewerSceneService
         // UModel cannot read every object; Arkive's own decoder may still show its geometry.
         var exportTask = Tolerate(_bridge.ExportForViewerAsync(request.PackagePath, asset,
             Path.Combine(directory, UmodelFolder), request.PackageSearchRoot, cancellationToken));
-        var dumpTask = Tolerate(_bridge.DumpObjectAsync(request.PackagePath, asset, cancellationToken));
+        var dumpTask = Tolerate(_bridge.DumpObjectAsync(request.PackagePath, asset, cancellationToken, request.PackageSearchRoot));
         await Task.WhenAll(exportTask, dumpTask).ConfigureAwait(false);
         var (exported, exportFailure) = await exportTask.ConfigureAwait(false);
         var (dumped, dumpFailure) = await dumpTask.ConfigureAwait(false);

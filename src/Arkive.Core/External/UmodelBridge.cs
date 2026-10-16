@@ -283,6 +283,41 @@ public sealed partial class UmodelBridge
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    /// <summary>Exports every texture in a package as PNG files (in one UModel run).</summary>
+    public async Task<IReadOnlyList<string>> ExportPackageTexturesAsync(
+        string packagePath,
+        string outputDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        var fullPackagePath = ValidatePackage(packagePath);
+        var fullOutputDirectory = Path.GetFullPath(outputDirectory);
+        Directory.CreateDirectory(fullOutputDirectory);
+        var result = await RunAsync(
+            ["-export", .. CommonArguments(resolvePackageNames: false), $"-out={fullOutputDirectory}", "-png", fullPackagePath],
+            DefaultTimeout, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0) throw CreateProcessException("export textures", result);
+        return Directory.EnumerateFiles(fullOutputDirectory, "*.png", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    /// <summary>Exports a skeletal mesh as ActorX .psk without its materials, for UModel's view of its skeleton.</summary>
+    public async Task<string> ExportSkeletonAsync(
+        string packagePath,
+        string meshName,
+        string outputDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        var fullPackagePath = ValidatePackage(packagePath);
+        var fullOutputDirectory = Path.GetFullPath(outputDirectory);
+        Directory.CreateDirectory(fullOutputDirectory);
+        var result = await RunAsync(
+            ["-export", .. CommonArguments(resolvePackageNames: false), "-notex", $"-out={fullOutputDirectory}", fullPackagePath, meshName],
+            DefaultTimeout, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0) throw CreateProcessException($"export the skeleton of {meshName}", result);
+        return Directory.EnumerateFiles(fullOutputDirectory, "*.psk*", SearchOption.AllDirectories).FirstOrDefault()
+            ?? throw new UmodelBridgeException($"UModel did not export {meshName} as .psk.");
+    }
+
     public Process StartPreview(string packagePath)
     {
         var fullPackagePath = ValidatePackage(packagePath);
@@ -419,15 +454,21 @@ public sealed partial class UmodelBridge
     public async Task<UmodelObjectDumpResult> DumpObjectAsync(
         string packagePath,
         UmodelAssetEntry asset,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? packageSearchRoot = null)
     {
         ArgumentNullException.ThrowIfNull(asset);
         var fullPackagePath = ValidatePackage(packagePath);
         var stopwatch = Stopwatch.StartNew();
+        // Linked objects (materials) resolve only when UModel searches the folder their packages are in.
+        string[] searchPath = !string.IsNullOrWhiteSpace(packageSearchRoot) && Directory.Exists(packageSearchRoot)
+            ? [$"-path={Path.GetFullPath(packageSearchRoot)}"]
+            : [];
         var result = await RunAsync(
             [
                 "-dump",
                 .. CommonArguments(resolvePackageNames: false),
+                .. searchPath,
                 fullPackagePath,
                 asset.ObjectName,
             ],

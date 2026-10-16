@@ -40,7 +40,7 @@ public partial class ModelViewerWindow : Window
     public Func<CancellationToken, Task<ModelViewerEnvironmentSet?>>? Environments { get; init; }
 
     /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
-    public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationSet?>>? Animations { get; init; }
+    public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationOffer?>>? Animations { get; init; }
 
     private string SceneCacheRoot => _service.Cache.RootDirectory;
 
@@ -154,6 +154,9 @@ public partial class ModelViewerWindow : Window
                 type = "environments",
                 baseUrl = $"https://{SceneHost}/{folder}/",
                 environments = set.Environments.Select(item => new { name = item.Name, label = item.Label, faces = item.Faces }),
+                skyBaseUrl = set.Skies is null ? null
+                    : $"https://{SceneHost}/{Path.GetRelativePath(SceneCacheRoot, set.Skies.Directory).Replace('\\', '/')}/",
+                skies = (set.Skies?.Skies ?? []).Select(item => new { name = item.Name, label = item.Label, file = item.File }),
             });
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -172,8 +175,11 @@ public partial class ModelViewerWindow : Window
         try
         {
             Post(new { type = "animationsStatus", text = "Preparing animations…" });
-            var set = await Animations(request, cancellationToken);
+            var offer = await Animations(request, cancellationToken);
+            // A cached set can be ready before the page is; messages sent before then are lost.
+            await _pageReadyTask.Task.WaitAsync(cancellationToken);
             if (cancellationToken.IsCancellationRequested) return;
+            var set = offer?.Set;
             if (set is null)
             {
                 Post(new { type = "animationsStatus", text = "" });
@@ -186,6 +192,7 @@ public partial class ModelViewerWindow : Window
                 baseUrl = $"https://{SceneHost}/{folder}/",
                 animSet = set.AnimSetName,
                 bones = set.Bones,
+                restPose = $"https://{SceneHost}/{folder}/{offer!.RestPoseFile}",
                 animations = set.Animations.Select(item => new { name = item.Name, group = item.Group, frames = item.Frames, rate = item.Rate, file = item.File }),
             });
         }
@@ -356,6 +363,7 @@ public partial class ModelViewerWindow : Window
         {
             case "ready":
                 _pageReady = true;
+                _pageReadyTask.TrySetResult();
                 _ = OfferEnvironmentsAsync();
                 if (_pendingLoadMessage is not null)
                 {
@@ -398,6 +406,8 @@ public partial class ModelViewerWindow : Window
                 break;
         }
     }
+
+    private readonly TaskCompletionSource _pageReadyTask = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private void Post(object message)
     {

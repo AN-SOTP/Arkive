@@ -22,12 +22,18 @@ public sealed class ModelViewerCache
     public string RootDirectory { get; }
     public long MaximumBytes { get; }
 
-    /// <summary>A key that changes whenever the source package file changes.</summary>
-    public static string Key(string packagePath, int exportIndex, string objectName, int schemaVersion)
+    /// <summary>
+    /// A key that changes whenever the source package file changes, or the folder its linked packages are searched in
+    /// (when that is not the package's own folder, as for a clean backup copy).
+    /// </summary>
+    public static string Key(string packagePath, int exportIndex, string objectName, int schemaVersion, string? searchRoot = null)
     {
         var file = new FileInfo(packagePath);
         var identity = string.Join('|', Path.GetFullPath(packagePath).ToUpperInvariant(), file.Length,
             file.LastWriteTimeUtc.Ticks, exportIndex, objectName.ToUpperInvariant(), schemaVersion);
+        if (searchRoot is not null && !string.Equals(Path.GetFullPath(searchRoot).TrimEnd('\\', '/'),
+                Path.GetDirectoryName(Path.GetFullPath(packagePath)), StringComparison.OrdinalIgnoreCase))
+            identity += "|" + Path.GetFullPath(searchRoot).ToUpperInvariant();
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))[..20];
         var safe = new string(objectName.Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
         return $"{safe[..Math.Min(48, safe.Length)]}-{hash}";

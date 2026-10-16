@@ -38,7 +38,7 @@ public partial class ProportionEditorWindow : Window
     public Func<CancellationToken, Task<ModelViewerEnvironmentSet?>>? Environments { get; init; }
 
     /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
-    public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationSet?>>? Animations { get; init; }
+    public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationOffer?>>? Animations { get; init; }
 
     private string SceneCacheRoot => _scenes.Cache.RootDirectory;
 
@@ -259,6 +259,9 @@ public partial class ProportionEditorWindow : Window
                 type = "environments",
                 baseUrl = $"https://{SceneHost}/{folder}/",
                 environments = set.Environments.Select(item => new { name = item.Name, label = item.Label, faces = item.Faces }),
+                skyBaseUrl = set.Skies is null ? null
+                    : $"https://{SceneHost}/{Path.GetRelativePath(SceneCacheRoot, set.Skies.Directory).Replace('\\', '/')}/",
+                skies = (set.Skies?.Skies ?? []).Select(item => new { name = item.Name, label = item.Label, file = item.File }),
             });
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -277,8 +280,9 @@ public partial class ProportionEditorWindow : Window
         try
         {
             Post(new { type = "animationsStatus", text = "Preparing animations…" });
-            var set = await Animations(request, cancellationToken);
+            var offer = await Animations(request, cancellationToken);
             if (cancellationToken.IsCancellationRequested) return;
+            var set = offer?.Set;
             if (set is null)
             {
                 Post(new { type = "animationsStatus", text = "" });
@@ -291,6 +295,7 @@ public partial class ProportionEditorWindow : Window
                 baseUrl = $"https://{SceneHost}/{folder}/",
                 animSet = set.AnimSetName,
                 bones = set.Bones,
+                restPose = $"https://{SceneHost}/{folder}/{offer!.RestPoseFile}",
                 animations = set.Animations.Select(item => new { name = item.Name, group = item.Group, frames = item.Frames, rate = item.Rate, file = item.File }),
             });
         }

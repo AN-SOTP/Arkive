@@ -9,7 +9,16 @@ namespace Arkive.Core.Viewer;
 /// <summary>One of the game's environment cubemaps, as six PNG faces in the viewer's (three.js) order: +X, -X, +Y, -Y, +Z, -Z.</summary>
 public sealed record ModelViewerEnvironment(string Name, string Label, IReadOnlyList<string> Faces);
 
-public sealed record ModelViewerEnvironmentSet(string Directory, IReadOnlyList<ModelViewerEnvironment> Environments);
+/// <param name="Skies">The game's sky backgrounds, when found (they live in another package).</param>
+public sealed record ModelViewerEnvironmentSet(string Directory, IReadOnlyList<ModelViewerEnvironment> Environments, ModelViewerSkySet? Skies = null);
+
+/// <summary>
+/// One of the game's sky backgrounds: a single texture wrapping once around the horizon, zenith at the top and the
+/// horizon near the bottom (the upper half of a panorama).
+/// </summary>
+public sealed record ModelViewerSky(string Name, string Label, string File);
+
+public sealed record ModelViewerSkySet(string Directory, IReadOnlyList<ModelViewerSky> Skies);
 
 /// <summary>
 /// The environment cubemaps the game lights characters with (package efpbrenvcubemaps: reflections and sky light
@@ -64,6 +73,57 @@ public sealed partial class ModelViewerEnvironmentService(UmodelBridge bridge, s
         Directory.Move(staging, directory);
         return set;
     }
+
+    /// <summary>
+    /// The sky backgrounds of the game's dynamic sky package (lv_dynamicsky), exported once as PNGs and cached per
+    /// package version. Zenith caps ("top") are left out; each other texture is a whole sky.
+    /// </summary>
+    public async Task<ModelViewerSkySet> PrepareSkiesAsync(string packagePath, CancellationToken cancellationToken = default)
+    {
+        var package = new FileInfo(packagePath);
+        if (!package.Exists) throw new FileNotFoundException("The sky package was not found.", packagePath);
+        var key = System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"skies|{package.FullName}|{package.Length}|{package.LastWriteTimeUtc.Ticks}|{FormatVersion}")))[..24];
+        var directory = Path.Combine(CacheRoot, "skies-" + key);
+        var indexPath = Path.Combine(directory, "skies.json");
+        if (File.Exists(indexPath) &&
+            JsonSerializer.Deserialize<ModelViewerSkySet>(await File.ReadAllTextAsync(indexPath, cancellationToken)
+                .ConfigureAwait(false), Json) is { } cached)
+            return cached with { Directory = directory };
+
+        var staging = directory + ".tmp";
+        if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        var files = await bridge.ExportPackageTexturesAsync(package.FullName, staging, cancellationToken).ConfigureAwait(false);
+        var skies = files
+            .Select(file => (File: file, Name: Path.GetFileNameWithoutExtension(file)))
+            .Where(item => !item.Name.Contains("top", StringComparison.OrdinalIgnoreCase))
+            .Select(item => new ModelViewerSky(item.Name, SkyLabel(item.Name), Path.GetRelativePath(staging, item.File).Replace('\\', '/')))
+            .OrderBy(sky => sky.Label, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var set = new ModelViewerSkySet(directory, skies);
+        await File.WriteAllTextAsync(Path.Combine(staging, "skies.json"), JsonSerializer.Serialize(set, Json), cancellationToken)
+            .ConfigureAwait(false);
+        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        Directory.Move(staging, directory);
+        return set;
+    }
+
+    /// <summary>lv_dynamicskypack03_02_d → Sky 3-2, lv_auroraskies_04_d → Aurora 4, lv_chaotic_skies_iii_02_d → Chaotic III 2.</summary>
+    public static string SkyLabel(string name)
+    {
+        var lower = name.ToLowerInvariant();
+        var pack = SkyPack().Match(lower);
+        if (pack.Success) return $"Sky {int.Parse(pack.Groups[1].Value)}-{int.Parse(pack.Groups[2].Value)}";
+        var words = lower.Replace("lv_", "").Replace("_d", " ").Replace("skies", "").Replace("sky", "")
+            .Split('_', ' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(word => word is "ii" or "iii" or "iv" ? word.ToUpperInvariant()
+                : char.IsDigit(word[0]) ? int.Parse(word).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : char.ToUpperInvariant(word[0]) + word[1..]);
+        return string.Join(' ', words);
+    }
+
+    [GeneratedRegex(@"^lv_dynamicskypack(\d+)_(\d+)")]
+    private static partial Regex SkyPack();
 
     /// <summary>A readable name: pbr_cubemap_03 → Game environment 3, pbr_cubemap_env_01 → Game sky 1, pbr_khargh_ed_02_cubemap_00 → Khargh ed 02.</summary>
     public static string Label(string name)

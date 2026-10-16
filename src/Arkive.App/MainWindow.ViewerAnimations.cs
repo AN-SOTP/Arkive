@@ -47,7 +47,8 @@ public partial class MainWindow
             _viewerEnvironments ??= new ModelViewerEnvironmentService(_umodelBridge,
                 Path.Combine(ModelViewerService().Cache.RootDirectory, "environments"));
             var set = await _viewerEnvironments.PrepareAsync(match.SourcePath, names);
-            Log($"Viewer environments ready: {set.Environments.Count} game cubemaps in {set.Directory}.");
+            set = set with { Skies = await PrepareViewerSkiesAsync() };
+            Log($"Viewer environments ready: {set.Environments.Count} game cubemaps in {set.Directory}, {set.Skies?.Skies.Count ?? 0} skies.");
             return set;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -58,8 +59,28 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>The game's sky backgrounds (package lv_dynamicsky), or null when they can't be found or exported.</summary>
+    private async Task<ModelViewerSkySet?> PrepareViewerSkiesAsync()
+    {
+        try
+        {
+            const string probe = "lv_dynamicskypack01_01_d";
+            var found = await _packageIndexStore.SearchAsync(_libraryRootPath!, probe, null, _gameMetadataIndex,
+                PackageIndexSearchScope.ObjectName, null, resultLimit: 50);
+            var match = found.Matches.FirstOrDefault(item => item.PackageAlias.Equals("lv_dynamicsky", StringComparison.OrdinalIgnoreCase) &&
+                                                             item.ObjectName.Equals(probe, StringComparison.OrdinalIgnoreCase));
+            if (match is null || !File.Exists(match.SourcePath)) return null;
+            return await _viewerEnvironments!.PrepareSkiesAsync(match.SourcePath);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Log($"Viewer skies unavailable: {exception.Message}");
+            return null;
+        }
+    }
+
     /// <summary>Null when the mesh has no animations Arkive can find.</summary>
-    private async Task<ModelViewerAnimationSet?> FindViewerAnimationsAsync(ModelViewerRequest request, CancellationToken cancellationToken)
+    private async Task<ModelViewerAnimationOffer?> FindViewerAnimationsAsync(ModelViewerRequest request, CancellationToken cancellationToken)
     {
         if (_umodelBridge is null || !request.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase)) return null;
         var profile = BodyProfiles.ForObjectName(request.ObjectName);
@@ -86,7 +107,8 @@ public partial class MainWindow
             (package, animSet) = (request.PackagePath, own.ObjectName);
         }
         var set = await ViewerAnimations().PrepareAsync(package, animSet!, keepAll: profile is null || profile.IsNpc, cancellationToken);
-        Log($"Viewer animations ready: animset={set.AnimSetName}, animations={set.Animations.Count}, folder={set.Directory}.");
-        return set;
+        var rest = await ViewerAnimations().PrepareRestPoseAsync(set, request.PackagePath, request.ObjectName, cancellationToken);
+        Log($"Viewer animations ready: animset={set.AnimSetName}, animations={set.Animations.Count}, folder={set.Directory}, rest={rest}.");
+        return new ModelViewerAnimationOffer(set, rest);
     }
 }

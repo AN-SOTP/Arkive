@@ -12,7 +12,9 @@ using Arkive.Core.Viewer;
 namespace Arkive.Core.Proportions;
 
 /// <summary>One outfit piece to reshape, read from its clean (unmodded) package.</summary>
-public sealed record BodyProportionPieceRequest(string CleanPackagePath, string PackageAlias, string ObjectName);
+/// <param name="PackageSearchRoot">The game's Packages folder, where the piece's materials, textures and shader cache are
+/// found. The clean package can be a backup copy outside it (when the game file carries a mod).</param>
+public sealed record BodyProportionPieceRequest(string CleanPackagePath, string PackageAlias, string ObjectName, string? PackageSearchRoot = null);
 
 /// <summary>An outfit piece ready for the proportion editor: its editable GLB and the viewer request for its materials.</summary>
 public sealed record BodyProportionPiece(
@@ -46,7 +48,7 @@ public sealed class BodyProportionPieceService(
         if (matches.Length != 1)
             throw new InvalidDataException($"{request.ObjectName} is missing or appears more than once in {package.Name}.");
         var export = matches[0];
-        var viewerRequest = new ModelViewerRequest(package.FullName, request.PackageAlias, package.DirectoryName, export.ExportIndex,
+        var viewerRequest = new ModelViewerRequest(package.FullName, request.PackageAlias, request.PackageSearchRoot ?? package.DirectoryName, export.ExportIndex,
             export.SerialOffset, export.SerialSize, export.ClassName, export.ObjectName);
 
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(

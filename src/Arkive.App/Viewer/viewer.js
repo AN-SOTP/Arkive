@@ -1165,7 +1165,10 @@ window.arkiveProportions = { proportions, setZone };
 
 // Animation preview: plays the character's own game animations (prepared by Arkive from its AnimSet) on every
 // skeleton in the view, so clipping shows in motion. Rest pose puts every bone back where the mesh binds it.
-const animation = { base: '', list: [], clip: null, playing: true, time: 0, speed: 1, rest: null, last: 0 };
+// UModel exports some bones (pelvis, arms, hands) with a different resting frame from the one the mesh binds, so each
+// bone carries a fixed correction C = inverse(UModel rest world) * mesh rest world, and a key's local transform L
+// becomes inverse(C of parent) * L * C. At rest that gives the mesh's own pose; in motion the bone turns as in game.
+const animation = { base: '', list: [], clip: null, playing: true, time: 0, speed: 1, rest: null, last: 0, restPose: null, restUrl: '' };
 
 function animationBones() {
   const byName = new Map();
@@ -1182,12 +1185,36 @@ function rememberRestPose() {
   if (animation.rest) return;
   animation.rest = [];
   state.model?.traverse((object) => {
-    if (object.isBone) animation.rest.push([object, object.quaternion.clone(), object.position.clone()]);
+    if (object.isBone) animation.rest.push([object, object.quaternion.clone(), object.position.clone(), object.scale.clone()]);
   });
+  // Corrections per bone object, from the mesh's rest locals and UModel's rest locals (by bone name).
+  const local = new Map(), umodel = new Map();
+  for (const [bone, quaternion, position, scale] of animation.rest) {
+    local.set(bone, new THREE.Matrix4().compose(position, quaternion, scale));
+    const key = animation.restPose?.[bone.name.replace(/__ARKIVE_\d+$/, '')];
+    umodel.set(bone, key
+      ? new THREE.Matrix4().compose(new THREE.Vector3(key[4], key[5], key[6]), new THREE.Quaternion(key[0], key[1], key[2], key[3]).normalize(), new THREE.Vector3(1, 1, 1))
+      : local.get(bone));
+  }
+  const meshWorld = new Map(), umodelWorld = new Map();
+  const worldOf = (bone, locals, cache) => {
+    if (cache.has(bone)) return cache.get(bone);
+    const parent = bone.parent?.isBone && locals.has(bone.parent) ? worldOf(bone.parent, locals, cache) : null;
+    const world = parent ? parent.clone().multiply(locals.get(bone)) : locals.get(bone).clone();
+    cache.set(bone, world);
+    return world;
+  };
+  animation.correction = new Map();
+  animation.correctionInverse = new Map();
+  for (const [bone] of animation.rest) {
+    const correction = worldOf(bone, umodel, umodelWorld).clone().invert().multiply(worldOf(bone, local, meshWorld));
+    animation.correction.set(bone, correction);
+    animation.correctionInverse.set(bone, correction.clone().invert());
+  }
 }
 
 function restorePose() {
-  for (const [bone, quaternion, position] of animation.rest ?? []) { bone.quaternion.copy(quaternion); bone.position.copy(position); }
+  for (const [bone, quaternion, position, scale] of animation.rest ?? []) { bone.quaternion.copy(quaternion); bone.position.copy(position); bone.scale.copy(scale); }
   requestRender();
 }
 
@@ -1210,6 +1237,8 @@ function parseClip(buffer, info) {
 }
 
 const poseA = new THREE.Quaternion(), poseB = new THREE.Quaternion();
+const poseKey = new THREE.Matrix4(), poseLocal = new THREE.Matrix4(), poseOne = new THREE.Vector3(1, 1, 1), posePosition = new THREE.Vector3();
+const identityMatrix = new THREE.Matrix4();
 
 function poseAt(time) {
   const clip = animation.clip;
@@ -1228,7 +1257,12 @@ function poseAt(time) {
     const x = p[pa * 3] + (p[pb * 3] - p[pa * 3]) * blend;
     const y = p[pa * 3 + 1] + (p[pb * 3 + 1] - p[pa * 3 + 1]) * blend;
     const z = p[pa * 3 + 2] + (p[pb * 3 + 2] - p[pa * 3 + 2]) * blend;
-    for (const bone of bones) { bone.quaternion.copy(poseA); bone.position.set(x, y, z); }
+    poseKey.compose(posePosition.set(x, y, z), poseA, poseOne);
+    for (const bone of bones) {
+      const parent = bone.parent?.isBone ? animation.correctionInverse.get(bone.parent) ?? identityMatrix : identityMatrix;
+      poseLocal.copy(parent).multiply(poseKey).multiply(animation.correction.get(bone) ?? identityMatrix);
+      poseLocal.decompose(bone.position, bone.quaternion, bone.scale);
+    }
   }
   requestRender();
 }
@@ -1253,6 +1287,10 @@ async function playAnimation(file) {
     return;
   }
   $('animationStatus').textContent = `Loading ${info.name}…`;
+  if (!animation.restPose && animation.restUrl) {
+    animation.restPose = await (await fetch(animation.restUrl)).json();
+    animation.rest = null;
+  }
   const clip = parseClip(await (await fetch(animation.base + file)).arrayBuffer(), info);
   rememberRestPose();
   const byName = animationBones();
@@ -1273,6 +1311,8 @@ function showAnimations(message) {
   animation.base = message.baseUrl;
   animation.list = message.animations;
   animation.bones = message.bones;
+  if (animation.restUrl !== (message.restPose ?? '')) { animation.restPose = null; animation.rest = null; }
+  animation.restUrl = message.restPose ?? '';
   const select = $('animationSelect');
   const groups = new Map();
   for (const item of message.animations) {
@@ -1307,10 +1347,12 @@ window.arkiveAnimation = { animation, playAnimation, poseAt };
 
 // Game environment lighting: one of the game's own environment cubemaps (the reflections and sky light it uses for
 // characters) lights the model and can be shown as the background, with a sun that can be moved, recoloured and
-// dimmed. Shift-drag in the view moves the sun.
+// dimmed. Shift-drag in the view moves the sun. One of the game's skies (lv_dynamicsky: each texture wraps once around
+// the horizon, zenith at the top) can be shown behind the model and, optionally, light it.
 const lighting = {
   environments: [], base: '', name: '', background: false, blur: 0.35, rotation: 0, brightness: 1,
   sunAzimuth: 45, sunElevation: 40, sunIntensity: 1.7, sunColour: '#fff4e6', texture: null, cubes: new Map(), pending: 0,
+  skies: [], skyBase: '', sky: '', skyLight: false, skyHorizon: -8, skyTextures: new Map(), skyReady: false,
 };
 const pmrem = new THREE.PMREMGenerator(renderer);
 const environmentScene = new THREE.Scene();
@@ -1328,6 +1370,29 @@ const environmentMaterial = new THREE.ShaderMaterial({
     }`,
 });
 environmentScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 64, 32), environmentMaterial));
+
+const skyScene = new THREE.Scene();
+const skyMaterial = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  depthWrite: false,
+  uniforms: { map: { value: null }, rotation: { value: 0 }, brightness: { value: 1 }, horizon: { value: 0 } },
+  vertexShader: 'varying vec3 vDirection; void main() { vDirection = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D map; uniform float rotation; uniform float brightness; uniform float horizon; varying vec3 vDirection;
+    void main() {
+      vec3 d = normalize(vDirection);
+      float c = cos(rotation), s = sin(rotation);
+      d = vec3(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
+      float elevation = asin(clamp(d.y, -1.0, 1.0));
+      float v = clamp((elevation - horizon) / (1.5707963 - horizon), 0.0, 1.0);
+      vec3 colour = texture2D(map, vec2(atan(d.z, d.x) / 6.2831853 + 0.5, v)).rgb;
+      // Below the sky's horizon: its lowest row, darkening towards the ground.
+      colour *= mix(0.35, 1.0, clamp(1.0 + (elevation - horizon) * 3.0, 0.0, 1.0));
+      gl_FragColor = vec4(colour * brightness, 1.0);
+    }`,
+});
+skyScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 64, 32), skyMaterial));
+const skyTarget = new THREE.WebGLCubeRenderTarget(1024);
+const skyCamera = new THREE.CubeCamera(0.1, 100, skyTarget);
 
 const lightingPresets = {
   daylight: { label: 'Daylight', name: 'pbr_cubemap_env_00', sunAzimuth: 45, sunElevation: 45, sunIntensity: 1.7, sunColour: '#fff4e6', brightness: 1 },
@@ -1349,15 +1414,45 @@ function cubeFor(name) {
   });
 }
 
+function skyFor(name) {
+  if (lighting.skyTextures.has(name)) return Promise.resolve(lighting.skyTextures.get(name));
+  const entry = lighting.skies.find((item) => item.name === name);
+  if (!entry) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const texture = new THREE.TextureLoader().load(lighting.skyBase + entry.file, () => {
+      lighting.skyTextures.set(name, texture);
+      resolve(texture);
+    }, undefined, reject);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    // No mipmaps: the wrap seam would otherwise show as a line.
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+  });
+}
+
 async function rebuildEnvironment() {
   const ticket = ++lighting.pending;
   const cube = lighting.name ? await cubeFor(lighting.name) : null;
+  const sky = lighting.sky ? await skyFor(lighting.sky) : null;
   if (ticket !== lighting.pending) return;
   lighting.texture?.dispose();
   lighting.texture = null;
-  if (cube) {
+  lighting.skyReady = false;
+  const rotation = THREE.MathUtils.degToRad(lighting.rotation);
+  if (sky) {
+    skyMaterial.uniforms.map.value = sky;
+    skyMaterial.uniforms.rotation.value = rotation;
+    skyMaterial.uniforms.brightness.value = lighting.brightness;
+    skyMaterial.uniforms.horizon.value = THREE.MathUtils.degToRad(lighting.skyHorizon);
+    skyCamera.update(renderer, skyScene);
+    lighting.skyReady = true;
+  }
+  if (sky && lighting.skyLight) {
+    lighting.texture = pmrem.fromScene(skyScene, 0, 0.1, 100).texture;
+  } else if (cube) {
     environmentMaterial.uniforms.map.value = cube;
-    environmentMaterial.uniforms.rotation.value = THREE.MathUtils.degToRad(lighting.rotation);
+    environmentMaterial.uniforms.rotation.value = rotation;
     environmentMaterial.uniforms.brightness.value = lighting.brightness;
     lighting.texture = pmrem.fromScene(environmentScene, 0, 0.1, 100).texture;
   }
@@ -1377,7 +1472,7 @@ function applyGameLighting() {
   lights.key.color.set(lighting.sunColour);
   lights.key.position.copy(sunDirection());
   world.environment = lighting.texture ?? environment;
-  world.background = lighting.background && lighting.texture ? lighting.texture : null;
+  world.background = lighting.skyReady ? skyTarget.texture : lighting.background && lighting.texture ? lighting.texture : null;
   world.backgroundBlurriness = lighting.blur;
 }
 
@@ -1395,7 +1490,7 @@ function setLighting(changes, source) {
     $('lightSelect').value = 'game';
   }
   renderLighting(source);
-  if ('name' in changes || 'rotation' in changes || 'brightness' in changes) rebuildEnvironment();
+  if (['name', 'rotation', 'brightness', 'sky', 'skyLight', 'skyHorizon'].some((key) => key in changes)) rebuildEnvironment();
   else { applyLighting(); requestRender(); }
 }
 
@@ -1419,6 +1514,12 @@ function renderLighting(source) {
       <button data-preset="studio">Studio</button></div>
     <label class="row">Environment <select data-light="name">${options}</select></label>
     <label class="row"><input type="checkbox" data-light="background" ${lighting.background ? 'checked' : ''}> Show it as the background</label>
+    <h3>Sky</h3>
+    <div class="muted">${lighting.skies.length ? 'The game’s own skies, shown behind the model.' : 'The game’s skies were not found.'}</div>
+    <label class="row">Sky <select data-light="sky"><option value="">None</option>${lighting.skies.map((item) =>
+      `<option value="${escapeHtml(item.name)}" ${item.name === lighting.sky ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></label>
+    <label class="row"><input type="checkbox" data-light="skyLight" ${lighting.skyLight ? 'checked' : ''}> Light the model from the sky</label>
+    ${slider('skyHorizon', 'Sky horizon', -30, 20, 1, 'degrees')}
     ${slider('blur', 'Background blur', 0, 1, 0.05)}
     ${slider('rotation', 'Rotate environment', 0, 360, 1, 'degrees')}
     ${slider('brightness', 'Environment brightness', 0, 3, 0.05)}
@@ -1431,7 +1532,12 @@ function renderLighting(source) {
   tab.querySelectorAll('[data-light]').forEach((input) => {
     const key = input.dataset.light;
     const read = () => input.type === 'checkbox' ? input.checked : input.type === 'range' || input.type === 'number' ? Number(input.value) : input.value;
-    input.addEventListener(input.type === 'range' || input.type === 'color' ? 'input' : 'change', () => setLighting({ [key]: read() }, 'input'));
+    input.addEventListener(input.type === 'range' || input.type === 'color' ? 'input' : 'change', () => {
+      const changes = { [key]: read() };
+      // A sky reads best sharp; the blur suits the soft environment maps.
+      if (key === 'sky' && changes.sky && !lighting.sky) changes.blur = 0;
+      setLighting(changes, 'input');
+    });
   });
   tab.querySelectorAll('[data-preset]').forEach((button) => button.addEventListener('click', () => {
     const id = button.dataset.preset;
@@ -1472,6 +1578,8 @@ host?.addEventListener('message', (event) => {
   if (event.data?.type !== 'environments') return;
   lighting.environments = event.data.environments;
   lighting.base = event.data.baseUrl;
+  lighting.skies = event.data.skies ?? [];
+  lighting.skyBase = event.data.skyBaseUrl ?? '';
   renderLighting();
 });
 renderLighting();

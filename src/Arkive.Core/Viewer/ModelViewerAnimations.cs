@@ -10,6 +10,9 @@ namespace Arkive.Core.Viewer;
 /// <summary>One animation the viewer can play.</summary>
 public sealed record ModelViewerAnimation(string Name, string Group, int Frames, double Rate, string File);
 
+/// <summary>Animations offered for one mesh: the prepared set and UModel's rest pose of the mesh's skeleton (a file in its folder).</summary>
+public sealed record ModelViewerAnimationOffer(ModelViewerAnimationSet Set, string RestPoseFile);
+
 /// <summary>A character's animations, prepared for the viewer: an index and one small file per animation.</summary>
 public sealed record ModelViewerAnimationSet(
     string AnimSetName,
@@ -67,6 +70,65 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
             try { if (Directory.Exists(work)) Directory.Delete(work, recursive: true); }
             catch (IOException) { }
         }
+    }
+
+    /// <summary>
+    /// UModel's rest pose of a mesh's skeleton, in the same axes as the animation files. UModel orients some bones
+    /// differently from Arkive's decoder (the pelvis and upper arms of player bodies, for example); the viewer uses
+    /// both rest poses to move each animation key into Arkive's bone frames, so bodies are not twisted. Written once
+    /// per mesh next to the animations; returns the file name.
+    /// </summary>
+    public async Task<string> PrepareRestPoseAsync(
+        ModelViewerAnimationSet set, string meshPackagePath, string meshName, CancellationToken cancellationToken = default)
+    {
+        var mesh = new FileInfo(meshPackagePath);
+        var key = System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{mesh.FullName}|{mesh.Length}|{mesh.LastWriteTimeUtc.Ticks}|{meshName}|{FormatVersion}")))[..16];
+        var file = $"rest-{key}.json";
+        var path = Path.Combine(set.Directory, file);
+        if (File.Exists(path)) return file;
+        var work = Path.Combine(CacheRoot, $"skeleton-{Guid.NewGuid():N}");
+        try
+        {
+            var psk = await bridge.ExportSkeletonAsync(mesh.FullName, meshName, work, cancellationToken).ConfigureAwait(false);
+            var rest = ReadRestPose(await File.ReadAllBytesAsync(psk, cancellationToken).ConfigureAwait(false));
+            var temporary = path + ".tmp";
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(rest, Json), cancellationToken).ConfigureAwait(false);
+            File.Move(temporary, path, overwrite: true);
+            return file;
+        }
+        finally
+        {
+            try { if (Directory.Exists(work)) Directory.Delete(work, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+
+    /// <summary>Each bone's rest rotation and position from a .psk, converted exactly as animation keys are.</summary>
+    internal static Dictionary<string, float[]> ReadRestPose(byte[] psk)
+    {
+        var rest = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
+        var offset = 0;
+        while (offset + 32 <= psk.Length)
+        {
+            var id = Encoding.ASCII.GetString(psk, offset, 20).TrimEnd('\0');
+            var size = BinaryPrimitives.ReadInt32LittleEndian(psk.AsSpan(offset + 24));
+            var count = BinaryPrimitives.ReadInt32LittleEndian(psk.AsSpan(offset + 28));
+            offset += 32;
+            if (id.Equals("REFSKELT", StringComparison.OrdinalIgnoreCase) && size >= 104)
+            {
+                for (var bone = 0; bone < count; bone++)
+                {
+                    var at = offset + bone * size;
+                    var name = Encoding.ASCII.GetString(psk, at, 64).Split('\0')[0];
+                    float F(int position) => BinaryPrimitives.ReadSingleLittleEndian(psk.AsSpan(at + position));
+                    // Rotation (x, y, z, w) at 76, position at 92; the same swap of Y and Z as the animation keys.
+                    rest.TryAdd(name, [F(76), F(84), F(80), F(88), F(92) * 0.01f, F(100) * 0.01f, F(96) * 0.01f]);
+                }
+            }
+            offset += checked(size * count);
+        }
+        return rest;
     }
 
     /// <summary>Which group an animation belongs to, or null for ones not worth offering (mounts, props, hit reactions).</summary>
