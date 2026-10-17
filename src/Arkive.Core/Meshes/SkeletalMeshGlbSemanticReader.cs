@@ -638,7 +638,10 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
             if (bone is null && match.Success && int.TryParse(match.Groups[1].Value, out var namedBone))
                 bone = namedBone;
             if (bone is null)
-                throw Error("SMI145", $"Skin joint '{name}' has no Arkive stable bone identity.");
+                throw Error("SMI145", name.Equals("neutral_bone", StringComparison.OrdinalIgnoreCase)
+                    ? "Some vertices have no bone weights, so Blender added 'neutral_bone' for them (usually new or joined geometry). " +
+                      "Weight them to the skeleton (for example Data Transfer from the original mesh, or Parent > With Automatic Weights) before export."
+                    : $"Skin joint '{name}' has no Arkive stable bone identity.");
             if (result.ContainsValue(bone.Value))
                 throw Error("SMI146", $"Skin contains duplicate Arkive bone ID {bone.Value}.");
             result.Add(joint, bone.Value);

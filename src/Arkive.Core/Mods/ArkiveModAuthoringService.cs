@@ -90,7 +90,9 @@ public sealed class ArkiveModAuthoringService
     {
         var manifest = mesh.Manifest;
         if (manifest.Preflight.Readiness == SkeletalMeshEditReadiness.Refused || manifest.Preflight.ErrorCount != 0)
-            Refuse("AUT020", $"{manifest.DisplayName} failed mesh preflight; resolve its errors before saving it to a mod.");
+            Refuse("AUT020", $"{manifest.DisplayName} failed mesh preflight; resolve its errors before saving it to a mod. " +
+                string.Join(" ", manifest.Preflight.Issues.Where(issue => issue.Severity == SkeletalMeshEditIssueSeverity.Error)
+                    .Take(3).Select(issue => $"{issue.Code}: {issue.Message}")));
         await RequireFileHashAsync(mesh.EditedGlbPath, manifest.EditedGlbSha256, manifest.DisplayName, cancellationToken)
             .ConfigureAwait(false);
         var source = await ArkiveModEditSnapshot.LoadSkeletalSourceAsync(mesh, cancellationToken).ConfigureAwait(false);

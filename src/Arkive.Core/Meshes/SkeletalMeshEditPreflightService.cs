@@ -325,10 +325,15 @@ public sealed class SkeletalMeshEditPreflightService
                 AddError("SMT027", $"Candidate skin weights differ from a normalized sum by up to {lod.MaximumSkinWeightSumError:G6}.");
             else if (lod.MaximumSkinWeightSumError > 0.002d)
                 AddWarning("SMT028", $"Candidate skin weights require normalization; maximum sum error is {lod.MaximumSkinWeightSumError:G6}.");
-            // Shipped game meshes contain a few zero-area triangles; ones the source already had are kept as-is.
-            var newDegenerate = lod.DegenerateTriangles
+            // Shipped game meshes contain a few zero-area triangles; ones the source already had are kept as-is. Edits
+            // that move them too (scaling, sculpting, smoothing) leave them zero-area elsewhere, so as many as the
+            // game mesh had are accepted wherever they now are.
+            var unmatchedDegenerate = lod.DegenerateTriangles
                 .Where(triangle => !sourceLod0.DegenerateTriangles.Any(source => SameTriangle(triangle, source)))
                 .ToArray();
+            var movedAllowance = Math.Max(0,
+                sourceLod0.DegenerateTriangles.Count - (lod.DegenerateTriangles.Count - unmatchedDegenerate.Length));
+            var newDegenerate = unmatchedDegenerate.Skip(movedAllowance).ToArray();
             if (newDegenerate.Length > 0)
                 AddError("SMT030", $"Candidate contains {newDegenerate.Length:N0} new degenerate triangle(s) " +
                     $"(zero area), e.g. near {Describe(newDegenerate[0].A)}. Delete or dissolve them before export.");
