@@ -1,0 +1,6 @@
+Preview animations that move correctly, progress for Simple upscale batches and a faster Mods list.
+
+- Preview animations no longer bend and stretch limbs. Every class was affected: Arkive mirrored each bone's motion front to back, which standing idles hid but dances and seated poses showed.
+- Applying a Simple upscale preset to several outfits or to every outfit of a body shows a progress bar for both steps, with a count, percentage and time left.
+- Enabling or disabling a mod and changing its priority no longer reloads every working file, and the Mods list refreshes faster with large mods.
+- Mods and Edit mods operations that take more than a moment show a wait card over the tabs, so nothing clicked or typed meanwhile is lost.
