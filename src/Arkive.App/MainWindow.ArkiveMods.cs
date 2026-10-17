@@ -219,6 +219,7 @@ public partial class MainWindow : Window
         ModLibraryPreviewButton.IsEnabled = idle;
         ModLibraryRestoreAllButton.IsEnabled = idle;
         ModLibraryRestoreOtherFolderButton.IsEnabled = idle;
+        ModLibraryCleanUpWorkingFilesButton.IsEnabled = idle;
         ModLibraryImportButton.IsEnabled = idle;
         ModLibraryGameFolderButton.IsEnabled = idle;
         ModLibraryRefreshButton.IsEnabled = idle;

@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Windows;
 using Arkive.Core.External;
 using Arkive.Core.Updates;
+using Arkive.Core.Viewer;
 
 namespace Arkive.App;
 
@@ -30,6 +31,21 @@ public partial class MainWindow
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         { Log($"Old update downloads could not be cleaned: {exception.Message}"); }
+    }
+
+    /// <summary>
+    /// Deletes viewer work folders left by a closed or killed Arkive (an interrupted animation export is about 1 GB)
+    /// and trims the viewer cache to its cap.
+    /// </summary>
+    private async Task CleanUpViewerCacheAsync()
+    {
+        try
+        {
+            var freed = await Task.Run(() => new ModelViewerCache(Path.Combine(_projectRoot, "cache", "model-viewer")).Trim());
+            if (freed > 0) Log($"Viewer cache cleaned: freedBytes={freed}.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { Log($"Viewer cache could not be cleaned: {exception.Message}"); }
     }
 
     // Never throws: every failure is explained to the user (interactive) or the session log (startup).

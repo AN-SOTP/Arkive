@@ -524,6 +524,9 @@ public partial class MainWindow
         ArkiveModLibraryEntry? saved = null;
         Exception? failure = null;
         var skipped = new List<string>();
+        var replaced = request.ExistingModId is { } existing
+            ? await ProportionPieceEditIdsAsync(existing, request.Pieces.Select(piece => piece.ObjectName))
+            : [];
         await RunAuthoringOperationAsync(async () =>
         {
             try { saved = await CreateProportionModAsync(request, skipped); }
@@ -532,6 +535,7 @@ public partial class MainWindow
         if (failure is not null) throw failure;
         if (saved is null) throw new InvalidOperationException(AuthoringStatusText.Text);
         await RefreshArkiveModsAsync("proportion mod saved", saved.ModId);
+        await CleanUpReplacedProportionPiecesAsync(replaced);
         var result = request.ExistingModId is null
             ? $"Saved {saved.FileName}. Enable it in Mods to apply it to the game; it is also open in Edit mods."
             : $"Updated {saved.FileName}. If it is enabled, apply it again in Mods to put the new shape in the game.";

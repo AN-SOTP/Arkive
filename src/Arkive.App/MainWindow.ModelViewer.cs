@@ -57,6 +57,7 @@ public partial class MainWindow
         try
         {
             window = CreateModelViewerWindow(_ => null);
+            window.RememberViewSettings = false;
             window.ShowInTaskbar = false;
             window.ShowActivated = false;
             window.WindowStartupLocation = WindowStartupLocation.Manual;

@@ -7,6 +7,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     MeshSmokeTests.Cases,
     ViewerSmokeTests.Cases,
     ProportionSmokeTests.Cases,
+    WorkingFileSmokeTests.Cases,
     TextureSmokeTests.Cases,
     MaterialSmokeTests.Cases,
     ModWorkflowSmokeTests.Cases,

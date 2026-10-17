@@ -44,7 +44,10 @@ public sealed partial class ModelViewerEnvironmentService(UmodelBridge bridge, s
         if (File.Exists(indexPath) &&
             JsonSerializer.Deserialize<ModelViewerEnvironmentSet>(await File.ReadAllTextAsync(indexPath, cancellationToken)
                 .ConfigureAwait(false), Json) is { } cached)
+        {
+            ModelViewerCache.TouchDirectory(directory);
             return cached with { Directory = directory };
+        }
 
         var staging = directory + ".tmp";
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
@@ -89,7 +92,10 @@ public sealed partial class ModelViewerEnvironmentService(UmodelBridge bridge, s
         if (File.Exists(indexPath) &&
             JsonSerializer.Deserialize<ModelViewerSkySet>(await File.ReadAllTextAsync(indexPath, cancellationToken)
                 .ConfigureAwait(false), Json) is { } cached)
+        {
+            ModelViewerCache.TouchDirectory(directory);
             return cached with { Directory = directory };
+        }
 
         var staging = directory + ".tmp";
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);

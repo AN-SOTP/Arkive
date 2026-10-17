@@ -2584,6 +2584,9 @@
                                                     <MenuItem x:Name="ModLibraryRestoreOtherFolderButton" Header="Restore from another Arkive folder…"
                                                               Click="ModLibraryRestoreOtherFolderButton_Click"
                                                               ToolTip="Put back game files that an Arkive using a different data folder installed mods into, from that folder's verified backups." />
+                                                    <MenuItem x:Name="ModLibraryCleanUpWorkingFilesButton" Header="Clean up working files…"
+                                                              Click="ModLibraryCleanUpWorkingFilesButton_Click"
+                                                              ToolTip="Delete edited meshes and game-mesh exports that no draft, mod or package build uses, such as replaced Simple upscale pieces." />
                                                     <MenuItem Header="Open mods folder" Click="ModLibraryOpenFolderButton_Click" />
                                                     <MenuItem x:Name="ModLibraryGameFolderButton" Header="Game folder…" Click="ModLibraryGameFolderButton_Click" />
                                                     <MenuItem x:Name="ModLibraryRefreshButton" Header="Refresh" Click="ModLibraryRefreshButton_Click" />

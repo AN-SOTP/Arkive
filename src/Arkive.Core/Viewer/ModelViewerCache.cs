@@ -43,11 +43,7 @@ public sealed class ModelViewerCache
 
     public bool IsReady(string key) => File.Exists(Path.Combine(DirectoryFor(key), ReadyMarker));
 
-    public void Touch(string key)
-    {
-        var directory = DirectoryFor(key);
-        if (Directory.Exists(directory)) Directory.SetLastWriteTimeUtc(directory, DateTime.UtcNow);
-    }
+    public void Touch(string key) => TouchDirectory(DirectoryFor(key));
 
     /// <summary>Creates an empty folder for a scene, discarding any half-written attempt.</summary>
     public string Prepare(string key)
@@ -58,34 +54,84 @@ public sealed class ModelViewerCache
         return directory;
     }
 
-    /// <summary>Deletes the least recently used scenes until the cache fits its cap.</summary>
+    /// <summary>
+    /// Folders shared by every scene. Each set inside them (one class's animations, one version's lighting or skies)
+    /// is its own cache entry, so a large shared folder is never evicted as a whole like one old scene.
+    /// </summary>
+    public static readonly string[] SharedFolders = ["animations", "environments"];
+
+    /// <summary>Work folders and half-written sets untouched this long are leftovers of a closed or killed Arkive.</summary>
+    public static readonly TimeSpan LeftoverAge = TimeSpan.FromHours(2);
+
+    /// <summary>
+    /// Deletes leftover work folders, then the least recently used scenes and shared sets until the cache fits its cap.
+    /// </summary>
     public long Trim(string? keepKey = null)
     {
         if (!Directory.Exists(RootDirectory)) return 0;
-        var scenes = new DirectoryInfo(RootDirectory).EnumerateDirectories()
-            .Select(directory => (Directory: directory, Bytes: Size(directory)))
-            .OrderByDescending(scene => scene.Directory.LastWriteTimeUtc)
-            .ToList();
-        var total = scenes.Sum(scene => scene.Bytes);
         var freed = 0L;
-        for (var index = scenes.Count - 1; index >= 0 && total > MaximumBytes; index--)
+        var entries = new List<(DirectoryInfo Directory, long Bytes)>();
+        var root = new DirectoryInfo(RootDirectory);
+        var children = root.EnumerateDirectories()
+            .SelectMany(directory => SharedFolders.Contains(directory.Name, StringComparer.OrdinalIgnoreCase)
+                ? directory.EnumerateDirectories()
+                : [directory]);
+        foreach (var directory in children)
         {
-            var scene = scenes[index];
-            if (keepKey is not null && scene.Directory.Name.Equals(keepKey, StringComparison.OrdinalIgnoreCase)) continue;
-            try
+            if (IsWorkFolder(directory.Name))
             {
-                scene.Directory.Delete(recursive: true);
-                total -= scene.Bytes;
-                freed += scene.Bytes;
+                // A running export keeps writing files somewhere inside its folder.
+                var files = directory.EnumerateFiles("*", SearchOption.AllDirectories).ToArray();
+                var touched = files.Select(file => file.LastWriteTimeUtc).Append(directory.LastWriteTimeUtc).Max();
+                if (DateTime.UtcNow - touched > LeftoverAge && TryDelete(directory))
+                    freed += files.Sum(file => file.Length);
+                continue;
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            entries.Add((directory, Size(directory)));
+        }
+
+        var total = entries.Sum(entry => entry.Bytes);
+        foreach (var entry in entries.OrderBy(entry => entry.Directory.LastWriteTimeUtc))
+        {
+            if (total <= MaximumBytes) break;
+            if (keepKey is not null && entry.Directory.Name.Equals(keepKey, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!TryDelete(entry.Directory)) continue;
+            total -= entry.Bytes;
+            freed += entry.Bytes;
         }
         return freed;
     }
 
+    /// <summary>Marks a scene or shared set as just used, so it is evicted last.</summary>
+    public static void TouchDirectory(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory)) Directory.SetLastWriteTimeUtc(directory, DateTime.UtcNow);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     public long CurrentBytes() =>
         Directory.Exists(RootDirectory) ? new DirectoryInfo(RootDirectory).EnumerateDirectories().Sum(Size) : 0;
+
+    private static bool IsWorkFolder(string name) =>
+        name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ||
+        name.StartsWith("export-", StringComparison.OrdinalIgnoreCase) ||
+        name.StartsWith("skeleton-", StringComparison.OrdinalIgnoreCase) ||
+        name.StartsWith("proportions-", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryDelete(DirectoryInfo directory)
+    {
+        try
+        {
+            directory.Delete(recursive: true);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
 
     private static long Size(DirectoryInfo directory) =>
         directory.EnumerateFiles("*", SearchOption.AllDirectories).Sum(file => file.Length);

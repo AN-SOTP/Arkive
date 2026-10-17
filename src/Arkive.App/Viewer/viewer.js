@@ -26,6 +26,23 @@ const state = {
   bounds: new THREE.Box3(),
 };
 
+// The viewer remembers its choices between sessions: lighting, sky and sun, colour mode, view toggles and the
+// animation. Arkive's off-screen colour bakes load with remember: false, so their output never depends on them.
+const preferencesKey = 'arkive.viewer.v1';
+const preferences = {
+  remember: true,
+  restored: false,
+  saved: (() => {
+    try { return JSON.parse(localStorage.getItem(preferencesKey) ?? '{}') ?? {}; } catch { return {}; }
+  })(),
+};
+
+function savePreferences(changes) {
+  if (!preferences.remember) return;
+  Object.assign(preferences.saved, changes);
+  try { localStorage.setItem(preferencesKey, JSON.stringify(preferences.saved)); } catch { /* storage is optional */ }
+}
+
 // Renderer, camera and lights.
 const canvas = $('view3d');
 const overlay = $('overlay2d');
@@ -746,6 +763,7 @@ document.querySelectorAll('[data-toggle]').forEach((button) => button.addEventLi
 function toggle(name, value) {
   state.toggles[name] = value ?? !state.toggles[name];
   document.querySelector(`[data-toggle="${name}"]`)?.setAttribute('aria-pressed', String(state.toggles[name]));
+  savePreferences({ toggles: { ...state.toggles } });
   if (name === 'wireframe' || name === 'backfaces') applyMaterials();
   if (['normals', 'tangents', 'skeleton'].includes(name)) rebuildHelpers();
   requestRender();
@@ -754,8 +772,13 @@ function toggle(name, value) {
 $('lodSelect').addEventListener('change', (e) => showLod(Number(e.target.value)));
 $('editsToggle').addEventListener('click', () => post({ type: 'showEdits', value: $('editsToggle').getAttribute('aria-pressed') !== 'true' }));
 $('uvSelect').addEventListener('change', (e) => { state.uvSet = Number(e.target.value); requestRender(); });
-$('shadingSelect').addEventListener('change', (e) => { state.shading = e.target.value; applyMaterials(); });
-$('lightSelect').addEventListener('change', (e) => { state.light = e.target.value; applyLighting(); requestRender(); });
+$('shadingSelect').addEventListener('change', (e) => { state.shading = e.target.value; savePreferences({ shading: state.shading }); applyMaterials(); });
+$('lightSelect').addEventListener('change', (e) => {
+  state.light = e.target.value;
+  savePreferences({ light: state.light });
+  applyLighting();
+  requestRender();
+});
 $('focusButton').addEventListener('click', focus);
 $('screenshotButton').addEventListener('click', (e) => screenshot(e.altKey));
 $('umodelButton').addEventListener('click', () => post({ type: 'openUmodel' }));
@@ -858,6 +881,8 @@ async function load(message) {
   } : null;
   $('loading').hidden = false;
   $('loading').textContent = `Loading ${message.scene.object.objectName}…`;
+  if (message.remember === false) preferences.remember = false;
+  if (!preferences.restored) restorePreferences();
   if (message.theme) document.documentElement.dataset.theme = message.theme;
   for (const t of state.textures.values()) t.dispose();
   for (const m of state.materialCache.values()) m.dispose();
@@ -872,7 +897,9 @@ async function load(message) {
   const scene = state.scene;
   const hasGame = scene.materials.some((m) => m.gameShader);
   $('shadingSelect').querySelector('option[value="game"]').disabled = !hasGame;
-  state.shading = keep && (keep.shading !== 'game' || hasGame) ? keep.shading : hasGame ? 'game' : 'recipe';
+  const usable = (mode) => mode && $('shadingSelect').querySelector(`option[value="${mode}"]`) && (mode !== 'game' || hasGame);
+  const remembered = preferences.remember ? preferences.saved.shading : null;
+  state.shading = keep && usable(keep.shading) ? keep.shading : usable(remembered) ? remembered : hasGame ? 'game' : 'recipe';
   $('shadingSelect').value = state.shading;
   $('editsToggle').hidden = !message.hasEdits;
   $('editsToggle').setAttribute('aria-pressed', String(!!scene.edits));
@@ -1324,16 +1351,28 @@ function showAnimations(message) {
       `<option value="${escapeHtml(item.file)}">${escapeHtml(item.name)}</option>`).join('')}</optgroup>`).join('');
   $('animationGroup').hidden = false;
   $('animationStatus').textContent = `${message.animations.length} animations`;
+  const remembered = preferences.remember && preferences.saved.animation
+    ? message.animations.find((item) => item.name === preferences.saved.animation) : null;
+  if (remembered) {
+    select.value = remembered.file;
+    playAnimation(remembered.file).catch((error) => { $('animationStatus').textContent = `Could not play it: ${error.message}`; });
+  }
 }
 
-$('animationSelect').addEventListener('change', (e) => playAnimation(e.target.value).catch((error) => {
-  $('animationStatus').textContent = `Could not play it: ${error.message}`;
-}));
+$('animationSelect').addEventListener('change', (e) => {
+  savePreferences({ animation: animation.list.find((item) => item.file === e.target.value)?.name ?? '' });
+  playAnimation(e.target.value).catch((error) => {
+    $('animationStatus').textContent = `Could not play it: ${error.message}`;
+  });
+});
 $('animationPlay').addEventListener('click', () => {
   animation.playing = !animation.playing;
   $('animationPlay').textContent = animation.playing ? 'Pause' : 'Play';
 });
-$('animationSpeed').addEventListener('change', (e) => { animation.speed = Number(e.target.value); });
+$('animationSpeed').addEventListener('change', (e) => {
+  animation.speed = Number(e.target.value);
+  savePreferences({ animationSpeed: animation.speed });
+});
 
 host?.addEventListener('message', (event) => {
   const message = event.data;
@@ -1354,6 +1393,9 @@ const lighting = {
   sunAzimuth: 45, sunElevation: 40, sunIntensity: 1.7, sunColour: '#fff4e6', texture: null, cubes: new Map(), pending: 0,
   skies: [], skyBase: '', sky: '', skyLight: false, skyHorizon: -8, skyTextures: new Map(), skyReady: false,
 };
+// The lighting settings remembered between sessions.
+const rememberedLighting = ['name', 'background', 'blur', 'rotation', 'brightness', 'sunAzimuth', 'sunElevation', 'sunIntensity',
+  'sunColour', 'sky', 'skyLight', 'skyHorizon'];
 const pmrem = new THREE.PMREMGenerator(renderer);
 const environmentScene = new THREE.Scene();
 const environmentMaterial = new THREE.ShaderMaterial({
@@ -1489,6 +1531,7 @@ function setLighting(changes, source) {
     state.light = 'game';
     $('lightSelect').value = 'game';
   }
+  savePreferences({ light: state.light, lighting: Object.fromEntries(rememberedLighting.map((key) => [key, lighting[key]])) });
   renderLighting(source);
   if (['name', 'rotation', 'brightness', 'sky', 'skyLight', 'skyHorizon'].some((key) => key in changes)) rebuildEnvironment();
   else { applyLighting(); requestRender(); }
@@ -1544,6 +1587,7 @@ function renderLighting(source) {
     if (id === 'studio') {
       state.light = 'studio';
       $('lightSelect').value = 'studio';
+      savePreferences({ light: state.light });
       restoreStudioKey();
       applyLighting();
       requestRender();
@@ -1580,10 +1624,39 @@ host?.addEventListener('message', (event) => {
   lighting.base = event.data.baseUrl;
   lighting.skies = event.data.skies ?? [];
   lighting.skyBase = event.data.skyBaseUrl ?? '';
+  // A remembered environment or sky that this game version no longer has falls back to none.
+  if (lighting.name && !lighting.environments.some((item) => item.name === lighting.name)) lighting.name = '';
+  if (lighting.sky && !lighting.skies.some((item) => item.name === lighting.sky)) lighting.sky = '';
   renderLighting();
+  if (state.light === 'game' && (lighting.name || lighting.sky)) rebuildEnvironment();
 });
 renderLighting();
 window.arkiveLighting = { lighting, setLighting, rebuildEnvironment };
+
+// Applies the remembered choices once, when the first object loads (the host says by then whether to remember).
+function restorePreferences() {
+  preferences.restored = true;
+  if (!preferences.remember) return;
+  const saved = preferences.saved;
+  // Set before the model loads, which builds materials and helpers from them.
+  for (const [name, value] of Object.entries(saved.toggles ?? {})) {
+    if (!(name in state.toggles) || typeof value !== 'boolean') continue;
+    state.toggles[name] = value;
+    document.querySelector(`[data-toggle="${name}"]`)?.setAttribute('aria-pressed', String(value));
+  }
+  if (saved.lighting && typeof saved.lighting === 'object')
+    for (const key of rememberedLighting) if (typeof saved.lighting[key] === typeof lighting[key]) lighting[key] = saved.lighting[key];
+  if ([...$('lightSelect').options].some((option) => option.value === saved.light)) {
+    state.light = saved.light;
+    $('lightSelect').value = saved.light;
+  }
+  if ([...$('animationSpeed').options].some((option) => Number(option.value) === saved.animationSpeed)) {
+    animation.speed = saved.animationSpeed;
+    $('animationSpeed').value = String(saved.animationSpeed);
+  }
+  renderLighting();
+  if (state.light === 'game' && (lighting.name || lighting.sky)) rebuildEnvironment();
+}
 
 // Outside Arkive (for development): viewer.html?scene=<url of scene.json>
 const sceneUrl = new URLSearchParams(location.search).get('scene');

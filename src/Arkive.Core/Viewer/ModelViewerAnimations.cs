@@ -48,7 +48,11 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
         {
             var cached = JsonSerializer.Deserialize<ModelViewerAnimationSet>(await File.ReadAllTextAsync(indexPath, cancellationToken)
                 .ConfigureAwait(false), Json);
-            if (cached is not null) return cached with { Directory = directory };
+            if (cached is not null)
+            {
+                ModelViewerCache.TouchDirectory(directory);
+                return cached with { Directory = directory };
+            }
         }
 
         var work = Path.Combine(CacheRoot, $"export-{Guid.NewGuid():N}");

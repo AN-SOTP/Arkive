@@ -31,6 +31,7 @@ public partial class MainWindow : Window
         if (_restoredSettings.CheckForUpdatesOnStartup)
             _ = CheckApplicationUpdatesAsync(interactive: false);
         _ = CleanUpUpdateDownloadsAsync();
+        _ = CleanUpViewerCacheAsync();
         Log(
             $"Workspace restoration started: root={_libraryRootPath ?? "none"}, " +
             $"savedMetadata={_restoredSettings.GameMetadataPath ?? "default"}, " +

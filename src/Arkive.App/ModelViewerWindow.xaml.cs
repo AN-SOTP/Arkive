@@ -39,6 +39,12 @@ public partial class ModelViewerWindow : Window
     /// <summary>Prepares the game's environment cubemaps (null when unavailable); set by Arkive's main window.</summary>
     public Func<CancellationToken, Task<ModelViewerEnvironmentSet?>>? Environments { get; init; }
 
+    /// <summary>
+    /// Whether the page uses and saves the choices remembered between sessions (lighting, colour mode, toggles,
+    /// animation). Off for the hidden windows that bake colours, so a bake never depends on them.
+    /// </summary>
+    public bool RememberViewSettings { get; set; } = true;
+
     /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
     public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationOffer?>>? Animations { get; init; }
 
@@ -120,6 +126,7 @@ public partial class ModelViewerWindow : Window
             var sceneJson = JsonSerializer.Serialize(result.Scene, ModelViewerSceneService.JsonOptions);
             var baseUrl = $"https://{SceneHost}/{Uri.EscapeDataString(Path.GetFileName(result.Directory))}/";
             var message = $"{{\"type\":\"load\",\"theme\":\"{_theme}\",\"keepView\":{(keepView ? "true" : "false")}," +
+                          $"\"remember\":{(RememberViewSettings ? "true" : "false")}," +
                           $"\"hasEdits\":{(workingFiles is not null ? "true" : "false")}," +
                           $"\"baseUrl\":{JsonSerializer.Serialize(baseUrl)},\"scene\":{sceneJson}}}";
             _log($"Model viewer scene ready: object={request.ObjectName}, cached={result.FromCache}, " +

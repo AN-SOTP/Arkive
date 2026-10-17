@@ -369,6 +369,29 @@ internal static class ViewerSmokeTests
         cache.Trim(keepKey: "scene0");
         Assert(cache.IsReady("scene0") && cache.IsReady("scene2") && !cache.IsReady("scene1") && cache.CurrentBytes() <= 64L << 20,
             "the cache did not evict the least recently used scene while keeping the requested one");
+
+        // Shared sets are evicted one at a time, never a whole shared folder; old leftovers of killed exports are deleted.
+        var lighting = Path.Combine(root, "environments", "lighting1");
+        var animations = Path.Combine(root, "animations", "set1");
+        var leftover = Path.Combine(root, "animations", "export-0123");
+        var running = Path.Combine(root, "animations", "export-4567");
+        foreach (var (directory, bytes) in new[] { (lighting, 2 << 20), (animations, 10 << 20), (leftover, 40 << 20), (running, 1 << 10) })
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(Path.Combine(directory, "data.bin"), new byte[bytes]);
+        }
+        var old = DateTime.UtcNow - ModelViewerCache.LeftoverAge - TimeSpan.FromMinutes(5);
+        File.SetLastWriteTimeUtc(Path.Combine(leftover, "data.bin"), old);
+        Directory.SetLastWriteTimeUtc(leftover, old);
+        Directory.SetLastWriteTimeUtc(animations, DateTime.UtcNow.AddMinutes(-30));
+        ModelViewerCache.TouchDirectory(lighting);
+        cache.Trim(keepKey: "scene0");
+        Assert(!Directory.Exists(leftover) && Directory.Exists(running),
+            "the cache did not delete an old leftover export while keeping one still being written");
+        Assert(Directory.Exists(lighting) && !Directory.Exists(animations) && Directory.Exists(Path.Combine(root, "animations")),
+            "the cache did not evict the oldest shared set alone while keeping the recently used lighting");
+        Assert(cache.IsReady("scene0") && cache.IsReady("scene2") && cache.CurrentBytes() <= 64L << 20,
+            "the cache did not fit its cap after counting shared sets one at a time");
     }
 
     private sealed class Bindings(
