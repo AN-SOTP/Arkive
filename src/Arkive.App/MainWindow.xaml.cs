@@ -424,6 +424,7 @@ public partial class MainWindow : Window
 
         InitializeComponent();
         InitializeBodyProportionsTab();
+        InitializeWorkshopKinds();
         ApplyBannerArtwork(_activeBannerArtwork);
         SourceInitialized += (_, _) =>
             AppearanceManager.ApplyWindowChrome(this, _effectiveAppearanceTheme);

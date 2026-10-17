@@ -554,17 +554,13 @@ public partial class MainWindow : Window
     }
 
     private static bool CanReconnoitreTexture(AssetKind kind, string className) =>
-        kind == AssetKind.Texture &&
-        className.Contains("Texture2D", StringComparison.OrdinalIgnoreCase);
+        AssetTypes.Editable(kind, className) == AssetTypes.Texture;
 
     private static bool CanReconnoitreSkeletalMesh(AssetKind kind, string className) =>
-        kind == AssetKind.SkeletalMesh &&
-        className.Contains("SkeletalMesh", StringComparison.OrdinalIgnoreCase);
+        AssetTypes.Editable(kind, className) == AssetTypes.SkeletalMesh;
 
     private static bool CanReconnoitreStaticMesh(AssetKind kind, string className) =>
-        kind == AssetKind.StaticMesh &&
-        className.Contains("StaticMesh", StringComparison.OrdinalIgnoreCase) &&
-        !className.Contains("SkeletalMesh", StringComparison.OrdinalIgnoreCase);
+        AssetTypes.Editable(kind, className) == AssetTypes.StaticMesh;
 
     private static bool CanReconnoitreMesh(AssetKind kind, string className) =>
         CanReconnoitreSkeletalMesh(kind, className) || CanReconnoitreStaticMesh(kind, className);

@@ -694,13 +694,8 @@
                                                     </TextBlock.Style>
                                                 </TextBlock>
                                             </Grid>
-                                            <ComboBox x:Name="WorkshopKindComboBox" Width="170" SelectedIndex="4">
-                                                <ComboBoxItem Content="Textures" Tag="Texture" />
-                                                <ComboBoxItem Content="Skeletal meshes" Tag="SkeletalMesh" />
-                                                <ComboBoxItem Content="Static meshes" Tag="StaticMesh" />
-                                                <ComboBoxItem Content="Materials" Tag="MaterialInstanceConstant" />
-                                                <ComboBoxItem Content="All moddable assets" Tag="" />
-                                            </ComboBox>
+                                            <!-- Filled from AssetTypes.Moddable by InitializeWorkshopKinds. -->
+                                            <ComboBox x:Name="WorkshopKindComboBox" Width="170" />
                                             <ComboBox x:Name="WorkshopArchetypeComboBox" Width="145" SelectedIndex="0">
                                                 <ComboBoxItem Content="All class types" Tag="" />
                                             </ComboBox>

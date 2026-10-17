@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using Arkive.Core.Assets;
 using Arkive.Core.Mods;
 
 namespace Arkive.App;
@@ -65,13 +66,8 @@ public partial class MainWindow : Window
 
         public bool HasActiveAssets => Status.Assets.Any(asset => asset.InGame == true);
 
-        private static string KindLabel(UnifiedPackageAssetKind kind, int count) => kind switch
-        {
-            UnifiedPackageAssetKind.Texture2D => count == 1 ? "texture" : "textures",
-            UnifiedPackageAssetKind.SkeletalMesh => count == 1 ? "skeletal mesh" : "skeletal meshes",
-            UnifiedPackageAssetKind.StaticMesh => count == 1 ? "static mesh" : "static meshes",
-            _ => count == 1 ? "material" : "materials",
-        };
+        private static string KindLabel(UnifiedPackageAssetKind kind, int count) =>
+            count == 1 ? AssetTypes.For(kind).Singular : AssetTypes.For(kind).Plural;
     }
 
     private sealed class ModAssetRow
@@ -80,13 +76,7 @@ public partial class MainWindow : Window
 
         public ArkiveModAssetStatus Status { get; }
 
-        public string Kind => Status.Asset.Kind switch
-        {
-            UnifiedPackageAssetKind.Texture2D => "Texture",
-            UnifiedPackageAssetKind.SkeletalMesh => "Skeletal mesh",
-            UnifiedPackageAssetKind.StaticMesh => "Static mesh",
-            _ => "Material",
-        };
+        public string Kind => AssetTypes.For(Status.Asset.Kind).Title;
 
         public string DisplayName => Status.Asset.DisplayName;
 

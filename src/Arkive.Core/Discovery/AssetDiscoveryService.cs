@@ -180,9 +180,7 @@ public sealed class AssetDiscoveryService
             score += LinkWeight(match.GameMetadata);
         }
 
-        if (match.Kind is AssetKind.SkeletalMesh or AssetKind.StaticMesh) score += 8;
-        else if (match.Kind == AssetKind.Texture) score += 6;
-        else if (match.Kind == AssetKind.Material) score += 4;
+        score += AssetTypes.For(match.Kind)?.DiscoveryScore ?? 0;
         var reason = reasons.Count == 0
             ? Evidence(match.GameMetadata)
             : string.Join(" + ", reasons.Distinct(StringComparer.OrdinalIgnoreCase));

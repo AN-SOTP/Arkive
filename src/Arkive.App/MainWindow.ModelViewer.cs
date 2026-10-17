@@ -18,7 +18,7 @@ public partial class MainWindow
     private DataGrid? _modelViewerBrowseGrid;
     private readonly SemaphoreSlim _colourBakeGate = new(1, 1);
 
-    private static bool CanPreviewInArkive(AssetKind kind) => kind is AssetKind.SkeletalMesh or AssetKind.StaticMesh;
+    private static bool CanPreviewInArkive(AssetKind kind) => AssetTypes.For(kind)?.Previewable == true;
 
     private void LibraryPreviewButton_Click(object sender, RoutedEventArgs e)
     {

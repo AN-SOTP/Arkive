@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Arkive.Core.Assets;
 
 namespace Arkive.Core.Mods;
 
@@ -383,16 +384,8 @@ public static class ArkiveModFileService
             Refuse("ARK039", $"Asset {asset.AssetId} declares {asset.Kind} but targets class {target.ClassName}.");
     }
 
-    internal static bool KindMatches(UnifiedPackageAssetKind kind, string className) => kind switch
-    {
-        UnifiedPackageAssetKind.Texture2D => className.Contains("Texture", StringComparison.OrdinalIgnoreCase),
-        UnifiedPackageAssetKind.SkeletalMesh => className.Contains("SkeletalMesh", StringComparison.OrdinalIgnoreCase),
-        UnifiedPackageAssetKind.StaticMesh => className.Contains("StaticMesh", StringComparison.OrdinalIgnoreCase) &&
-                                               !className.Contains("SkeletalMesh", StringComparison.OrdinalIgnoreCase),
-        UnifiedPackageAssetKind.MaterialInstanceConstant =>
-            className.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase),
-        _ => false,
-    };
+    internal static bool KindMatches(UnifiedPackageAssetKind kind, string className) =>
+        AssetTypes.Moddable.FirstOrDefault(type => type.ModKind == kind)?.AcceptsClass(className) == true;
 
     private static void ValidateAssetData(ArkiveModFileAsset asset)
     {

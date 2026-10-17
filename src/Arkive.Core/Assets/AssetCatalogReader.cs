@@ -262,30 +262,7 @@ public sealed class AssetCatalogReader
         return string.IsNullOrEmpty(outer) ? name : $"{outer}.{name}";
     }
 
-    private static AssetKind InferKind(string className)
-    {
-        if (className.Contains("Texture", StringComparison.OrdinalIgnoreCase))
-        {
-            return AssetKind.Texture;
-        }
-
-        if (className.Equals("StaticMesh", StringComparison.OrdinalIgnoreCase))
-        {
-            return AssetKind.StaticMesh;
-        }
-
-        if (className.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase))
-        {
-            return AssetKind.SkeletalMesh;
-        }
-
-        if (className.Contains("Material", StringComparison.OrdinalIgnoreCase))
-        {
-            return AssetKind.Material;
-        }
-
-        return AssetKind.Object;
-    }
+    private static AssetKind InferKind(string className) => AssetTypes.CatalogKind(className);
 
     private static UnrealNameReference ReadNameReference(
         BinaryReader reader,

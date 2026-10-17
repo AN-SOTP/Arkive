@@ -79,10 +79,7 @@ public partial class MainWindow : Window
                     resultLimit: 750);
             }
             var ranked = _assetDiscoveryService.Rank(result.Matches, query, scope)
-                .Where(item => CanReconnoitreTexture(item.Match.Kind, item.Match.ClassName) ||
-                               CanReconnoitreMesh(item.Match.Kind, item.Match.ClassName) ||
-                               item.Match.Kind == AssetKind.Material && item.Match.ClassName.Equals(
-                                   "MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase))
+                .Where(item => AssetTypes.Editable(item.Match.Kind, item.Match.ClassName) is not null)
                 .ToArray();
             var rows = ranked.Select(item => new LibraryAssetRow(
                 item.Match.SourcePath, item.Match.PackageAlias, item.Match.PhysicalPackageName,
@@ -109,6 +106,15 @@ public partial class MainWindow : Window
             _workshopBusy = false;
             UpdateWorkshopActionState();
         }
+    }
+
+    /// <summary>One entry per moddable asset type, then All moddable assets (the default).</summary>
+    private void InitializeWorkshopKinds()
+    {
+        foreach (var type in AssetTypes.Moddable)
+            WorkshopKindComboBox.Items.Add(new ComboBoxItem { Content = type.PluralTitle, Tag = type.SearchCategory });
+        WorkshopKindComboBox.Items.Add(new ComboBoxItem { Content = "All moddable assets", Tag = string.Empty });
+        WorkshopKindComboBox.SelectedIndex = WorkshopKindComboBox.Items.Count - 1;
     }
 
     private void WorkshopSuggestButton_Click(object sender, RoutedEventArgs e)

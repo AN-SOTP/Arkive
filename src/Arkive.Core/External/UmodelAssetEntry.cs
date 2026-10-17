@@ -9,29 +9,9 @@ public sealed record UmodelAssetEntry(
     string ClassName,
     string ObjectName)
 {
-    public AssetKind Kind => ClassName.ToLowerInvariant() switch
-    {
-        "texture" or
-        "texture2d" or
-        "eftexture2d" or
-        "texturecube" or
-        "lightmaptexture2d" or
-        "shadowmaptexture2d" => AssetKind.Texture,
-        "staticmesh" or "staticmesh3" => AssetKind.StaticMesh,
-        "skeletalmesh" or "skeletalmesh3" => AssetKind.SkeletalMesh,
-        "material" or
-        "material3" or
-        "materialinstance" or
-        "materialinstanceconstant" or
-        "materialinstancetimevarying" => AssetKind.Material,
-        _ => AssetKind.Object,
-    };
+    public AssetKind Kind => AssetTypes.UmodelKind(ClassName);
 
-    public bool IsExportable => Kind is
-        AssetKind.Texture or
-        AssetKind.StaticMesh or
-        AssetKind.SkeletalMesh or
-        AssetKind.Material;
+    public bool IsExportable => AssetTypes.UmodelExportable(Kind);
 
     public string DisplayClassName => ClassName.ToLowerInvariant() switch
     {

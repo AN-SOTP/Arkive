@@ -63,6 +63,12 @@ internal static class Program
                 .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Mods"]),
             "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, and Mods.");
         Check(tabs.SelectedItem == Control<TabItem>(window, "ModifiedUpksTab"), "Mods was not the initial destination.");
+        var kinds = Control<ComboBox>(window, "WorkshopKindComboBox").Items.OfType<ComboBoxItem>()
+            .Select(item => $"{item.Content}={item.Tag}").ToArray();
+        Check(kinds.SequenceEqual(["Textures=Texture", "Skeletal meshes=SkeletalMesh", "Static meshes=StaticMesh",
+                  "Materials=MaterialInstanceConstant", "All moddable assets="]) &&
+              Control<ComboBox>(window, "WorkshopKindComboBox").SelectedIndex == 4,
+            "Edit mods does not offer the moddable asset types: " + string.Join(", ", kinds));
         Check(Control<Button>(window, "ModLibraryNewButton").IsVisible, "The initial mod library has no visible content.");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");
         tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");
