@@ -108,6 +108,12 @@ public static partial class BodyProfiles
             new("bip001-spine2", 0.058, 0.034, 0.036, 0.045),
             new("bip001-pelvis", -0.068, 0.010, 0.040, 0.058),
             new("bip001-spine", 0.056, -0.010, 0.0, 0.060)),
+        // Guardianknight (pc_dk outfits, pc_ddk class gear) shares the Female Assassin's skeleton and body shape, so
+        // only its mesh names tell the two apart; it is listed after the Assassin so a nameless mesh stays hers.
+        new("guardianknight", "Guardianknight", true, 0.738, 1.143,
+            new("bip001-spine2", 0.058, 0.034, 0.036, 0.045),
+            new("bip001-pelvis", -0.068, 0.010, 0.040, 0.058),
+            new("bip001-spine", 0.056, -0.010, 0.0, 0.060)),
     ];
 
     // NPCs have their own skeletons; each is tuned from its own meshes and offered only for those meshes.
@@ -145,6 +151,7 @@ public static partial class BodyProfiles
         "female-warrior" => "pc_wr_f_00_ani",
         "male-warrior" => "pc_wr_00_ani",
         "female-assassin" => "pc_dl_00_ani",
+        "guardianknight" => "pc_dk_00_ani",
         "female-mage" => "pc_mg_00_ani",
         "female-martial-artist" => "pc_ft_00_ani",
         "male-gunner" => "pc_gn_00_ani",
@@ -162,10 +169,13 @@ public static partial class BodyProfiles
         if (!restBones.TryGetValue("bip001-pelvis", out var pelvis) || !restBones.TryGetValue("bip001-head", out var head))
             return null;
         if (objectName is not null && ForNpc(objectName) is { } npc) return npc;
-        return Players.Where(profile => Math.Abs(profile.PelvisHeight - pelvis.Y) < 0.006 &&
-                                        Math.Abs(profile.HeadHeight - head.Y) < 0.006)
+        var matches = Players.Where(profile => Math.Abs(profile.PelvisHeight - pelvis.Y) < 0.006 &&
+                                               Math.Abs(profile.HeadHeight - head.Y) < 0.006)
             .OrderBy(profile => Math.Abs(profile.PelvisHeight - pelvis.Y) + Math.Abs(profile.HeadHeight - head.Y))
-            .FirstOrDefault();
+            .ToArray();
+        // Bodies that share a skeleton are told apart by the mesh name.
+        if (objectName is not null && ForObjectName(objectName) is { } named && matches.Contains(named)) return named;
+        return matches.FirstOrDefault();
     }
 
     private static BodyProfile? ForNpc(string objectName) =>
@@ -180,7 +190,7 @@ public static partial class BodyProfiles
         if (ForNpc(objectName) is { } npc) return npc;
         var match = PlayerMeshName().Match(objectName);
         if (!match.Success) return null;
-        var code = match.Groups["code"].Value;
+        var code = match.Groups["code"].Value.ToLowerInvariant();
         var sex = match.Groups["sex"].Value;
         var id = (code[0], sex) switch
         {
@@ -190,6 +200,7 @@ public static partial class BodyProfiles
             ('f', _) => "female-martial-artist",
             ('g', "f") => "female-assassin",
             ('g', _) => "male-gunner",
+            ('d', _) when code is "dk" or "ddk" => "guardianknight",
             ('d', _) => "female-assassin",
             ('m', _) => "female-mage",
             ('s', "m") => "male-specialist",

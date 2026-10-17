@@ -811,6 +811,15 @@ internal static class DiscoverySmokeTests
                 "DragonHuman", "DragonHuman", "PC", 701, "LookInfo",
                 "EFDLChar_PC_DK.PC_DK", "EFDLChar_PC_DK", "PC_DK"),
             new GameAssetAssociation(
+                "Shadowhunter", "Demonic", "PC", 403, "LookInfo",
+                "EFDLChar_PC_DMN.PC_DMN", "EFDLChar_PC_DMN", "PC_DMN"),
+            new GameAssetAssociation(
+                "Gladiator Chestpiece", "tip.name.item_1", "Item", 1, "Model",
+                "EFDLItem_PC_DDM_AV_001_Upper.PC_DDM_AV_001_Upper", "EFDLItem_PC_DDM_AV_001_Upper", "PC_DDM_AV_001_Upper"),
+            new GameAssetAssociation(
+                "Lance Chestpiece", "tip.name.item_2", "Item", 2, "Model",
+                "EFDLItem_PC_FLM_AV_001_Upper.PC_FLM_AV_001_Upper", "EFDLItem_PC_FLM_AV_001_Upper", "PC_FLM_AV_001_Upper"),
+            new GameAssetAssociation(
                 "Raid Boss", "tip.name.raid_boss", "Npc", 9001, "Model",
                 "EFDLChar_RAID_BOSS.RAID_BOSS", "EFDLChar_RAID_BOSS", "RAID_BOSS"),
         };
@@ -850,6 +859,11 @@ internal static class DiscoverySmokeTests
             ]);
         File.WriteAllText(metadataPath, JsonSerializer.Serialize(document));
         var metadata = GameAssetMetadataIndex.Load(metadataPath);
+        Assert(metadata.Archetypes.Contains("Shadowhunter") && !metadata.Archetypes.Contains("DDM"),
+            "Shadowhunter gear (PC_DDM) was not listed under its class");
+        Assert(metadata.Archetypes.Contains("LanceMaster") && GameClassNames.Label("LanceMaster") == "Glaivier (LanceMaster)" &&
+               GameClassNames.Label("Shadowhunter") == "Shadowhunter" && GameClassNames.Label("SoulEater") == "Souleater",
+            "class types were not shown with their localised names");
         Assert(metadata.EntityCount == 6, "entity definitions were not loaded");
         Assert(metadata.CustomizationOptionCount == 3, "customization definitions were not loaded");
         var slayer = metadata.Entities.Single(entity => entity.EntityId == 112);

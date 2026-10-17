@@ -586,7 +586,7 @@ public partial class MainWindow : Window
     {
         public string Label =>
             $"{Reference.DisplayName}" +
-            (string.IsNullOrWhiteSpace(Reference.Archetype) ? string.Empty : $" · {Reference.Archetype}") +
+            (string.IsNullOrWhiteSpace(Reference.Archetype) ? string.Empty : $" · {GameClassNames.Label(Reference.Archetype)}") +
             $" — {Match.PackageAlias}.{Match.ObjectName} ({Match.Kind})";
     }
 

@@ -18,6 +18,13 @@ internal static partial class AvatarItemAssociationResolver
             ["PC_DL"] = "Female Assassin",
         };
 
+    // Item packages of a class whose character record goes by another code: Shadowhunter (PC_DMN) gear is PC_DDM.
+    private static readonly IReadOnlyDictionary<string, string> ItemClassCodes =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["PC_DDM"] = "PC_DMN",
+        };
+
     public static IReadOnlyList<GameAssetAssociation> AttachArchetypes(
         IReadOnlyList<GameAssetAssociation> associations) =>
         associations.Select(item =>
@@ -104,6 +111,7 @@ internal static partial class AvatarItemAssociationResolver
 
             var family = match.Groups["family"].Value;
             var classCode = match.Groups["class"].Value;
+            classCode = ItemClassCodes.GetValueOrDefault(classCode.ToUpperInvariant(), classCode);
             var slot = match.Groups["slot"].Value;
             var archetype = archetypes.TryGetValue(classCode, out var label)
                 ? label

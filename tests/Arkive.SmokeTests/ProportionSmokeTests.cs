@@ -32,6 +32,24 @@ internal static class ProportionSmokeTests
         Assert(BodyProfiles.ForObjectName("pc_wbk_f_av_137_upper_sk")?.Id == "female-warrior", "Slayer outfits use the female warrior body");
         Assert(BodyProfiles.ForObjectName("pc_gn_f_av_141a_dress_sk")?.Id == "female-assassin", "female gunners share the assassin body");
         Assert(BodyProfiles.ForObjectName("pc_ft_m_av_008_upper_sk")?.Id == "male-gunner", "male martial artists share the male gunner body");
+        Assert(BodyProfiles.ForObjectName("pc_dk_av_179_upper_sk")?.Id == "guardianknight" &&
+               BodyProfiles.ForObjectName("pc_ddk_03_upper_sk")?.Id == "guardianknight",
+            "Guardianknight outfits and class gear use the Guardianknight body");
+        Assert(BodyProfiles.ForObjectName("pc_dl_av_236a_upper_sk")?.Id == "female-assassin" &&
+               BodyProfiles.ForObjectName("pc_ddm_hr_01_upper_sk")?.Id == "female-assassin",
+            "Assassin and Shadowhunter outfits keep the assassin body");
+        // Both bodies share one skeleton (pelvis 0.738, head 1.143 in the game files), so the mesh name decides.
+        var skeleton = new Dictionary<string, Vector3>
+        {
+            ["bip001-pelvis"] = new(-0.01f, 0.7383f, 0),
+            ["bip001-head"] = new(0, 1.1431f, 0),
+        };
+        Assert(BodyProfiles.Detect(skeleton, "pc_dk_av_179_lower_sk")?.Id == "guardianknight" &&
+               BodyProfiles.Detect(skeleton, "pc_dl_av_236a_lower_sk")?.Id == "female-assassin" &&
+               BodyProfiles.Detect(skeleton)?.Id == "female-assassin",
+            "the shared skeleton is told apart by mesh name and stays the assassin's without one");
+        Assert(BodyProfiles.AnimSetName(BodyProfiles.Players.Single(profile => profile.Id == "guardianknight")) == "pc_dk_00_ani",
+            "Guardianknight previews with its own animations");
         Assert(BodyProfiles.OutfitStem("pc_sp_av_108-1_upper_sk") == BodyProfiles.OutfitStem("pc_sp_av_108-1_lower_sk"),
             "a top and bottom of one outfit share a stem");
         Assert(BodyProfiles.OutfitStem("pc_sp_av_108-1_upper_sk") != BodyProfiles.OutfitStem("pc_sp_av_108-2_upper_sk"),

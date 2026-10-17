@@ -634,11 +634,11 @@ public partial class MainWindow : Window
                 Content = "All class types",
                 Tag = string.Empty,
             });
-            foreach (var archetype in index.Archetypes)
+            foreach (var archetype in ClassTypesByLabel(index))
             {
                 LibraryArchetypeComboBox.Items.Add(new ComboBoxItem
                 {
-                    Content = archetype,
+                    Content = GameClassNames.Label(archetype),
                     Tag = archetype,
                 });
             }
@@ -662,12 +662,16 @@ public partial class MainWindow : Window
                 Content = "All class types",
                 Tag = string.Empty,
             });
-            foreach (var archetype in index.Archetypes)
+            foreach (var archetype in ClassTypesByLabel(index))
                 WorkshopArchetypeComboBox.Items.Add(new ComboBoxItem
-                    { Content = archetype, Tag = archetype });
+                    { Content = GameClassNames.Label(archetype), Tag = archetype });
             WorkshopArchetypeComboBox.SelectedIndex = 0;
         }
     }
+
+    // Listed by the name shown, which leads with the localised class name; the database name stays the tag.
+    private static IEnumerable<string> ClassTypesByLabel(GameAssetMetadataIndex index) =>
+        index.Archetypes.OrderBy(GameClassNames.Label, StringComparer.CurrentCultureIgnoreCase);
 
     private async void GameAssetLinksButton_Click(object sender, RoutedEventArgs e)
     {

@@ -241,6 +241,8 @@ internal static class Program
         // A preset saved in the proportion editor's own window appears when the list opens.
         new BodyProportionPresetStore(Path.Combine(root, "presets", "body-proportions")).Save(new BodyProportionPreset(
             "UI preset", "female-warrior", new Dictionary<string, double> { ["chest"] = 30 }, true, true, DateTimeOffset.Now));
+        Check(Control<ComboBox>(window, "ProportionBodyComboBox").Items.OfType<string>().Contains("Guardianknight"),
+            "Simple upscale does not offer the Guardianknight body.");
         Control<ComboBox>(window, "ProportionBodyComboBox").SelectedIndex =
             1 + BodyProfiles.All.ToList().FindIndex(profile => profile.Id == "female-warrior");
         Invoke<object?>(window, "ProportionPresetComboBox_DropDownOpened", presets, EventArgs.Empty);
