@@ -346,19 +346,26 @@ internal static class ViewerSmokeTests
                ModelViewerEnvironmentService.SkyLabel("lv_chaotic_skies_iii_02_d") == "Chaotic III 2" &&
                ModelViewerEnvironmentService.SkyLabel("lv_chaotic_sky_ii_01") == "Chaotic II 1",
             "game skies were not given readable names");
-        // UModel's rest pose (a .psk REFSKELT chunk) converts like the animation keys: rotation (x, z, y, w), position (x, z, y) / 100.
-        var psk = new byte[32 + 120];
+        // UModel's rest pose (a .psk REFSKELT chunk) converts like the animation keys: the root bone's rotation
+        // (x, z, y, w) and position (x, z, y) / 100; every other bone is stored conjugated, so (-x, -z, y, w) and (x, z, -y) / 100.
+        var psk = new byte[32 + 2 * 120];
         Encoding.ASCII.GetBytes("REFSKELT").CopyTo(psk, 0);
         BinaryPrimitives.WriteInt32LittleEndian(psk.AsSpan(24), 120);
-        BinaryPrimitives.WriteInt32LittleEndian(psk.AsSpan(28), 1);
-        Encoding.ASCII.GetBytes("Bip001-Pelvis").CopyTo(psk, 32);
-        float[] record = [0.1f, 0.2f, 0.3f, 0.9f, 10f, 20f, 30f];
-        for (var i = 0; i < 4; i++) BinaryPrimitives.WriteSingleLittleEndian(psk.AsSpan(32 + 76 + i * 4), record[i]);
-        for (var i = 0; i < 3; i++) BinaryPrimitives.WriteSingleLittleEndian(psk.AsSpan(32 + 92 + i * 4), record[4 + i]);
+        BinaryPrimitives.WriteInt32LittleEndian(psk.AsSpan(28), 2);
+        float[] record = [0.1f, 0.3f, 0.3f, 0.9f, 10f, 20f, 30f];
+        foreach (var (bone, name) in new[] { (0, "b_root"), (1, "Bip001-Pelvis") })
+        {
+            Encoding.ASCII.GetBytes(name).CopyTo(psk, 32 + bone * 120);
+            for (var i = 0; i < 4; i++) BinaryPrimitives.WriteSingleLittleEndian(psk.AsSpan(32 + bone * 120 + 76 + i * 4), record[i]);
+            for (var i = 0; i < 3; i++) BinaryPrimitives.WriteSingleLittleEndian(psk.AsSpan(32 + bone * 120 + 92 + i * 4), record[4 + i]);
+        }
         var rest = ModelViewerAnimationService.ReadRestPose(psk);
-        Assert(rest.TryGetValue("bip001-pelvis", out var pelvis) &&
-               pelvis.Zip([0.1f, 0.3f, 0.2f, 0.9f, 0.1f, 0.3f, 0.2f]).All(pair => Math.Abs(pair.First - pair.Second) < 1e-6f),
-            "UModel's rest pose was not converted like the animation keys: " + (pelvis is null ? "missing" : string.Join(", ", pelvis)));
+        bool Converted(string name, float[] expected) => rest.TryGetValue(name, out var values) &&
+            values.Zip(expected).All(pair => Math.Abs(pair.First - pair.Second) < 1e-5f);
+        Assert(Converted("b_root", [0.1f, 0.3f, 0.3f, 0.9f, 0.1f, 0.3f, 0.2f]) &&
+               Converted("bip001-pelvis", [-0.1f, -0.3f, 0.3f, 0.9f, 0.1f, 0.3f, -0.2f]),
+            "UModel's rest pose was not converted like the animation keys: " +
+            string.Join(" | ", rest.Select(pair => $"{pair.Key} {string.Join(", ", pair.Value)}")));
         var cache = new ModelViewerCache(root, 64L << 20);
         for (var i = 0; i < 3; i++)
         {

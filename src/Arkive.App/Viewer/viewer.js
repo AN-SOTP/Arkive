@@ -1192,7 +1192,7 @@ window.arkiveProportions = { proportions, setZone };
 
 // Animation preview: plays the character's own game animations (prepared by Arkive from its AnimSet) on every
 // skeleton in the view, so clipping shows in motion. Rest pose puts every bone back where the mesh binds it.
-// UModel exports some bones (pelvis, arms, hands) with a different resting frame from the one the mesh binds, so each
+// UModel may export a bone with a different resting frame from the one the mesh binds, so each
 // bone carries a fixed correction C = inverse(UModel rest world) * mesh rest world, and a key's local transform L
 // becomes inverse(C of parent) * L * C. At rest that gives the mesh's own pose; in motion the bone turns as in game.
 const animation = { base: '', list: [], clip: null, playing: true, time: 0, speed: 1, rest: null, last: 0, restPose: null, restUrl: '' };

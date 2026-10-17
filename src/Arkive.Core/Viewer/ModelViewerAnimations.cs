@@ -29,7 +29,7 @@ public sealed record ModelViewerAnimationSet(
 /// </summary>
 public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, string cacheRoot)
 {
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public string CacheRoot { get; } = Path.GetFullPath(cacheRoot);
@@ -126,8 +126,10 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
                     var at = offset + bone * size;
                     var name = Encoding.ASCII.GetString(psk, at, 64).Split('\0')[0];
                     float F(int position) => BinaryPrimitives.ReadSingleLittleEndian(psk.AsSpan(at + position));
-                    // Rotation (x, y, z, w) at 76, position at 92; the same swap of Y and Z as the animation keys.
-                    rest.TryAdd(name, [F(76), F(84), F(80), F(88), F(92) * 0.01f, F(100) * 0.01f, F(96) * 0.01f]);
+                    // Rotation (x, y, z, w) at 76, position at 92, converted exactly as the animation keys.
+                    var rotation = ToViewerRotation(F(76), F(80), F(84), F(88), bone == 0);
+                    var position = ToViewerPosition(F(92), F(96), F(100), bone == 0);
+                    rest.TryAdd(name, [.. rotation, .. position]);
                 }
             }
             offset += checked(size * count);
@@ -238,23 +240,31 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
             var moves = Changes(0, 3);
             writer.Write((byte)((rotates ? 1 : 0) | (moves ? 2 : 0)));
             for (var frame = 0; frame < (rotates ? frames : 1); frame++)
-            {
-                // Unreal (x, y, z, w) conjugated in the .psa → glTF (x, z, y, w).
-                float x = Read(frame, 3), y = Read(frame, 4), z = Read(frame, 5), w = Read(frame, 6);
-                var length = MathF.Sqrt(x * x + y * y + z * z + w * w);
-                if (length < 1e-8f) { x = y = z = 0; w = 1; length = 1; }
-                foreach (var value in new[] { x / length, z / length, y / length, w / length })
+                foreach (var value in ToViewerRotation(Read(frame, 3), Read(frame, 4), Read(frame, 5), Read(frame, 6), bone == 0))
                     writer.Write((short)Math.Clamp(MathF.Round(value * 32767f), -32767, 32767));
-            }
             for (var frame = 0; frame < (moves ? frames : 1); frame++)
-            {
-                writer.Write(Read(frame, 0) * 0.01f);
-                writer.Write(Read(frame, 2) * 0.01f);
-                writer.Write(Read(frame, 1) * 0.01f);
-            }
+                foreach (var value in ToViewerPosition(Read(frame, 0), Read(frame, 1), Read(frame, 2), bone == 0))
+                    writer.Write(value);
         }
         return output.ToArray();
     }
+
+    /// <summary>
+    /// An ActorX rotation (.psa key or .psk rest pose) in glTF axes, as Arkive's own mesh decoder gives the bone. ActorX
+    /// stores the root bone's rotation as it is and every other bone's conjugated, so the root swaps Y and Z
+    /// (x, z, y, w) while the others are also mirrored back through the bone's own frame (-x, -z, y, w). Converting
+    /// the others like the root mirrored the skeleton front to back, and motions bent the wrong way.
+    /// </summary>
+    internal static float[] ToViewerRotation(float x, float y, float z, float w, bool root)
+    {
+        var length = MathF.Sqrt(x * x + y * y + z * z + w * w);
+        if (length < 1e-8f) return [0, 0, 0, 1];
+        return root ? [x / length, z / length, y / length, w / length] : [-x / length, -z / length, y / length, w / length];
+    }
+
+    /// <summary>An ActorX position in glTF axes and metres, matching <see cref="ToViewerRotation"/>.</summary>
+    internal static float[] ToViewerPosition(float x, float y, float z, bool root) =>
+        root ? [x * 0.01f, z * 0.01f, y * 0.01f] : [x * 0.01f, z * 0.01f, -y * 0.01f];
 
     [GeneratedRegex(@"^(ride|pr|knockdown|twistknockdown|airborne|psychokinesis|bound|abn|att|lp|stun|down|death|die|hit)_")]
     private static partial Regex UnwantedAnimation();
