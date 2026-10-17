@@ -67,6 +67,11 @@ public partial class ProportionEditorWindow : Window
             Browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
     }
     private bool _loadingPresets;
+
+    // The preset box also offers the outfit as the game has it, and a way back to the sliders it replaced.
+    private const string OriginalChoice = "Original (game body)";
+    private const string BackChoice = "Back to your sliders";
+    private (Dictionary<string, double> Values, BodyProportionFollow Follow)? _beforeOriginal;
     private readonly CancellationTokenSource _closing = new();
     private readonly TaskCompletionSource _pageReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -351,17 +356,28 @@ public partial class ProportionEditorWindow : Window
     private void LoadPresets(string? select)
     {
         _loadingPresets = true;
-        var presets = _presets.Load(_pieces[0].Profile.Id);
+        var profile = _pieces[0].Profile.Id;
+        BodyProportionPreset Choice(string name, IReadOnlyDictionary<string, double> settings, BodyProportionFollow follow) =>
+            new(name, profile, settings, follow.LooseClothing, follow.Hair, DateTimeOffset.MinValue);
+        var presets = new List<BodyProportionPreset> { Choice(OriginalChoice, new Dictionary<string, double>(), _follow) };
+        if (_beforeOriginal is { } before) presets.Add(Choice(BackChoice, before.Values, before.Follow));
+        presets.AddRange(_presets.Load(profile));
         PresetComboBox.ItemsSource = presets;
         PresetComboBox.SelectedItem = presets.FirstOrDefault(preset => preset.Name == select);
         if (select is not null) PresetComboBox.Text = select;
         _loadingPresets = false;
     }
 
+    private static bool IsBuiltInChoice(string name) => name is OriginalChoice or BackChoice;
+
     /// <summary>Choosing a preset sets every slider (and the follow options) to its values.</summary>
     private async void PresetComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (_loadingPresets || PresetComboBox.SelectedItem is not BodyProportionPreset preset || _pieces.Count == 0) return;
+        // Original shows the outfit as the game has it and keeps the sliders it replaced, to compare and go back.
+        if (preset.Name == OriginalChoice && !BodyProportionEngine.IsNeutral(_values))
+            _beforeOriginal = (new Dictionary<string, double>(_values, StringComparer.Ordinal), _follow);
+        var returning = preset.Name == BackChoice;
         _values = new Dictionary<string, double>(preset.Settings, StringComparer.Ordinal);
         try
         {
@@ -373,7 +389,16 @@ public partial class ProportionEditorWindow : Window
             else
                 Browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(
                     new { type = "setProportionValues", values = _values }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-            Status($"Preset {preset.Name} applied. Adjust the sliders or save as a mod.");
+            Status(preset.Name == OriginalChoice
+                ? "Showing the original body. Choose Back to your sliders in the Preset box to return to them."
+                : returning ? "Back to your sliders." : $"Preset {preset.Name} applied. Adjust the sliders or save as a mod.");
+            if (returning)
+            {
+                _beforeOriginal = null;
+                _ = Dispatcher.BeginInvoke(() => LoadPresets(null));
+            }
+            else if (preset.Name == OriginalChoice && _beforeOriginal is not null)
+                _ = Dispatcher.BeginInvoke(() => LoadPresets(OriginalChoice));
             _log($"Proportion preset applied in the editor: {preset.Name} ({preset.ProfileId}).");
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or OperationCanceledException)
@@ -385,6 +410,12 @@ public partial class ProportionEditorWindow : Window
     private void SavePresetButton_Click(object sender, RoutedEventArgs e)
     {
         var name = PresetComboBox.Text.Trim();
+        if (IsBuiltInChoice(name))
+        {
+            Status("Type a new name for the preset in the Preset box first.");
+            PresetComboBox.Focus();
+            return;
+        }
         if (name.Length == 0)
         {
             Status("Type a name for the preset in the Preset box first.");

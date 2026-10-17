@@ -552,7 +552,6 @@ public partial class MainWindow : Window
         LibraryInspectButton.IsEnabled = backendAvailable && hasSelection && !_exportInProgress;
         LibraryPreviewButton.IsEnabled = backendAvailable && row is not null && CanPreviewInArkive(row.Kind);
         LibraryBrowsePackageButton.IsEnabled = backendAvailable && hasSelection && !_exportInProgress;
-        LibraryOpenPackageButton.IsEnabled = hasSelection && !_exportInProgress;
         LibraryExportButton.IsEnabled = canExport;
         LibraryOpenPackageFolderButton.IsEnabled = hasSelection;
         LibraryCopyIdentityButton.IsEnabled = hasSelection;
@@ -564,19 +563,6 @@ public partial class MainWindow : Window
         LibrarySkeletalMeshReconButton.IsEnabled = !_skeletalMeshReconnaissanceInProgress &&
                                                    row is not null &&
                                                    CanReconnoitreMesh(row.Kind, row.ClassName);
-        LibraryExtractSkeletalMeshAssetKitButton.IsEnabled =
-            !_skeletalMeshAssetKitInProgress &&
-            !_skeletalMeshReconnaissanceInProgress &&
-            !_skeletalMeshEditableExportInProgress &&
-            _skeletalMeshAssetKitService is not null &&
-            row is not null && CanReconnoitreSkeletalMesh(row.Kind, row.ClassName);
-        LibraryStartTextureModButton.IsEnabled = !_guidedTextureModInProgress &&
-                                                 row is not null &&
-                                                 CanReconnoitreTexture(row.Kind, row.ClassName) &&
-                                                 _nativeTextureExportService is not null;
-        LibraryStartMaterialModButton.IsEnabled = !_guidedTextureModInProgress && row is not null &&
-                                                   row.Kind == AssetKind.Material &&
-                                                   row.ClassName.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase);
     }
 
     private void LibraryInspectButton_Click(object sender, RoutedEventArgs e) =>
@@ -649,16 +635,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void LibraryOpenPackageButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (LibraryGrid.SelectedItem is not LibraryAssetRow row)
-        {
-            return;
-        }
-
-        await OpenPackageAsync(row.SourcePath, "Library result action");
-        MainTabControl.SelectedIndex = 0;
-    }
 
     private async void LibraryExportButton_Click(object sender, RoutedEventArgs e)
     {

@@ -17,19 +17,19 @@ Arkive operates on files **while the game, launcher and anti-cheat are closed**.
 
 The actual desktop GUI. The library and mod screenshots use fictional demonstration data; the model viewer screenshots show game models rendered from a locally installed client. None of them are installable mods, and the repository contains no game files or personal library data.
 
-### Asset library
+### Asset Library
 
 Search technical filenames and in-game names, then inspect an asset or its relationships.
 
 ![Arkive asset library with demonstration search results](docs/screenshots/asset-library.png)
 
-### Edit mods
+### Edit Mods
 
 Keep a named draft, edit its working assets and add individual assets or a mesh's complete dependency kit.
 
 ![Arkive mod editor with demonstration working assets and asset search](docs/screenshots/edit-mods.png)
 
-### Mod library
+### Mod Library
 
 Enable mods, set priorities and review the effective asset selection before applying changes.
 
@@ -117,7 +117,7 @@ Use a trusted local folder, not the game's Packages directory. Avoid simultaneou
 
 The four primary tabs separate discovery, creation, editing and deployment. **Advanced** retains native diagnostics and specialist/legacy workflows.
 
-### Asset library
+### Asset Library
 
 Search **All names and filenames** by physical/decoded package filename, object, class or loaded in-game name. The full index includes assets even when their class is not moddable. Inspect a selected object in UModel, browse its package, open it in Arkive, export it, copy its identity or explore evidence-labelled relationships. UModel and Arkive may support different display types. Direct database links, verified dependencies and candidate mappings are deliberately distinguished.
 
@@ -127,7 +127,7 @@ The local index is resumable. Worker count and optional fast scratch storage hel
 
 ### Create
 
-1. In **Create mod**, enter a name and optional version/author/description. **Create mod** saves a draft and opens **Edit mods**; no game files change.
+1. In **Create Mod**, enter a name and optional version/author/description. **Create Mod** saves a draft and opens **Edit Mods**; no game files change.
 2. Expand **Add assets**, search by game/object name and select results. **Add asset only** prepares one editable GLB, PNG/DDS or material project. **Add mesh + textures/materials** prepares a skeletal mesh and its exact resolved dependencies as a structured kit. References start excluded; tick **Include** only for assets your mod should replace. Some packages hold two textures or materials with the same name in different groups (for example `tex.pc_dl_av_214_head_orm` and `pc_dl_av_214_head_orm`); the kit adds the one the mesh's material uses, Add assets adds the row you select, and the working list shows the group so the two can be told apart. A link the kit cannot add stays in the exported kit, is named in the status line and is explained in the session log. When a mod is installed over the mesh's package, the mesh is read from its clean backup while its linked textures and materials are still found in the game folder.
 3. Use **Preview original** to inspect sources: meshes open in Arkive's model viewer, where PgUp/PgDn step through these search results, and textures and materials open in UModel. **Open in UModel** opens any selected asset in UModel instead. Extraction shows stage, elapsed time and dependency counts, with cancellation at safe checkpoints. Original previews remain available during extraction; editing/building waits until completion.
 4. Select a working asset and use **Open edited file**, **Working folder**, **Replace file**, **Compare with original** or **Edit material**. Edit the working file displayed in the table. Export meshes back as GLB while retaining the target contract. When a working mesh is saved again (for example from Blender), Edit mods checks it as soon as you come back to Arkive: a mesh that would be refused shows **Fails mesh check**, and selecting it lists each problem with what to do, so it can be fixed before **Save mod**.
@@ -137,15 +137,15 @@ The local index is resumable. Worker count and optional fast scratch storage hel
 
 ### Edit
 
-Choose **Mods → Edit mod**, or use the **Edit mods** selector. Missing working copies are prepared against a verified clean client, using verified backups if Arkive has an active package replacement. Existing working edits are retained. Edit, save, then preview/apply the new composition with the game closed.
+Choose **Mods → Edit mod**, or use the **Edit Mods** selector. Missing working copies are prepared against a verified clean client, using verified backups if Arkive has an active package replacement. Existing working edits are retained. Edit, save, then preview/apply the new composition with the game closed.
 
 Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every row in the focused table. **Remove selected** affects all selected assets; single-file edit/compare/preview needs one row. Clearing a draft preserves working files and the previous saved archive. An empty draft cannot become a valid shared mod.
 
 Drag dividers to resize working/search tables and mod/detail panes. Collapse Add assets, metadata or library setup when unnecessary. Pane sizes, density, theme and random/fixed banner preferences persist.
 
-### Simple upscale
+### Simple Upscale
 
-**Simple upscale** reshapes player bodies and outfits, and a few NPCs, without Blender. Its search lists only player character bodies and outfit pieces (tops, bottoms, one-piece outfits, arms and shoulders) and the NPCs Brelshaza, Echidna, Nineveh, Serca and Beatrice; faces, hair, headwear, weapons, other NPCs and objects are left out. **Open in proportion editor** shows the selected piece and, with **Open the whole outfit** ticked, the outfit's other pieces, in Arkive's model viewer with game colours and a **Proportions** panel. Its sliders, each with a number box, come in groups:
+**Simple Upscale** reshapes player bodies and outfits, and a few NPCs, without Blender. Its search lists only player character bodies and outfit pieces (tops, bottoms, one-piece outfits, arms and shoulders) and the NPCs Brelshaza, Echidna, Nineveh, Serca and Beatrice; faces, hair, headwear, weapons, other NPCs and objects are left out. **Open in proportion editor** shows the selected piece and, with **Open the whole outfit** ticked, the outfit's other pieces, in Arkive's model viewer with game colours and a **Proportions** panel. Its sliders, each with a number box, come in groups:
 
 - **Arms and neck:** neck, shoulders, upper arms and forearms.
 - **Breasts** (chest on male bodies): size, width, projection, height, lift, spacing and, on female bodies, sag.
@@ -159,7 +159,7 @@ The model changes as you move them. **Save as mod** creates a new mod with a wor
 - **Loose clothing follows the body** and **Hair follows the body** (both on by default) move skirts, capes, coat tails, sashes, drapes and hair, which hang from bones of their own, with the body surface nearest to them, so the body does not grow through them. The fade-out of each area is measured across the body, not in depth, so every layer over a spot (skin, a top, a coat) moves together.
 - Thickness, shape and placement change; height and limb length do not, because the game's skeleton and animations set them. Every LOD is reshaped; normals and tangents turn with the new shape so lighting, shadows and normal maps follow it (in the preview too); bones do not change, and saving runs the usual skeleton and animation stress checks.
 - **Presets:** type a name in the editor's **Preset** box and choose **Save preset** to keep the sliders and follow options for that body; choosing a preset sets every slider. In the tab, select any number of outfits of one body, choose a preset and **Apply preset to selected outfits** to reshape them all (with their other pieces when **Open the whole outfit** is ticked) and save them as one new mod without opening the editor. **Apply preset to every outfit of its body** does the same for every player outfit of the preset's body (for example all Female Warrior outfits: about 290 outfits, 540 pieces). Arkive first says how many that is, roughly how long it takes (about 3 seconds per piece, so around half an hour for one body) and how much disk the working files and mod need (about 9 MB per piece). On a PC with four or more processor threads it then offers to work on several pieces at once (two to four, half the threads): about 2.5 times faster with four, but it keeps those threads busy and uses about twice the memory, so the PC may feel slower until it finishes. A piece that fails its mesh check with those settings is left out and named, and the rest are saved; **Stop** ends it after the current piece and keeps the pieces done so far as a draft in Edit mods.
-- **Editing a saved upscale mod:** open it in **Edit mods** and choose **Edit in proportion editor**. The outfit reopens from the clean game files with the mod's sliders (kept in the mod's tags; mods saved before 0.3.2 are read from their description), and **Save as mod** updates that same mod instead of creating a new one. Apply it again in Mods to put the new shape in the game. Mods with more than 20 pieces (body-wide ones) are changed by applying an edited preset to the body again.
+- **Editing a saved upscale mod:** open it in **Edit Mods** and choose **Edit in proportion editor**. The outfit reopens from the clean game files with the mod's sliders (kept in the mod's tags; mods saved before 0.3.2 are read from their description), and **Save as mod** updates that same mod instead of creating a new one. Apply it again in Mods to put the new shape in the game. Mods with more than 20 pieces (body-wide ones) are changed by applying an edited preset to the body again.
 - The editor and viewer can play the character's animations and use game lighting (see Asset library above), to check an outfit in motion and in game-like light before saving.
 - A mod replaces the outfit (or NPC) for every character you see wearing it. Very large or combined values can still make pieces overlap.
 

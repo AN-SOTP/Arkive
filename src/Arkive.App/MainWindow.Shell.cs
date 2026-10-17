@@ -60,22 +60,22 @@ public partial class MainWindow : Window
     {
         if (MainTabControl.SelectedItem == LibraryTab)
         {
-            PackageAliasText.Text = "Asset library";
+            PackageAliasText.Text = "Asset Library";
             PathText.Text = "Search filenames and game names; inspect assets in UModel or explore their details.";
         }
         else if (MainTabControl.SelectedItem == CreateModTab)
         {
-            PackageAliasText.Text = "Create mod";
+            PackageAliasText.Text = "Create Mod";
             PathText.Text = "Name a new mod, then add its assets in Edit mods.";
         }
         else if (MainTabControl.SelectedItem == WorkshopTab)
         {
-            PackageAliasText.Text = _authoringDraft?.Metadata.Name ?? "Edit mods";
+            PackageAliasText.Text = _authoringDraft?.Metadata.Name ?? "Edit Mods";
             PathText.Text = "Edit working assets, save the mod, then review and apply changes.";
         }
         else if (MainTabControl.SelectedItem == ModifiedUpksTab)
         {
-            PackageAliasText.Text = "Mod library";
+            PackageAliasText.Text = "Mod Library";
             PathText.Text = "Enable mods and set priorities; Apply changes updates the game.";
         }
         else if (_currentPackagePath is { } packagePath)

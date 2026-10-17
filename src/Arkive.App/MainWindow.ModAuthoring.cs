@@ -312,7 +312,6 @@ public partial class MainWindow : Window
         AuthoringPrepareButton.Visibility = _authoringDraft?.ModId is not null &&
             AuthoringAssetsGrid.Items.OfType<AuthoringAssetRow>().Any(row => row.Edit is null)
                 ? Visibility.Visible : Visibility.Collapsed;
-        AuthoringAddAssetsButton.IsEnabled = idle && hasMod;
         AuthoringRemoveButton.IsEnabled = idle && hasMod && selectionCount > 0;
         AuthoringRemoveButton.Content = selectionCount > 0 ? $"Remove selected ({selectionCount:N0})" : "Remove selected assets";
         AuthoringOpenButton.IsEnabled = idle && selected?.Edit is not null;
@@ -340,9 +339,6 @@ public partial class MainWindow : Window
         UpdateAuthoringActions();
         ShowAuthoringCheck();
     }
-
-    private void AuthoringAddAssetsButton_Click(object sender, RoutedEventArgs e)
-    { AuthoringSearchExpander.IsExpanded = true; WorkshopSearchTextBox.Focus(); }
 
     /// <param name="objectPath">Picks one of several same-named objects in the package; see ArkiveModObjectPath.</param>
     private async Task<ArkiveModLocalEdit> AddAuthoringAssetAsync(LibraryAssetRow row, AuthoringAddSession session,

@@ -45,23 +45,6 @@ public partial class MainWindow : Window
             "open-package Assets result");
     }
 
-    private async void LibraryStartTextureModButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (LibraryGrid.SelectedItem is not LibraryAssetRow row ||
-            !CanReconnoitreTexture(row.Kind, row.ClassName)) return;
-        await StartGuidedTextureModAsync(new GuidedTextureSelection(
-            row.SourcePath,
-            row.PackageAlias,
-            row.PhysicalPackageName,
-            row.ExportIndex,
-            row.Kind,
-            row.ClassName,
-            row.ObjectName,
-            row.SerialOffset,
-            row.SerialSize,
-            row.GameMetadata.Select(item => item.DisplayName).ToArray()),
-            "Library result");
-    }
 
     private async void EntityBrowserStartTextureModButton_Click(object sender, RoutedEventArgs e)
     {

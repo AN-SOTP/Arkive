@@ -84,17 +84,6 @@ public partial class MainWindow : Window
             "open-package Assets result");
     }
 
-    private async void LibraryExtractSkeletalMeshAssetKitButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (LibraryGrid.SelectedItem is not LibraryAssetRow row ||
-            !CanReconnoitreSkeletalMesh(row.Kind, row.ClassName)) return;
-        await ExtractSkeletalMeshAssetKitAsync(new SkeletalMeshAssetKitSelection(
-            row.SourcePath, row.PackageAlias, row.PhysicalPackageName,
-            row.ExportIndex, row.Kind, row.ClassName, row.ObjectName,
-            row.SerialOffset, row.SerialSize,
-            row.GameMetadata.Select(item => item.DisplayName).ToArray()), "Library result");
-    }
-
     private async void EntityBrowserExtractSkeletalMeshAssetKitButton_Click(
         object sender, RoutedEventArgs e)
     {

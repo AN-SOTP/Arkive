@@ -37,14 +37,6 @@ public partial class MainWindow : Window
             row.ClassName, objectName, row.SerialOffset, row.SerialSize, "open-package Assets result");
     }
 
-    private async void LibraryStartMaterialModButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (LibraryGrid.SelectedItem is not LibraryAssetRow row || row.Kind != AssetKind.Material ||
-            !row.ClassName.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase)) return;
-        await RunMaterialProjectAsync(row.SourcePath, row.PackageAlias, row.ExportIndex, row.Kind,
-            row.ClassName, row.ObjectName, row.SerialOffset, row.SerialSize, "indexed library result");
-    }
-
     private async Task RunMaterialProjectAsync(
         string packagePath,
         string packageAlias,
@@ -57,7 +49,6 @@ public partial class MainWindow : Window
         string trigger)
     {
         MaterialReconButton.IsEnabled = false;
-        LibraryStartMaterialModButton.IsEnabled = false;
         MaterialStatusText.Text = "Decoding the native material parameter stream...";
         try
         {

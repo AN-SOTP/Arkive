@@ -132,14 +132,12 @@
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                             <Button x:Name="ReportProblemButton" Content="Report a problem" Click="ReportProblemButton_Click"
                                     ToolTip="Pack Arkive's recent logs, your mod list and the checks of the meshes you're editing into one file and copy it, ready to send. No game files or settings are included." />
-                            <Button Content="Edit mods" Click="OpenWorkshopButton_Click" />
-                            <Button Content="Open package…" Click="OpenPackage_Click"
-                                    Style="{StaticResource PrimaryButtonStyle}" />
                             <Button x:Name="AdvancedSectionsButton" Content="Advanced  ▾"
                                     Click="AdvancedSectionsButton_Click">
                             <Button.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="Asset discovery">
+                                        <MenuItem Header="Open package…" Click="OpenPackage_Click" />
                                         <MenuItem Header="Package assets" Tag="Assets" Click="AdvancedNavigationMenuItem_Click" />
                                         <MenuItem Header="Library and game setup" Tag="Library" Click="AdvancedNavigationMenuItem_Click" />
                                         <MenuItem Header="Characters and NPCs" Tag="Entities" Click="AdvancedNavigationMenuItem_Click" />
@@ -198,13 +196,13 @@
             </Grid>
         </Border>
 
-        <Grid x:Name="WorkspaceContent" Margin="12">
+        <Grid x:Name="WorkspaceContent" Margin="0">
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="ResultsRow" Height="*" MinHeight="300" />
                 <RowDefinition x:Name="ValidationSplitterRow" Height="0" />
                 <RowDefinition x:Name="ValidationRow" Height="0" />
             </Grid.RowDefinitions>
-            <TabControl x:Name="MainTabControl" Grid.Row="0" SelectionChanged="MainTabControl_SelectionChanged">
+            <TabControl x:Name="MainTabControl" Grid.Row="0" BorderThickness="0" SelectionChanged="MainTabControl_SelectionChanged">
                 <TabItem x:Name="AssetsTab" Header="Assets" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
@@ -298,7 +296,7 @@
                         </DataGrid>
                     </DockPanel>
                 </TabItem>
-                <TabItem x:Name="LibraryTab" Header="Asset library">
+                <TabItem x:Name="LibraryTab" Header="Asset Library">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                             <Expander x:Name="LibrarySetupExpander" Header="Library setup" Margin="0,0,0,6">
@@ -488,16 +486,6 @@
                                         IsEnabled="False"
                                         Click="LibraryBrowsePackageButton_Click"
                                         ToolTip="Open the selected result's whole package in UModel." />
-                                <Button x:Name="LibraryOpenPackageButton"
-                                        Content="Open package in Arkive"
-                                        IsEnabled="False"
-                                        Click="LibraryOpenPackageButton_Click"
-                                        ToolTip="Load the selected result's source package into Arkive's package and Assets views." />
-                                <Button x:Name="LibraryExportButton"
-                                        Content="Export selected"
-                                        IsEnabled="False"
-                                        Click="LibraryExportButton_Click"
-                                        ToolTip="Export this texture, mesh, or material into an isolated Arkive export workspace session." />
                                 <Button x:Name="LibraryOpenPackageFolderButton"
                                         Content="Open package folder"
                                         IsEnabled="False"
@@ -507,41 +495,6 @@
                                         IsEnabled="False"
                                         Click="LibraryCopyIdentityButton_Click"
                                         ToolTip="Copy the decoded package, physical package, class, object, and export index." />
-                                <Button x:Name="LibraryExploreRelationshipsButton"
-                                        Content="Explore relationships"
-                                        IsEnabled="False"
-                                        Click="LibraryExploreRelationshipsButton_Click"
-                                        ToolTip="Find database-linked assets, same-package context, and explicitly labelled naming-family candidates." />
-                                <Button x:Name="LibraryBaselineButton"
-                                        Content="Baseline selected"
-                                        IsEnabled="False"
-                                        Click="LibraryBaselineButton_Click"
-                                        ToolTip="Create a lazy package hash and asset logical-range baseline." />
-                                <Button x:Name="LibraryTextureReconButton"
-                                        Content="Native texture recon"
-                                        IsEnabled="False"
-                                        Click="LibraryTextureReconButton_Click"
-                                        ToolTip="Create a native Texture2D property and mip-layout evidence report for this indexed result." />
-                                <Button x:Name="LibrarySkeletalMeshReconButton"
-                                        Content="Native mesh recon"
-                                        IsEnabled="False"
-                                        Click="LibrarySkeletalMeshReconButton_Click"
-                                        ToolTip="Create native export evidence and a UModel-compared report for this SkeletalMesh or StaticMesh." />
-                                <Button x:Name="LibraryExtractSkeletalMeshAssetKitButton"
-                                        Content="Extract complete asset kit"
-                                        IsEnabled="False"
-                                        Click="LibraryExtractSkeletalMeshAssetKitButton_Click"
-                                        ToolTip="Export this SkeletalMesh and its exact material and Texture2D dependencies into one persistent authoring folder." />
-                                <Button x:Name="LibraryStartTextureModButton"
-                                        Content="Start texture mod"
-                                        IsEnabled="False"
-                                        Click="LibraryStartTextureModButton_Click"
-                                        ToolTip="Create or reopen a guided mod project for this Texture2D and open its editable image." />
-                                <Button x:Name="LibraryStartMaterialModButton"
-                                        Content="Start material mod"
-                                        IsEnabled="False"
-                                        Click="LibraryStartMaterialModButton_Click"
-                                        ToolTip="Create a persistent parameter and compatible object-reference project for this MaterialInstanceConstant." />
                             </WrapPanel>
                             <Expander x:Name="LibraryDiscoveryExpander"
                                       Header="Discovery suggestions and result facets"
@@ -594,13 +547,16 @@
                                 <ContextMenu>
                                     <MenuItem Header="Inspect selected in UModel" Click="LibraryInspectButton_Click" />
                                     <MenuItem Header="Browse package in UModel" Click="LibraryBrowsePackageButton_Click" />
-                                    <MenuItem Header="Open package in Arkive" Click="LibraryOpenPackageButton_Click" />
-                                    <MenuItem Header="Export selected" Click="LibraryExportButton_Click" />
-                                    <MenuItem Header="Explore relationships" Click="LibraryExploreRelationshipsButton_Click" />
-                                    <MenuItem Header="Create asset baseline" Click="LibraryBaselineButton_Click" />
-                                    <MenuItem Header="Run native texture reconnaissance" Click="LibraryTextureReconButton_Click" />
-                                    <MenuItem Header="Start guided texture mod" Click="LibraryStartTextureModButton_Click" />
-                                    <MenuItem Header="Start material parameter mod" Click="LibraryStartMaterialModButton_Click" />
+                                    <Separator />
+                                    <MenuItem x:Name="LibraryExportButton" Header="Export selected" Click="LibraryExportButton_Click"
+                                              ToolTip="Export this texture, mesh, or material into an isolated Arkive export workspace session." />
+                                    <MenuItem x:Name="LibraryExploreRelationshipsButton" Header="Explore relationships"
+                                              Click="LibraryExploreRelationshipsButton_Click" />
+                                    <MenuItem x:Name="LibraryBaselineButton" Header="Create asset baseline" Click="LibraryBaselineButton_Click" />
+                                    <MenuItem x:Name="LibraryTextureReconButton" Header="Run native texture reconnaissance"
+                                              Click="LibraryTextureReconButton_Click" />
+                                    <MenuItem x:Name="LibrarySkeletalMeshReconButton" Header="Run native mesh reconnaissance"
+                                              Click="LibrarySkeletalMeshReconButton_Click" />
                                     <Separator />
                                     <MenuItem Header="Open package folder" Click="LibraryOpenPackageFolderButton_Click" />
                                     <MenuItem Header="Copy asset identity" Click="LibraryCopyIdentityButton_Click" />
@@ -620,7 +576,7 @@
                         </DataGrid>
                     </DockPanel>
                 </TabItem>
-                <TabItem x:Name="CreateModTab" Header="Create mod">
+                <TabItem x:Name="CreateModTab" Header="Create Mod">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="10">
                             <TextBlock Text="Create a mod" FontSize="20" Margin="0,0,0,8" />
@@ -655,7 +611,7 @@
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
-                <TabItem x:Name="WorkshopTab" Header="Edit mods">
+                <TabItem x:Name="WorkshopTab" Header="Edit Mods">
                     <DockPanel Margin="8">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <WrapPanel>
@@ -793,7 +749,6 @@
                             <DockPanel Grid.Row="0" Margin="0,0,0,5">
                                 <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                                     <WrapPanel>
-                                        <Button x:Name="AuthoringAddAssetsButton" Content="Add assets" Click="AuthoringAddAssetsButton_Click" />
                                         <Button x:Name="AuthoringPrepareButton" Content="Prepare for editing" Click="AuthoringPrepareButton_Click" />
                                         <Button x:Name="AuthoringOpenButton" Content="Open edited file" Click="AuthoringOpenButton_Click" />
                                         <Button x:Name="AuthoringProportionsButton" Content="Edit in proportion editor" Visibility="Collapsed"
@@ -841,7 +796,7 @@
                         </Grid>
                     </DockPanel>
                 </TabItem>
-                <TabItem x:Name="BodyProportionsTab" Header="Simple upscale">
+                <TabItem x:Name="BodyProportionsTab" Header="Simple Upscale">
                     <DockPanel Margin="8">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <TextBlock Text="Simple upscale" FontSize="20" Margin="0,0,0,6" />
@@ -1073,7 +1028,7 @@
                         </Grid>
                     </DockPanel>
                 </TabItem>
-                <TabItem x:Name="CompressedChunksTab" Header="Compressed chunks" Visibility="Collapsed">
+                <TabItem x:Name="CompressedChunksTab" Header="Compressed Chunks" Visibility="Collapsed">
                     <DataGrid x:Name="ChunksGrid"
                               Margin="6"
                               IsReadOnly="True"
@@ -1091,7 +1046,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
                 </TabItem>
-                <TabItem x:Name="IndexStatusTab" Header="Index status" Visibility="Collapsed">
+                <TabItem x:Name="IndexStatusTab" Header="Index Status" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <DockPanel Margin="0,0,0,6">
@@ -1195,7 +1150,7 @@
                         </DockPanel>
                     </DockPanel>
                 </TabItem>
-                <TabItem x:Name="TextureReconTab" Header="Texture recon" Visibility="Collapsed">
+                <TabItem x:Name="TextureReconTab" Header="Texture Recon" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <Border Padding="8,6"
@@ -1255,7 +1210,7 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                            <TabItem Header="Mip candidates">
+                            <TabItem Header="Mip Candidates">
                                 <DataGrid x:Name="TextureReconMipsGrid"
                                           IsReadOnly="True"
                                           AutoGenerateColumns="False"
@@ -1316,7 +1271,7 @@
                         </TabControl>
                     </DockPanel>
                 </TabItem>
-                <TabItem x:Name="SkeletalMeshReconTab" Header="Mesh recon" Visibility="Collapsed">
+                <TabItem x:Name="SkeletalMeshReconTab" Header="Mesh Recon" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <Border Padding="8,6" Margin="0,0,0,6"
@@ -1346,7 +1301,7 @@
                                        Foreground="{DynamicResource InfoTextBrush}" Text="No report loaded." TextTrimming="CharacterEllipsis" />
                         </StackPanel>
                         <TabControl>
-                            <TabItem Header="LODs and sections">
+                            <TabItem Header="LODs and Sections">
                                 <DataGrid x:Name="SkeletalMeshLodsGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                           CanUserAddRows="False" CanUserResizeColumns="True" GridLinesVisibility="Horizontal">
                                     <DataGrid.Columns>
@@ -1362,7 +1317,7 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                            <TabItem Header="Native LOD buffers">
+                            <TabItem Header="Native LOD Buffers">
                                 <DataGrid x:Name="SkeletalMeshNativeLodsGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                           CanUserAddRows="False" CanUserResizeColumns="True" GridLinesVisibility="Horizontal">
                                     <DataGrid.Columns>
@@ -1381,7 +1336,7 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                            <TabItem Header="Native ranges">
+                            <TabItem Header="Native Ranges">
                                 <DataGrid x:Name="SkeletalMeshNativeRangesGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                           CanUserAddRows="False" CanUserResizeColumns="True" GridLinesVisibility="Horizontal">
                                     <DataGrid.Columns>
@@ -1393,7 +1348,7 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                            <TabItem Header="Reference skeleton">
+                            <TabItem Header="Reference Skeleton">
                                 <DataGrid x:Name="SkeletalMeshBonesGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                           CanUserAddRows="False" CanUserResizeColumns="True" GridLinesVisibility="Horizontal">
                                     <DataGrid.Columns>
@@ -1418,7 +1373,7 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                            <TabItem Header="Cloth &amp; morph dependencies">
+                            <TabItem Header="Cloth &amp; Morph Dependencies">
                                 <DockPanel Margin="6">
                                     <TextBlock x:Name="SkeletalMeshDependencySummaryText" DockPanel.Dock="Top"
                                                Margin="0,0,0,6" TextWrapping="Wrap"
@@ -1437,7 +1392,7 @@
                                     </DataGrid>
                                 </DockPanel>
                             </TabItem>
-                            <TabItem x:Name="SkeletalMeshEditableExportsTab" Header="Editable exports">
+                            <TabItem x:Name="SkeletalMeshEditableExportsTab" Header="Editable Exports">
                                 <DockPanel Margin="6">
                                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -1616,7 +1571,7 @@
                         </TabControl>
                     </DockPanel>
                 </TabItem>
-                <TabItem x:Name="StaticMeshTab" Header="Static meshes" Visibility="Collapsed">
+                <TabItem x:Name="StaticMeshTab" Header="Static Meshes" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <Border DockPanel.Dock="Top" Padding="9,7" Margin="0,0,0,7"
                                 Background="{DynamicResource SuccessSurfaceBrush}" BorderBrush="{DynamicResource SuccessBorderBrush}" BorderThickness="1">
@@ -1624,7 +1579,7 @@
                                        Text="StaticMesh projects edit non-skinned world geometry, props, architecture, weapons, and rigid accessories. Arkive exports stable native GLB geometry, preserves material-section identity and all source collision bytes, accepts same-topology or bounded topology-changing render edits, independently decodes compiled StaticMesh3 data, and composes checked edits into the same reversible UPK as textures, materials, and skeletal meshes. Collision is retained, not regenerated; review it when an edit materially changes the object's silhouette." />
                         </Border>
                         <TabControl>
-                            <TabItem Header="Native recon">
+                            <TabItem Header="Native Recon">
                                 <DockPanel Margin="4">
                                     <StackPanel DockPanel.Dock="Top">
                                         <WrapPanel Margin="0,0,0,5">
@@ -1656,7 +1611,7 @@
                                                 </DataGrid.Columns>
                                             </DataGrid>
                                         </TabItem>
-                                        <TabItem Header="Sections / materials">
+                                        <TabItem Header="Sections / Materials">
                                             <DataGrid x:Name="StaticMeshSectionsGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                                       CanUserAddRows="False" CanUserResizeColumns="True" GridLinesVisibility="Horizontal">
                                                 <DataGrid.Columns>
@@ -1683,7 +1638,7 @@
                                     </TabControl>
                                 </DockPanel>
                             </TabItem>
-                            <TabItem Header="Editable exports and projects">
+                            <TabItem Header="Editable Exports and Projects">
                                 <Grid Margin="4">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
@@ -1791,7 +1746,7 @@
                             <GridSplitter Grid.Row="1" Height="7" HorizontalAlignment="Stretch"
                                           ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
                         <TabControl Grid.Row="2">
-                            <TabItem Header="Scalar parameters">
+                            <TabItem Header="Scalar Parameters">
                                 <DataGrid x:Name="MaterialScalarGrid" IsReadOnly="False" AutoGenerateColumns="False"
                                           CanUserAddRows="False" CanUserResizeColumns="True" GridLinesVisibility="Horizontal">
                                     <DataGrid.Columns>
@@ -1801,7 +1756,7 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                            <TabItem Header="Vector parameters">
+                            <TabItem Header="Vector Parameters">
                                 <DataGrid x:Name="MaterialVectorGrid" IsReadOnly="False" AutoGenerateColumns="False"
                                           CanUserAddRows="False" CanUserResizeColumns="True" GridLinesVisibility="Horizontal">
                                     <DataGrid.Columns>
@@ -1814,7 +1769,7 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                            <TabItem Header="Texture parameters">
+                            <TabItem Header="Texture Parameters">
                                 <DataGrid x:Name="MaterialTextureGrid" IsReadOnly="False" AutoGenerateColumns="False"
                                           CanUserAddRows="False" CanUserResizeColumns="True" GridLinesVisibility="Horizontal">
                                     <DataGrid.Columns>
@@ -1835,7 +1790,7 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                            <TabItem Header="Parent material">
+                            <TabItem Header="Parent Material">
                                 <DockPanel>
                                     <TextBlock DockPanel.Dock="Top" Margin="7" TextWrapping="Wrap"
                                                Text="Advanced: changing the parent can substantially alter rendering. Arkive permits only an existing Material or MaterialInstance object in this UPK and verifies the staged package with UModel; runtime shader compatibility still requires an in-game check." />
@@ -2130,7 +2085,7 @@
                                                 </DataGrid>
                                             </TabItem>
                                             <TabItem x:Name="TextureImportCandidateDetailsTab"
-                                                     Header="Import candidate">
+                                                     Header="Import Candidate">
                                                 <DockPanel>
                                                     <StackPanel DockPanel.Dock="Top"
                                                                 Margin="0,0,0,5">
@@ -2168,7 +2123,7 @@
                                                 </DockPanel>
                                             </TabItem>
                                             <TabItem x:Name="TextureReplacementDetailsTab"
-                                                     Header="Replacement readiness">
+                                                     Header="Replacement Readiness">
                                                 <DockPanel>
                                                     <StackPanel DockPanel.Dock="Top"
                                                                 Margin="0,0,0,5">
@@ -2554,7 +2509,7 @@
                                                   SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
                             </ControlTemplate>
                         </TabControl.Template>
-                        <TabItem x:Name="ModLibraryTab" Header="Mod library">
+                        <TabItem x:Name="ModLibraryTab" Header="Mod Library">
                             <DockPanel Margin="6">
                                 <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                     <WrapPanel Margin="0,0,0,7">
@@ -2642,7 +2597,7 @@
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
                                                         <TextBox Text="{Binding Priority, Mode=OneWay}" MinWidth="44" Padding="3,0"
-                                                                 VerticalAlignment="Center" HorizontalContentAlignment="Right"
+                                                                 VerticalAlignment="Center" HorizontalContentAlignment="Center"
                                                                  PreviewKeyDown="ModLibraryPriorityBox_PreviewKeyDown"
                                                                  LostKeyboardFocus="ModLibraryPriorityBox_LostKeyboardFocus"
                                                                  ToolTip="Type a priority and press Enter, or use the Up and Down keys. When two enabled mods change the same asset, the higher priority wins." />
@@ -2759,7 +2714,7 @@
                                                 </Grid>
                                             </ScrollViewer>
                                         </TabItem>
-                                        <TabItem x:Name="ModLibraryPlanTab" Header="Apply plan">
+                                        <TabItem x:Name="ModLibraryPlanTab" Header="Apply Plan">
                                             <DataGrid x:Name="ModLibraryPlanGrid" IsReadOnly="True"
                                                       AutoGenerateColumns="False" CanUserAddRows="False"
                                                       CanUserResizeColumns="True" GridLinesVisibility="Horizontal"
@@ -2777,7 +2732,7 @@
                                 </Grid>
                             </DockPanel>
                         </TabItem>
-                        <TabItem x:Name="ClientUpdateSafetyTab" Header="Game update safety" Visibility="Collapsed">
+                        <TabItem x:Name="ClientUpdateSafetyTab" Header="Game Update Safety" Visibility="Collapsed">
                             <DockPanel Margin="6">
                                 <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                     <Border Padding="9,7" Margin="0,0,0,7"
@@ -2841,7 +2796,7 @@
                                     <GridSplitter Grid.Row="1" Height="7" HorizontalAlignment="Stretch"
                                                   ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
                                     <TabControl Grid.Row="2">
-                                        <TabItem Header="Selected asset evidence">
+                                        <TabItem Header="Selected Asset Evidence">
                                             <DataGrid x:Name="ClientUpdateAssetsGrid" IsReadOnly="True"
                                                       AutoGenerateColumns="False" CanUserAddRows="False"
                                                       CanUserResizeColumns="True" GridLinesVisibility="Horizontal"
@@ -2858,7 +2813,7 @@
                                                 </DataGrid.Columns>
                                             </DataGrid>
                                         </TabItem>
-                                        <TabItem Header="Installation targets">
+                                        <TabItem Header="Installation Targets">
                                             <DataGrid x:Name="ClientUpdateInstallationsGrid" IsReadOnly="True"
                                                       AutoGenerateColumns="False" CanUserAddRows="False"
                                                       CanUserResizeColumns="True" GridLinesVisibility="Horizontal"
@@ -2872,7 +2827,7 @@
                                                 </DataGrid.Columns>
                                             </DataGrid>
                                         </TabItem>
-                                        <TabItem Header="Format and protection checks">
+                                        <TabItem Header="Format and Protection Checks">
                                             <DataGrid x:Name="ClientUpdateFormatChecksGrid" IsReadOnly="True"
                                                       AutoGenerateColumns="False" CanUserAddRows="False"
                                                       CanUserResizeColumns="True" GridLinesVisibility="Horizontal"
@@ -2891,7 +2846,7 @@
                                 </Grid>
                             </DockPanel>
                         </TabItem>
-                        <TabItem x:Name="GuidedPackageProjectsTab" Header="Package projects" Visibility="Collapsed">
+                        <TabItem x:Name="GuidedPackageProjectsTab" Header="Package Projects" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <Border Padding="9,7"
@@ -3154,7 +3109,7 @@
                                 </DataGrid.Columns>
                             </DataGrid>
                                 </TabItem>
-                                <TabItem Header="Skeletal meshes">
+                                <TabItem Header="Skeletal Meshes">
                                     <DataGrid x:Name="GuidedMeshModsGrid"
                                               IsReadOnly="False"
                                               AutoGenerateColumns="False"
@@ -3190,7 +3145,7 @@
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </TabItem>
-                                <TabItem Header="Static meshes">
+                                <TabItem Header="Static Meshes">
                                     <DataGrid x:Name="GuidedStaticMeshModsGrid"
                                               IsReadOnly="False" AutoGenerateColumns="False"
                                               CanUserAddRows="False" CanUserResizeColumns="True"
@@ -3254,7 +3209,7 @@
                         </Grid>
                     </DockPanel>
                         </TabItem>
-                        <TabItem x:Name="ModConflictDependencyTab" Header="Conflicts &amp; dependencies" Visibility="Collapsed">
+                        <TabItem x:Name="ModConflictDependencyTab" Header="Conflicts &amp; Dependencies" Visibility="Collapsed">
                             <DockPanel Margin="6">
                                 <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                     <Border Padding="9,7" Margin="0,0,0,7"
@@ -3370,7 +3325,7 @@
                                     <GridSplitter Grid.Row="1" Height="7" HorizontalAlignment="Stretch"
                                                   ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
                                     <TabControl Grid.Row="2">
-                                        <TabItem Header="Package members">
+                                        <TabItem Header="Package Members">
                                             <DataGrid x:Name="ModSetPackagesGrid" IsReadOnly="False" AutoGenerateColumns="False"
                                                       CanUserAddRows="False" CanUserResizeColumns="True"
                                                       SelectionMode="Single" SelectionUnit="FullRow"
@@ -3393,7 +3348,7 @@
                                                 </DataGrid.Columns>
                                             </DataGrid>
                                         </TabItem>
-                                        <TabItem Header="Conflict report">
+                                        <TabItem Header="Conflict Report">
                                             <DataGrid x:Name="ModSetConflictsGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                                       CanUserAddRows="False" CanUserResizeColumns="True"
                                                       GridLinesVisibility="Horizontal" HeadersVisibility="Column">
@@ -3409,7 +3364,7 @@
                                 </Grid>
                             </DockPanel>
                         </TabItem>
-                        <TabItem x:Name="LegacyMeshBundlesTab" Header="Legacy single-mesh bundles" Visibility="Collapsed">
+                        <TabItem x:Name="LegacyMeshBundlesTab" Header="Legacy Single-Mesh Bundles" Visibility="Collapsed">
                             <DockPanel Margin="6">
                                 <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                     <Border Padding="9,7" Margin="0,0,0,7"

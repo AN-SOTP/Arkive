@@ -60,7 +60,7 @@ internal static class Program
             () => $"The game database mapping did not load: {Control<TextBlock>(window, "GameMetadataText").Text}");
         var tabs = Control<TabControl>(window, "MainTabControl");
         Check(tabs.Items.OfType<TabItem>().Where(tab => tab.Visibility == Visibility.Visible)
-                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset library", "Create mod", "Edit mods", "Simple upscale", "Mods"]),
+                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Mods"]),
             "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, and Mods.");
         Check(tabs.SelectedItem == Control<TabItem>(window, "ModifiedUpksTab"), "Mods was not the initial destination.");
         Check(Control<Button>(window, "ModLibraryNewButton").IsVisible, "The initial mod library has no visible content.");
@@ -131,7 +131,7 @@ internal static class Program
               Control<TextBox>(window, "AuthoringAuthorTextBox").Text == "UI test author" &&
               Control<TextBox>(window, "AuthoringDescriptionTextBox").Text == "UI test description",
             "The editing tab did not retain creation details.");
-        Check(Control<Button>(window, "AuthoringAddAssetsButton").IsEnabled, "A named draft cannot add assets.");
+        Check(Control<Expander>(window, "AuthoringSearchExpander").IsEnabled, "A named draft cannot add assets.");
         Check(!Control<Button>(window, "AuthoringShareButton").IsEnabled, "An unsaved draft can be shared.");
         Control<Button>(window, "AuthoringNewButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Check(tabs.SelectedItem == Control<TabItem>(window, "CreateModTab") &&
