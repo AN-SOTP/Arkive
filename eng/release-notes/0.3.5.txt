@@ -1,0 +1,8 @@
+A new icon, a tidier install folder and a cleaner main window.
+
+- New Arkive icon.
+- The install folder is tidy: the .NET runtime Arkive ships with now lives in its own runtime folder instead of filling the folder with about 270 files. Updating from earlier versions clears the old files automatically; mods, settings and logs are untouched.
+- The Simple upscale editor's Preset box offers "Original (game body)" to compare with the outfit as the game has it, and "Back to your sliders" to return.
+- Typing a new preset name in the editor no longer picks and applies an existing preset whose name starts the same way (which saved that preset's sliders under the new name).
+- The main tabs fill the window without the dark frame under the header, tab names are capitalised, and the Mods priority number is centred.
+- Removed buttons left over from older workflows (Open package in Arkive, Start texture mod, Start material mod, Extract complete asset kit, and duplicate Add assets and Edit mods buttons). Open package is now under Advanced; export, relationships, baseline and the native reconnaissance tools are in the Asset Library's right-click menu.
