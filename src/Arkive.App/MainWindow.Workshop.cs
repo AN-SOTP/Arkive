@@ -463,6 +463,10 @@ public partial class MainWindow : Window
             searchCancellation.Dispose();
         }
 
+        // A search replaced by a newer one can still finish; its results must not overwrite the newer ones.
+        if (searchCancellation.IsCancellationRequested)
+            return result with { WasCancelled = true };
+
         var ranked = _assetDiscoveryService.Rank(result.Matches, query, searchScope);
         if (LibraryLinkedOnlyCheckBox.IsChecked == true)
             ranked = ranked.Where(item => item.Match.GameMetadata.Count > 0).ToArray();
