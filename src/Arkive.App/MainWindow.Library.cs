@@ -95,6 +95,7 @@ public partial class MainWindow : Window
         Log(
             $"Workspace restoration completed: root={_libraryRootPath ?? "none"}, " +
             $"metadataLoaded={_gameMetadataIndex is not null}, tab={MainTabControl.SelectedIndex}.");
+        _ = TrimPackageBuildsAsync("startup");
         if (Application.Current is App { StartupModFiles.Count: > 0 } app)
             await ImportModFilesAsync(app.StartupModFiles);
     }

@@ -5,7 +5,46 @@ internal static class WorkingFileSmokeTests
     public static IReadOnlyList<SmokeTestCase> Cases { get; } =
     [
         new("cleans up only mesh working files that nothing uses, keeping recent and hand-edited ones", TestWorkingFileCleanup),
+        new("trims a finished package build to its payload, once, and leaves a changed build alone", TestPackageRevisionTrim),
     ];
+
+    private static void TestPackageRevisionTrim()
+    {
+        var root = Path.Combine(fixtureDirectory, "revision-trim");
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        var package = Enumerable.Range(0, 300_000).Select(index => (byte)(index * 7)).ToArray();
+        var payload = Write(Path.Combine("bundle", "payload", "EFGame", "ReleasePC", "Packages", "PACKAGE.upk"), package);
+        var output = Write(Path.Combine("m01", "05-staged-upk", "PACKAGE.upk"), package);
+        var earlier = Write(Path.Combine("01-textures", "a01", "09-upk", "arkive-replacement-staging.upk"), package[..250_000]);
+        var noOp = Write(Path.Combine("01-textures", "a01", "08-noop", "arkive-noop-reconstructed.upk"), package[..290_000]);
+        var logical = Write(Path.Combine("01-textures", "a01", "06-logical", "arkive-logical-package-image.bin"), package);
+        var kept = Write(Path.Combine("m01", "04-native-encoding", "piece.skeletalmesh.edit.bin"), [1, 2, 3]);
+        var hash = Convert.ToHexString(SHA256.HashData(package));
+        var revision = new GuidedTexturePackageRevision("r1", DateTimeOffset.UtcNow, "", [], output, "", "", "", payload,
+            package.Length, hash, 1);
+
+        var changed = revision with { PayloadSha256 = new string('0', 64) };
+        Assert(PackageRevisionTrimmer.TrimAsync(root, changed).GetAwaiter().GetResult() == 0 && File.Exists(noOp) && File.Exists(logical),
+            "a build whose payload no longer matches its record was trimmed");
+        var freed = PackageRevisionTrimmer.TrimAsync(root, revision).GetAwaiter().GetResult();
+        Assert(!File.Exists(earlier) && !File.Exists(noOp) && !File.Exists(logical) && File.Exists(kept),
+            "the trim did not delete exactly the earlier staged package, the no-change proof and the decompressed image");
+        Assert(File.ReadAllBytes(output).SequenceEqual(package) && File.ReadAllBytes(payload).SequenceEqual(package),
+            "the final staged package or the payload changed");
+        Assert(freed == package.Length * 2L + 250_000 + 290_000, $"the trim reported {freed:N0} bytes freed");
+        Assert(File.Exists(Path.Combine(root, PackageRevisionTrimmer.MarkerFileName)) &&
+               PackageRevisionTrimmer.TrimAsync(root, revision).GetAwaiter().GetResult() == 0,
+            "a trimmed build was not marked, or was trimmed twice");
+        Directory.Delete(root, recursive: true);
+
+        string Write(string relative, byte[] bytes)
+        {
+            var path = Path.Combine(root, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, bytes);
+            return path;
+        }
+    }
 
     private static void TestWorkingFileCleanup()
     {

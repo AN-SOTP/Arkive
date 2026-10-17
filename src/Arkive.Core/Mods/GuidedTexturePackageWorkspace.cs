@@ -219,8 +219,36 @@ public sealed class GuidedTexturePackageWorkspace
             ClientBaselineAt = DateTimeOffset.UtcNow,
         };
         await SaveAtomicAsync(entry.ManifestPath, updated, cancellationToken).ConfigureAwait(false);
+        // The build is verified and recorded; drop the package copies nothing reads again.
+        try
+        {
+            await PackageRevisionTrimmer.TrimAsync(RevisionDirectory(updated, revision), revision, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         return entry with { Manifest = updated };
     }
+
+    /// <summary>Trims every revision of every package project (see <see cref="PackageRevisionTrimmer"/>); returns the bytes freed.</summary>
+    public async Task<long> TrimRevisionsAsync(CancellationToken cancellationToken = default)
+    {
+        var freed = 0L;
+        foreach (var entry in await LoadAsync(cancellationToken).ConfigureAwait(false))
+        foreach (var revision in entry.Manifest.Revisions)
+        {
+            try
+            {
+                freed += await PackageRevisionTrimmer.TrimAsync(RevisionDirectory(entry.Manifest, revision), revision, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        return freed;
+    }
+
+    private string RevisionDirectory(GuidedTexturePackageManifest manifest, GuidedTexturePackageRevision revision) =>
+        RequireWithinRoot(Path.GetFullPath(Path.Combine(RootDirectory, "_r", manifest.PackageProjectId[..8], revision.RevisionId)),
+            "package revision directory");
 
     public async Task<GuidedTexturePackageEntry> UpdateMetadataAsync(
         string manifestPath,

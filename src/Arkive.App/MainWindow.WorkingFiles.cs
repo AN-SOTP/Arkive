@@ -9,6 +9,25 @@ public partial class MainWindow
     /// <summary>Working files changed this recently are left alone, in case another Arkive is still making them.</summary>
     private static readonly TimeSpan WorkingFileMinimumAge = TimeSpan.FromHours(1);
 
+    /// <summary>
+    /// Drops the extra copies of game packages that finished builds keep (see <see cref="PackageRevisionTrimmer"/>).
+    /// Each build is trimmed once; failures only reach the log.
+    /// </summary>
+    private async Task<long> TrimPackageBuildsAsync(string trigger)
+    {
+        try
+        {
+            var freed = await Task.Run(() => _guidedTexturePackageWorkspace.TrimRevisionsAsync());
+            if (freed > 0) Log($"Package builds trimmed: trigger={trigger}, freedBytes={freed}.");
+            return freed;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
+        {
+            Log($"Package builds could not be trimmed: {exception.Message}");
+            return 0;
+        }
+    }
+
     private ArkiveWorkingFileCleanup WorkingFileCleanup() =>
         new(_projectRoot, _skeletalMeshEditWorkspaceStore, _skeletalMeshEditableWorkspaceStore);
 
@@ -21,11 +40,13 @@ public partial class MainWindow
         {
             ModLibraryStatusText.Text = "Looking for working files that nothing uses…";
             var cleanup = WorkingFileCleanup();
+            var trimmed = await TrimPackageBuildsAsync("clean up working files");
             var plan = await Task.Run(() => cleanup.PlanAsync(WorkingFileMinimumAge));
             Log($"Working-file cleanup planned: items={plan.Items.Count}, bytes={plan.Bytes}.");
             if (plan.Items.Count == 0)
             {
-                ModLibraryStatusText.Text = "No working files to clean up: every edited mesh belongs to a draft, a mod or a package build.";
+                ModLibraryStatusText.Text = (trimmed > 0 ? $"Freed {FormatByteSize(trimmed)} of extra package copies kept by earlier builds. " : "") +
+                                            "No other working files to clean up: every edited mesh belongs to a draft, a mod or a package build.";
                 return;
             }
             var meshes = plan.Items.Count(item => item.Description.StartsWith("Edited mesh", StringComparison.Ordinal));
@@ -41,7 +62,7 @@ public partial class MainWindow
                 ModLibraryStatusText.Text = "Nothing was deleted.";
                 return;
             }
-            var freed = await Task.Run(() => cleanup.DeleteAsync(plan, WorkingFileMinimumAge));
+            var freed = trimmed + await Task.Run(() => cleanup.DeleteAsync(plan, WorkingFileMinimumAge));
             ModLibraryStatusText.Text = $"Cleaned up working files: freed {FormatByteSize(freed)}.";
             Log($"Working files cleaned up: freedBytes={freed}, planned={plan.Items.Count}.");
         }
