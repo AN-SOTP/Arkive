@@ -1,0 +1,7 @@
+Faster, sturdier body-wide upscales, a smarter viewer cache, and working-file clean-up.
+
+- Simple upscale no longer folds creases (for example the crotch of some dresses when thighs widen), which made the save refuse those pieces and failed a whole body-wide run. A piece that still fails its mesh check in a batch is now left out and named, and the rest are saved.
+- Apply preset to every outfit of its body can work on two to four pieces at once (about 2.5 times faster with four). It asks first and says it is more taxing on the PC. The time estimate is now closer to real runs.
+- The model viewer remembers lighting, sky, sun, colour mode, toggles and animation between sessions, its cache no longer throws out prepared lighting and animations, and it deletes leftovers from interrupted exports.
+- New Mods > More actions > Clean up working files deletes edited meshes and exports that no draft, mod or package build uses. Saving an upscale mod again deletes the pieces it replaced.
+- Package builds keep one copy of the game file instead of four, and older builds are trimmed once at startup.
