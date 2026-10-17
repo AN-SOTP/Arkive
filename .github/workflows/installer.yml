@@ -1,0 +1,122 @@
+name: installer
+
+# Builds the installer from this commit and checks that it installs fresh, updates the last published release through
+# that release's own in-app updater, starts Arkive afterwards and uninstalls cleanly.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'feature/**'
+    paths:
+      - 'installer/**'
+      - 'eng/Build-Installer.ps1'
+      - 'eng/Copy-PrivateRuntime.ps1'
+      - 'src/Arkive.Updater/**'
+      - '.github/workflows/installer.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-update:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Fetch pinned tool pack
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.1.0 --repo '${{ github.repository }}' --pattern Arkive-Tools-win-x64.zip --dir $env:RUNNER_TEMP
+          ./eng/Get-ExternalTools.ps1 -Archive "$env:RUNNER_TEMP/Arkive-Tools-win-x64.zip"
+      - name: Build native bridge
+        shell: pwsh
+        run: ./tools/Build-CrunchNative.ps1 -PlatformToolset v143
+      - name: Install compiler
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe' -OutFile $setup
+          $signature = Get-AuthenticodeSignature $setup
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys') { throw 'Untrusted installer compiler.' }
+          $process = Start-Process $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$env:RUNNER_TEMP\inno`"", '/NOICONS') -PassThru -WindowStyle Hidden
+          $process.WaitForExit()
+          if ($process.ExitCode -ne 0) { throw 'Compiler installation failed.' }
+      - name: Build installer
+        shell: pwsh
+        run: ./eng/Build-Installer.ps1 -IsccPath "$env:RUNNER_TEMP/inno/ISCC.exe" -SkipVerification
+      - name: Install, update from the last release, uninstall
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $new = Get-ChildItem dist/releases/Arkive-Setup-*-win-x64.exe | Select-Object -First 1
+          $previous = gh release list --repo '${{ github.repository }}' --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName'
+          gh release download $previous --repo '${{ github.repository }}' --pattern 'Arkive-Setup-*-win-x64.exe' --dir "$env:RUNNER_TEMP/previous"
+          $old = Get-ChildItem "$env:RUNNER_TEMP/previous/Arkive-Setup-*-win-x64.exe" | Select-Object -First 1
+          Write-Host "New installer: $($new.Name); last release: $previous ($($old.Name))"
+
+          function Install([string]$installer, [string]$directory) {
+            $process = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$directory`"", '/TASKS=fileassociation') -PassThru -Wait
+            if ($process.ExitCode -ne 0) { throw "$installer failed with exit code $($process.ExitCode)." }
+          }
+          function Check-Layout([string]$directory) {
+            foreach ($stray in @('hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll', 'System.Private.CoreLib.dll', 'createdump.exe')) {
+              if (Test-Path (Join-Path $directory $stray)) { throw "$stray is still in the install root." }
+            }
+            foreach ($needed in @('Arkive.App.exe', 'Arkive.Cli.exe', 'Arkive.Updater.exe', 'arkive-installation.json', 'Viewer\index.html',
+                'tools\external', 'runtime\host\fxr', 'runtime\shared\Microsoft.NETCore.App', 'runtime\shared\Microsoft.WindowsDesktop.App')) {
+              if (-not (Test-Path (Join-Path $directory $needed))) { throw "$needed is missing from the install." }
+            }
+            $entries = @(Get-ChildItem $directory).Count
+            Write-Host "Install root holds $entries entries."
+            if ($entries -gt 40) { throw "The install root still holds $entries entries." }
+            $banner = & (Join-Path $directory 'Arkive.Cli.exe') 2>&1 | Select-Object -First 1
+            if ("$banner" -notmatch '^Arkive') { throw "Arkive.Cli.exe did not start: $banner" }
+          }
+          function Wait-Window([string]$directory) {
+            $exe = Join-Path $directory 'Arkive.App.exe'
+            for ($i = 0; $i -lt 90; $i++) {
+              $app = Get-Process Arkive.App -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe -and $_.MainWindowTitle }
+              if ($app) { Write-Host "Arkive is open: $($app.MainWindowTitle)"; $app | Stop-Process -Force; return }
+              Start-Sleep -Seconds 1
+            }
+            throw "Arkive.App.exe from $directory did not open a window."
+          }
+
+          # Fresh install, start, uninstall.
+          $fresh = Join-Path $env:RUNNER_TEMP 'fresh'
+          Install $new.FullName $fresh
+          Check-Layout $fresh
+          Start-Process (Join-Path $fresh 'Arkive.App.exe')
+          Wait-Window $fresh
+          $command = (Get-ItemProperty 'HKCU:\Software\Classes\Arkive.Mod\shell\open\command').'(default)'
+          if ($command -notlike "*$fresh\Arkive.App.exe*") { throw "The .arkive association points elsewhere: $command" }
+          $uninstall = Start-Process (Join-Path $fresh 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru -Wait
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstall failed with exit code $($uninstall.ExitCode)." }
+          # The uninstaller hands over to a copy of itself and returns at once.
+          for ($i = 0; $i -lt 60 -and @(Get-ChildItem $fresh -Recurse -File -ErrorAction SilentlyContinue).Count -gt 0; $i++) { Start-Sleep -Seconds 1 }
+          $left = @(Get-ChildItem $fresh -Recurse -File -ErrorAction SilentlyContinue)
+          if ($left.Count -gt 0) { throw "Uninstall left files: $($left.FullName -join ', ')" }
+
+          # The last release, updated by its own updater exactly as Install update does, which reopens Arkive.
+          $updated = Join-Path $env:RUNNER_TEMP 'updated'
+          Install $old.FullName $updated
+          if (-not (Test-Path (Join-Path $updated 'Arkive.App.exe'))) { throw 'The last release did not install.' }
+          $work = Join-Path $env:RUNNER_TEMP 'update-work'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $installer = Join-Path $work $new.Name
+          Copy-Item $new.FullName $installer
+          Copy-Item (Join-Path $updated 'Arkive.Updater.exe') (Join-Path $work 'Arkive.Updater.exe')
+          $sha = (Get-FileHash $installer -Algorithm SHA256).Hash
+          $parent = Start-Process cmd -ArgumentList '/c exit 0' -PassThru -Wait
+          $data = Join-Path $env:LOCALAPPDATA 'Arkive'
+          $updater = Start-Process (Join-Path $work 'Arkive.Updater.exe') -ArgumentList @($installer, $sha, $parent.Id, $updated, $data) -PassThru -Wait
+          if ($updater.ExitCode -ne 0) { Get-Content (Join-Path $work 'install.log') -ErrorAction SilentlyContinue; throw "The updater failed with exit code $($updater.ExitCode)." }
+          Check-Layout $updated
+          Wait-Window $updated

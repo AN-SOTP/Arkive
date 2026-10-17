@@ -35,10 +35,14 @@ $output = Join-Path $root 'dist\releases'
 New-Item -ItemType Directory -Force -Path $payload, $updater, $output | Out-Null
 Push-Location $root
 try {
+    # The app and the command-line tool share one private .NET runtime in the runtime folder (see
+    # Copy-PrivateRuntime.ps1); their hosts look only there, never for a .NET installed on the PC.
     foreach ($project in @('Arkive.App', 'Arkive.Cli')) {
-        & dotnet publish "src/$project/$project.csproj" -c Release -r win-x64 --self-contained true -o $payload "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false
+        & dotnet publish "src/$project/$project.csproj" -c Release -r win-x64 --self-contained false -o $payload "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false `
+            -p:AppHostDotNetSearch=AppRelative -p:AppHostRelativeDotNet=runtime -p:PublishReferencesDocumentationFiles=false
         if ($LASTEXITCODE -ne 0) { throw "Publishing $project failed." }
     }
+    $runtimeVersion = & (Join-Path $PSScriptRoot 'Copy-PrivateRuntime.ps1') -Destination $payload | Select-Object -Last 1
     & dotnet publish 'src/Arkive.Updater/Arkive.Updater.csproj' -c Release -r win-x64 --self-contained true -o $updater "-p:Version=$Version" -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false
     if ($LASTEXITCODE -ne 0) { throw 'Publishing updater failed.' }
     Copy-Item -LiteralPath (Join-Path $updater 'Arkive.Updater.exe') -Destination $payload
@@ -55,9 +59,13 @@ try {
         'SQLitePCLRaw.core.dll', 'SQLitePCLRaw.batteries_v2.dll', 'SQLitePCLRaw.provider.e_sqlite3.dll', 'e_sqlite3.dll')) {
         if (-not (Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Database runtime missing from installer payload: $required" }
     }
-    $runtimeConfig = Get-Content (Join-Path $payload 'Arkive.App.runtimeconfig.json') -Raw | ConvertFrom-Json
-    $runtimeVersion = ($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -eq 'Microsoft.NETCore.App').version
     if ($runtimeVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Cannot determine the bundled .NET runtime version.' }
+    # The runtime belongs in its folder: a runtime file next to the exes would make them start as self-contained apps.
+    foreach ($stray in @('hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll', 'System.Private.CoreLib.dll')) {
+        if (Test-Path -LiteralPath (Join-Path $payload $stray)) { throw "Runtime file $stray is in the install root." }
+    }
+    $banner = & (Join-Path $payload 'Arkive.Cli.exe') 2>&1 | Select-Object -First 1
+    if ("$banner" -notmatch '^Arkive') { throw "Arkive.Cli.exe did not start with its private runtime: $banner" }
     Invoke-WebRequest "https://raw.githubusercontent.com/dotnet/runtime/v$runtimeVersion/LICENSE.TXT" -OutFile (Join-Path $payload 'DOTNET-LICENSE.txt')
     Invoke-WebRequest "https://raw.githubusercontent.com/dotnet/runtime/v$runtimeVersion/THIRD-PARTY-NOTICES.TXT" -OutFile (Join-Path $payload 'DOTNET-THIRD-PARTY-NOTICES.txt')
     Invoke-WebRequest "https://raw.githubusercontent.com/dotnet/wpf/v$runtimeVersion/THIRD-PARTY-NOTICES.TXT" -OutFile (Join-Path $payload 'WPF-THIRD-PARTY-NOTICES.txt')

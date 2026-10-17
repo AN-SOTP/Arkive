@@ -38,6 +38,31 @@ LicenseFile=..\LICENSE.txt
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Name: "fileassociation"; Description: "Add Arkive to Open with for .arkive mod files"
 
+[InstallDelete]
+; Up to 0.3.4 the .NET runtime was spread across the install root. The runtime now lives in the runtime folder,
+; and a runtime file left next to Arkive.App.exe would make it start as a self-contained app, so every program
+; file in the root goes before the new ones are copied. Mods, settings and logs live in the user's data folder.
+; Only a folder an earlier Arkive installer filled is cleared (see IsArkiveFolder).
+Type: files; Name: "{app}\*.dll"; Check: IsArkiveFolder
+Type: files; Name: "{app}\*.json"; Check: IsArkiveFolder
+Type: files; Name: "{app}\*.xml"; Check: IsArkiveFolder
+Type: files; Name: "{app}\createdump.exe"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\runtimes"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\runtime"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\cs"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\de"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\es"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\fr"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\it"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\ja"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\ko"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\pl"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\pt-BR"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\ru"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\tr"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\zh-Hans"; Check: IsArkiveFolder
+Type: filesandordirs; Name: "{app}\zh-Hant"; Check: IsArkiveFolder
+
 [Files]
 Source: "{#PayloadDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -55,6 +80,22 @@ Root: HKCU; Subkey: "Software\Classes\.arkive\OpenWithProgids"; ValueName: "Arki
 Filename: "{app}\Arkive.App.exe"; Description: "Launch Arkive"; Flags: nowait postinstall skipifsilent
 
 [Code]
+var
+  ArkiveFolderChecked, ArkiveFolder: Boolean;
+
+// True only for a folder an Arkive installer filled: both its program and its installation marker are there.
+// Decided once, before the first old file goes (the marker itself is among the files removed).
+function IsArkiveFolder(): Boolean;
+begin
+  if not ArkiveFolderChecked then
+  begin
+    ArkiveFolder := FileExists(ExpandConstant('{app}\Arkive.App.exe')) and
+                    FileExists(ExpandConstant('{app}\arkive-installation.json'));
+    ArkiveFolderChecked := True;
+  end;
+  Result := ArkiveFolder;
+end;
+
 function InitializeSetup(): Boolean;
 begin
   Result := not CheckForMutexes('Arkive.Application.Update');
