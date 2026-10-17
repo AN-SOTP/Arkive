@@ -429,6 +429,8 @@ public partial class MainWindow : Window
         {
             var routingProgress = new Progress<PackageSearchRoutingProgress>(progress =>
             {
+                // Progress reports arrive later on the UI thread; one from a finished search must not replace its count.
+                if (!ReferenceEquals(_librarySearchCancellation, searchCancellation)) return;
                 LibraryCountText.Text =
                     $"Preparing fast in-game search index: {progress.CompletedPackages:N0}/" +
                     $"{progress.TotalPackages:N0} packages...";

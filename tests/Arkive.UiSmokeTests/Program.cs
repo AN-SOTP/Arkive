@@ -202,7 +202,9 @@ internal static class Program
     {
         Control<TextBox>(window, "LibrarySearchTextBox").Text = query;
         Control<Button>(window, "LibrarySearchButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await UntilAsync(() => !Control<TextBlock>(window, "LibraryCountText").Text.StartsWith("Searching", StringComparison.Ordinal));
+        await UntilAsync(() => Control<TextBlock>(window, "LibraryCountText").Text is var text &&
+                               !text.StartsWith("Searching", StringComparison.Ordinal) &&
+                               !text.StartsWith("Preparing", StringComparison.Ordinal));
     }
 
     private static MainWindow CreateWindow(string root) => new(root)
