@@ -21,7 +21,7 @@ internal readonly record struct SkeletalMeshGlbTriangle(
     uint C,
     string Material);
 
-internal readonly record struct SkeletalMeshGlbTrianglePositions(Vector3 A, Vector3 B, Vector3 C);
+public readonly record struct SkeletalMeshGlbTrianglePositions(Vector3 A, Vector3 B, Vector3 C);
 
 internal sealed record SkeletalMeshGlbLod(
     int LodIndex,

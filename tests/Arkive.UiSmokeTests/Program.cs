@@ -1,4 +1,6 @@
 using System.IO;
+using System.IO.Compression;
+using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -7,6 +9,9 @@ using System.Windows.Media.Imaging;
 using Arkive.App;
 using Arkive.Core.Assets;
 using Arkive.Core.Discovery;
+using Arkive.Core.Mods;
+using Arkive.Core.Proportions;
+using Arkive.Core.Validation;
 
 internal static class Program
 {
@@ -90,6 +95,10 @@ internal static class Program
         Check(results.Items.Count == 3, "The asset library cannot search by decoded filename.");
         if (screenshotDirectory is not null) Capture(window, screenshotDirectory, "asset-library.png");
         Console.WriteLine("PASS: full asset library searches filenames, game names, and metadata-only assets with preview and information controls");
+        await CheckProblemReportAsync(window, root);
+        CheckSimpleUpscalePresets(window, root);
+        CheckEditModsUpscaleAndMeshChecks(window);
+        CheckEditableComboBox();
         var advanced = Control<Button>(window, "AdvancedSectionsButton").ContextMenu;
         var modTools = advanced.Items.OfType<MenuItem>().Single(item => item.Header.ToString() == "Mod tools");
         modTools.Items.OfType<MenuItem>().Single(item => item.Tag?.ToString() == "PackageProjects")
@@ -196,6 +205,94 @@ internal static class Program
             GameMetadataPath = metadataPath,
             LibrarySearchText = "fixture-package.upk",
         }));
+    }
+
+    private static T Invoke<T>(MainWindow window, string method, params object?[] arguments) =>
+        (T)typeof(MainWindow).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, arguments)!;
+
+    // The button itself shows a message box and Explorer, so the report is made from the same content directly.
+    private static async Task CheckProblemReportAsync(MainWindow window, string root)
+    {
+        Check(Control<Button>(window, "ReportProblemButton").IsVisible, "Report a problem is not in the top bar.");
+        var content = await Invoke<Task<ArkiveProblemReportContent>>(window, "ProblemReportContentAsync");
+        var path = await ArkiveProblemReport.CreateAsync(Path.Combine(root, "reports"), content);
+        using var zip = ZipFile.OpenRead(path);
+        var names = zip.Entries.Select(entry => entry.FullName).ToArray();
+        Check(names.Contains("summary.txt") && names.Contains("mods.txt") && names.Contains("mesh-checks.txt") &&
+              names.Any(name => name.StartsWith("logs/arkive-", StringComparison.Ordinal)),
+            "The problem report is missing parts: " + string.Join(", ", names));
+        Check(content.Summary.StartsWith("Arkive ", StringComparison.Ordinal) && content.Summary.Contains("Game Packages folder:", StringComparison.Ordinal) &&
+              content.Summary.Contains("Last messages shown:", StringComparison.Ordinal),
+            "The problem report summary is incomplete: " + content.Summary);
+        Check(!names.Any(name => name.Contains("settings", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".upk", StringComparison.OrdinalIgnoreCase)),
+            "The problem report holds settings or game files.");
+        Console.WriteLine("PASS: Report a problem packs the summary, recent logs, mod list and mesh checks into one zip");
+    }
+
+    private static void CheckSimpleUpscalePresets(MainWindow window, string root)
+    {
+        var presets = Control<ComboBox>(window, "ProportionPresetComboBox");
+        var body = Control<Button>(window, "ProportionApplyBodyButton");
+        Check(!body.IsEnabled && !Control<Button>(window, "ProportionApplyPresetButton").IsEnabled &&
+              Control<Button>(window, "ProportionCancelButton").Visibility == Visibility.Collapsed,
+            "Simple upscale offers preset actions before a preset is chosen.");
+        // A preset saved in the proportion editor's own window appears when the list opens.
+        new BodyProportionPresetStore(Path.Combine(root, "presets", "body-proportions")).Save(new BodyProportionPreset(
+            "UI preset", "female-warrior", new Dictionary<string, double> { ["chest"] = 30 }, true, true, DateTimeOffset.Now));
+        Control<ComboBox>(window, "ProportionBodyComboBox").SelectedIndex =
+            1 + BodyProfiles.All.ToList().FindIndex(profile => profile.Id == "female-warrior");
+        Invoke<object?>(window, "ProportionPresetComboBox_DropDownOpened", presets, EventArgs.Empty);
+        Check((presets.SelectedItem as BodyProportionPreset)?.Name == "UI preset", "A preset saved in the editor did not appear in Simple upscale.");
+        Check(body.IsEnabled && body.Content.ToString() == "Apply preset to every outfit of its body",
+            "Apply preset to every outfit of its body is not offered for a player body's preset.");
+        Console.WriteLine("PASS: Simple upscale lists presets saved in the editor and offers them for every outfit of their body");
+    }
+
+    private static void CheckEditModsUpscaleAndMeshChecks(MainWindow window)
+    {
+        Check(Control<Border>(window, "AuthoringCheckPanel").Visibility == Visibility.Collapsed,
+            "Edit mods shows a mesh check panel with nothing failing.");
+        var proportions = Control<Button>(window, "AuthoringProportionsButton");
+        Check(proportions.Visibility == Visibility.Collapsed, "Edit in proportion editor is offered without an upscale mod.");
+        var field = typeof(MainWindow).GetField("_authoringDraft", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var previous = field.GetValue(window);
+        var warrior = BodyProfiles.All.First(profile => profile.Id == "female-warrior");
+        var settings = new BodyProportionModSettings(warrior, new Dictionary<string, double> { ["chest"] = 30 }, BodyProportionFollow.All);
+        field.SetValue(window, new ArkiveModAuthoringDraft(1, "ui-upscale-draft", "ui-upscale-mod",
+            new ArkiveModMetadata("UI upscale", "1.0.0", Description: BodyProportionModTags.Description(settings, ["pc_wr_f_av_226a_upper_sk"]),
+                Tags: BodyProportionModTags.Write(settings)), [], DateTimeOffset.Now));
+        Invoke<object?>(window, "UpdateAuthoringActions");
+        var shown = proportions.Visibility == Visibility.Visible;
+        field.SetValue(window, previous);
+        Invoke<object?>(window, "UpdateAuthoringActions");
+        Check(shown, "Edit in proportion editor is not offered for a saved upscale mod.");
+        Console.WriteLine("PASS: Edit mods offers Edit in proportion editor for upscale mods and keeps the mesh check panel hidden until a mesh fails");
+    }
+
+    private static void CheckEditableComboBox()
+    {
+        var editable = new ComboBox { IsEditable = true, Width = 200 };
+        var fixedChoice = new ComboBox { Width = 200 };
+        var host = new Window
+        {
+            Content = new StackPanel { Children = { editable, fixedChoice } },
+            ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -20000, Top = -20000, Width = 300, Height = 200,
+        };
+        host.Show();
+        try
+        {
+            editable.ApplyTemplate();
+            fixedChoice.ApplyTemplate();
+            var text = (TextBox)editable.Template.FindName("PART_EditableTextBox", editable);
+            text.Text = "Typed name";
+            host.UpdateLayout();
+            Check(text.IsVisible && editable.Text == "Typed name", "An editable combo box (the Preset box) cannot be typed into.");
+            Check(fixedChoice.Template.FindName("PART_EditableTextBox", fixedChoice) is TextBox { IsVisible: false },
+                "A choice-only combo box shows a text box.");
+        }
+        finally { host.Close(); }
+        Console.WriteLine("PASS: editable combo boxes take typed text and choice-only ones do not");
     }
 
     private static async Task SearchLibraryAsync(MainWindow window, string query)

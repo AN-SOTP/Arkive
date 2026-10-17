@@ -16,6 +16,8 @@ internal static class ModAuthoringSmokeTests
         new("refuses unsaved edits and invalidates a reviewed apply plan when saved content changes", TestSaveApplyConsistency),
         new("revalidates in-place mesh edits on save and preserves the portable mod on failure", TestMeshSaveValidation),
         new("packs logs, mod list and mesh checks into a problem report without game files", TestProblemReport),
+        new("accepts a game mesh's own zero-area triangles wherever an edit moves them", TestMovedDegenerateTriangles),
+        new("explains unweighted vertices that Blender exports as neutral_bone", TestNeutralBone),
         new("exports clean assets into independent working copies without changing game files", TestDirectAssetExport),
         new("reports asset-export stages and honours cancellation without adding a working edit", TestAssetExportCancellation),
         new("refuses changed retained mesh evidence before invoking the asset-kit exporter", TestRetainedKitEvidence),
@@ -290,6 +292,73 @@ internal static class ModAuthoringSmokeTests
         var refusal = Expect("AUT020", () => author.SaveDraftAsync(draft with { ModId = mod.ModId }).GetAwaiter().GetResult());
         Assert(refusal.Contains("SMT013", StringComparison.Ordinal), "the save refusal did not name the mesh check's error");
         Assert(File.ReadAllBytes(env.Library.GetModFilePath(mod)).SequenceEqual(portable), "invalid mesh save changed the portable mod");
+    }
+
+    private static void TestMovedDegenerateTriangles()
+    {
+        static SkeletalMeshGlbTrianglePositions Flat(float x) =>
+            new(new System.Numerics.Vector3(x, 0, 0), new System.Numerics.Vector3(x + 1, 0, 0), new System.Numerics.Vector3(x + 2, 0, 0));
+        static SkeletalMeshGlbTrianglePositions Scaled(SkeletalMeshGlbTrianglePositions triangle) =>
+            new(triangle.A * 1.05f, triangle.B * 1.05f, triangle.C * 1.05f);
+        SkeletalMeshGlbTrianglePositions[] game = [Flat(1), Flat(5)];
+        Assert(SkeletalMeshEditPreflightService.NewDegenerateTriangles(game, game).Count == 0,
+            "the game mesh's own zero-area triangles were refused where they were");
+        Assert(SkeletalMeshEditPreflightService.NewDegenerateTriangles(game.Select(Scaled).ToArray(), game).Count == 0,
+            "the game mesh's own zero-area triangles were refused after the mesh was scaled");
+        Assert(SkeletalMeshEditPreflightService.NewDegenerateTriangles([.. game.Select(Scaled), Flat(20)], game).Count == 1,
+            "a new zero-area triangle was accepted alongside moved original ones");
+        Assert(SkeletalMeshEditPreflightService.NewDegenerateTriangles([game[0], Flat(20), Flat(30)], game).Count == 1,
+            "only as many moved triangles as the game mesh had may be accepted");
+    }
+
+    private static void TestNeutralBone()
+    {
+        var root = Path.Combine(fixtureDirectory, "authoring-neutral-bone");
+        Directory.CreateDirectory(root);
+        var package = Path.Combine(root, "mesh.upk");
+        var range = WriteSkeletalMeshReconPackage(package);
+        var report = new SkeletalMeshReconnaissanceService().InspectAsync(new SkeletalMeshReconnaissanceRequest(
+            package, "mesh", 1, AssetKind.SkeletalMesh, "SkeletalMesh", "TestMesh", range.SerialOffset, range.SerialSize))
+            .GetAwaiter().GetResult();
+        var recon = new SkeletalMeshReconnaissanceWorkspaceStore(Path.Combine(root, "recon")).SaveAsync(report).GetAwaiter().GetResult();
+        var export = new SkeletalMeshEditableExportService().ExportAsync(new SkeletalMeshEditableExportRequest(
+            report, recon.JsonPath, Path.Combine(root, "editable"))).GetAwaiter().GetResult();
+        var source = new SkeletalMeshEditableWorkspaceEntry(export.OutputDirectory, export.ManifestPath, export.GlbPath,
+            export.Manifest, true, true, true);
+        // What Blender writes for vertices without weights: an extra joint called neutral_bone with no Arkive identity.
+        var bytes = File.ReadAllBytes(export.GlbPath);
+        var jsonLength = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(12));
+        var json = JsonNode.Parse(Encoding.UTF8.GetString(bytes, 20, jsonLength))!.AsObject();
+        var joints = json["skins"]!.AsArray()[0]!["joints"]!.AsArray();
+        var node = json["nodes"]!.AsArray()[joints[^1]!.GetValue<int>()]!.AsObject();
+        node["name"] = "neutral_bone";
+        node.Remove("extras");
+        var edited = Path.Combine(root, "neutral-bone.glb");
+        File.WriteAllBytes(edited, RebuildGlb(json, bytes.AsSpan(20 + jsonLength)));
+        var preflight = new SkeletalMeshEditPreflightService().InspectAsync(source, edited).GetAwaiter().GetResult();
+        Assert(preflight.Issues.Any(issue => issue.Code == "SMI145" && issue.Severity == SkeletalMeshEditIssueSeverity.Error &&
+                                             issue.Message.Contains("no bone weights", StringComparison.Ordinal) &&
+                                             issue.Message.Contains("neutral_bone", StringComparison.Ordinal)),
+            "neutral_bone was not explained: " + string.Join(" | ", preflight.Issues.Select(issue => $"{issue.Code}:{issue.Message}")));
+    }
+
+    /// <summary>A GLB with new JSON and the original binary chunk (which starts at <paramref name="binChunk"/>).</summary>
+    private static byte[] RebuildGlb(JsonObject json, ReadOnlySpan<byte> binChunk)
+    {
+        var text = Encoding.UTF8.GetBytes(json.ToJsonString());
+        var padded = (text.Length + 3) & ~3;
+        using var output = new MemoryStream();
+        var word = new byte[4];
+        void Write(uint value) { BinaryPrimitives.WriteUInt32LittleEndian(word, value); output.Write(word); }
+        Write(0x46546C67);
+        Write(2);
+        Write((uint)(12 + 8 + padded + binChunk.Length));
+        Write((uint)padded);
+        Write(0x4E4F534A);
+        output.Write(text);
+        for (var i = text.Length; i < padded; i++) output.WriteByte((byte)' ');
+        output.Write(binChunk);
+        return output.ToArray();
     }
 
     private static void TestProblemReport()

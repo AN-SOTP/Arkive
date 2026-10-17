@@ -470,17 +470,10 @@ public partial class MainWindow
     private async Task<ArkiveModLibraryEntry> CreateProportionModAsync(ProportionSaveRequest request)
     {
         await PersistAuthoringDraftAsync();
-        var changes = request.Profile.Zones.Where(zone => request.Settings.TryGetValue(zone.Id, out var value) && value != 0)
-            .Select(zone => $"{zone.Label} {request.Settings[zone.Id]:+0;-0}%");
-        var description = $"Body proportions for {request.Profile.DisplayName}: {string.Join(", ", changes)}" +
-                          (request.Follow.LooseClothing ? "; loose clothing follows the body" : "") +
-                          (request.Follow.Hair ? "; hair follows the body" : "") +
-                          // A mod's description holds at most 8,000 characters; body-wide mods have hundreds of pieces.
-                          (request.Pieces.Count <= 20
-                              ? $". Pieces: {string.Join(", ", request.Pieces.Select(piece => piece.ObjectName))}."
-                              : $". {request.Pieces.Count:N0} pieces of {request.Pieces.Select(piece => BodyProfiles.OutfitStem(piece.ObjectName) ?? piece.ObjectName).Distinct(StringComparer.OrdinalIgnoreCase).Count():N0} outfits.");
+        var modSettings = new BodyProportionModSettings(request.Profile, request.Settings, request.Follow);
+        var description = BodyProportionModTags.Description(modSettings, request.Pieces.Select(piece => piece.ObjectName).ToArray());
         // The sliders travel with the mod in its tags, so it can be reopened in the proportion editor later.
-        var tags = BodyProportionModTags.Write(new BodyProportionModSettings(request.Profile, request.Settings, request.Follow));
+        var tags = BodyProportionModTags.Write(modSettings);
         if (request.ExistingModId is { } modId)
         {
             // Editing a saved upscale mod: its reshaped pieces are replaced by new ones; anything else in it stays.

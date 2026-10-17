@@ -11,6 +11,7 @@ internal static class ProportionSmokeTests
         new("reshapes a player mesh by body area and keeps unaffected vertices", TestBodyAreas),
         new("saves, reloads and limits body proportion presets per body", TestPresets),
         new("keeps an upscale mod's sliders in its tags and reads older mods from their description", TestModSettings),
+        new("keeps a body-wide upscale mod's description within the mod file's limit", TestLongDescription),
     ];
 
     private static void TestPlayerPieceNames()
@@ -55,6 +56,22 @@ internal static class ProportionSmokeTests
                old.Settings["chestHeight"] == 50 && old.Settings["belly"] == 30 && old.Settings["buttocks"] == 10 && old.Settings.Count == 4,
             "an older upscale mod's sliders were not read from its description");
         Assert(BodyProportionModTags.Read(["outfit"], "A recoloured dress.") is null, "an ordinary mod was taken for an upscale mod");
+    }
+
+    private static void TestLongDescription()
+    {
+        var warrior = BodyProfiles.All.First(profile => profile.Id == "female-warrior");
+        var settings = new BodyProportionModSettings(warrior, new Dictionary<string, double> { ["chest"] = 25, ["hips"] = -10 }, BodyProportionFollow.All);
+        var few = BodyProportionModTags.Description(settings, ["pc_wr_f_av_173b_upper_sk", "pc_wr_f_av_173b_lower_sk"]);
+        Assert(few.Contains("Pieces: pc_wr_f_av_173b_upper_sk, pc_wr_f_av_173b_lower_sk.", StringComparison.Ordinal) &&
+               few.StartsWith("Body proportions for Female Warrior: Size +25%, Hips -10%; loose clothing follows the body; hair follows the body.", StringComparison.Ordinal),
+            "a small upscale mod's description changed: " + few);
+        var pieces = Enumerable.Range(0, 600).Select(index => $"pc_wr_f_av_{index / 2:000}a_{(index % 2 == 0 ? "upper" : "lower")}_sk").ToArray();
+        var many = BodyProportionModTags.Description(settings, pieces);
+        Assert(many.Length < 8000 && many.Contains("600 pieces of 300 outfits.", StringComparison.Ordinal),
+            $"a body-wide description is {many.Length} characters: {many[..Math.Min(200, many.Length)]}");
+        Assert(BodyProportionModTags.Read(null, many) is { Settings.Count: 2 } read && read.Settings["chest"] == 25 && read.Settings["hips"] == -10,
+            "a body-wide mod's sliders could not be read back from its description");
     }
 
     private static void TestPresets()

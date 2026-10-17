@@ -325,20 +325,12 @@ public sealed class SkeletalMeshEditPreflightService
                 AddError("SMT027", $"Candidate skin weights differ from a normalized sum by up to {lod.MaximumSkinWeightSumError:G6}.");
             else if (lod.MaximumSkinWeightSumError > 0.002d)
                 AddWarning("SMT028", $"Candidate skin weights require normalization; maximum sum error is {lod.MaximumSkinWeightSumError:G6}.");
-            // Shipped game meshes contain a few zero-area triangles; ones the source already had are kept as-is. Edits
-            // that move them too (scaling, sculpting, smoothing) leave them zero-area elsewhere, so as many as the
-            // game mesh had are accepted wherever they now are.
-            var unmatchedDegenerate = lod.DegenerateTriangles
-                .Where(triangle => !sourceLod0.DegenerateTriangles.Any(source => SameTriangle(triangle, source)))
-                .ToArray();
-            var movedAllowance = Math.Max(0,
-                sourceLod0.DegenerateTriangles.Count - (lod.DegenerateTriangles.Count - unmatchedDegenerate.Length));
-            var newDegenerate = unmatchedDegenerate.Skip(movedAllowance).ToArray();
-            if (newDegenerate.Length > 0)
-                AddError("SMT030", $"Candidate contains {newDegenerate.Length:N0} new degenerate triangle(s) " +
+            var newDegenerate = NewDegenerateTriangles(lod.DegenerateTriangles, sourceLod0.DegenerateTriangles);
+            if (newDegenerate.Count > 0)
+                AddError("SMT030", $"Candidate contains {newDegenerate.Count:N0} new degenerate triangle(s) " +
                     $"(zero area), e.g. near {Describe(newDegenerate[0].A)}. Delete or dissolve them before export.");
-            if (lod.DegenerateTriangleCount > newDegenerate.Length)
-                AddWarning("SMT034", $"Kept {lod.DegenerateTriangleCount - newDegenerate.Length:N0} degenerate " +
+            if (lod.DegenerateTriangleCount > newDegenerate.Count)
+                AddWarning("SMT034", $"Kept {lod.DegenerateTriangleCount - newDegenerate.Count:N0} degenerate " +
                     "triangle(s) that already exist in the original game mesh.");
             var opposedPercent = lod.FaceOrientationTriangleCount == 0 ? 0d :
                 100d * lod.OpposedFaceNormalTriangleCount / lod.FaceOrientationTriangleCount;
@@ -529,6 +521,20 @@ public sealed class SkeletalMeshEditPreflightService
     }
 
     /// <summary>Same corner positions within 0.01 mm, in any order (editors may rotate or flip a triangle's corners).</summary>
+    /// <summary>
+    /// The candidate's zero-area triangles that the game mesh did not already have. Shipped game meshes contain a few;
+    /// ones still where they were are kept as-is, and edits that move them too (scaling, sculpting, smoothing) leave
+    /// them zero-area elsewhere, so as many as the game mesh had are accepted wherever they now are.
+    /// </summary>
+    public static IReadOnlyList<SkeletalMeshGlbTrianglePositions> NewDegenerateTriangles(
+        IReadOnlyList<SkeletalMeshGlbTrianglePositions> candidate,
+        IReadOnlyList<SkeletalMeshGlbTrianglePositions> source)
+    {
+        var unmatched = candidate.Where(triangle => !source.Any(original => SameTriangle(triangle, original))).ToArray();
+        var movedAllowance = Math.Max(0, source.Count - (candidate.Count - unmatched.Length));
+        return unmatched.Skip(movedAllowance).ToArray();
+    }
+
     private static bool SameTriangle(SkeletalMeshGlbTrianglePositions left, SkeletalMeshGlbTrianglePositions right)
     {
         const float tolerance = 1e-5f;

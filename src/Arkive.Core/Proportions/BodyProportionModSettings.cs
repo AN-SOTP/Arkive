@@ -18,6 +18,24 @@ public static partial class BodyProportionModTags
 {
     private const string Prefix = "upscale:";
 
+    /// <summary>
+    /// The description of a Simple upscale mod: the changed sliders, what follows the body and its pieces (only a count
+    /// past 20, since a mod's description holds at most 8,000 characters and body-wide mods have hundreds of pieces).
+    /// </summary>
+    public static string Description(BodyProportionModSettings settings, IReadOnlyList<string> pieceNames)
+    {
+        var changes = settings.Profile.Zones
+            .Where(zone => settings.Settings.TryGetValue(zone.Id, out var value) && value != 0)
+            .Select(zone => $"{zone.Label} {settings.Settings[zone.Id].ToString("+0;-0", CultureInfo.InvariantCulture)}%");
+        var outfits = pieceNames.Select(name => BodyProfiles.OutfitStem(name) ?? name).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+        return $"Body proportions for {settings.Profile.DisplayName}: {string.Join(", ", changes)}" +
+               (settings.Follow.LooseClothing ? "; loose clothing follows the body" : "") +
+               (settings.Follow.Hair ? "; hair follows the body" : "") +
+               (pieceNames.Count <= 20
+                   ? $". Pieces: {string.Join(", ", pieceNames)}."
+                   : $". {pieceNames.Count.ToString("N0", CultureInfo.InvariantCulture)} pieces of {outfits.ToString("N0", CultureInfo.InvariantCulture)} outfits.");
+    }
+
     public static IReadOnlyList<string> Write(BodyProportionModSettings settings)
     {
         var follow = string.Join('+', new[] { settings.Follow.LooseClothing ? "clothing" : null, settings.Follow.Hair ? "hair" : null }

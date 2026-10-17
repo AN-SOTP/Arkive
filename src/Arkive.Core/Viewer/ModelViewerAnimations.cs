@@ -105,7 +105,7 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
     }
 
     /// <summary>Each bone's rest rotation and position from a .psk, converted exactly as animation keys are.</summary>
-    internal static Dictionary<string, float[]> ReadRestPose(byte[] psk)
+    public static Dictionary<string, float[]> ReadRestPose(byte[] psk)
     {
         var rest = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
         var offset = 0;

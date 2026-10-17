@@ -130,7 +130,7 @@
                                        Text="Create, edit, and apply portable Lost Ark mods." />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                            <Button Content="Report a problem" Click="ReportProblemButton_Click"
+                            <Button x:Name="ReportProblemButton" Content="Report a problem" Click="ReportProblemButton_Click"
                                     ToolTip="Pack Arkive's recent logs, your mod list and the checks of the meshes you're editing into one file and copy it, ready to send. No game files or settings are included." />
                             <Button Content="Edit mods" Click="OpenWorkshopButton_Click" />
                             <Button Content="Open package…" Click="OpenPackage_Click"
