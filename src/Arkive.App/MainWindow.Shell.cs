@@ -438,6 +438,7 @@ public partial class MainWindow : Window
         _applicationUpdateCancellation.Cancel();
         _applicationUpdateCancellation.Dispose();
         TrySaveSettings("window closing");
+        ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath);
         _libraryIndexCancellation?.Cancel();
         _libraryIndexCancellation?.Dispose();
         _librarySearchCancellation?.Cancel();

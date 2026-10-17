@@ -1,0 +1,24 @@
+<Window x:Class="Arkive.App.StartupProgressWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Starting Arkive"
+        Width="420"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStyle="ToolWindow"
+        ShowInTaskbar="False"
+        Background="{DynamicResource SurfaceBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="18,14,18,18">
+        <TextBlock Text="Mods" FontWeight="SemiBold" />
+        <TextBlock x:Name="ModsText" Text="Waiting…" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,6"
+                   TextWrapping="Wrap" />
+        <ProgressBar x:Name="ModsProgress" Height="4" IsIndeterminate="True" />
+        <TextBlock Text="Game database" FontWeight="SemiBold" Margin="0,14,0,0" />
+        <TextBlock x:Name="DatabaseText" Text="Waiting for the mods…" Foreground="{DynamicResource TextSecondaryBrush}"
+                   Margin="0,2,0,6" TextWrapping="Wrap" />
+        <ProgressBar x:Name="DatabaseProgress" Height="4" IsIndeterminate="False" />
+    </StackPanel>
+</Window>

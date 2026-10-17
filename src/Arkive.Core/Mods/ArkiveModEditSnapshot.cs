@@ -36,6 +36,10 @@ public sealed class ArkiveModEditSnapshot
     private static readonly ConcurrentDictionary<string, (long Length, DateTime WriteTime, string Sha256)> HashCache =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // Every edit's source record is read each time a snapshot is built; it is parsed again only when its file changes.
+    private static readonly ConcurrentDictionary<string, (long Length, DateTime WriteTime, SkeletalMeshEditableExportManifest Manifest)>
+        SkeletalSourceCache = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly Dictionary<string, ArkiveModLocalEdit> _byId;
 
     private ArkiveModEditSnapshot(IReadOnlyList<ArkiveModLocalEdit> edits)
@@ -166,15 +170,23 @@ public sealed class ArkiveModEditSnapshot
         SkeletalMeshEditWorkspaceEntry mesh,
         CancellationToken cancellationToken)
     {
+        var full = Path.GetFullPath(mesh.Manifest.SourceManifestPath);
+        var info = new FileInfo(full);
+        if (SkeletalSourceCache.TryGetValue(full, out var cached) &&
+            cached.Length == info.Length && cached.WriteTime == info.LastWriteTimeUtc)
+            return cached.Manifest;
         await using var stream = new FileStream(
-            Path.GetFullPath(mesh.Manifest.SourceManifestPath), FileMode.Open, FileAccess.Read,
+            full, FileMode.Open, FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        return await JsonSerializer.DeserializeAsync<SkeletalMeshEditableExportManifest>(
-                   stream, ArkiveModFileService.JsonOptions, cancellationToken).ConfigureAwait(false) ??
-               throw new InvalidDataException("The editable SkeletalMesh source manifest was empty.");
+        var manifest = await JsonSerializer.DeserializeAsync<SkeletalMeshEditableExportManifest>(
+                           stream, ArkiveModFileService.JsonOptions, cancellationToken).ConfigureAwait(false) ??
+                       throw new InvalidDataException("The editable SkeletalMesh source manifest was empty.");
+        SkeletalSourceCache[full] = (info.Length, info.LastWriteTimeUtc, manifest);
+        return manifest;
     }
 
-    internal static async Task<string> HashFileCachedAsync(string path, CancellationToken cancellationToken)
+    /// <summary>A file's SHA-256, hashed again only when its length or write time changes.</summary>
+    public static async Task<string> HashFileCachedAsync(string path, CancellationToken cancellationToken = default)
     {
         var full = Path.GetFullPath(path);
         var info = new FileInfo(full);
@@ -187,6 +199,42 @@ public sealed class ArkiveModEditSnapshot
         var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
         HashCache[full] = (info.Length, info.LastWriteTimeUtc, hash);
         return hash;
+    }
+
+    private sealed record SavedHash(string Path, long Length, long WriteTimeTicks, string Sha256);
+
+    /// <summary>
+    /// Loads hashes saved by <see cref="SaveHashCache"/>, so a restart does not read every working file and game
+    /// package again. A saved hash is used only while its file keeps the same length and write time.
+    /// </summary>
+    public static void LoadHashCache(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return;
+            foreach (var saved in JsonSerializer.Deserialize<SavedHash[]>(File.ReadAllBytes(path)) ?? [])
+                if (saved.Sha256?.Length == 64)
+                    HashCache.TryAdd(saved.Path, (saved.Length, new DateTime(saved.WriteTimeTicks, DateTimeKind.Utc), saved.Sha256));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException) { }
+    }
+
+    /// <summary>Saves the hashes of files that still exist unchanged.</summary>
+    public static void SaveHashCache(string path)
+    {
+        var current = HashCache
+            .Where(pair => new FileInfo(pair.Key) is { Exists: true } info &&
+                           info.Length == pair.Value.Length && info.LastWriteTimeUtc == pair.Value.WriteTime)
+            .Select(pair => new SavedHash(pair.Key, pair.Value.Length, pair.Value.WriteTime.Ticks, pair.Value.Sha256))
+            .ToArray();
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            var temporary = path + ".tmp";
+            File.WriteAllBytes(temporary, JsonSerializer.SerializeToUtf8Bytes(current));
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
     }
 
     internal static bool SamePath(string left, string right) =>

@@ -26,8 +26,46 @@ namespace Arkive.App;
 
 public partial class MainWindow : Window
 {
+    /// <summary>Hashes of working files and game packages, kept between sessions (see <see cref="ArkiveModEditSnapshot.LoadHashCache"/>).</summary>
+    private string FileHashCachePath => Path.Combine(_projectRoot, "cache", "file-hashes.json");
+
+    private StartupProgressWindow? _startupWindow;
+    private (string Text, bool Done) _startupMods = ("Loading your working files…", false);
+    private (string Text, bool Done) _startupDatabase = ("Waiting for the mods…", false);
+    private bool _startupFinished;
+
+    /// <summary>Updates the startup window's lines (kept for when it appears).</summary>
+    private void ReportStartup(string? mods = null, bool modsDone = false, string? database = null, bool databaseDone = false)
+    {
+        if (mods is not null) _startupMods = (mods, modsDone);
+        if (database is not null) _startupDatabase = (database, databaseDone);
+        _startupWindow?.ShowMods(_startupMods.Text, _startupMods.Done);
+        _startupWindow?.ShowDatabase(_startupDatabase.Text, _startupDatabase.Done);
+    }
+
+    /// <summary>Shows the startup window only when loading takes long enough to notice.</summary>
+    private async Task ShowStartupWindowWhenSlowAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(1.5));
+        if (_startupFinished || !IsVisible || WindowState == WindowState.Minimized) return;
+        _startupWindow = new StartupProgressWindow { Owner = this, ShowActivated = false };
+        _startupWindow.Closed += (_, _) => _startupWindow = null;
+        ReportStartup();
+        _startupWindow.Show();
+    }
+
+    private void FinishStartup(Stopwatch watch)
+    {
+        _startupFinished = true;
+        _startupWindow?.Close();
+        Log($"Startup loading took {watch.Elapsed.TotalSeconds:N1}s.");
+    }
+
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        var startup = Stopwatch.StartNew();
+        _ = ShowStartupWindowWhenSlowAsync();
+        ArkiveModEditSnapshot.LoadHashCache(FileHashCachePath);
         if (_restoredSettings.CheckForUpdatesOnStartup)
             _ = CheckApplicationUpdatesAsync(interactive: false);
         _ = CleanUpUpdateDownloadsAsync();
@@ -44,13 +82,20 @@ public partial class MainWindow : Window
         await RefreshSkeletalMeshEditableWorkspaceAsync("workspace restore");
         await RefreshStaticMeshWorkspaceAsync("workspace restore");
         await RefreshMaterialProjectsAsync("workspace restore");
+        ReportStartup("Reading the mod library…");
         await InitializeArkiveModLibraryAsync();
+        ReportStartup("Checking which mods are in the game…");
         await RefreshGuidedTextureModsAsync("workspace restore");
+        ReportStartup("Loading drafts, conflicts and mod sets…");
         await RefreshModAuthoringAsync();
         await RefreshModConflictDependencyAsync("workspace restore");
         await RefreshClientUpdateAuditAsync("workspace restore");
         await RefreshModSetsAsync("workspace restore");
         await RefreshModifiedMeshUpksAsync("workspace restore");
+        ReportStartup($"{_arkiveModLibraryManifest.Mods.Count:N0} mod(s), " +
+                      $"{_arkiveModLibraryManifest.Mods.Count(mod => mod.Enabled):N0} enabled.", modsDone: true,
+            database: "Loading the game database…");
+        Log($"Startup mods loaded in {startup.Elapsed.TotalSeconds:N1}s.");
         var defaultMetadataPath = Path.Combine(
             _projectRoot,
             "staging",
@@ -71,11 +116,14 @@ public partial class MainWindow : Window
             loadedMetadata = _gameMetadataIndex is not null;
             if (loadedMetadata)
             {
+                ReportStartup(database: "Matching your mods to in-game names…");
                 await RefreshGuidedTextureModsAsync("metadata restored");
             }
+            ReportStartup(database: loadedMetadata ? "Loaded." : "Could not be loaded; see Diagnostics.", databaseDone: true);
         }
         else
         {
+            ReportStartup(database: "Not set up yet.", databaseDone: true);
             Log($"Workspace metadata was not restored because the candidate file is unavailable: {metadataPath}");
         }
 
@@ -92,10 +140,12 @@ public partial class MainWindow : Window
             await ApplyLibraryFilterAsync("workspace restore");
         }
 
+        FinishStartup(startup);
         Log(
             $"Workspace restoration completed: root={_libraryRootPath ?? "none"}, " +
             $"metadataLoaded={_gameMetadataIndex is not null}, tab={MainTabControl.SelectedIndex}.");
         _ = TrimPackageBuildsAsync("startup");
+        _ = Task.Run(() => ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath));
         if (Application.Current is App { StartupModFiles.Count: > 0 } app)
             await ImportModFilesAsync(app.StartupModFiles);
     }

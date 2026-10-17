@@ -660,13 +660,8 @@ public partial class MainWindow : Window
         candidate.StartsWith(expected + "_", StringComparison.OrdinalIgnoreCase) ||
         expected.StartsWith(candidate + "_", StringComparison.OrdinalIgnoreCase);
 
-    private static async Task<string> HashFileForPreviewAsync(string path)
-    {
-        await using var stream = new FileStream(
-            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
-            1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        return Convert.ToHexString(await SHA256.HashDataAsync(stream));
-    }
+    // Package rows hash every working file on each refresh; unchanged files are not read again.
+    private static Task<string> HashFileForPreviewAsync(string path) => ArkiveModEditSnapshot.HashFileCachedAsync(path);
 
     private static bool SamePath(string left, string right) =>
         Path.GetFullPath(left).Equals(Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);

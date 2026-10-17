@@ -120,12 +120,23 @@ public partial class MainWindow : Window
             }
             var packageEntries = new Dictionary<string, GuidedTexturePackageEntry>(
                 StringComparer.OrdinalIgnoreCase);
+            // Read the package projects once; looking each one up separately re-read all of them per package.
+            var knownPackages = new Dictionary<string, GuidedTexturePackageEntry>(StringComparer.OrdinalIgnoreCase);
+            foreach (var known in await _guidedTexturePackageWorkspace.LoadAsync())
+                knownPackages.TryAdd(Path.GetFullPath(known.Manifest.SourcePackagePath), known);
+            async Task<GuidedTexturePackageEntry> PackageFor(string alias, string physicalName, string sourcePath)
+            {
+                if (knownPackages.TryGetValue(Path.GetFullPath(sourcePath), out var known)) return known;
+                var created = await _guidedTexturePackageWorkspace.GetOrCreateAsync(alias, physicalName, sourcePath);
+                knownPackages[Path.GetFullPath(created.Manifest.SourcePackagePath)] = created;
+                return created;
+            }
             foreach (var group in entries.GroupBy(entry =>
                          Path.GetFullPath(entry.Manifest.SourcePackagePath),
                          StringComparer.OrdinalIgnoreCase))
             {
                 var first = group.First();
-                var package = await _guidedTexturePackageWorkspace.GetOrCreateAsync(
+                var package = await PackageFor(
                     first.Manifest.PackageAlias,
                     first.Manifest.PhysicalPackageName,
                     first.Manifest.SourcePackagePath);
@@ -136,8 +147,7 @@ public partial class MainWindow : Window
                          StringComparer.OrdinalIgnoreCase))
             {
                 var source = meshSourcesByExportId[group.First().Manifest.SourceExportId].Manifest;
-                var package = await _guidedTexturePackageWorkspace.GetOrCreateAsync(
-                    source.PackageAlias, source.PhysicalPackageName, source.SourcePackagePath);
+                var package = await PackageFor(source.PackageAlias, source.PhysicalPackageName, source.SourcePackagePath);
                 packageEntries[Path.GetFullPath(package.Manifest.SourcePackagePath)] = package;
             }
             foreach (var group in materialEntries.GroupBy(entry =>
@@ -145,8 +155,7 @@ public partial class MainWindow : Window
                          StringComparer.OrdinalIgnoreCase))
             {
                 var source = group.First().Document;
-                var package = await _guidedTexturePackageWorkspace.GetOrCreateAsync(
-                    source.PackageAlias, Path.GetFileName(source.SourcePackagePath), source.SourcePackagePath);
+                var package = await PackageFor(source.PackageAlias, Path.GetFileName(source.SourcePackagePath), source.SourcePackagePath);
                 packageEntries[Path.GetFullPath(package.Manifest.SourcePackagePath)] = package;
             }
             foreach (var group in staticMeshEntries.GroupBy(entry => Path.GetFullPath(
@@ -154,8 +163,7 @@ public partial class MainWindow : Window
                          StringComparer.OrdinalIgnoreCase))
             {
                 var source = staticMeshSources[group.First().Manifest.EditId];
-                var package = await _guidedTexturePackageWorkspace.GetOrCreateAsync(
-                    source.PackageAlias, source.PhysicalPackageName, source.SourcePackagePath);
+                var package = await PackageFor(source.PackageAlias, source.PhysicalPackageName, source.SourcePackagePath);
                 packageEntries[Path.GetFullPath(package.Manifest.SourcePackagePath)] = package;
             }
             var packageRows = new List<GuidedTexturePackageRow>(packageEntries.Count);

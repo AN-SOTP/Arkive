@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -17,6 +18,11 @@ public sealed class SkeletalMeshEditWorkspaceStore
     };
 
     private readonly SkeletalMeshEditPreflightService _preflight;
+
+    // Edit records carry their full mesh check (hundreds of KB each) and are listed by every mod refresh; each one
+    // is parsed again only when its file changes.
+    private readonly ConcurrentDictionary<string, (long Length, DateTime WriteTimeUtc, SkeletalMeshEditRegistrationManifest Manifest)>
+        _parsed = new(StringComparer.OrdinalIgnoreCase);
 
     public SkeletalMeshEditWorkspaceStore(
         string rootDirectory,
@@ -124,48 +130,58 @@ public sealed class SkeletalMeshEditWorkspaceStore
     {
         if (!Directory.Exists(RootDirectory))
             return new SkeletalMeshEditWorkspaceSnapshot([], []);
-        var entries = new List<SkeletalMeshEditWorkspaceEntry>();
-        var issues = new List<SkeletalMeshEditWorkspaceIssue>();
-        foreach (var path in Directory.EnumerateFiles(
-                     RootDirectory, ManifestFileName, SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+        var paths = Directory.EnumerateFiles(RootDirectory, ManifestFileName, SearchOption.AllDirectories).ToArray();
+        var entries = new SkeletalMeshEditWorkspaceEntry?[paths.Length];
+        var issues = new SkeletalMeshEditWorkspaceIssue?[paths.Length];
+        // Records not parsed yet (at startup, all of them) are read in parallel: large drafts hold hundreds.
+        await Parallel.ForEachAsync(Enumerable.Range(0, paths.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken },
+            async (index, token) =>
             {
-                var manifestPath = EnsureWithinRoot(path);
-                await using var stream = new FileStream(
-                    manifestPath, FileMode.Open, FileAccess.Read,
-                    FileShare.ReadWrite | FileShare.Delete, 64 * 1024,
-                    FileOptions.Asynchronous | FileOptions.SequentialScan);
-                var manifest = await JsonSerializer.DeserializeAsync<SkeletalMeshEditRegistrationManifest>(
-                                   stream, JsonOptions, cancellationToken).ConfigureAwait(false) ??
-                               throw new InvalidDataException("The edited-mesh manifest was empty.");
-                if (manifest.SchemaVersion != CurrentSchemaVersion ||
-                    string.IsNullOrWhiteSpace(manifest.EditId) ||
-                    string.IsNullOrWhiteSpace(manifest.SourceExportId) ||
-                    string.IsNullOrWhiteSpace(manifest.EditedGlbRelativePath) ||
-                    Path.IsPathRooted(manifest.EditedGlbRelativePath))
-                    throw new InvalidDataException("The edited-mesh manifest identity or schema is invalid.");
-                var directory = Path.GetDirectoryName(manifestPath) ??
-                                throw new InvalidDataException("The edited-mesh directory is unavailable.");
-                var editedGlb = EnsureWithinDirectory(
-                    directory, Path.Combine(directory, manifest.EditedGlbRelativePath));
-                if (!File.Exists(editedGlb))
-                    throw new FileNotFoundException("The registered edited GLB is missing.", editedGlb);
-                entries.Add(new SkeletalMeshEditWorkspaceEntry(
-                    directory, manifestPath, editedGlb, manifest));
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or JsonException or
-                    InvalidDataException or ArgumentException or NotSupportedException)
-            {
-                issues.Add(new SkeletalMeshEditWorkspaceIssue(
-                    Path.GetFullPath(path), exception.Message));
-            }
-        }
+                var path = paths[index];
+                try
+                {
+                    var manifestPath = EnsureWithinRoot(path);
+                    var info = new FileInfo(manifestPath);
+                    SkeletalMeshEditRegistrationManifest manifest;
+                    if (_parsed.TryGetValue(manifestPath, out var parsed) && parsed.Length == info.Length &&
+                        parsed.WriteTimeUtc == info.LastWriteTimeUtc)
+                        manifest = parsed.Manifest;
+                    else
+                    {
+                        await using var stream = new FileStream(
+                            manifestPath, FileMode.Open, FileAccess.Read,
+                            FileShare.ReadWrite | FileShare.Delete, 64 * 1024,
+                            FileOptions.Asynchronous | FileOptions.SequentialScan);
+                        manifest = await JsonSerializer.DeserializeAsync<SkeletalMeshEditRegistrationManifest>(
+                                       stream, JsonOptions, token).ConfigureAwait(false) ??
+                                   throw new InvalidDataException("The edited-mesh manifest was empty.");
+                        _parsed[manifestPath] = (info.Length, info.LastWriteTimeUtc, manifest);
+                    }
+                    if (manifest.SchemaVersion != CurrentSchemaVersion ||
+                        string.IsNullOrWhiteSpace(manifest.EditId) ||
+                        string.IsNullOrWhiteSpace(manifest.SourceExportId) ||
+                        string.IsNullOrWhiteSpace(manifest.EditedGlbRelativePath) ||
+                        Path.IsPathRooted(manifest.EditedGlbRelativePath))
+                        throw new InvalidDataException("The edited-mesh manifest identity or schema is invalid.");
+                    var directory = Path.GetDirectoryName(manifestPath) ??
+                                    throw new InvalidDataException("The edited-mesh directory is unavailable.");
+                    var editedGlb = EnsureWithinDirectory(
+                        directory, Path.Combine(directory, manifest.EditedGlbRelativePath));
+                    if (!File.Exists(editedGlb))
+                        throw new FileNotFoundException("The registered edited GLB is missing.", editedGlb);
+                    entries[index] = new SkeletalMeshEditWorkspaceEntry(directory, manifestPath, editedGlb, manifest);
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException or JsonException or
+                        InvalidDataException or ArgumentException or NotSupportedException)
+                {
+                    issues[index] = new SkeletalMeshEditWorkspaceIssue(Path.GetFullPath(path), exception.Message);
+                }
+            }).ConfigureAwait(false);
         return new SkeletalMeshEditWorkspaceSnapshot(
-            entries.OrderByDescending(entry => entry.Manifest.CreatedAt).ToArray(),
-            issues.ToArray());
+            entries.OfType<SkeletalMeshEditWorkspaceEntry>().OrderByDescending(entry => entry.Manifest.CreatedAt).ToArray(),
+            issues.OfType<SkeletalMeshEditWorkspaceIssue>().ToArray());
     }
 
     public Task DeleteAsync(

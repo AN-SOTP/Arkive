@@ -6,7 +6,27 @@ internal static class WorkingFileSmokeTests
     [
         new("cleans up only mesh working files that nothing uses, keeping recent and hand-edited ones", TestWorkingFileCleanup),
         new("trims a finished package build to its payload, once, and leaves a changed build alone", TestPackageRevisionTrim),
+        new("keeps file hashes between sessions only while each file is unchanged", TestHashCache),
     ];
+
+    private static void TestHashCache()
+    {
+        var root = Path.Combine(fixtureDirectory, "hash-cache");
+        Directory.CreateDirectory(root);
+        var file = Path.Combine(root, "piece.glb");
+        File.WriteAllBytes(file, [1, 2, 3]);
+        var hash = ArkiveModEditSnapshot.HashFileCachedAsync(file).GetAwaiter().GetResult();
+        var saved = Path.Combine(root, "file-hashes.json");
+        ArkiveModEditSnapshot.SaveHashCache(saved);
+        Assert(File.ReadAllText(saved).Contains(hash, StringComparison.Ordinal), "a hash was not saved for the next session");
+        File.WriteAllBytes(file, [4, 5, 6, 7]);
+        ArkiveModEditSnapshot.SaveHashCache(saved);
+        Assert(!File.ReadAllText(saved).Contains(hash, StringComparison.Ordinal), "the hash of a file that changed was saved");
+        ArkiveModEditSnapshot.LoadHashCache(saved);
+        Assert(ArkiveModEditSnapshot.HashFileCachedAsync(file).GetAwaiter().GetResult() ==
+               Convert.ToHexString(SHA256.HashData(new byte[] { 4, 5, 6, 7 })), "a changed file kept its old hash");
+        Directory.Delete(root, recursive: true);
+    }
 
     private static void TestPackageRevisionTrim()
     {

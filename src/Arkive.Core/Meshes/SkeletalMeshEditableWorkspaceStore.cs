@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -35,6 +36,10 @@ public sealed class SkeletalMeshEditableWorkspaceStore
         Converters = { new JsonStringEnumConverter() },
     };
 
+    // Listed at every startup and mesh refresh; each record is parsed again only when its file changes.
+    private readonly ConcurrentDictionary<string, (long Length, DateTime WriteTimeUtc, SkeletalMeshEditableExportManifest Manifest)>
+        _parsed = new(StringComparer.OrdinalIgnoreCase);
+
     public SkeletalMeshEditableWorkspaceStore(string rootDirectory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
@@ -58,13 +63,22 @@ public sealed class SkeletalMeshEditableWorkspaceStore
             try
             {
                 var fullManifestPath = EnsureWithinRoot(manifestPath);
-                await using var stream = new FileStream(
-                    fullManifestPath, FileMode.Open, FileAccess.Read,
-                    FileShare.ReadWrite | FileShare.Delete, 64 * 1024,
-                    FileOptions.Asynchronous | FileOptions.SequentialScan);
-                var manifest = await JsonSerializer.DeserializeAsync<SkeletalMeshEditableExportManifest>(
+                var info = new FileInfo(fullManifestPath);
+                SkeletalMeshEditableExportManifest manifest;
+                if (_parsed.TryGetValue(fullManifestPath, out var parsed) && parsed.Length == info.Length &&
+                    parsed.WriteTimeUtc == info.LastWriteTimeUtc)
+                    manifest = parsed.Manifest;
+                else
+                {
+                    await using var stream = new FileStream(
+                        fullManifestPath, FileMode.Open, FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete, 64 * 1024,
+                        FileOptions.Asynchronous | FileOptions.SequentialScan);
+                    manifest = await JsonSerializer.DeserializeAsync<SkeletalMeshEditableExportManifest>(
                                    stream, JsonOptions, cancellationToken).ConfigureAwait(false) ??
                                throw new InvalidDataException("The manifest was empty.");
+                    _parsed[fullManifestPath] = (info.Length, info.LastWriteTimeUtc, manifest);
+                }
                 if (manifest.SchemaVersion <= 0)
                     throw new InvalidDataException($"Invalid editable-mesh schema {manifest.SchemaVersion}.");
                 if (string.IsNullOrWhiteSpace(manifest.ExportId) ||
