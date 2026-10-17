@@ -20,7 +20,7 @@ permissions:
 jobs:
   install-and-update:
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v5
@@ -62,7 +62,8 @@ jobs:
           Write-Host "New installer: $($new.Name); last release: $previous ($($old.Name))"
 
           function Install([string]$installer, [string]$directory) {
-            $process = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$directory`"", '/TASKS=fileassociation') -PassThru -Wait
+            $process = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$directory`"", '/TASKS=fileassociation') -PassThru
+            if (-not $process.WaitForExit(600000)) { throw "$installer did not finish within 10 minutes." }
             if ($process.ExitCode -ne 0) { throw "$installer failed with exit code $($process.ExitCode)." }
           }
           function Check-Layout([string]$directory) {
@@ -97,7 +98,8 @@ jobs:
           Wait-Window $fresh
           $command = (Get-ItemProperty 'HKCU:\Software\Classes\Arkive.Mod\shell\open\command').'(default)'
           if ($command -notlike "*$fresh\Arkive.App.exe*") { throw "The .arkive association points elsewhere: $command" }
-          $uninstall = Start-Process (Join-Path $fresh 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru -Wait
+          $uninstall = Start-Process (Join-Path $fresh 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru
+          $uninstall.WaitForExit()
           if ($uninstall.ExitCode -ne 0) { throw "Uninstall failed with exit code $($uninstall.ExitCode)." }
           # The uninstaller hands over to a copy of itself and returns at once.
           for ($i = 0; $i -lt 60 -and @(Get-ChildItem $fresh -Recurse -File -ErrorAction SilentlyContinue).Count -gt 0; $i++) { Start-Sleep -Seconds 1 }
@@ -116,7 +118,9 @@ jobs:
           $sha = (Get-FileHash $installer -Algorithm SHA256).Hash
           $parent = Start-Process cmd -ArgumentList '/c exit 0' -PassThru -Wait
           $data = Join-Path $env:LOCALAPPDATA 'Arkive'
-          $updater = Start-Process (Join-Path $work 'Arkive.Updater.exe') -ArgumentList @($installer, $sha, $parent.Id, $updated, $data) -PassThru -Wait
+          # Start-Process -Wait would also wait for the Arkive the updater reopens, so only the updater is awaited.
+          $updater = Start-Process (Join-Path $work 'Arkive.Updater.exe') -ArgumentList @($installer, $sha, $parent.Id, $updated, $data) -PassThru
+          if (-not $updater.WaitForExit(600000)) { throw 'The updater did not finish within 10 minutes.' }
           if ($updater.ExitCode -ne 0) { Get-Content (Join-Path $work 'install.log') -ErrorAction SilentlyContinue; throw "The updater failed with exit code $($updater.ExitCode)." }
           Check-Layout $updated
           Wait-Window $updated
