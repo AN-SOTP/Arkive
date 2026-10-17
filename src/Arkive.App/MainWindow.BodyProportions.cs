@@ -353,6 +353,8 @@ public partial class MainWindow
     private async Task ReshapePiecesAsync(ProportionSaveRequest request)
     {
         var editIds = new string?[request.Pieces.Count];
+        // Pieces these settings leave exactly as they were (shoulder pads, arms) are not saved into a body-wide mod.
+        var unchanged = new System.Collections.Concurrent.ConcurrentBag<string>();
         var finished = 0;
         try
         {
@@ -369,8 +371,13 @@ public partial class MainWindow
                     var glb = EditablePath(created) ?? throw new InvalidDataException($"{piece.ObjectName} has no working GLB.");
                     var bytes = await File.ReadAllBytesAsync(glb, token);
                     var model = BodyProportionEngine.Build(bytes, request.Follow, request.Profile, piece.ObjectName);
-                    await File.WriteAllBytesAsync(glb, BodyProportionEngine.Apply(bytes, model, request.Settings), token);
-                    editIds[index] = created.EditId;
+                    var reshaped = BodyProportionEngine.Apply(bytes, model, request.Settings);
+                    if (request.Pieces.Count > 1 && reshaped.AsSpan().SequenceEqual(bytes)) unchanged.Add(created.EditId);
+                    else
+                    {
+                        await File.WriteAllBytesAsync(glb, reshaped, token);
+                        editIds[index] = created.EditId;
+                    }
                     var count = Interlocked.Increment(ref finished);
                     if (request.Parallelism > 1)
                         _ = Dispatcher.InvokeAsync(() => ProportionStatusText.Text =
@@ -383,6 +390,11 @@ public partial class MainWindow
             {
                 EditIds = _authoringDraft.EditIds.Concat(editIds.OfType<string>()).ToArray(),
             });
+            if (!unchanged.IsEmpty)
+            {
+                Log($"Proportion pieces these settings leave unchanged were not added: {unchanged.Count:N0}.");
+                await CleanUpReplacedProportionPiecesAsync(unchanged.ToArray());
+            }
         }
     }
 

@@ -22,6 +22,12 @@ public sealed record SkeletalMeshReconnaissanceRequest(
     string? KnownPackageSha256 = null)
 {
     public bool SkipUmodelOracle { get; init; }
+
+    /// <summary>
+    /// The game's Packages folder, when the package is a copy kept elsewhere (a clean backup). UModel names the mesh's
+    /// materials only when it can find the packages they live in; without it every material is called None.
+    /// </summary>
+    public string? PackageSearchRoot { get; init; }
 }
 
 public sealed record SkeletalMeshPropertyEvidence(

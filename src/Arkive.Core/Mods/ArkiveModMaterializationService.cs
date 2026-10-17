@@ -168,7 +168,10 @@ public sealed class ArkiveModMaterializationService
                 var meshReport = await _services.SkeletalMeshReconnaissance.InspectAsync(
                     new SkeletalMeshReconnaissanceRequest(selection.PackagePath, selection.PackageAlias,
                         export.ExportIndex - 1, AssetKind.SkeletalMesh, export.ClassName, export.ObjectName,
-                        export.SerialOffset, export.SerialSize, hash), cancellationToken).ConfigureAwait(false);
+                        export.SerialOffset, export.SerialSize, hash)
+                    {
+                        PackageSearchRoot = await GameFolderForCopyAsync(selection.PackagePath, cancellationToken).ConfigureAwait(false),
+                    }, cancellationToken).ConfigureAwait(false);
                 if (meshReport.Readiness != SkeletalMeshReadiness.NoOpReady)
                     Refuse("AMM020", FirstError(meshReport.Issues.Select(issue => (issue.Severity, issue.Message))));
                 var meshRecon = await _services.SkeletalMeshReconnaissanceStore.SaveAsync(meshReport, cancellationToken)
@@ -328,6 +331,20 @@ public sealed class ArkiveModMaterializationService
         return (project.Manifest.ProjectId, project.ManifestPath);
     }
 
+    /// <summary>
+    /// The game's Packages folder when <paramref name="packagePath"/> is a copy kept elsewhere (a clean backup of a
+    /// package a mod is installed in), so UModel can still find the packages the mesh's materials live in.
+    /// </summary>
+    private async Task<string?> GameFolderForCopyAsync(string packagePath, CancellationToken cancellationToken)
+    {
+        var game = (await _library.LoadAsync(cancellationToken).ConfigureAwait(false)).GamePackagesDirectory;
+        return game is not null && Directory.Exists(game) &&
+               !Path.GetFullPath(game).TrimEnd(Path.DirectorySeparatorChar)
+                   .Equals(Path.GetDirectoryName(Path.GetFullPath(packagePath)), StringComparison.OrdinalIgnoreCase)
+            ? game
+            : null;
+    }
+
     private async Task<(string EditId, string ManifestPath)> MaterializeSkeletalMeshAsync(
         ArkiveModFileAsset asset,
         ArkiveModTargetCheck check,
@@ -338,7 +355,10 @@ public sealed class ArkiveModMaterializationService
         var report = await _services.SkeletalMeshReconnaissance.InspectAsync(
             new SkeletalMeshReconnaissanceRequest(
                 check.PackagePath, asset.Target.PackageAlias, export.ExportIndex - 1, AssetKind.SkeletalMesh,
-                export.ClassName, export.ObjectName, export.SerialOffset, export.SerialSize, check.PackageSha256),
+                export.ClassName, export.ObjectName, export.SerialOffset, export.SerialSize, check.PackageSha256)
+            {
+                PackageSearchRoot = await GameFolderForCopyAsync(check.PackagePath, cancellationToken).ConfigureAwait(false),
+            },
             cancellationToken).ConfigureAwait(false);
         if (report.Readiness != SkeletalMeshReadiness.NoOpReady)
             Refuse("AMM020", $"{asset.DisplayName}: {FirstError(report.Issues.Select(issue => (issue.Severity, issue.Message)))}");

@@ -68,7 +68,7 @@ public sealed class SkeletalMeshReconnaissanceService
                         request.SerialSize,
                         request.ClassName,
                         request.ObjectName),
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken, request.PackageSearchRoot).ConfigureAwait(false);
                 oracle = ParseSkeletalMeshDump(dump.RawOutput, dump.Duration, dump.Asset.ClassName);
                 if (oracle.Lods.GroupBy(lod => lod.LodIndex).Any(group => group.Count() > 1))
                 {

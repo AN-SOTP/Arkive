@@ -287,7 +287,7 @@ public sealed class ArkiveModApplyService
                             ArkiveModFileService.PhysicalPackageKey(asset.Target.PhysicalPackageName), out var active);
                         var built = await ArkiveModEditSnapshot.GetBuildContentSha256Async(edit, cancellationToken)
                             .ConfigureAwait(false);
-                        inGame = active is not null && built is not null &&
+                        inGame = ChangesNothing(edit) || active is not null && built is not null &&
                                  RevisionContent(active).Contains(ContentKey(edit.EditId, built));
                     }
                 }
@@ -393,6 +393,7 @@ public sealed class ArkiveModApplyService
             var setups = new List<ArkiveModPendingSetup>();
             var desired = new HashSet<string>(StringComparer.Ordinal);
             var contentKnown = true;
+            var unchanged = 0;
             foreach (var (mod, asset) in winners)
             {
                 var binding = mod.BindingFor(asset.AssetId);
@@ -440,6 +441,11 @@ public sealed class ArkiveModApplyService
                                 : string.Empty));
                     continue;
                 }
+                if (ChangesNothing(local))
+                {
+                    unchanged++;
+                    continue;
+                }
                 var content = await ArkiveModEditSnapshot.GetBuildContentSha256Async(local, cancellationToken)
                     .ConfigureAwait(false);
                 if (content is null) contentKnown = false;
@@ -456,6 +462,11 @@ public sealed class ArkiveModApplyService
                     packageProblems.Add(
                         $"The checked draft '{draft.DisplayName}' and mod '{winner.Mod.Manifest.Name}' both replace " +
                         $"{draft.ObjectName}. Uncheck the draft or add it to a mod.");
+                    continue;
+                }
+                if (ChangesNothing(draft))
+                {
+                    unchanged++;
                     continue;
                 }
                 var content = await ArkiveModEditSnapshot.GetBuildContentSha256Async(draft, cancellationToken)
@@ -497,12 +508,16 @@ public sealed class ArkiveModApplyService
             ArkiveModPackageAction action;
             string reason;
             var restoreFirst = false;
-            if (winners.Length == 0 && drafts.Count == 0)
+            if (winners.Length + drafts.Count == unchanged && setups.Count == 0)
             {
                 action = active is null ? ArkiveModPackageAction.None : ArkiveModPackageAction.Restore;
-                reason = active is null
-                    ? "No enabled mod replaces assets in this package."
-                    : "No enabled mod replaces assets here any more; the original package will be restored.";
+                reason = unchanged > 0
+                    ? active is null
+                        ? "The enabled mods leave every asset in this package as the game has it."
+                        : "The enabled mods leave every asset here as the game has it; the original package will be restored."
+                    : active is null
+                        ? "No enabled mod replaces assets in this package."
+                        : "No enabled mod replaces assets here any more; the original package will be restored.";
             }
             else if (setups.Count > 0 || !contentKnown)
             {
@@ -645,6 +660,13 @@ public sealed class ArkiveModApplyService
             {
                 outcomes[package.PhysicalPackageName] = new ArkiveModPackageOutcome(
                     package.PhysicalPackageName, package.Action, false, $"Rebuild failed: {built.Error}");
+                continue;
+            }
+            if (built.Package is null)
+            {
+                outcomes[package.PhysicalPackageName] = new ArkiveModPackageOutcome(
+                    package.PhysicalPackageName, package.Action, true,
+                    "Left as the game has it: the enabled mods change nothing in this package.");
                 continue;
             }
             rebuilt++;
@@ -851,8 +873,11 @@ public sealed class ArkiveModApplyService
         var package = await _context.Packages.GetOrCreateAsync(
             plan.PackageAlias, plan.PhysicalPackageName, plan.SourcePackagePath!, cancellationToken).ConfigureAwait(false);
         var snapshot = await ArkiveModEditSnapshot.LoadAsync(_context.Edits, cancellationToken).ConfigureAwait(false);
-        var included = snapshot.ForPackage(plan.SourcePackagePath!).Where(edit => edit.Included).ToArray();
-        if (included.Length == 0) return (null, "No checked assets remain for this package.");
+        var checkedEdits = snapshot.ForPackage(plan.SourcePackagePath!).Where(edit => edit.Included).ToArray();
+        if (checkedEdits.Length == 0) return (null, "No checked assets remain for this package.");
+        // A piece identical to the game's own needs no rebuild; the rest of the package is still built.
+        var included = checkedEdits.Where(edit => !ChangesNothing(edit)).ToArray();
+        if (included.Length == 0) return (null, null);
         var revisionDirectory = _context.Packages.CreateRevisionDirectory(package);
         try
         {
@@ -1012,6 +1037,14 @@ public sealed class ArkiveModApplyService
         return named.FirstOrDefault(package => ArkiveModEditSnapshot.SamePath(package.Manifest.SourcePackagePath, gamePath)) ??
                named.FirstOrDefault(package => !File.Exists(package.Manifest.SourcePackagePath));
     }
+
+    /// <summary>
+    /// A mesh whose check found it identical to the game's own (a piece a body-wide upscale does not reach, such as a
+    /// shoulder pad). There is nothing to write for it, so it is left out of builds instead of failing its package.
+    /// </summary>
+    internal static bool ChangesNothing(ArkiveModLocalEdit edit) =>
+        edit.Entry is SkeletalMeshEditWorkspaceEntry mesh &&
+        mesh.Manifest.Preflight?.Readiness == SkeletalMeshEditReadiness.ReadyNoChanges;
 
     public static HashSet<string> RevisionContent(GuidedTexturePackageRevision revision)
     {

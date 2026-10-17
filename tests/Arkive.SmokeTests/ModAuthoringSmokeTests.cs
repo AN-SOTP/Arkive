@@ -15,6 +15,7 @@ internal static class ModAuthoringSmokeTests
         new("prepares editing from a verified clean backup while another mod stays installed", TestPrepareInstalledPackage),
         new("refuses unsaved edits and invalidates a reviewed apply plan when saved content changes", TestSaveApplyConsistency),
         new("revalidates in-place mesh edits on save and preserves the portable mod on failure", TestMeshSaveValidation),
+        new("leaves a mod's unchanged mesh out of builds instead of failing its package", TestUnchangedMeshApply),
         new("packs logs, mod list and mesh checks into a problem report without game files", TestProblemReport),
         new("accepts a game mesh's own zero-area triangles wherever an edit moves them", TestMovedDegenerateTriangles),
         new("explains unweighted vertices that Blender exports as neutral_bone", TestNeutralBone),
@@ -252,6 +253,44 @@ internal static class ModAuthoringSmokeTests
         Expect("APL001", () => service.ApplyAsync(plan.Fingerprint).GetAwaiter().GetResult());
         Assert(Hash(client) == cleanHash, "an obsolete reviewed plan changed the game");
         Assert(service.ApplyAsync().GetAwaiter().GetResult().Succeeded, "saved changes could not be applied");
+    }
+
+    private static void TestUnchangedMeshApply()
+    {
+        var root = Path.Combine(fixtureDirectory, "authoring-unchanged-mesh");
+        var game = Path.Combine(root, "game");
+        Directory.CreateDirectory(game);
+        var package = Path.Combine(game, "mesh.upk");
+        var range = WriteSkeletalMeshReconPackage(package);
+        var original = File.ReadAllBytes(package);
+        var report = new SkeletalMeshReconnaissanceService().InspectAsync(new SkeletalMeshReconnaissanceRequest(
+            package, "mesh", 1, AssetKind.SkeletalMesh, "SkeletalMesh", "TestMesh", range.SerialOffset, range.SerialSize))
+            .GetAwaiter().GetResult();
+        var env = CreateEnvironment(Path.Combine(root, "workspace"));
+        var recon = new SkeletalMeshReconnaissanceWorkspaceStore(Path.Combine(root, "recon")).SaveAsync(report).GetAwaiter().GetResult();
+        var export = new SkeletalMeshEditableExportService().ExportAsync(new SkeletalMeshEditableExportRequest(
+            report, recon.JsonPath, Path.Combine(root, "editable"))).GetAwaiter().GetResult();
+        var source = new SkeletalMeshEditableWorkspaceEntry(export.OutputDirectory, export.ManifestPath, export.GlbPath,
+            export.Manifest, true, true, true);
+        // A body-wide upscale piece it does not reach: saved exactly as the game has it.
+        var unchanged = env.Edits.SkeletalMeshEdits.RegisterAsync(source, export.GlbPath).GetAwaiter().GetResult().Entry;
+        Assert(unchanged.Manifest.Preflight.Readiness == SkeletalMeshEditReadiness.ReadyNoChanges, "an unchanged mesh was not recognised");
+        var author = new ArkiveModAuthoringService(env.Library, env.Edits);
+        var mod = author.SaveDraftAsync(new ArkiveModAuthoringDraft(1, Guid.NewGuid().ToString("N"), null,
+            new ArkiveModMetadata("Untouched piece", "1.0.0"), [unchanged.Manifest.EditId], DateTimeOffset.UtcNow)).GetAwaiter().GetResult();
+        env.Library.SetEnabledAsync(mod.ModId, true).GetAwaiter().GetResult();
+        var service = CreateApplyService(env, game);
+        var plan = service.PlanAsync().GetAwaiter().GetResult();
+        Assert(plan.CanApply && plan.Packages.Single().Action == ArkiveModPackageAction.None,
+            "a package whose only mod mesh is unchanged was not left alone: " +
+            string.Join(" | ", plan.Packages.Select(item => $"{item.Action} {item.Reason}")) + " " + string.Join(" | ", plan.BlockingProblems));
+        Assert(service.ApplyAsync(plan.Fingerprint).GetAwaiter().GetResult().Succeeded && File.ReadAllBytes(package).SequenceEqual(original),
+            "applying an unchanged mesh failed or changed the game file");
+        var library = env.Library.LoadAsync().GetAwaiter().GetResult();
+        var status = ArkiveModApplyService.DescribeAsync(env.Library, library,
+            ArkiveModEditSnapshot.LoadAsync(env.Edits).GetAwaiter().GetResult(),
+            new Dictionary<string, GuidedTexturePackageRevision?>()).GetAwaiter().GetResult().Single();
+        Assert(status.Assets.Single().InGame == true, "an unchanged mesh was reported as still waiting to be applied");
     }
 
     private static void TestMeshSaveValidation()
