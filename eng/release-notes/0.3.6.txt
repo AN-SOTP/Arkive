@@ -1,0 +1,5 @@
+Class names players know, Shadowhunter in the class list and a Guardianknight body for Simple upscale.
+
+- The Asset Library's class types show the localised class name with the game's original name beside it, for example "Glaivier (LanceMaster)", "Soulfist (Kimaster)" and "Gunslinger (Female Devilhunter)", sorted by the name shown. A saved class filter keeps working.
+- Shadowhunter is listed as a class type. Its outfits were listed as "DDM" before.
+- Simple upscale has a Guardianknight body. Guardianknight outfits share the Female Assassin's skeleton and were listed under her; they now have their own body, presets and preview animations.
