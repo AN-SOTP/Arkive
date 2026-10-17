@@ -63,15 +63,26 @@ internal static class ArkiveModTestFixture
         return new ArkiveModMaterializationService(environment.Library, environment.Edits, services);
     }
 
-    internal static ArkiveModApplyService CreateApplyService(ArkiveTestEnvironment environment, string gamePackages) =>
-        new(Context(environment, gamePackages), CreateMaterializer(environment), Composer());
+    internal static ArkiveModApplyService CreateApplyService(
+        ArkiveTestEnvironment environment, string gamePackages, IModPackageExternalValidator? validator = null) =>
+        new(Context(environment, gamePackages), CreateMaterializer(environment), Composer(validator));
 
-    internal static UnifiedPackageComposerService Composer() => new(
+    internal static UnifiedPackageComposerService Composer(IModPackageExternalValidator? validator = null) => new(
         new UpkPackageReader(), NoChunkProtectionProvider.Instance,
         new SkeletalMeshReconnaissanceService(), new SkeletalMeshEditableExportService(),
         new SkeletalMeshNativeEncodingService(), new SkeletalMeshStagedUpkService(), null!,
         new ArkivePackageModBundleService(
-            new SyntheticModPackageExternalValidator(), protectionProvider: NoChunkProtectionProvider.Instance));
+            validator ?? new SyntheticModPackageExternalValidator(), protectionProvider: NoChunkProtectionProvider.Instance));
+
+    /// <summary>A UModel that cannot read the named packages (all of them when none are named).</summary>
+    internal sealed class UnreadableValidator(Func<string, bool> unreadable) : IModPackageExternalValidator
+    {
+        public Task<ModExternalValidationResult> ValidateAsync(
+            string packagePath, string className, string objectName, CancellationToken cancellationToken = default) =>
+            unreadable(packagePath)
+                ? throw new UmodelBridgeException($"UModel could not export {objectName} (exit code 1): Serializing behind stopper")
+                : new SyntheticModPackageExternalValidator().ValidateAsync(packagePath, className, objectName, cancellationToken);
+    }
 
     internal static string CreateMaterialClient(string root, out string cleanHash)
     {

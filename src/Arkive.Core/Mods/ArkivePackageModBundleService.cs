@@ -155,9 +155,26 @@ public sealed class ArkivePackageModBundleService
         var packageRoot = Path.GetDirectoryName(sourcePath)!;
         foreach (var asset in assets)
         {
-            externalResults.Add(await _externalValidator.ValidateInPackageRootAsync(
-                    payloadPath, packageRoot, asset.ClassName, asset.ObjectName, cancellationToken)
-                .ConfigureAwait(false));
+            try
+            {
+                externalResults.Add(await _externalValidator.ValidateInPackageRootAsync(
+                        payloadPath, packageRoot, asset.ClassName, asset.ObjectName, cancellationToken)
+                    .ConfigureAwait(false));
+            }
+            catch (External.UmodelBridgeException exception) when (
+                request.VariableSizeMeshCount == 0 && asset.ClassName.Contains("Mesh", StringComparison.OrdinalIgnoreCase))
+            {
+                // Some newer meshes use a layout the bundled UModel cannot read even in the clean game file. Arkive's
+                // own reader handles them, and a same-size mesh replacement has already been decoded back and compared
+                // by Arkive; that check stands in for UModel's only when UModel cannot read the original either.
+                if (await ExternalValidatorReadsAsync(sourcePath, packageRoot, asset, cancellationToken).ConfigureAwait(false))
+                    throw;
+                externalResults.Add(new ModExternalValidationResult(
+                    "Arkive native decode (UModel cannot read the original)", 1, 1,
+                    CataloguePassed: true, NativeLoadPassed: true, ExpectedObjectFound: true,
+                    [$"UModel cannot read {asset.ObjectName} in the clean game file either; Arkive's own decode-back check was used. {exception.Message}"],
+                    TimeSpan.Zero));
+            }
         }
         if (externalResults.Any(result => !result.CataloguePassed || !result.NativeLoadPassed ||
                                           !result.ExpectedObjectFound ||
@@ -330,6 +347,21 @@ public sealed class ArkivePackageModBundleService
         finally
         {
             if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
+    private async Task<bool> ExternalValidatorReadsAsync(
+        string packagePath, string packageRoot, ArkiveModAsset asset, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _externalValidator.ValidateInPackageRootAsync(
+                packagePath, packageRoot, asset.ClassName, asset.ObjectName, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (External.UmodelBridgeException)
+        {
+            return false;
         }
     }
 

@@ -16,6 +16,7 @@ internal static class ModAuthoringSmokeTests
         new("refuses unsaved edits and invalidates a reviewed apply plan when saved content changes", TestSaveApplyConsistency),
         new("revalidates in-place mesh edits on save and preserves the portable mod on failure", TestMeshSaveValidation),
         new("leaves a mod's unchanged mesh out of builds instead of failing its package", TestUnchangedMeshApply),
+        new("installs a reshaped mesh UModel cannot read only when it cannot read the original either", TestUnreadableByUmodel),
         new("packs logs, mod list and mesh checks into a problem report without game files", TestProblemReport),
         new("accepts a game mesh's own zero-area triangles wherever an edit moves them", TestMovedDegenerateTriangles),
         new("explains unweighted vertices that Blender exports as neutral_bone", TestNeutralBone),
@@ -253,6 +254,45 @@ internal static class ModAuthoringSmokeTests
         Expect("APL001", () => service.ApplyAsync(plan.Fingerprint).GetAwaiter().GetResult());
         Assert(Hash(client) == cleanHash, "an obsolete reviewed plan changed the game");
         Assert(service.ApplyAsync().GetAwaiter().GetResult().Succeeded, "saved changes could not be applied");
+    }
+
+    private static void TestUnreadableByUmodel()
+    {
+        foreach (var originalReadable in new[] { false, true })
+        {
+            var root = Path.Combine(fixtureDirectory, $"authoring-unreadable-{originalReadable}");
+            var game = Path.Combine(root, "client", "EFGame", "ReleasePC", "Packages");
+            Directory.CreateDirectory(game);
+            var package = Path.Combine(game, "mesh.upk");
+            var range = WriteSkeletalMeshReconPackage(package);
+            var original = File.ReadAllBytes(package);
+            var report = new SkeletalMeshReconnaissanceService().InspectAsync(new SkeletalMeshReconnaissanceRequest(
+                package, "mesh", 1, AssetKind.SkeletalMesh, "SkeletalMesh", "TestMesh", range.SerialOffset, range.SerialSize))
+                .GetAwaiter().GetResult();
+            var env = CreateEnvironment(Path.Combine(root, "workspace"));
+            var recon = new SkeletalMeshReconnaissanceWorkspaceStore(Path.Combine(root, "recon")).SaveAsync(report).GetAwaiter().GetResult();
+            var export = new SkeletalMeshEditableExportService().ExportAsync(new SkeletalMeshEditableExportRequest(
+                report, recon.JsonPath, Path.Combine(root, "editable"))).GetAwaiter().GetResult();
+            var source = new SkeletalMeshEditableWorkspaceEntry(export.OutputDirectory, export.ManifestPath, export.GlbPath,
+                export.Manifest, true, true, true);
+            var edit = env.Edits.SkeletalMeshEdits.RegisterAsync(source, export.GlbPath).GetAwaiter().GetResult().Entry;
+            WriteSkeletalMeshPositionEdit(export.GlbPath, edit.EditedGlbPath, 0.025f);
+            var author = new ArkiveModAuthoringService(env.Library, env.Edits);
+            var mod = author.SaveDraftAsync(new ArkiveModAuthoringDraft(1, Guid.NewGuid().ToString("N"), null,
+                new ArkiveModMetadata("Reshaped", "1.0.0"), [edit.Manifest.EditId], DateTimeOffset.UtcNow)).GetAwaiter().GetResult();
+            env.Library.SetEnabledAsync(mod.ModId, true).GetAwaiter().GetResult();
+            // UModel never reads the rebuilt package; it reads the clean game file only when originalReadable.
+            var validator = new UnreadableValidator(path =>
+                !originalReadable || !Path.GetFullPath(path).Equals(Path.GetFullPath(package), StringComparison.OrdinalIgnoreCase));
+            var result = CreateApplyService(env, game, validator).ApplyAsync().GetAwaiter().GetResult();
+            if (originalReadable)
+                Assert(!result.Succeeded && File.ReadAllBytes(package).SequenceEqual(original),
+                    "a rebuilt mesh UModel cannot read was installed although UModel reads the original");
+            else
+                Assert(result.Succeeded && !File.ReadAllBytes(package).SequenceEqual(original),
+                    "a reshaped mesh was refused although UModel cannot read the original either: " +
+                    string.Join(" | ", result.Packages.Select(item => item.Message)));
+        }
     }
 
     private static void TestUnchangedMeshApply()
