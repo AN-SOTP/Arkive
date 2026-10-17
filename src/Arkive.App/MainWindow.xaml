@@ -864,6 +864,7 @@
                                 <TextBlock Text="Preset" VerticalAlignment="Center" Margin="14,0,6,0" />
                                 <ComboBox x:Name="ProportionPresetComboBox" Width="220" VerticalAlignment="Center"
                                           SelectionChanged="ProportionPresetComboBox_SelectionChanged"
+                                          DropDownOpened="ProportionPresetComboBox_DropDownOpened"
                                           ToolTip="Presets saved in the proportion editor for the selected body." />
                                 <Button x:Name="ProportionApplyPresetButton" Content="Apply preset to selected outfits" IsEnabled="False"
                                         Click="ProportionApplyPresetButton_Click"

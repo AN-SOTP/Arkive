@@ -48,7 +48,14 @@ public partial class MainWindow
         await SearchProportionAssetsAsync();
     }
 
-    private void ProportionBodyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => ShowProportionResults();
+    private void ProportionBodyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        ShowProportionResults();
+        RefreshProportionPresets();
+    }
+
+    // Presets are saved from the proportion editor's own window, so the list is read again each time it opens.
+    private void ProportionPresetComboBox_DropDownOpened(object? sender, EventArgs e) => RefreshProportionPresets();
 
     private async Task SearchProportionAssetsAsync()
     {
@@ -162,11 +169,12 @@ public partial class MainWindow
     private BodyProportionPresetStore BodyProportionPresets() =>
         _bodyProportionPresets ??= new BodyProportionPresetStore(Path.Combine(_projectRoot, "presets", "body-proportions"));
 
-    /// <summary>Lists the selected body's presets (or every preset when nothing is selected).</summary>
+    /// <summary>Lists the presets of the selected outfits' body, else of the body chosen in the filter, else every preset.</summary>
     private void RefreshProportionPresets()
     {
-        if (ProportionPresetComboBox is null) return;
-        var profile = ProportionResultsGrid.SelectedItems.OfType<ProportionRow>().Select(row => row.Profile).Distinct().SingleOrDefault();
+        if (ProportionPresetComboBox is null || ProportionResultsGrid is null) return;
+        var profile = ProportionResultsGrid.SelectedItems.OfType<ProportionRow>().Select(row => row.Profile).Distinct().SingleOrDefault() ??
+                      (ProportionBodyComboBox?.SelectedIndex > 0 ? BodyProfiles.All[ProportionBodyComboBox.SelectedIndex - 1] : null);
         var previous = (ProportionPresetComboBox.SelectedItem as BodyProportionPreset)?.Name;
         var presets = BodyProportionPresets().Load(profile?.Id);
         ProportionPresetComboBox.ItemsSource = presets;
