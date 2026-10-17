@@ -1,0 +1,9 @@
+Problem reports, mesh checks while you edit, and more Simple upscale tools.
+
+- Report a problem (top bar): packs Arkive's recent logs, your mod list and the checks of the meshes you're editing into one zip, copies it so it can be pasted into Discord or an email, and shows it in Explorer. No game files or settings are included.
+- Edit mods checks a working mesh as soon as its file changes (for example after exporting from Blender) and lists what would stop the mod saving, with what to do, instead of only failing on Save mod.
+- Blender edits: scaling, sculpting or smoothing a whole mesh no longer fails the mesh check because of the game mesh's own zero-area triangles; unweighted new geometry (Blender's "neutral_bone") gets a clear explanation, and a mod that fails the check names the errors.
+- Simple upscale: Apply preset to every outfit of its body reshapes every player outfit of a body (for example all Female Warrior outfits) as one mod, after saying how many pieces, roughly how long and how much disk it takes; Stop ends it after the current piece.
+- Simple upscale mods can be reopened with their sliders: Edit mods > Edit in proportion editor, and saving updates the same mod. Mods made with earlier versions are read from their description.
+- The proportion editor's Preset box can be typed into, and presets saved there appear in the Simple upscale tab straight away.
+- Asset library search no longer shows an older search's results or a stale progress message after a newer search.
