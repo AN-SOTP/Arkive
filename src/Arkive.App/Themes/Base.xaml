@@ -165,6 +165,13 @@
                                 </ControlTemplate>
                             </ToggleButton.Template>
                         </ToggleButton>
+                        <!-- Editable combo boxes (a name you can type or pick) type into this box, which covers the
+                             selected item and leaves the arrow free to open the list. -->
+                        <TextBox x:Name="PART_EditableTextBox" Style="{x:Null}" Visibility="Collapsed"
+                                 Margin="1,1,25,1" Padding="5,0" BorderThickness="0" VerticalContentAlignment="Center"
+                                 Background="{TemplateBinding Background}" Foreground="{TemplateBinding Foreground}"
+                                 CaretBrush="{TemplateBinding Foreground}"
+                                 IsReadOnly="{Binding IsReadOnly, RelativeSource={RelativeSource TemplatedParent}}" />
                         <Popup x:Name="PART_Popup" Placement="Bottom"
                                AllowsTransparency="True" Focusable="False"
                                PopupAnimation="Fade" IsOpen="{TemplateBinding IsDropDownOpen}">
@@ -182,6 +189,9 @@
                         </Popup>
                     </Grid>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="IsEditable" Value="True">
+                            <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" />
+                        </Trigger>
                         <Trigger Property="IsKeyboardFocusWithin" Value="True">
                             <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
                         </Trigger>
