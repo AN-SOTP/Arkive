@@ -319,6 +319,63 @@ public partial class MainWindow
         ProportionStatusText.Text = "Stopping after the current piece…";
     }
 
+    private const int MaximumEditorPieces = 20;
+
+    /// <summary>Reopens the Simple upscale mod open in Edit mods in the proportion editor, with its sliders.</summary>
+    private async void AuthoringProportionsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_authoringDraft?.ModId is not { } modId || _umodelBridge is null || _proportionBusy || string.IsNullOrWhiteSpace(_libraryRootPath) ||
+            BodyProportionModTags.Read(_authoringDraft.Metadata.Tags, _authoringDraft.Metadata.Description) is not { } settings) return;
+        _proportionBusy = true;
+        UpdateAuthoringActions();
+        try
+        {
+            await PersistAuthoringDraftAsync();
+            var library = await _arkiveModLibrary.LoadAsync();
+            var mod = library.Find(modId) ?? throw new InvalidOperationException("The mod is no longer in the library.");
+            var requests = new List<BodyProportionPieceRequest>();
+            foreach (var asset in mod.Manifest.Assets.Where(asset => asset.Kind == UnifiedPackageAssetKind.SkeletalMesh &&
+                                                                    BodyProfiles.IsReshapeable(asset.Target.ObjectName)))
+            {
+                var gamePackage = Path.Combine(_libraryRootPath, asset.Target.PhysicalPackageName);
+                if (!File.Exists(gamePackage))
+                    throw new FileNotFoundException($"{asset.Target.PhysicalPackageName} ({asset.Target.PackageAlias}) is not in the game folder.");
+                var clean = await _arkiveModApply.ResolveCleanPackageAsync(gamePackage);
+                requests.Add(new BodyProportionPieceRequest(clean, asset.Target.PackageAlias, asset.Target.ObjectName, _libraryRootPath));
+            }
+            if (requests.Count == 0) throw new InvalidOperationException("This mod has no outfit pieces the proportion editor can open.");
+            if (requests.Count > MaximumEditorPieces)
+                throw new InvalidOperationException($"This mod reshapes {requests.Count:N0} pieces, too many to open in the editor together. " +
+                    "To change it, adjust its preset and use Apply preset to every outfit of its body again.");
+            var window = new ProportionEditorWindow(ModelViewerService(), BodyProportionPieces(), requests,
+                Path.Combine(_projectRoot, "cache", "webview2"), _effectiveAppearanceTheme, SaveProportionModAsync,
+                BodyProportionPresets(), Log)
+            {
+                Animations = FindViewerAnimationsAsync,
+                Environments = FindViewerEnvironmentsAsync,
+                InitialSettings = settings,
+                EditingModId = modId,
+                EditingModName = mod.Manifest.Name,
+                Owner = this,
+            };
+            window.Show();
+            AuthoringStatusText.Text = $"Opened {mod.Manifest.Name} in the proportion editor. Saving there updates this mod.";
+            Log($"Proportion editor opened for an upscale mod: mod={mod.Manifest.Name}, pieces={requests.Count}, settings=" +
+                string.Join(", ", settings.Settings.Select(pair => $"{pair.Key}={pair.Value}")) + $", follow={settings.Follow}.");
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            AuthoringStatusText.Text = $"The proportion editor could not open this mod: {exception.Message}";
+            Log($"Proportion editor could not open an upscale mod: {exception}");
+        }
+        finally
+        {
+            _proportionBusy = false;
+            UpdateAuthoringActions();
+            UpdateProportionActions();
+        }
+    }
+
     private void UpdateProportionActions()
     {
         if (ProportionOpenButton is null) return;
@@ -397,7 +454,9 @@ public partial class MainWindow
         if (failure is not null) throw failure;
         if (saved is null) throw new InvalidOperationException(AuthoringStatusText.Text);
         await RefreshArkiveModsAsync("proportion mod saved", saved.ModId);
-        return $"Saved {saved.FileName}. Enable it in Mods to apply it to the game; it is also open in Edit mods.";
+        return request.ExistingModId is null
+            ? $"Saved {saved.FileName}. Enable it in Mods to apply it to the game; it is also open in Edit mods."
+            : $"Updated {saved.FileName}. If it is enabled, apply it again in Mods to put the new shape in the game.";
     }
 
     private async Task<ArkiveModLibraryEntry> CreateProportionModAsync(ProportionSaveRequest request)
@@ -408,8 +467,37 @@ public partial class MainWindow
         var description = $"Body proportions for {request.Profile.DisplayName}: {string.Join(", ", changes)}" +
                           (request.Follow.LooseClothing ? "; loose clothing follows the body" : "") +
                           (request.Follow.Hair ? "; hair follows the body" : "") +
-                          $". Pieces: {string.Join(", ", request.Pieces.Select(piece => piece.ObjectName))}.";
-        _authoringDraft = await _modAuthoringWorkspace.CreateAsync(new ArkiveModMetadata(request.ModName, "1.0.0", "", description));
+                          // A mod's description holds at most 8,000 characters; body-wide mods have hundreds of pieces.
+                          (request.Pieces.Count <= 20
+                              ? $". Pieces: {string.Join(", ", request.Pieces.Select(piece => piece.ObjectName))}."
+                              : $". {request.Pieces.Count:N0} pieces of {request.Pieces.Select(piece => BodyProfiles.OutfitStem(piece.ObjectName) ?? piece.ObjectName).Distinct(StringComparer.OrdinalIgnoreCase).Count():N0} outfits.");
+        // The sliders travel with the mod in its tags, so it can be reopened in the proportion editor later.
+        var tags = BodyProportionModTags.Write(new BodyProportionModSettings(request.Profile, request.Settings, request.Follow));
+        if (request.ExistingModId is { } modId)
+        {
+            // Editing a saved upscale mod: its reshaped pieces are replaced by new ones; anything else in it stays.
+            var library = await _arkiveModLibrary.LoadAsync();
+            var mod = library.Find(modId) ?? throw new InvalidOperationException("The mod being edited no longer exists.");
+            var draft = (await _modAuthoringWorkspace.LoadAsync()).FirstOrDefault(item => item.ModId == modId) ??
+                        await _modAuthoringWorkspace.BeginEditAsync(mod);
+            var snapshot = await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
+            var pieceNames = request.Pieces.Select(piece => piece.ObjectName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _authoringDraft = await _modAuthoringWorkspace.SaveAsync(draft with
+            {
+                Metadata = draft.Metadata with
+                {
+                    Name = request.ModName,
+                    Description = description,
+                    Tags = [.. BodyProportionModTags.Others(draft.Metadata.Tags), .. tags],
+                },
+                EditIds = draft.EditIds.Where(id => snapshot.Find(id) is not { } edit ||
+                                                    edit.Kind != UnifiedPackageAssetKind.SkeletalMesh ||
+                                                    !pieceNames.Contains(edit.ObjectName)).ToArray(),
+            });
+        }
+        else
+            _authoringDraft = await _modAuthoringWorkspace.CreateAsync(new ArkiveModMetadata(request.ModName, "1.0.0", "", description,
+                Tags: tags));
         LoadAuthoringMetadata();
         foreach (var (piece, index) in request.Pieces.Select((piece, index) => (piece, index)))
         {

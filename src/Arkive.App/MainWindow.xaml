@@ -796,6 +796,9 @@
                                         <Button x:Name="AuthoringAddAssetsButton" Content="Add assets" Click="AuthoringAddAssetsButton_Click" />
                                         <Button x:Name="AuthoringPrepareButton" Content="Prepare for editing" Click="AuthoringPrepareButton_Click" />
                                         <Button x:Name="AuthoringOpenButton" Content="Open edited file" Click="AuthoringOpenButton_Click" />
+                                        <Button x:Name="AuthoringProportionsButton" Content="Edit in proportion editor" Visibility="Collapsed"
+                                                Click="AuthoringProportionsButton_Click"
+                                                ToolTip="Reopen this Simple upscale mod's outfit from the clean game files with the mod's sliders; saving there updates this mod." />
                                         <Button x:Name="AuthoringReplaceButton" Content="Replace file…" Click="AuthoringReplaceButton_Click" />
                                         <Button x:Name="AuthoringCompareButton" Content="Compare with original" Click="AuthoringCompareButton_Click" />
                                         <Button x:Name="AuthoringViewButton" Content="Preview with edits" Click="AuthoringViewButton_Click"

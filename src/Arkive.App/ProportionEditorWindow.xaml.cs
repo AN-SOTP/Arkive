@@ -18,6 +18,9 @@ public sealed record ProportionSaveRequest(
 {
     /// <summary>Stops reshaping between pieces; the pieces done so far stay in the mod's draft.</summary>
     public CancellationToken Cancellation { get; init; }
+
+    /// <summary>The Simple upscale mod to update instead of creating a new one.</summary>
+    public string? ExistingModId { get; init; }
 }
 
 /// <summary>
@@ -40,6 +43,13 @@ public partial class ProportionEditorWindow : Window
 
     /// <summary>Prepares the game's environment cubemaps (null when unavailable); set by Arkive's main window.</summary>
     public Func<CancellationToken, Task<ModelViewerEnvironmentSet?>>? Environments { get; init; }
+
+    /// <summary>A saved Simple upscale mod being edited again: its slider settings, and the mod saving updates.</summary>
+    public BodyProportionModSettings? InitialSettings { get; init; }
+
+    public string? EditingModId { get; init; }
+
+    public string? EditingModName { get; init; }
 
     /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
     public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationOffer?>>? Animations { get; init; }
@@ -103,6 +113,16 @@ public partial class ProportionEditorWindow : Window
     private async Task StartAsync()
     {
         if (!await InitializeBrowserAsync()) return;
+        if (InitialSettings is { } initial)
+        {
+            _values = new Dictionary<string, double>(initial.Settings, StringComparer.Ordinal);
+            _follow = initial.Follow;
+        }
+        if (EditingModName is { } modName)
+        {
+            ModNameTextBox.Text = modName;
+            Title = $"Arkive simple upscale · editing {modName}";
+        }
         try
         {
             var token = _closing.Token;
@@ -140,7 +160,9 @@ public partial class ProportionEditorWindow : Window
             PresetComboBox.IsEnabled = SavePresetButton.IsEnabled = true;
             _ = OfferAnimationsAsync(pieces[0].ViewerRequest, token);
             LoadPresets(null);
-            Status($"{profiles[0].DisplayName} · {pieces.Count} piece(s). Move the sliders, then save as a mod.");
+            Status(EditingModId is null
+                ? $"{profiles[0].DisplayName} · {pieces.Count} piece(s). Move the sliders, then save as a mod."
+                : $"{profiles[0].DisplayName} · {pieces.Count} piece(s) with {EditingModName}'s sliders. Saving updates that mod.");
             _log($"Proportion editor ready: body={profiles[0].Id}, pieces={string.Join(", ", pieces.Select(piece => piece.Request.ObjectName))}.");
         }
         catch (OperationCanceledException) when (_closing.IsCancellationRequested)
@@ -232,7 +254,10 @@ public partial class ProportionEditorWindow : Window
         try
         {
             var result = await _save(new ProportionSaveRequest(name, _pieces[0].Profile,
-                _pieces.Select(piece => piece.Request).ToArray(), new Dictionary<string, double>(_values), _follow));
+                _pieces.Select(piece => piece.Request).ToArray(), new Dictionary<string, double>(_values), _follow)
+            {
+                ExistingModId = EditingModId,
+            });
             Status(result);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)

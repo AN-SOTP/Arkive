@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.Mods;
+using Arkive.Core.Proportions;
 using Arkive.Core.StaticMeshes;
 using Arkive.Core.Textures;
 using Microsoft.Win32;
@@ -325,6 +326,11 @@ public partial class MainWindow : Window
         AuthoringViewButton.IsEnabled = idle && _umodelBridge is not null &&
             AuthoringAssetsGrid.Items.OfType<AuthoringAssetRow>().Any(row =>
                 row.Edit?.Kind is UnifiedPackageAssetKind.SkeletalMesh or UnifiedPackageAssetKind.StaticMesh);
+        AuthoringProportionsButton.Visibility = _authoringDraft?.ModId is not null &&
+            BodyProportionModTags.Read(_authoringDraft.Metadata.Tags, _authoringDraft.Metadata.Description) is not null
+                ? Visibility.Visible : Visibility.Collapsed;
+        AuthoringProportionsButton.IsEnabled = idle && _umodelBridge is not null && !_proportionBusy &&
+                                               !string.IsNullOrWhiteSpace(_libraryRootPath);
         AuthoringOpenButton.Content = selected?.Edit?.Kind == UnifiedPackageAssetKind.MaterialInstanceConstant
             ? "Edit material" : "Open edited file";
     }

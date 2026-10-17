@@ -10,6 +10,7 @@ internal static class ProportionSmokeTests
         new("lists only player outfit pieces and the tuned NPCs for proportion editing", TestPlayerPieceNames),
         new("reshapes a player mesh by body area and keeps unaffected vertices", TestBodyAreas),
         new("saves, reloads and limits body proportion presets per body", TestPresets),
+        new("keeps an upscale mod's sliders in its tags and reads older mods from their description", TestModSettings),
     ];
 
     private static void TestPlayerPieceNames()
@@ -33,6 +34,27 @@ internal static class ProportionSmokeTests
             "a top and bottom of one outfit share a stem");
         Assert(BodyProfiles.OutfitStem("pc_sp_av_108-1_upper_sk") != BodyProfiles.OutfitStem("pc_sp_av_108-2_upper_sk"),
             "alternative versions of an outfit do not share a stem");
+    }
+
+    private static void TestModSettings()
+    {
+        var warrior = BodyProfiles.All.First(profile => profile.Id == "female-warrior");
+        var tags = BodyProportionModTags.Write(new BodyProportionModSettings(warrior,
+            new Dictionary<string, double> { ["chest"] = 25, ["buttocksProjection"] = -12.5, ["waist"] = 0 }, new BodyProportionFollow(true, false)));
+        Assert(tags.All(tag => tag.Length <= 40) && !tags.Any(tag => tag.Contains("waist", StringComparison.Ordinal)),
+            "upscale tags are too long or keep sliders at 0: " + string.Join(", ", tags));
+        var read = BodyProportionModTags.Read([.. tags, "outfit"], "anything");
+        Assert(read is { Profile.Id: "female-warrior", Follow: { LooseClothing: true, Hair: false } } &&
+               read.Settings.Count == 2 && read.Settings["chest"] == 25 && read.Settings["buttocksProjection"] == -12.5,
+            "upscale settings did not survive the tags");
+        Assert(BodyProportionModTags.Others([.. tags, "outfit"]).SequenceEqual(["outfit"]), "other tags were not kept apart");
+        var old = BodyProportionModTags.Read(null,
+            "Body proportions for Female Warrior: Size +40%, Height +50%, Belly +30%, Buttocks size +10%; " +
+            "loose clothing follows the body; hair follows the body. Pieces: pc_wr_f_av_173b_lower_sk, pc_wr_f_av_173b_upper_sk.");
+        Assert(old is { Profile.Id: "female-warrior", Follow: { LooseClothing: true, Hair: true } } && old.Settings["chest"] == 40 &&
+               old.Settings["chestHeight"] == 50 && old.Settings["belly"] == 30 && old.Settings["buttocks"] == 10 && old.Settings.Count == 4,
+            "an older upscale mod's sliders were not read from its description");
+        Assert(BodyProportionModTags.Read(["outfit"], "A recoloured dress.") is null, "an ordinary mod was taken for an upscale mod");
     }
 
     private static void TestPresets()
