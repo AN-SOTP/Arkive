@@ -53,7 +53,18 @@ public partial class MainWindow : Window
 
     private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (IsLoaded && ReferenceEquals(e.Source, MainTabControl)) UpdateBannerContext();
+        if (!IsLoaded || !ReferenceEquals(e.Source, MainTabControl)) return;
+        UpdateBannerContext();
+        // The advanced views list the package workspace, which enabling mods leaves to be reloaded when needed.
+        if (_packageWorkspaceStale && MainTabControl.SelectedItem is TabItem tab &&
+            tab != LibraryTab && tab != CreateModTab && tab != WorkshopTab && tab != ModifiedUpksTab && tab != BodyProportionsTab)
+            _ = RefreshStalePackageWorkspaceWithNoticeAsync();
+    }
+
+    private async Task RefreshStalePackageWorkspaceWithNoticeAsync()
+    {
+        using var busy = ShowBusy("Loading the package workspace…", "Arkive is reading the mods' working files. Please wait until it finishes.");
+        await RefreshStalePackageWorkspaceAsync("advanced view opened");
     }
 
     private void UpdateBannerContext()

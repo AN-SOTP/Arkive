@@ -65,7 +65,7 @@ public partial class MainWindow
                 _authoringExtractionCancellation = null;
                 AuthoringOperationPanel.Visibility = Visibility.Collapsed;
             }
-        });
+        }, busyTitle: null);
     }
 
     private void ReportAuthoringExtraction(string stage, int? completed = null, int? total = null)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -67,12 +68,17 @@ public partial class MainWindow : Window
     private async Task RefreshArkiveModsAsync(string trigger, string? selectModId = null)
     {
         if (ModLibraryGrid is null) return;
+        var clock = Stopwatch.StartNew();
+        var stages = new List<string>();
+        void Lap(string stage) { stages.Add($"{stage} {clock.Elapsed.TotalSeconds:N1}s"); clock.Restart(); }
         try
         {
             var scan = await _arkiveModAuthoring.ScanAsync();
             var library = scan.Library;
             _arkiveModLibraryManifest = library;
+            Lap("scan");
             var snapshot = await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
+            Lap("working files");
             IReadOnlyList<ArkiveModOutsideChange> outside = [];
             try { outside = await _arkiveModApply.FindOutsideChangesAsync(); }
             catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
@@ -81,9 +87,11 @@ public partial class MainWindow : Window
                 Log($"Game file changed outside this Arkive: {change.PhysicalPackageName} ({change.PackageAlias}), " +
                     $"sha256={change.GameSha256}, changed objects={string.Join(", ", change.ChangedObjects)}.");
             _outsideChanges = outside;
+            Lap("game files");
             var statuses = await ArkiveModApplyService.DescribeAsync(
                 _arkiveModLibrary, library, snapshot, ActiveRevisionsByPhysicalName(),
                 outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray());
+            Lap("status"); 
             var previous = selectModId ?? (ModLibraryGrid.SelectedItem as ModLibraryRow)?.Entry.ModId;
             var drafts = (await _modAuthoringWorkspace.LoadAsync()).Where(draft => draft.ModId is not null)
                 .ToDictionary(draft => draft.ModId!, StringComparer.OrdinalIgnoreCase);
@@ -142,6 +150,8 @@ public partial class MainWindow : Window
             }
             if (scan.Released.Count > 0) await RefreshGuidedTextureModsAsync("mod file updated");
             await RefreshModAuthoringAsync();
+            Lap("edit mods");
+            Log($"Mod library refresh took: {string.Join(", ", stages)}.");
         }
         catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
         {
@@ -250,6 +260,7 @@ public partial class MainWindow : Window
         if (!ModLibraryIdle) return;
         _modLibraryBusy = true;
         UpdateModLibraryActionState();
+        using var busy = ShowBusy(BusyTitle(title), "Arkive is updating the mod list. Please wait until it finishes.");
         try
         {
             var message = await operation();
@@ -272,16 +283,50 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task SynchronizeModSelectionsAsync(string trigger, bool onlyIfChanged = false)
+    /// <param name="deferWorkspace">
+    /// Leave reloading the package workspace (every working file of every mod; minutes with large upscale mods) until
+    /// a view that shows it is opened or mods are applied. Enabling, disabling and priorities only change which
+    /// working files are selected, which nothing in the Mods list reads from that workspace.
+    /// </param>
+    private async Task SynchronizeModSelectionsAsync(string trigger, bool onlyIfChanged = false, bool deferWorkspace = false)
     {
         var changes = await ArkiveModSelectionService.SynchronizeAsync(_arkiveModLibrary, _arkiveModEdits);
-        foreach (var change in changes)
-            Log($"Mod selection synchronized: trigger={trigger}, mod={change.ModName}, kind={change.Kind}, " +
-                $"object={change.ObjectName}, edit={change.EditId}, included={change.Included}.");
+        if (changes.Count > 0)
+            Log($"Mod selection synchronized: trigger={trigger}, changes={changes.Count:N0}, " +
+                string.Join("; ", changes.Take(20).Select(change =>
+                    $"mod={change.ModName}, kind={change.Kind}, object={change.ObjectName}, edit={change.EditId}, included={change.Included}")) +
+                (changes.Count > 20 ? $"; and {changes.Count - 20:N0} more." : "."));
         if (onlyIfChanged && changes.Count == 0) return;
+        if (deferWorkspace)
+        {
+            _packageWorkspaceStale = true;
+            return;
+        }
+        _packageWorkspaceStale = false;
         await RefreshGuidedTextureModsAsync(trigger);
         await RefreshMaterialProjectsAsync(trigger);
     }
+
+    private bool _packageWorkspaceStale;
+
+    /// <summary>Reloads the package workspace if a deferred change left it behind (see SynchronizeModSelectionsAsync).</summary>
+    private async Task RefreshStalePackageWorkspaceAsync(string trigger)
+    {
+        if (!_packageWorkspaceStale) return;
+        _packageWorkspaceStale = false;
+        await RefreshGuidedTextureModsAsync(trigger);
+        await RefreshMaterialProjectsAsync(trigger);
+    }
+
+    private static string BusyTitle(string operation) => operation switch
+    {
+        "Enable mod" => "Enabling the mod…",
+        "Disable mod" => "Disabling the mod…",
+        "Mod priority" => "Changing the priority…",
+        "Rename mod" => "Renaming the mod…",
+        "Remove mod" => "Removing the mod…",
+        _ => $"{operation}…",
+    };
 
     private async void ModLibraryRefreshButton_Click(object sender, RoutedEventArgs e) =>
         await RefreshArkiveModsAsync("refresh requested");
@@ -312,7 +357,7 @@ public partial class MainWindow : Window
         {
             await _arkiveModLibrary.SetEnabledAsync(row.Entry.ModId, enabled);
             Log($"Mod {(enabled ? "enabled" : "disabled")}: mod={row.Entry.ModId}, name={row.DisplayName}.");
-            await SynchronizeModSelectionsAsync(enabled ? "mod enabled" : "mod disabled", onlyIfChanged: true);
+            await SynchronizeModSelectionsAsync(enabled ? "mod enabled" : "mod disabled", onlyIfChanged: true, deferWorkspace: true);
             return $"{row.DisplayName} {(enabled ? "enabled" : "disabled")}. Choose Apply changes to update the game.";
         }, row.Entry.ModId);
 
@@ -475,7 +520,7 @@ public partial class MainWindow : Window
             await _arkiveModLibrary.SetPriorityAsync(row.Entry.ModId, priority);
             Log($"Mod priority changed: mod={row.Entry.ModId}, name={row.DisplayName}, " +
                 $"from={row.Priority}, to={priority}.");
-            await SynchronizeModSelectionsAsync("mod priority changed", onlyIfChanged: true);
+            await SynchronizeModSelectionsAsync("mod priority changed", onlyIfChanged: true, deferWorkspace: true);
             return $"{row.DisplayName} now has priority {priority:N0}. Choose Apply changes to update the game.";
         }, row.Entry.ModId);
 
@@ -707,9 +752,14 @@ public partial class MainWindow : Window
         }, row.Entry.ModId);
     }
 
-    private void ModLibraryGoToPackageButton_Click(object sender, RoutedEventArgs e)
+    private async void ModLibraryGoToPackageButton_Click(object sender, RoutedEventArgs e)
     {
         if (ModLibraryGrid.SelectedItem is not ModLibraryRow row) return;
+        if (_packageWorkspaceStale)
+        {
+            using var busy = ShowBusy("Loading the package workspace…", "Arkive is reading the mods' working files. Please wait until it finishes.");
+            await RefreshStalePackageWorkspaceAsync("package view opened");
+        }
         var physical = (ModLibraryAssetsGrid.SelectedItem as ModAssetRow)?.Status.Asset.Target.PhysicalPackageName ??
                        row.Entry.Manifest.Assets[0].Target.PhysicalPackageName;
         var package = _guidedPackageRows.FirstOrDefault(item => Path.GetFileName(item.Entry.Manifest.SourcePackagePath)
@@ -873,6 +923,7 @@ public partial class MainWindow : Window
         {
             ModLibraryStatusText.Text = "Checking enabled mods, priorities, and installed packages...";
             ModLibraryProgressBar.IsIndeterminate = true;
+            await RefreshStalePackageWorkspaceAsync("before applying mods");
             await EnsureGamePackagesDirectoryAsync();
             if (!previewOnly) await SaveEnabledModChangesAsync();
             var plan = previewModId is null ? await _arkiveModApply.PlanAsync() : await _arkiveModApply.PreviewModAsync(previewModId);

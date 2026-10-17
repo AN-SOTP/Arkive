@@ -833,6 +833,20 @@
                             </WrapPanel>
                             <TextBlock x:Name="ProportionStatusText" Margin="0,6,0,0" TextWrapping="Wrap"
                                        Text="Search for a player outfit or one of the supported NPCs to begin." />
+                            <Grid x:Name="ProportionProgressPanel" Margin="0,6,0,0" Visibility="Collapsed">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="ProportionProgressText" Grid.ColumnSpan="2" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                <ProgressBar x:Name="ProportionProgressBar" Grid.Row="1" Height="10" Minimum="0" Maximum="1" Margin="0,4,8,0" />
+                                <TextBlock x:Name="ProportionProgressPercent" Grid.Row="1" Grid.Column="1" MinWidth="36"
+                                           TextAlignment="Right" VerticalAlignment="Center" Margin="0,4,0,0" />
+                            </Grid>
                         </StackPanel>
                         <DataGrid x:Name="ProportionResultsGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                   CanUserAddRows="False" CanUserResizeColumns="True" SelectionMode="Extended" SelectionUnit="FullRow"
@@ -3418,6 +3432,25 @@
                     </TabControl>
                 </TabItem>
             </TabControl>
+
+            <!-- Covers the tabs while a mod operation that takes a few seconds or more runs, so nothing is clicked
+                 meanwhile and the user can see Arkive is working (see MainWindow.Busy.cs). -->
+            <Grid x:Name="BusyOverlay" Grid.Row="0" Visibility="Collapsed" Panel.ZIndex="100"
+                  Cursor="Wait" Focusable="True">
+                <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1" CornerRadius="6" Padding="22,18" MinWidth="360" MaxWidth="560"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel>
+                        <TextBlock x:Name="BusyTitleText" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock x:Name="BusyDetailText" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <ProgressBar x:Name="BusyProgressBar" Height="8" Margin="0,14,0,0" IsIndeterminate="True" />
+                        <TextBlock x:Name="BusyElapsedText" Margin="0,6,0,0" HorizontalAlignment="Right"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
 
             <GridSplitter x:Name="ValidationSplitter" Grid.Row="1"
                           Height="7"

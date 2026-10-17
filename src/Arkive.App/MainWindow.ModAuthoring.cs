@@ -258,9 +258,15 @@ public partial class MainWindow : Window
         });
     }
 
-    private async Task RunAuthoringOperationAsync(Func<Task> operation)
+    /// <param name="busyTitle">
+    /// The wait card shown over the tabs if this takes more than a moment; null for operations that show their own
+    /// progress and Stop button (adding assets, Simple upscale batches).
+    /// </param>
+    private async Task RunAuthoringOperationAsync(Func<Task> operation, string? busyTitle = "Working on the mod…")
     {
         if (_authoringBusy || _modLibraryBusy || _guidedTextureModInProgress || _modSetBusy || _workshopBusy) return;
+        using var busy = busyTitle is null ? null
+            : ShowBusy(busyTitle, "Arkive is updating the mod's working files. Please wait until it finishes.");
         _authoringBusy = true;
         _guidedTextureModInProgress = true;
         UpdateAuthoringActions();
@@ -403,12 +409,14 @@ public partial class MainWindow : Window
     private async void AuthoringPrepareButton_Click(object sender, RoutedEventArgs e) =>
         await RunAuthoringOperationAsync(PrepareAuthoringAsync);
 
-    private async Task<ArkiveModLibraryEntry> SaveAuthoringAsync(ICollection<string>? skippedMeshes = null, int parallelism = 1)
+    private async Task<ArkiveModLibraryEntry> SaveAuthoringAsync(ICollection<string>? skippedMeshes = null, int parallelism = 1,
+        IProgress<ArkiveModSaveProgress>? progress = null)
     {
         await PersistAuthoringDraftAsync();
         if (_authoringDraft is null) throw new InvalidOperationException("Create or select a mod first.");
         var draft = _authoringDraft;
-        var saved = await Task.Run(() => _arkiveModAuthoring.SaveDraftAsync(draft, skippedMeshes: skippedMeshes, parallelism: parallelism));
+        var saved = await Task.Run(() => _arkiveModAuthoring.SaveDraftAsync(draft, skippedMeshes: skippedMeshes, parallelism: parallelism,
+            progress: progress));
         _authoringDraft = await _modAuthoringWorkspace.SaveAsync(_authoringDraft with
         {
             ModId = saved.ModId,

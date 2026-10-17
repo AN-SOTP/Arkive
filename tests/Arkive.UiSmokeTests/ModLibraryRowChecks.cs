@@ -39,6 +39,8 @@ internal static class ModLibraryRowChecks
             { RoutedEvent = UIElement.PreviewKeyDownEvent });
         await Program.UntilAsync(() => Priority(grid) == 7 && apply.IsEnabled,
             () => $"Typing a priority did not update the list and its buttons: priority={Priority(grid)}, apply={apply.IsEnabled}.");
+        var overlay = (FrameworkElement)window.FindName("BusyOverlay");
+        await Program.UntilAsync(() => overlay.Visibility == Visibility.Collapsed, () => "The wait card stayed over the tabs after the priority changed.");
         Console.WriteLine("PASS: a priority typed into the Mods list applies at once and keeps Apply changes available");
 
         grid.SelectedItem = Row(grid);

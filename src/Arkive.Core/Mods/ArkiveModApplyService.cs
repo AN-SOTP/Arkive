@@ -922,6 +922,9 @@ public sealed class ArkiveModApplyService
     /// which this Arkive has not installed: changed by another Arkive data folder, another tool or a game patch.
     /// Packages whose target objects are all unchanged are not reported.
     /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, IReadOnlyList<string>> OutsideChangeChecks =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public async Task<IReadOnlyList<ArkiveModOutsideChange>> FindOutsideChangesAsync(CancellationToken cancellationToken = default)
     {
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
@@ -943,11 +946,20 @@ public sealed class ArkiveModApplyService
             var clean = group.Select(asset => asset.Target.SourcePackageSha256.ToUpperInvariant())
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             if (clean.Contains(hash, StringComparer.OrdinalIgnoreCase)) continue;
-            var changed = new List<string>();
-            foreach (var asset in group.DistinctBy(asset => asset.Target.ObjectName, StringComparer.OrdinalIgnoreCase))
+            var assets = group.DistinctBy(asset => asset.Target.ObjectName, StringComparer.OrdinalIgnoreCase).ToArray();
+            // The same changed file is compared object by object on every refresh of the Mods list; the answer only
+            // changes with the file's bytes or the objects asked about.
+            var key = $"{path}|{hash}|{string.Join(",", assets.Select(asset => $"{asset.Target.ObjectName}:{asset.Target.SourcePackageSha256}"))}";
+            if (!OutsideChangeChecks.TryGetValue(key, out var changed))
             {
-                var check = await _materializer.CheckTargetAsync(asset, path, hash, cancellationToken).ConfigureAwait(false);
-                if (check.State != ArkiveModTargetState.Exact) changed.Add(asset.Target.ObjectName);
+                var found = new List<string>();
+                foreach (var asset in assets)
+                {
+                    var check = await _materializer.CheckTargetAsync(asset, path, hash, cancellationToken).ConfigureAwait(false);
+                    if (check.State != ArkiveModTargetState.Exact) found.Add(asset.Target.ObjectName);
+                }
+                changed = found;
+                OutsideChangeChecks[key] = found;
             }
             if (changed.Count > 0)
                 changes.Add(new ArkiveModOutsideChange(group.Key, group.First().Target.PackageAlias, path, hash, clean, changed));

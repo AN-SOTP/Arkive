@@ -331,9 +331,10 @@ public sealed class ArkiveModAuthoringService
     /// instead of refusing the whole save; used when one batch reshapes hundreds of pieces.
     /// </param>
     /// <param name="parallelism">How many working assets to check at the same time (each check is independent).</param>
+    /// <param name="progress">Each working asset checked, then collected, then the mod file being written.</param>
     public async Task<ArkiveModLibraryEntry> SaveDraftAsync(
         ArkiveModAuthoringDraft draft, CancellationToken cancellationToken = default, ICollection<string>? skippedMeshes = null,
-        int parallelism = 1)
+        int parallelism = 1, IProgress<ArkiveModSaveProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         if (string.IsNullOrWhiteSpace(draft.Metadata.Name)) Refuse("AUT090", "Give the mod a name before saving.");
@@ -341,17 +342,29 @@ public sealed class ArkiveModAuthoringService
         var locals = draft.EditIds.Select(editId => snapshot.Find(editId) ??
             throw new ArkiveModRefusalException("AUT091", "A working asset is missing. Prepare the mod for editing again.")).ToArray();
         var validated = new ArkiveModLocalEdit[locals.Length];
+        var checkedCount = 0;
+        progress?.Report(new ArkiveModSaveProgress(ArkiveModSaveStage.Checking, 0, locals.Length));
         if (parallelism > 1)
             await Parallel.ForEachAsync(Enumerable.Range(0, locals.Length),
                 new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = cancellationToken },
-                async (index, token) => validated[index] = await ValidateEditAsync(locals[index], token).ConfigureAwait(false))
+                async (index, token) =>
+                {
+                    validated[index] = await ValidateEditAsync(locals[index], token).ConfigureAwait(false);
+                    progress?.Report(new ArkiveModSaveProgress(ArkiveModSaveStage.Checking, Interlocked.Increment(ref checkedCount),
+                        locals.Length));
+                })
                 .ConfigureAwait(false);
         else
             for (var index = 0; index < locals.Length; index++)
+            {
                 validated[index] = await ValidateEditAsync(locals[index], cancellationToken).ConfigureAwait(false);
+                progress?.Report(new ArkiveModSaveProgress(ArkiveModSaveStage.Checking, index + 1, locals.Length));
+            }
         var captured = new List<ArkiveModCapturedAsset>();
-        foreach (var local in validated)
+        for (var index = 0; index < validated.Length; index++)
         {
+            var local = validated[index];
+            progress?.Report(new ArkiveModSaveProgress(ArkiveModSaveStage.Collecting, index, validated.Length));
             if (skippedMeshes is not null && ArkiveModEditCheck.Read(local) is { Passed: false } check)
             {
                 skippedMeshes.Add($"{local.DisplayName}: {check.Problems.FirstOrDefault() ?? "failed the mesh check"}");
@@ -361,6 +374,7 @@ public sealed class ArkiveModAuthoringService
         }
         if (captured.Select(asset => ArkiveModTargetKey.From(asset.Descriptor)).Distinct().Count() != captured.Count)
             Refuse("AUT092", "The mod contains multiple working copies of the same asset. Keep one copy per asset.");
+        progress?.Report(new ArkiveModSaveProgress(ArkiveModSaveStage.Writing, 0, 0));
         return draft.ModId is null
             ? await CreateModAsync(draft.Metadata, captured, ArkiveModOrigin.Created, enabled: false,
                 cancellationToken: cancellationToken).ConfigureAwait(false)
@@ -594,3 +608,16 @@ public sealed class ArkiveModAuthoringService
     private static void Refuse(string code, string message) =>
         throw new ArkiveModRefusalException(code, message);
 }
+
+public enum ArkiveModSaveStage
+{
+    /// <summary>Each working asset is checked again (meshes against the game's skeleton and animations).</summary>
+    Checking,
+    /// <summary>Each checked asset's files are gathered for the mod.</summary>
+    Collecting,
+    /// <summary>The .arkive file is written; it reports no count.</summary>
+    Writing,
+}
+
+/// <summary>How far saving a mod has got: Done of Total in the current stage (Total is 0 when there is no count).</summary>
+public sealed record ArkiveModSaveProgress(ArkiveModSaveStage Stage, int Done, int Total);

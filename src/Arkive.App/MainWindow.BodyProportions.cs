@@ -346,6 +346,25 @@ public partial class MainWindow
     private const int MaximumEditorPieces = 20;
 
     /// <summary>
+    /// Shows a batch's progress under the Simple upscale status: the step, a bar and how long is left (from the pace
+    /// so far, once a few pieces are done). A total of 0 shows a moving bar for a step without a count.
+    /// </summary>
+    private void ShowProportionProgress(string text, int done, int total, DateTime started)
+    {
+        ProportionProgressPanel.Visibility = Visibility.Visible;
+        ProportionProgressBar.IsIndeterminate = total <= 0;
+        ProportionProgressBar.Value = total <= 0 ? 0 : (double)done / total;
+        ProportionProgressPercent.Text = total <= 0 ? "" : $"{100.0 * done / total:N0}%";
+        var elapsed = DateTime.UtcNow - started;
+        TimeSpan? left = total > 0 && done >= Math.Min(3, total) && done < total && elapsed.TotalSeconds > 5
+            ? TimeSpan.FromSeconds(elapsed.TotalSeconds / done * (total - done))
+            : null;
+        ProportionProgressText.Text = left is { } remaining
+            ? $"{text} · about {(remaining.TotalMinutes < 1 ? "less than a minute" : Duration(remaining.TotalMinutes))} left"
+            : text;
+    }
+
+    /// <summary>
     /// Gives every piece a working copy and reshapes it, one after another or several at the same time (each has its
     /// own working copy, so they share no files), then adds them to the draft in their original order. Stopping keeps
     /// the pieces finished so far in the draft.
@@ -356,6 +375,11 @@ public partial class MainWindow
         // Pieces these settings leave exactly as they were (shoulder pads, arms) are not saved into a body-wide mod.
         var unchanged = new System.Collections.Concurrent.ConcurrentBag<string>();
         var finished = 0;
+        var started = DateTime.UtcNow;
+        void Report(int done) => ShowProportionProgress(
+            $"Step 1 of 2 · Reshaping pieces: {done:N0} of {request.Pieces.Count:N0}" +
+            (request.Parallelism > 1 ? $" ({request.Parallelism} at a time)" : ""), done, request.Pieces.Count, started);
+        if (request.Pieces.Count > 1) Report(0);
         try
         {
             await Parallel.ForEachAsync(Enumerable.Range(0, request.Pieces.Count),
@@ -382,6 +406,7 @@ public partial class MainWindow
                     if (request.Parallelism > 1)
                         _ = Dispatcher.InvokeAsync(() => ProportionStatusText.Text =
                             $"Reshaped {count:N0} of {request.Pieces.Count:N0} pieces ({request.Parallelism} at a time)…");
+                    if (request.Pieces.Count > 1) _ = Dispatcher.InvokeAsync(() => Report(count));
                 });
         }
         finally
@@ -543,7 +568,8 @@ public partial class MainWindow
         {
             try { saved = await CreateProportionModAsync(request, skipped); }
             catch (Exception exception) { failure = exception; throw; }
-        });
+            finally { ProportionProgressPanel.Visibility = Visibility.Collapsed; }
+        }, busyTitle: null);
         if (failure is not null) throw failure;
         if (saved is null) throw new InvalidOperationException(AuthoringStatusText.Text);
         await RefreshArkiveModsAsync("proportion mod saved", saved.ModId);
@@ -593,11 +619,26 @@ public partial class MainWindow
         LoadAuthoringMetadata();
         await ReshapePiecesAsync(request);
         request.Cancellation.ThrowIfCancellationRequested();
+        IProgress<ArkiveModSaveProgress>? progress = null;
         if (request.Pieces.Count > 1)
+        {
             ProportionStatusText.Text = $"Checking all {request.Pieces.Count:N0} pieces against the game's skeleton and animations " +
                                         "and saving them as one mod. This is the longest step…";
+            var started = DateTime.UtcNow;
+            var stage = ArkiveModSaveStage.Checking;
+            progress = new Progress<ArkiveModSaveProgress>(item =>
+            {
+                if (item.Stage != stage) (stage, started) = (item.Stage, DateTime.UtcNow);
+                ShowProportionProgress(item.Stage switch
+                {
+                    ArkiveModSaveStage.Checking => $"Step 2 of 2 · Checking pieces against the game's skeleton and animations: {item.Done:N0} of {item.Total:N0}",
+                    ArkiveModSaveStage.Collecting => $"Step 2 of 2 · Collecting pieces for the mod: {item.Done:N0} of {item.Total:N0}",
+                    _ => "Step 2 of 2 · Writing the mod file…",
+                }, item.Done, item.Total, started);
+            });
+        }
         // A batch keeps going past a piece these settings can't reshape safely; a single outfit reports it instead.
-        var saved = await SaveAuthoringAsync(request.Pieces.Count > 1 ? skipped : null, request.Parallelism);
+        var saved = await SaveAuthoringAsync(request.Pieces.Count > 1 ? skipped : null, request.Parallelism, progress);
         foreach (var piece in skipped) Log($"Proportion piece left out of the mod (failed the mesh check): {piece}");
         Log($"Proportion mod saved: name={request.ModName}, body={request.Profile.Id}, pieces={request.Pieces.Count}, " +
             $"settings={string.Join(", ", request.Settings.Where(pair => pair.Value != 0).Select(pair => $"{pair.Key}={pair.Value}"))}, " +

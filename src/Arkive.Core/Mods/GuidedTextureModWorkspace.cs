@@ -163,8 +163,7 @@ public sealed class GuidedTextureModWorkspace
     {
         if (!Directory.Exists(RootDirectory)) return [];
         var entries = new List<GuidedTextureModProjectEntry>();
-        foreach (var path in Directory.EnumerateFiles(
-                     RootDirectory, ManifestFileName, SearchOption.AllDirectories))
+        foreach (var path in ProjectManifestPaths())
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -181,6 +180,23 @@ public sealed class GuidedTextureModWorkspace
             .OrderByDescending(entry => entry.Manifest.UpdatedAt)
             .ThenBy(entry => entry.Manifest.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Every project manifest under the root. Folders whose name starts with an underscore are not projects: the
+    /// package workspace (_packages) keeps its build revisions there, thousands of folders that a full search walked
+    /// on every load (about 2 s each time with large mods).
+    /// </summary>
+    private IEnumerable<string> ProjectManifestPaths()
+    {
+        foreach (var path in Directory.EnumerateFiles(RootDirectory, ManifestFileName, SearchOption.TopDirectoryOnly))
+            yield return path;
+        foreach (var directory in Directory.EnumerateDirectories(RootDirectory))
+        {
+            if (Path.GetFileName(directory).StartsWith('_')) continue;
+            foreach (var path in Directory.EnumerateFiles(directory, ManifestFileName, SearchOption.AllDirectories))
+                yield return path;
+        }
     }
 
     public async Task<GuidedTextureModProjectEntry?> FindAsync(
