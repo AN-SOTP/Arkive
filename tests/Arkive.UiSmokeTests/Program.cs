@@ -50,6 +50,9 @@ internal static class Program
         var window = CreateWindow(root);
         window.Show();
         await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == 3);
+        // In-game names come from the game database mapping, which loads after the first search on slow machines.
+        await UntilAsync(() => Control<TextBlock>(window, "GameMetadataText").Text.Contains("relationships", StringComparison.Ordinal),
+            () => $"The game database mapping did not load: {Control<TextBlock>(window, "GameMetadataText").Text}");
         var tabs = Control<TabControl>(window, "MainTabControl");
         Check(tabs.Items.OfType<TabItem>().Where(tab => tab.Visibility == Visibility.Visible)
                 .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset library", "Create mod", "Edit mods", "Simple upscale", "Mods"]),
@@ -68,7 +71,8 @@ internal static class Program
             "Filename search is not the default library scope.");
         await SearchLibraryAsync(window, "UI fixture boss");
         var results = Control<DataGrid>(window, "LibraryGrid");
-        Check(results.Items.Count == 1, "The asset library cannot search by in-game name.");
+        Check(results.Items.Count == 1,
+            $"The asset library cannot search by in-game name ({results.Items.Count} results: {Control<TextBlock>(window, "LibraryCountText").Text}).");
         results.SelectedIndex = 0;
         await UntilAsync(
             () => Control<Button>(window, "LibraryInspectButton").IsVisible &&
