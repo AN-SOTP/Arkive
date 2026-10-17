@@ -66,8 +66,8 @@ internal static class Program
         var kinds = Control<ComboBox>(window, "WorkshopKindComboBox").Items.OfType<ComboBoxItem>()
             .Select(item => $"{item.Content}={item.Tag}").ToArray();
         Check(kinds.SequenceEqual(["Textures=Texture", "Skeletal meshes=SkeletalMesh", "Static meshes=StaticMesh",
-                  "Materials=MaterialInstanceConstant", "All moddable assets="]) &&
-              Control<ComboBox>(window, "WorkshopKindComboBox").SelectedIndex == 4,
+                  "Materials=MaterialInstanceConstant", "Particle effects=ParticleSystem", "All moddable assets="]) &&
+              Control<ComboBox>(window, "WorkshopKindComboBox").SelectedIndex == 5,
             "Edit mods does not offer the moddable asset types: " + string.Join(", ", kinds));
         Check(Control<Button>(window, "ModLibraryNewButton").IsVisible, "The initial mod library has no visible content.");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");

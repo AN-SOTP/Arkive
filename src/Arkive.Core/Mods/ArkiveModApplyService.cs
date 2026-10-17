@@ -896,6 +896,7 @@ public sealed class ArkiveModApplyService
                 {
                     MaterialEdits = materials,
                     StaticMeshEdits = included.Select(edit => edit.Entry).OfType<StaticMeshEditEntry>().ToArray(),
+                    ParticleEdits = included.Select(edit => edit.Entry).OfType<Particles.ParticleEffectEditEntry>().ToArray(),
                 },
                 cancellationToken: cancellationToken).ConfigureAwait(false);
             var committed = await _context.Packages.CommitRevisionAsync(package.ManifestPath, result.Revision, cancellationToken)
@@ -1065,6 +1066,7 @@ public sealed class ArkiveModApplyService
             .Concat(revision.MeshAssets.Select(asset => ContentKey(asset.EditId, asset.EditedGlbSha256)))
             .Concat(revision.StaticMeshAssets.Select(asset => ContentKey(asset.EditId, asset.EditedGlbSha256)))
             .Concat(revision.MaterialAssets.Select(asset => ContentKey(asset.EditId, asset.CandidateExportSha256)))
+            .Concat(revision.ParticleAssets.Select(asset => ContentKey(asset.EditId, asset.ContentSha256)))
             .ToHashSet(StringComparer.Ordinal);
     }
 

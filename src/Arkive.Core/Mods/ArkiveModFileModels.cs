@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Arkive.Core.Materials;
+using Arkive.Core.Particles;
 using Arkive.Core.Textures;
 
 namespace Arkive.Core.Mods;
@@ -82,7 +83,15 @@ public sealed record ArkiveModFileAsset(
     public ArkiveModMeshData? Mesh { get; init; }
 
     public ArkiveModMaterialData? Material { get; init; }
+
+    public ArkiveModParticleData? Particle { get; init; }
 }
+
+/// <summary>
+/// A particle effect change: the tint it was made with and the value tables it writes. On a client whose effect is
+/// byte-identical the patches are written as they are; after a game update the tint is applied again to the new effect.
+/// </summary>
+public sealed record ArkiveModParticleData(ParticleEffectTint Tint, IReadOnlyList<ParticleEffectPatch> Patches);
 
 public sealed record ArkiveModFileManifest(
     string Format,

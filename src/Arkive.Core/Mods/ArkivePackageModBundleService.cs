@@ -155,6 +155,13 @@ public sealed class ArkivePackageModBundleService
         var packageRoot = Path.GetDirectoryName(sourcePath)!;
         foreach (var asset in assets)
         {
+            if (asset.PixelFormat == ParticleSystemValuesFormat)
+            {
+                // UModel cannot export particle objects. A particle edit only rewrites floats inside value tables, so
+                // Arkive checks that the export's property stream still reads through to its end in the payload.
+                externalResults.Add(ValidateParticleExport(catalogue, asset));
+                continue;
+            }
             try
             {
                 externalResults.Add(await _externalValidator.ValidateInPackageRootAsync(
@@ -398,6 +405,24 @@ public sealed class ArkivePackageModBundleService
         {
             if (File.Exists(temporary)) File.Delete(temporary);
         }
+    }
+
+    /// <summary>The bundle format of a particle effect's value-table exports.</summary>
+    public const string ParticleSystemValuesFormat = "ParticleSystemValues";
+
+    private ModExternalValidationResult ValidateParticleExport(AssetCatalog catalogue, ArkiveModAsset asset)
+    {
+        var match = catalogue.Assets.Single(candidate => candidate.ExportIndex == asset.NativeExportIndex);
+        using var logical = new LogicalPackageStream(catalogue.Summary, _protectionProvider);
+        var bytes = new byte[match.SerialSize];
+        logical.Position = match.SerialOffset;
+        logical.ReadExactly(bytes);
+        var readable = Particles.ParticlePropertyStream.Read(bytes, catalogue.Names) is not null;
+        if (!readable)
+            Refuse("CPB015", $"{asset.ObjectName}'s properties no longer read through in the combined payload.");
+        return new ModExternalValidationResult("Arkive particle property check", 1, 1,
+            CataloguePassed: true, NativeLoadPassed: true, ExpectedObjectFound: true,
+            [$"{asset.ObjectName}: property stream reads through to the end of the export."], TimeSpan.Zero);
     }
 
     [DoesNotReturn]

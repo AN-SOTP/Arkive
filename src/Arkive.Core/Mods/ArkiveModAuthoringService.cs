@@ -40,6 +40,7 @@ public sealed class ArkiveModAuthoringService
                 .ConfigureAwait(false),
             MaterialInstanceEditEntry material => await CaptureMaterialAsync(edit, material, id, cancellationToken)
                 .ConfigureAwait(false),
+            Particles.ParticleEffectEditEntry particle => CaptureParticle(edit, particle, id),
             _ => throw new ArkiveModRefusalException("AUT001", $"{edit.DisplayName} is not a supported edit."),
         };
         return edit.ObjectPath is null ? captured : captured with
@@ -173,6 +174,24 @@ public sealed class ArkiveModAuthoringService
             [])
         {
             Material = MaterialData(document),
+        };
+        return new ArkiveModCapturedAsset(descriptor, [], edit);
+    }
+
+    private static ArkiveModCapturedAsset CaptureParticle(ArkiveModLocalEdit edit, Particles.ParticleEffectEditEntry particle, string assetId)
+    {
+        var document = particle.Document;
+        if (document.Patches.Count == 0)
+            Refuse("AUT045", $"{document.DisplayName} changes nothing in {document.SystemObjectName}; it has no colour to change.");
+        var descriptor = new ArkiveModFileAsset(
+            assetId, UnifiedPackageAssetKind.ParticleSystem, document.DisplayName,
+            new ArkiveModAssetTarget(
+                document.PackageAlias, PhysicalName(document.SourcePackagePath), "particlesystem",
+                document.SystemObjectName, document.SystemExportIndex, document.SourcePackageSha256.ToUpperInvariant(),
+                document.SystemExportSha256.ToUpperInvariant()),
+            [])
+        {
+            Particle = new ArkiveModParticleData(document.Tint, document.Patches),
         };
         return new ArkiveModCapturedAsset(descriptor, [], edit);
     }
@@ -487,6 +506,7 @@ public sealed class ArkiveModAuthoringService
         ArkiveModLocalEdit edit,
         CancellationToken cancellationToken)
     {
+        if (edit.Entry is Particles.ParticleEffectEditEntry particle) return particle.Document.ContentSha256;
         if (edit.Entry is not MaterialInstanceEditEntry material)
         {
             var path = edit.Entry switch

@@ -18,6 +18,7 @@ public enum UnifiedPackageAssetKind
     MaterialInstanceConstant,
     SkeletalMesh,
     StaticMesh,
+    ParticleSystem,
 }
 
 public sealed record UnifiedPackageBuildProgress(
@@ -88,6 +89,8 @@ public sealed record UnifiedPackageCompositionManifest(
 
     public int StaticMeshCount { get; init; }
 
+    public int ParticleEffectCount { get; init; }
+
     public bool MaterialsAppliedBeforeMeshes { get; init; }
 
     public int VariableSizeMeshCount { get; init; }
@@ -137,6 +140,8 @@ public sealed record UnifiedPackageCompositionRequest(
     public IReadOnlyList<MaterialInstanceEditEntry> MaterialEdits { get; init; } = [];
 
     public IReadOnlyList<StaticMeshEditEntry> StaticMeshEdits { get; init; } = [];
+
+    public IReadOnlyList<Particles.ParticleEffectEditEntry> ParticleEdits { get; init; } = [];
 
     public bool ForcePreviewOnly { get; init; }
 }
@@ -401,9 +406,12 @@ public sealed class UnifiedPackageComposerService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Package);
         if (request.TextureProjects.Count == 0 && request.MaterialEdits.Count == 0 &&
-            request.MeshEdits.Count == 0 && request.StaticMeshEdits.Count == 0)
+            request.MeshEdits.Count == 0 && request.StaticMeshEdits.Count == 0 && request.ParticleEdits.Count == 0)
             throw new NotSupportedException(
-                "Select at least one texture, material, skeletal mesh, or static mesh before rebuilding the package.");
+                "Select at least one texture, material, skeletal mesh, static mesh or particle effect before rebuilding the package.");
+        foreach (var particle in request.ParticleEdits)
+            if (particle.Document.Patches.Count == 0)
+                throw new NotSupportedException($"{particle.Document.DisplayName} has no colour change to write.");
         if (string.IsNullOrWhiteSpace(request.DisplayName))
             throw new NotSupportedException("The package mod display name is empty.");
 
@@ -494,10 +502,17 @@ public sealed class UnifiedPackageComposerService
                 throw new NotSupportedException($"{texture.Manifest.ObjectName} has no confirmed native export index.");
             textureNativeIndices.Add(native.NativeExportIndex.Value);
         }
+        foreach (var particle in request.ParticleEdits)
+            if (!SamePath(particle.Document.SourcePackagePath, sourcePath) ||
+                !particle.Document.SourcePackageSha256.Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
+                throw new NotSupportedException(
+                    $"{particle.Document.SystemObjectName} was created from a different client package version. Run the game-update check before rebuilding.");
         var targetIndices = textureNativeIndices
             .Concat(materialInputs.Select(input => input.Report.NativeExportIndex!.Value))
             .Concat(meshInputs.Select(input => input.Source.NativeExportIndex))
-            .Concat(staticMeshInputs.Select(input => input.Source.NativeExportIndex)).ToArray();
+            .Concat(staticMeshInputs.Select(input => input.Source.NativeExportIndex))
+            .Concat(request.ParticleEdits.SelectMany(particle => particle.Document.Patches.Select(patch => patch.ExportIndex).Distinct()))
+            .ToArray();
         var duplicate = targetIndices.GroupBy(value => value).FirstOrDefault(group => group.Count() > 1);
         if (duplicate is not null)
             throw new NotSupportedException(
@@ -506,7 +521,8 @@ public sealed class UnifiedPackageComposerService
         var totalSteps = checked(request.TextureProjects.Count * 9 +
                                  request.MaterialEdits.Count * MaterialSteps +
                                  request.MeshEdits.Count * MeshSteps +
-                                 request.StaticMeshEdits.Count * MeshSteps + 2);
+                                 request.StaticMeshEdits.Count * MeshSteps +
+                                 request.ParticleEdits.Count + 2);
         var step = 0;
         void Report(string objectName, string stage, string message) => progress?.Report(
             new UnifiedPackageBuildProgress(++step, totalSteps, objectName, stage, message));
@@ -595,6 +611,52 @@ public sealed class UnifiedPackageComposerService
                 nativeIndex, edit.DocumentPath, candidate.ManifestPath,
                 candidate.Manifest.CandidateExportSha256, staged.ManifestPath,
                 staged.Manifest.SerialOffset, staged.Manifest.SerialSize));
+        }
+
+        var particleAssets = new List<GuidedParticlePackageAssetRevision>(request.ParticleEdits.Count);
+        foreach (var particle in request.ParticleEdits.OrderBy(edit => edit.Document.SystemExportIndex))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var document = particle.Document;
+            Report(document.SystemObjectName, "Particle effect", "Writing the effect's new colour values into the package...");
+            var particleRoot = Path.Combine(root, $"p{particleAssets.Count + 1:00}-{document.EditId[..8]}");
+            var inputPackageHash = await HashFileAsync(currentPackagePath, cancellationToken).ConfigureAwait(false);
+            var catalogue = _catalogReader.Read(currentPackagePath);
+            var replacements = new List<SerializedExportReplacement>();
+            using (var logical = new LogicalPackageStream(catalogue.Summary, _protectionProvider))
+            {
+                foreach (var group in document.Patches.GroupBy(patch => patch.ExportIndex))
+                {
+                    var first = group.First();
+                    var asset = catalogue.Assets.SingleOrDefault(candidate => candidate.ExportIndex == group.Key) ??
+                                throw new NotSupportedException($"{first.ObjectPath} is missing from the cumulative UPK.");
+                    if (!asset.ObjectPath.Equals(first.ObjectPath, StringComparison.OrdinalIgnoreCase) ||
+                        !asset.ClassName.Equals(first.ClassName, StringComparison.OrdinalIgnoreCase) ||
+                        asset.SerialSize != first.SerialSize)
+                        throw new NotSupportedException($"Native export {group.Key} no longer identifies {first.ObjectPath}.");
+                    var bytes = new byte[asset.SerialSize];
+                    logical.Position = asset.SerialOffset;
+                    logical.ReadExactly(bytes);
+                    if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(first.SourceExportSha256, StringComparison.OrdinalIgnoreCase))
+                        throw new NotSupportedException($"{first.ObjectPath}'s bytes changed during an earlier cumulative stage.");
+                    replacements.Add(new SerializedExportReplacement(asset.ExportIndex, asset.ClassName, asset.ObjectName,
+                        asset.SerialOffset, asset.SerialSize, first.SourceExportSha256,
+                        Particles.ParticleEffects.ApplyPatches(bytes, group)));
+                }
+            }
+            var staged = await _meshStaging.BuildSerializedExportsAsync(
+                new SerializedExportsStagedUpkRequest(
+                    currentPackagePath, inputPackageHash, Path.GetFileName(sourcePath), request.Package.Manifest.PackageAlias,
+                    replacements, particle.DocumentPath, particleRoot),
+                cancellationToken).ConfigureAwait(false);
+            currentPackagePath = staged.OutputUpkPath;
+            stages.Add(new UnifiedPackageCompositionStage(
+                stages.Count + 1, UnifiedPackageAssetKind.ParticleSystem, document.SystemObjectName,
+                document.SystemExportIndex, inputPackageHash, staged.Manifest.OutputPackageSha256,
+                staged.OutputUpkPath, staged.ManifestPath));
+            particleAssets.Add(new GuidedParticlePackageAssetRevision(
+                document.EditId, document.DisplayName, document.SystemObjectName, document.SystemExportIndex,
+                particle.DocumentPath, document.ContentSha256, staged.ManifestPath, staged.Manifest.Exports));
         }
 
         var meshAssets = new List<GuidedMeshPackageAssetRevision>(meshInputs.Count);
@@ -1002,6 +1064,23 @@ public sealed class UnifiedPackageComposerService
                 finalExportHash, catalogueAsset.SerialOffset, catalogueAsset.SerialSize,
                 asset.StagedUpkManifestPath));
         }
+        foreach (var particle in particleAssets)
+        foreach (var export in particle.Exports)
+        {
+            var catalogueAsset = finalCatalogue.Assets.SingleOrDefault(candidate =>
+                candidate.ExportIndex == export.NativeExportIndex &&
+                candidate.ObjectName.Equals(export.ObjectName, StringComparison.OrdinalIgnoreCase)) ??
+                                 throw new InvalidDataException($"The final package lost {export.ObjectName} of {particle.SystemObjectName}.");
+            var finalExportHash = await HashLogicalExportAsync(finalCatalogue.Summary, catalogueAsset, cancellationToken)
+                .ConfigureAwait(false);
+            if (!finalExportHash.Equals(export.CandidateExportSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"The final package no longer contains the new colours of {particle.SystemObjectName}.");
+            compositionAssets.Add(new UnifiedPackageCompositionAsset(
+                UnifiedPackageAssetKind.ParticleSystem, particle.EditId, particle.DisplayName,
+                request.Package.Manifest.PackageAlias, export.NativeExportIndex, catalogueAsset.ClassName, export.ObjectName,
+                particle.ContentSha256, finalExportHash, catalogueAsset.SerialOffset, catalogueAsset.SerialSize,
+                particle.StagedUpkManifestPath));
+        }
         var sourceHashAfter = await HashFileAsync(sourcePath, cancellationToken).ConfigureAwait(false);
         if (!sourceHashAfter.Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The clean source package changed during composition.");
@@ -1019,6 +1098,7 @@ public sealed class UnifiedPackageComposerService
                     project.Manifest.ProjectId.Equals(asset.ProjectId, StringComparison.OrdinalIgnoreCase))
                     .Manifest.PixelFormat,
                 UnifiedPackageAssetKind.MaterialInstanceConstant => "MaterialInstanceParameters",
+                UnifiedPackageAssetKind.ParticleSystem => ArkivePackageModBundleService.ParticleSystemValuesFormat,
                 UnifiedPackageAssetKind.StaticMesh => "NativeStaticMesh",
                 _ => "NativeSkeletalMesh",
             },
@@ -1197,6 +1277,7 @@ public sealed class UnifiedPackageComposerService
         {
             MaterialCount = materialAssets.Count,
             StaticMeshCount = staticMeshAssets.Count,
+            ParticleEffectCount = particleAssets.Count,
             MaterialsAppliedBeforeMeshes = true,
             VariableSizeMeshCount = variableSizeMeshCount,
             PreviewOnly = previewOnly,
@@ -1215,6 +1296,7 @@ public sealed class UnifiedPackageComposerService
             MeshAssets = meshAssets,
             StaticMeshAssets = staticMeshAssets,
             MaterialAssets = materialAssets,
+            ParticleAssets = particleAssets,
             CompositionManifestPath = manifestPath,
             PreviewOnly = previewOnly,
             ContainsVariableSizeMeshReplacements = variableSizeMeshCount > 0,

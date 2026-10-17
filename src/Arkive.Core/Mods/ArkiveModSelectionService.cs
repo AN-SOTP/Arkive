@@ -89,6 +89,9 @@ public static class ArkiveModSelectionService
                 await edits.MaterialEdits.SetIncludedAsync(material, included, cancellationToken)
                     .ConfigureAwait(false);
                 break;
+            case Particles.ParticleEffectEditEntry particle:
+                await edits.ParticleEdits.SetIncludedAsync(particle, included, cancellationToken).ConfigureAwait(false);
+                break;
         }
     }
 
@@ -112,6 +115,9 @@ public static class ArkiveModSelectionService
                 break;
             case MaterialInstanceEditEntry material:
                 await edits.MaterialEdits.DeleteAsync(material, cancellationToken).ConfigureAwait(false);
+                break;
+            case Particles.ParticleEffectEditEntry particle:
+                await edits.ParticleEdits.DeleteAsync(particle, cancellationToken).ConfigureAwait(false);
                 break;
         }
     }

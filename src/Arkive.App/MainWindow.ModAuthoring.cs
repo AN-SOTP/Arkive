@@ -336,8 +336,12 @@ public partial class MainWindow : Window
                 ? Visibility.Visible : Visibility.Collapsed;
         AuthoringProportionsButton.IsEnabled = idle && _umodelBridge is not null && !_proportionBusy &&
                                                !string.IsNullOrWhiteSpace(_libraryRootPath);
-        AuthoringOpenButton.Content = selected?.Edit?.Kind == UnifiedPackageAssetKind.MaterialInstanceConstant
-            ? "Edit material" : "Open edited file";
+        AuthoringOpenButton.Content = selected?.Edit?.Kind switch
+        {
+            UnifiedPackageAssetKind.MaterialInstanceConstant => "Edit material",
+            UnifiedPackageAssetKind.ParticleSystem => "Edit colour",
+            _ => "Open edited file",
+        };
     }
 
     private void AuthoringAssetsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)

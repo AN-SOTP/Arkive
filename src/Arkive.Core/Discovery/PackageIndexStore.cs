@@ -499,7 +499,7 @@ public sealed partial class PackageIndexStore
     private static bool MatchesCategory(IndexedAsset asset, string category) =>
         category.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase)
             ? asset.ClassName.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase)
-            : asset.Kind.ToString().Equals(category, StringComparison.OrdinalIgnoreCase);
+            : Assets.AssetTypes.Current(asset.Kind, asset.ClassName).ToString().Equals(category, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Finds evidence-labelled candidates related to one indexed asset. Database

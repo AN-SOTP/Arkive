@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
+using Arkive.Core.Particles;
 using Arkive.Core.StaticMeshes;
 using Arkive.Core.Textures;
 
@@ -12,7 +13,12 @@ public sealed record ArkiveModEditWorkspaces(
     GuidedTextureModWorkspace Textures,
     SkeletalMeshEditWorkspaceStore SkeletalMeshEdits,
     StaticMeshEditWorkspaceStore StaticMeshEdits,
-    MaterialInstanceEditWorkspaceStore MaterialEdits);
+    MaterialInstanceEditWorkspaceStore MaterialEdits)
+{
+    /// <summary>Particle effect working copies, in staging\particle-edits beside the material edits.</summary>
+    public ParticleEffectEditWorkspaceStore ParticleEdits { get; init; } = new(
+        Path.Combine(Path.GetDirectoryName(MaterialEdits.RootDirectory)!, "particle-edits"));
+}
 
 public sealed record ArkiveModLocalEdit(
     UnifiedPackageAssetKind Kind,
@@ -110,6 +116,13 @@ public sealed class ArkiveModEditSnapshot
                 material.Document.DisplayName, Path.GetFullPath(material.Document.SourcePackagePath),
                 material.Document.ObjectName, material.Document.IncludedInPackageBuild, material));
         }
+        foreach (var particle in await workspaces.ParticleEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            edits.Add(new ArkiveModLocalEdit(
+                UnifiedPackageAssetKind.ParticleSystem, particle.Document.EditId, particle.DocumentPath,
+                particle.Document.DisplayName, Path.GetFullPath(particle.Document.SourcePackagePath),
+                particle.Document.SystemObjectName, particle.Document.IncludedInPackageBuild, particle));
+        }
         return new ArkiveModEditSnapshot(edits);
     }
 
@@ -134,6 +147,7 @@ public sealed class ArkiveModEditSnapshot
                 File.Exists(material.Document.LatestCandidateManifestPath)
                     ? material.Document.LatestCandidateSha256?.ToUpperInvariant()
                     : null,
+            ParticleEffectEditEntry particle => particle.Document.ContentSha256,
             _ => null,
         };
     }
@@ -156,6 +170,7 @@ public sealed class ArkiveModEditSnapshot
                     mesh.Manifest.SourceEditableManifestPath, cancellationToken).ConfigureAwait(false))
                     .SourcePackageSha256.ToUpperInvariant(),
                 MaterialInstanceEditEntry material => material.Document.SourcePackageSha256.ToUpperInvariant(),
+                ParticleEffectEditEntry particle => particle.Document.SourcePackageSha256.ToUpperInvariant(),
                 _ => null,
             };
         }

@@ -76,8 +76,13 @@ public static class AssetTypes
         CanEditClass: IsMaterialInstanceConstant, AcceptsClass: IsMaterialInstanceConstant,
         Previewable: false, DiscoveryScore: 4, SearchCategory: "MaterialInstanceConstant");
 
+    public static readonly AssetType ParticleEffect = new(
+        AssetKind.ParticleSystem, UnifiedPackageAssetKind.ParticleSystem, "Particle effect", "particle effect", "particle effects",
+        CanEditClass: IsParticleSystem, AcceptsClass: IsParticleSystem,
+        Previewable: false, DiscoveryScore: 5, SearchCategory: "ParticleSystem");
+
     /// <summary>Every type that can be put in a mod.</summary>
-    public static IReadOnlyList<AssetType> Moddable { get; } = [Texture, SkeletalMesh, StaticMesh, Material];
+    public static IReadOnlyList<AssetType> Moddable { get; } = [Texture, SkeletalMesh, StaticMesh, Material, ParticleEffect];
 
     /// <summary>The type a mod stores as <paramref name="kind"/>.</summary>
     public static AssetType For(UnifiedPackageAssetKind kind) =>
@@ -89,15 +94,26 @@ public static class AssetTypes
 
     /// <summary>The type Arkive can make a working copy of for this object, or null when it cannot edit it.</summary>
     public static AssetType? Editable(AssetKind kind, string className) =>
-        For(kind) is { } type && type.CanEditClass(className) ? type : null;
+        For(Current(kind, className)) is { } type && type.CanEditClass(className) ? type : null;
 
-    /// <summary>How the package index files a class. Its rules are saved with every index, so they never change.</summary>
+    /// <summary>
+    /// An indexed object's kind by today's rules: package indexes built before a type existed filed its objects as
+    /// plain objects, so those are filed again from their class name.
+    /// </summary>
+    public static AssetKind Current(AssetKind kind, string className) =>
+        kind == AssetKind.Object ? CatalogKind(className) : kind;
+
+    /// <summary>
+    /// How the package index files a class. Its rules are saved with every index, so existing rules never change; a
+    /// new type only files classes that used to be plain objects (see <see cref="Current"/>).
+    /// </summary>
     public static AssetKind CatalogKind(string className)
     {
         if (className.Contains("Texture", StringComparison.OrdinalIgnoreCase)) return AssetKind.Texture;
         if (className.Equals("StaticMesh", StringComparison.OrdinalIgnoreCase)) return AssetKind.StaticMesh;
         if (className.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase)) return AssetKind.SkeletalMesh;
         if (className.Contains("Material", StringComparison.OrdinalIgnoreCase)) return AssetKind.Material;
+        if (IsParticleSystem(className)) return AssetKind.ParticleSystem;
         return AssetKind.Object;
     }
 
@@ -130,6 +146,9 @@ public static class AssetTypes
     private static bool IsStaticMeshClass(string className) =>
         className.Contains("StaticMesh", StringComparison.OrdinalIgnoreCase) &&
         !className.Contains("SkeletalMesh", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsParticleSystem(string className) =>
+        className.Equals("ParticleSystem", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsMaterialInstanceConstant(string className) =>
         className.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase);

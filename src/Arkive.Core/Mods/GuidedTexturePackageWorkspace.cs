@@ -63,6 +63,17 @@ public sealed record GuidedMaterialPackageAssetRevision(
     long SerialOffset,
     long SerialSize);
 
+/// <summary>One particle effect written into a package build: the exports its colour patches changed.</summary>
+public sealed record GuidedParticlePackageAssetRevision(
+    string EditId,
+    string DisplayName,
+    string SystemObjectName,
+    int SystemExportIndex,
+    string EditDocumentPath,
+    string ContentSha256,
+    string StagedUpkManifestPath,
+    IReadOnlyList<Meshes.SerializedExportsStagedUpkExport> Exports);
+
 public sealed record GuidedTexturePackageRevision(
     string RevisionId,
     DateTimeOffset CreatedAt,
@@ -83,6 +94,8 @@ public sealed record GuidedTexturePackageRevision(
 
     public IReadOnlyList<GuidedStaticMeshPackageAssetRevision> StaticMeshAssets { get; init; } = [];
 
+    public IReadOnlyList<GuidedParticlePackageAssetRevision> ParticleAssets { get; init; } = [];
+
     public string? CompositionManifestPath { get; init; }
 
     public bool PreviewOnly { get; init; }
@@ -93,7 +106,7 @@ public sealed record GuidedTexturePackageRevision(
 
     public string? VariableSizeDeploymentGateManifestPath { get; init; }
 
-    public int TotalAssetCount => Assets.Count + MeshAssets.Count + StaticMeshAssets.Count + MaterialAssets.Count;
+    public int TotalAssetCount => Assets.Count + MeshAssets.Count + StaticMeshAssets.Count + MaterialAssets.Count + ParticleAssets.Count;
 }
 
 public sealed record GuidedTexturePackageManifest(

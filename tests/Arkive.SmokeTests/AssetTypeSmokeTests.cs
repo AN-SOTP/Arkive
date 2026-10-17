@@ -18,8 +18,14 @@ internal static class AssetTypeSmokeTests
         foreach (var kind in Enum.GetValues<AssetKind>().Where(kind => kind != AssetKind.Object))
             Assert(AssetTypes.Moddable.Count(type => type.CatalogKind == kind) == 1, $"indexed kind {kind} is not registered exactly once");
         Assert(AssetTypes.For(AssetKind.Object) is null, "plain objects were made moddable");
+        // Indexes built before particle effects were a type filed them as plain objects; they are filed again by class.
+        Assert(AssetTypes.Editable(AssetKind.Object, "particlesystem") == AssetTypes.ParticleEffect &&
+               AssetTypes.Current(AssetKind.Object, "particlesystem") == AssetKind.ParticleSystem &&
+               AssetTypes.Editable(AssetKind.Object, "particlemodulecolor") is null,
+            "particle systems in older package indexes are not recognised");
         // Saved by number in the package index and by name in .arkive files: existing values never move.
-        Assert((int)AssetKind.Texture == 1 && (int)AssetKind.StaticMesh == 2 && (int)AssetKind.SkeletalMesh == 3 && (int)AssetKind.Material == 4,
+        Assert((int)AssetKind.Texture == 1 && (int)AssetKind.StaticMesh == 2 && (int)AssetKind.SkeletalMesh == 3 && (int)AssetKind.Material == 4 &&
+               (int)AssetKind.ParticleSystem == 5,
             "AssetKind values were reordered; existing package indexes would be read wrongly");
         Assert(AssetTypes.For(UnifiedPackageAssetKind.SkeletalMesh).Count(1) == "1 skeletal mesh" &&
                AssetTypes.For(UnifiedPackageAssetKind.Texture2D).Count(3) == "3 textures" &&
@@ -47,10 +53,13 @@ internal static class AssetTypeSmokeTests
             ("Material", AssetKind.Material, AssetKind.Material, null, []),
             ("MaterialInstanceTimeVarying", AssetKind.Material, AssetKind.Material, null, []),
             ("PhysicalMaterial", AssetKind.Material, AssetKind.Object, null, []),
-            ("ParticleSystem", AssetKind.Object, AssetKind.Object, null, []),
+            ("ParticleSystem", AssetKind.ParticleSystem, AssetKind.Object, UnifiedPackageAssetKind.ParticleSystem,
+                [UnifiedPackageAssetKind.ParticleSystem]),
             ("SoundCue", AssetKind.Object, AssetKind.Object, null, []),
             ("efswfmovie", AssetKind.Object, AssetKind.Object, null, []),
-            ("particlesystem", AssetKind.Object, AssetKind.Object, null, []),
+            ("particlesystem", AssetKind.ParticleSystem, AssetKind.Object, UnifiedPackageAssetKind.ParticleSystem,
+                [UnifiedPackageAssetKind.ParticleSystem]),
+            ("particlemodulecolor", AssetKind.Object, AssetKind.Object, null, []),
             ("AnimSet", AssetKind.Object, AssetKind.Object, null, []),
         ];
         foreach (var (className, catalog, umodel, editable, accepts) in cases)

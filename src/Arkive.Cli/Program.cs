@@ -302,6 +302,13 @@ static int Run(string[] arguments)
             "arkive-conflicts" => ArkiveConflicts(target, json),
             "arkive-migrate" => ArkiveMigrate(target, ReadTextOption(arguments, "--author"), json),
             "arkive-plan" => ArkivePlan(target, json),
+            "arkive-particle-tint" => ArkiveParticleTint(
+                target,
+                ReadTextOptions(arguments, "--package"),
+                ReadTextOption(arguments, "--match") ?? throw new ArgumentException("arkive-particle-tint requires --match NAME[,NAME...]."),
+                ReadTextOption(arguments, "--color") ?? throw new ArgumentException("arkive-particle-tint requires --color R,G,B."),
+                ReadTextOption(arguments, "--name") ?? throw new ArgumentException("arkive-particle-tint requires --name TEXT."),
+                json),
             "arkive-apply" => ArkiveApply(
                 target, arguments.Contains("--confirm", StringComparer.OrdinalIgnoreCase), json),
             "arkive-update" => ArkiveUpdate(target, ReadTextOption(arguments, "--mod"), json),
@@ -2365,6 +2372,60 @@ static int ArkiveMigrate(string projectRoot, string? author, bool json)
         Console.WriteLine($"  {(change.Included ? "Checked" : "Unchecked")} {change.Kind} {change.ObjectName} ({change.ModName})");
     Console.WriteLine($"{result.Migrated.Count:N0} package project(s) converted; no game file was changed.");
     return 0;
+}
+
+/// <summary>
+/// Makes one mod that tints every particle system whose name contains one of the --match words, in each --package
+/// (a game package; its clean copy is used when a mod is already installed in it). The mod is added to the library
+/// disabled, like a mod saved in Edit mods.
+/// </summary>
+static int ArkiveParticleTint(string projectRoot, IReadOnlyList<string> packages, string match, string color, string name, bool json)
+{
+    if (packages.Count == 0) throw new ArgumentException("arkive-particle-tint requires at least one --package FILE.upk.");
+    var channels = color.Split(',').Select(value => float.Parse(value, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+    if (channels.Length != 3) throw new ArgumentException("--color expects R,G,B, for example 1,0.05,0.03.");
+    var tint = new Arkive.Core.Particles.ParticleEffectTint(channels[0], channels[1], channels[2]);
+    var words = match.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    var environment = CreateModEnvironment(projectRoot);
+    var provider = ChunkProtectionProviderFactory.CreateWesternGlobal();
+    var captured = new List<ArkiveModCapturedAsset>();
+    var created = new List<Arkive.Core.Particles.ParticleEffectEditEntry>();
+    try
+    {
+        foreach (var gamePackage in packages.Select(Path.GetFullPath))
+        {
+            var clean = environment.Apply.ResolveCleanPackageAsync(gamePackage).GetAwaiter().GetResult();
+            var catalog = new AssetCatalogReader(protectionProvider: provider).Read(clean);
+            var alias = Arkive.Core.Discovery.LostArkPackageName.GetDisplayName(gamePackage);
+            var hash = ArkiveModEditSnapshot.HashFileCachedAsync(clean).GetAwaiter().GetResult();
+            foreach (var system in catalog.Assets.Where(asset => asset.ClassName.Equals("particlesystem", StringComparison.OrdinalIgnoreCase) &&
+                                                                 words.Any(word => asset.ObjectName.Contains(word, StringComparison.OrdinalIgnoreCase))))
+            {
+                var report = Arkive.Core.Particles.ParticleEffects.Inspect(clean, hash, system.ObjectName, system.ObjectPath, provider);
+                if (report.ColorTables.Count == 0) continue;
+                var edit = environment.Context.Edits.ParticleEdits.CreateAsync(report, alias, system.ObjectName, tint).GetAwaiter().GetResult();
+                created.Add(edit);
+                if (edit.Document.Patches.Count == 0) continue;
+                var local = new ArkiveModLocalEdit(UnifiedPackageAssetKind.ParticleSystem, edit.Document.EditId, edit.DocumentPath,
+                    system.ObjectName, Path.GetFullPath(clean), system.ObjectName, false, edit);
+                captured.Add(ArkiveModAuthoringService.CaptureAsync(local).GetAwaiter().GetResult());
+            }
+        }
+        if (captured.Count == 0) throw new InvalidOperationException("No particle system with colour values matched.");
+        var mod = environment.Authoring.CreateModAsync(new ArkiveModMetadata(name, "1.0.0", "Arkive",
+                $"Tints {captured.Count:N0} particle effect(s) matching {match} to {color}."),
+            captured, ArkiveModOrigin.Created, enabled: false).GetAwaiter().GetResult();
+        var patches = captured.Sum(asset => asset.Descriptor.Particle!.Patches.Count);
+        if (json) WriteJson(new { mod.ModId, mod.FileName, Effects = captured.Count, Patches = patches });
+        else Console.WriteLine($"Created {mod.FileName}: {captured.Count:N0} effect(s), {patches:N0} colour table(s). Enable it with arkive-set --mod {mod.ModId[..8]} --enable.");
+        return 0;
+    }
+    finally
+    {
+        // The mod keeps its own copy of the patches; the library sets up working copies again when it is enabled.
+        foreach (var edit in created)
+            environment.Context.Edits.ParticleEdits.DeleteAsync(edit).GetAwaiter().GetResult();
+    }
 }
 
 static int ArkivePlan(string projectRoot, bool json)

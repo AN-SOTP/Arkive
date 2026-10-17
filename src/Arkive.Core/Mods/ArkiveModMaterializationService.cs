@@ -4,6 +4,7 @@ using Arkive.Core.Inspection;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.Packages;
+using Arkive.Core.Particles;
 using Arkive.Core.StaticMeshes;
 using Arkive.Core.Textures;
 
@@ -227,6 +228,21 @@ public sealed class ArkiveModMaterializationService
                 editId = material.Document.EditId;
                 manifestPath = material.DocumentPath;
                 break;
+            case "particlesystem":
+                progress?.Report(new("Reading the particle effect's colours", selection.ObjectName));
+                var particleReport = ParticleEffects.Inspect(selection.PackagePath, hash, export.ObjectName, export.ObjectPath,
+                    _services.ProtectionProvider, cancellationToken);
+                if (particleReport.ColorTables.Count == 0)
+                    Refuse("AMM060", $"{export.ObjectName} has no colour values Arkive can change (its look comes only from its materials).");
+                var particle = await _edits.ParticleEdits.CreateAsync(particleReport, selection.PackageAlias, export.ObjectName,
+                    new ParticleEffectTint(1, 1, 1), cancellationToken).ConfigureAwait(false);
+                particle = await _edits.ParticleEdits.SaveAsync(particle with { Document = particle.Document with { Patches = [] } },
+                    cancellationToken).ConfigureAwait(false);
+                entry = particle;
+                kind = UnifiedPackageAssetKind.ParticleSystem;
+                editId = particle.Document.EditId;
+                manifestPath = particle.DocumentPath;
+                break;
             default:
                 throw new ArkiveModRefusalException("AMM051", "This asset type cannot be edited.");
         }
@@ -273,6 +289,8 @@ public sealed class ArkiveModMaterializationService
                 UnifiedPackageAssetKind.StaticMesh => await MaterializeStaticMeshAsync(
                     asset, check, files, cancellationToken).ConfigureAwait(false),
                 UnifiedPackageAssetKind.MaterialInstanceConstant => await MaterializeMaterialAsync(
+                    asset, check, cancellationToken).ConfigureAwait(false),
+                UnifiedPackageAssetKind.ParticleSystem => await MaterializeParticleAsync(
                     asset, check, cancellationToken).ConfigureAwait(false),
                 _ => throw new ArkiveModRefusalException("AMM004", $"{asset.Kind} is not supported."),
             };
@@ -454,6 +472,55 @@ public sealed class ArkiveModMaterializationService
         catch
         {
             await _edits.MaterialEdits.DeleteAsync(created, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// A particle effect from a mod: its patches as they are when the effect is byte-identical to the one the mod was
+    /// made for, otherwise its tint applied again to this client's effect.
+    /// </summary>
+    private async Task<(string EditId, string ManifestPath)> MaterializeParticleAsync(
+        ArkiveModFileAsset asset,
+        ArkiveModTargetCheck check,
+        CancellationToken cancellationToken)
+    {
+        var export = check.Export!;
+        var data = asset.Particle!;
+        var report = ParticleEffects.Inspect(check.PackagePath, check.PackageSha256!, export.ObjectName, export.ObjectPath,
+            _services.ProtectionProvider, cancellationToken);
+        var created = await _edits.ParticleEdits.CreateAsync(report, asset.Target.PackageAlias, asset.DisplayName, data.Tint,
+            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var patches = created.Document.Patches;
+            if (check.State == ArkiveModTargetState.Exact)
+            {
+                var tables = report.ColorTables.ToDictionary(table => (table.Export.ObjectPath.ToUpperInvariant(), table.ValueOffset));
+                if (data.Patches.Any(patch => !tables.TryGetValue((patch.ObjectPath.ToUpperInvariant(), patch.ValueOffset), out var table) ||
+                                              !table.Values.Select(BitConverter.SingleToInt32Bits).SequenceEqual(patch.Original.Select(BitConverter.SingleToInt32Bits))))
+                    Refuse("AMM061", $"{asset.DisplayName}'s colour values do not match this client's {export.ObjectName}.");
+                patches = data.Patches.Select(patch =>
+                {
+                    var table = tables[(patch.ObjectPath.ToUpperInvariant(), patch.ValueOffset)];
+                    return patch with
+                    {
+                        ObjectPath = table.Export.ObjectPath, ClassName = table.Export.ClassName, ExportIndex = table.Export.ExportIndex,
+                        SerialOffset = table.Export.SerialOffset, SerialSize = table.Export.SerialSize, SourceExportSha256 = table.ExportSha256,
+                    };
+                }).ToArray();
+            }
+            if (patches.Count == 0)
+                Refuse("AMM062", $"{asset.DisplayName} makes no change to this client's {export.ObjectName}.");
+            var saved = await _edits.ParticleEdits.SaveAsync(created with
+            {
+                Document = created.Document with { Patches = patches, IncludedInPackageBuild = false },
+            }, cancellationToken).ConfigureAwait(false);
+            return (saved.Document.EditId, saved.DocumentPath);
+        }
+        catch
+        {
+            await _edits.ParticleEdits.DeleteAsync(created, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }

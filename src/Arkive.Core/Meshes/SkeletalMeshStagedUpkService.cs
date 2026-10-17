@@ -176,6 +176,63 @@ public sealed record SerializedExportStagedUpkManifest(
     IReadOnlyList<ValidationIssue> ValidationIssues,
     double DurationSeconds);
 
+/// <summary>One export of a multi-export same-size replacement and the bytes it gets.</summary>
+public sealed record SerializedExportReplacement(
+    int NativeExportIndex,
+    string ClassName,
+    string ObjectName,
+    long SerialOffset,
+    long SerialSize,
+    string SourceExportSha256,
+    byte[] Candidate);
+
+/// <summary>Several exports of one package replaced by same-size candidates in one staged copy.</summary>
+public sealed record SerializedExportsStagedUpkRequest(
+    string SourcePackagePath,
+    string ExpectedSourcePackageSha256,
+    string PhysicalPackageName,
+    string PackageAlias,
+    IReadOnlyList<SerializedExportReplacement> Exports,
+    string VerificationEvidencePath,
+    string OutputDirectory);
+
+public sealed record SerializedExportsStagedUpkExport(
+    int NativeExportIndex,
+    string ClassName,
+    string ObjectName,
+    long SerialOffset,
+    long SerialSize,
+    string SourceExportSha256,
+    string CandidateExportSha256,
+    int ChangedByteCount);
+
+public sealed record SerializedExportsStagedUpkManifest(
+    int SchemaVersion,
+    string BuildId,
+    DateTimeOffset CreatedAt,
+    string VerificationEvidencePath,
+    string SourcePackagePath,
+    string SourcePackageSha256,
+    string OutputUpkRelativePath,
+    string OutputPackageSha256,
+    string PhysicalPackageName,
+    string PackageAlias,
+    IReadOnlyList<SerializedExportsStagedUpkExport> Exports,
+    bool AllUnrelatedLogicalBytesIdentical,
+    bool AllEncodedBlocksDecodeBack,
+    bool AssetCatalogueEquivalent,
+    bool StructuralValidationPassed,
+    IReadOnlyList<SkeletalMeshStagedUpkChunkEvidence> Chunks,
+    IReadOnlyList<SkeletalMeshStagedUpkTablePatchEvidence> ChunkTablePatches,
+    IReadOnlyList<ValidationIssue> ValidationIssues,
+    double DurationSeconds);
+
+public sealed record SerializedExportsStagedUpkResult(
+    string OutputDirectory,
+    string ManifestPath,
+    string OutputUpkPath,
+    SerializedExportsStagedUpkManifest Manifest);
+
 public sealed record SerializedExportStagedUpkResult(
     string OutputDirectory,
     string ManifestPath,
@@ -308,6 +365,7 @@ public sealed class SkeletalMeshStagedUpkService
     public const int CurrentSchemaVersion = 1;
     public const string ManifestFileName = "arkive-skeletalmesh-staged-upk.json";
     public const string SerializedExportManifestFileName = "arkive-serialized-export-staged-upk.json";
+    public const string SerializedExportsManifestFileName = "arkive-serialized-exports-staged-upk.json";
     public const string TopologyManifestFileName = "arkive-skeletalmesh-topology-staged-upk.json";
     private const int BufferBytes = 1024 * 1024;
     private const int MaximumBlockSize = 256 * 1024 * 1024;
@@ -537,6 +595,125 @@ public sealed class SkeletalMeshStagedUpkService
             await SaveJsonAtomicAsync(manifestPath, manifest, cancellationToken).ConfigureAwait(false);
             return new SerializedExportStagedUpkResult(
                 outputDirectory, manifestPath, outputPath, manifest, watch.Elapsed);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    /// <summary>
+    /// Writes several same-size export candidates (the modules of one particle effect, for example) into one staged
+    /// copy with the same checks as a single export: each export still holds its proven source bytes, only those
+    /// exports and the chunk table change, every rebuilt block decodes back, and the catalogue is unchanged.
+    /// </summary>
+    public async Task<SerializedExportsStagedUpkResult> BuildSerializedExportsAsync(
+        SerializedExportsStagedUpkRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var watch = Stopwatch.StartNew();
+        if (request.Exports.Count == 0) Refuse("SXM010", "No exports were given to replace.");
+        var sourcePath = RequireFile(request.SourcePackagePath, "SXM011", "source package");
+        var evidencePath = RequireFile(request.VerificationEvidencePath, "SXM012", "candidate verification manifest");
+        var sourceHashBefore = await HashFileAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+        if (!sourceHashBefore.Equals(request.ExpectedSourcePackageSha256, StringComparison.OrdinalIgnoreCase))
+            Refuse("SXM013", "The cumulative source UPK does not match the requested package stage.");
+        if (request.Exports.GroupBy(item => item.NativeExportIndex).Any(group => group.Count() > 1))
+            Refuse("SXM014", "An export was given more than once.");
+
+        var sourceSummary = _summaryReader.Read(sourcePath);
+        if (!sourceSummary.IsWesternLostArkProfile)
+            Refuse("SXM015", "Only the Western Lost Ark 868/16 package profile is supported.");
+        var sourceCatalog = _catalogReader.Read(sourceSummary);
+        var sourceLogical = await ReadLogicalAsync(sourceSummary, cancellationToken).ConfigureAwait(false);
+        var desiredLogical = sourceLogical.ToArray();
+        var evidence = new List<SerializedExportsStagedUpkExport>(request.Exports.Count);
+        foreach (var item in request.Exports.OrderBy(item => item.SerialOffset))
+        {
+            var targetSource = sourceCatalog.Exports.SingleOrDefault(export => export.TableIndex == item.NativeExportIndex);
+            var targetAsset = sourceCatalog.Assets.SingleOrDefault(asset => asset.ExportIndex == item.NativeExportIndex);
+            if (targetSource is null || targetAsset is null ||
+                targetSource.SerialOffset != item.SerialOffset || targetSource.SerialSize != item.SerialSize ||
+                !targetAsset.ObjectName.Equals(item.ObjectName, StringComparison.OrdinalIgnoreCase) ||
+                !targetAsset.ClassName.Equals(item.ClassName, StringComparison.OrdinalIgnoreCase))
+                Refuse("SXM016", $"The current export table no longer identifies {item.ObjectName}.");
+            var offset = checked((int)item.SerialOffset);
+            var size = checked((int)item.SerialSize);
+            if (item.Candidate.LongLength != item.SerialSize || offset < 0 || offset > sourceLogical.Length - size)
+                Refuse("SXM017", $"{item.ObjectName}'s candidate does not fit its export.");
+            if (!Hash(sourceLogical.AsSpan(offset, size)).Equals(item.SourceExportSha256, StringComparison.OrdinalIgnoreCase))
+                Refuse("SXM018", $"{item.ObjectName}'s source bytes no longer match the candidate's proven baseline.");
+            var changed = 0;
+            for (var index = 0; index < size; index++)
+                if (sourceLogical[offset + index] != item.Candidate[index]) changed++;
+            item.Candidate.CopyTo(desiredLogical, offset);
+            evidence.Add(new(item.NativeExportIndex, item.ClassName, item.ObjectName, item.SerialOffset, item.SerialSize,
+                item.SourceExportSha256.ToUpperInvariant(), Hash(item.Candidate), changed));
+        }
+        if (evidence.All(item => item.ChangedByteCount == 0))
+            Refuse("SXM019", "Every candidate is byte-identical to its source; there is nothing to write.");
+
+        var rangeStart = request.Exports.Min(item => item.SerialOffset);
+        var rangeEnd = request.Exports.Max(item => item.SerialOffset + item.SerialSize);
+        var outputDirectory = Path.GetFullPath(request.OutputDirectory);
+        Directory.CreateDirectory(outputDirectory);
+        var outputName = SafePhysicalName(request.PhysicalPackageName);
+        var outputPath = Path.Combine(outputDirectory, outputName);
+        if (Path.GetFullPath(outputPath).Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
+            Refuse("SXM020", "The staging output cannot be the source UPK.");
+        var temporaryPath = outputPath + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            var build = sourceSummary.CompressedChunks.Count == 0
+                ? await BuildUncompressedAsync(desiredLogical, temporaryPath, cancellationToken).ConfigureAwait(false)
+                : await BuildCompressedAsync(sourcePath, sourceSummary, desiredLogical,
+                    rangeStart, rangeEnd - rangeStart, temporaryPath, cancellationToken).ConfigureAwait(false);
+            var outputSummary = _summaryReader.Read(temporaryPath);
+            var validation = PackageValidator.Validate(outputSummary);
+            if (validation.Any(issue => issue.Severity == ValidationSeverity.Error))
+                Refuse("SXM021", "The staged UPK failed structural validation.");
+            await VerifyPhysicalChunksAsync(sourcePath, temporaryPath, outputSummary, build.Chunks, cancellationToken)
+                .ConfigureAwait(false);
+            var outputLogical = await ReadLogicalAsync(outputSummary, cancellationToken).ConfigureAwait(false);
+            if (!outputLogical.AsSpan().SequenceEqual(build.ExpectedLogical))
+                Refuse("SXM022", "The staged UPK did not decode to the expected logical image.");
+            foreach (var item in evidence)
+                if (!Hash(outputLogical.AsSpan(checked((int)item.SerialOffset), checked((int)item.SerialSize)))
+                        .Equals(item.CandidateExportSha256, StringComparison.OrdinalIgnoreCase))
+                    Refuse("SXM023", $"The staged {item.ObjectName} does not contain its verified candidate.");
+            var metadata = sourceSummary.CompressedChunks.Count == 0
+                ? []
+                : build.TablePatches.Where(item => item.Changed).Select(item => (item.PhysicalOffset, 4)).ToArray();
+            if (sourceLogical.Length != outputLogical.Length)
+                Refuse("SXM024", "The staged UPK changed length.");
+            var ranges = evidence.Select(item => (Start: item.SerialOffset, End: item.SerialOffset + item.SerialSize)).ToArray();
+            for (var index = 0; index < sourceLogical.Length; index++)
+            {
+                if (sourceLogical[index] == outputLogical[index]) continue;
+                if (ranges.Any(range => index >= range.Start && index < range.End)) continue;
+                if (metadata.Any(range => index >= range.PhysicalOffset && index < range.PhysicalOffset + range.Item2)) continue;
+                Refuse("SXM025", "A logical byte outside the replaced exports and chunk-table metadata changed.");
+            }
+            var outputCatalog = _catalogReader.Read(outputSummary);
+            if (!CataloguesEquivalent(sourceCatalog, outputCatalog))
+                Refuse("SXM026", "The asset catalogue changed during same-size export staging.");
+            var outputHash = await HashFileAsync(temporaryPath, cancellationToken).ConfigureAwait(false);
+            var sourceHashAfter = await HashFileAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+            if (!sourceHashAfter.Equals(sourceHashBefore, StringComparison.OrdinalIgnoreCase))
+                Refuse("SXM027", "The source package changed while Arkive built the staged copy.");
+            File.Move(temporaryPath, outputPath, overwrite: true);
+            watch.Stop();
+            var manifest = new SerializedExportsStagedUpkManifest(
+                CurrentSchemaVersion, Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow, evidencePath, sourcePath,
+                sourceHashAfter, outputName, outputHash, request.PhysicalPackageName, request.PackageAlias, evidence,
+                AllUnrelatedLogicalBytesIdentical: true,
+                AllEncodedBlocksDecodeBack: build.Chunks.SelectMany(item => item.Blocks).All(item => item.DecodeBackPassed),
+                AssetCatalogueEquivalent: true, StructuralValidationPassed: true,
+                build.Chunks, build.TablePatches, validation, watch.Elapsed.TotalSeconds);
+            var manifestPath = Path.Combine(outputDirectory, SerializedExportsManifestFileName);
+            await SaveJsonAtomicAsync(manifestPath, manifest, cancellationToken).ConfigureAwait(false);
+            return new SerializedExportsStagedUpkResult(outputDirectory, manifestPath, outputPath, manifest);
         }
         finally
         {

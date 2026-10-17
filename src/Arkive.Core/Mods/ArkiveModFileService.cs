@@ -251,6 +251,8 @@ public static class ArkiveModFileService
         ArgumentNullException.ThrowIfNull(asset);
         if (asset.Kind == UnifiedPackageAssetKind.MaterialInstanceConstant && asset.Material is not null)
             return ComputeMaterialChangesSha256(asset.Material);
+        if (asset.Kind == UnifiedPackageAssetKind.ParticleSystem && asset.Particle is not null)
+            return Particles.ParticleEffects.ContentSha256(asset.Particle.Patches);
         var files = string.Join("|", asset.Files
             .OrderBy(file => file.Role, StringComparer.Ordinal)
             .Select(file => $"{file.Role}:{file.Sha256.ToUpperInvariant()}"));
@@ -417,9 +419,20 @@ public static class ArkiveModFileService
                 break;
             case UnifiedPackageAssetKind.MaterialInstanceConstant:
                 if (asset.Material is null || files.Count != 0 ||
-                    asset.Texture is not null || asset.Mesh is not null)
+                    asset.Texture is not null || asset.Mesh is not null || asset.Particle is not null)
                     Refuse("ARK043", $"Material asset {asset.AssetId} must contain only material parameter data.");
                 ValidateMaterial(asset.AssetId, asset.Material);
+                break;
+            case UnifiedPackageAssetKind.ParticleSystem:
+                var particle = asset.Particle;
+                if (particle?.Tint is not { IsValid: true } || particle.Patches is not { Count: > 0 and <= 100_000 } || files.Count != 0 ||
+                    asset.Texture is not null || asset.Mesh is not null || asset.Material is not null)
+                    Refuse("ARK044", $"Particle asset {asset.AssetId} must contain only a valid tint and its value patches.");
+                if (particle.Patches.Any(patch => patch.Original is null || patch.Value is null ||
+                                                  patch.Original.Length != patch.Value.Length || patch.Value.Length is 0 or > 65_536 ||
+                                                  patch.ValueOffset < 0 || string.IsNullOrWhiteSpace(patch.ObjectPath) ||
+                                                  patch.Value.Any(value => !float.IsFinite(value)) || !IsSha256(patch.SourceExportSha256)))
+                    Refuse("ARK044", $"Particle asset {asset.AssetId} has a malformed value patch.");
                 break;
         }
     }

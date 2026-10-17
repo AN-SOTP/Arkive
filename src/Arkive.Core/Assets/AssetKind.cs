@@ -7,4 +7,5 @@ public enum AssetKind
     StaticMesh,
     SkeletalMesh,
     Material,
+    ParticleSystem,
 }
