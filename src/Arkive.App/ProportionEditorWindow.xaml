@@ -25,7 +25,7 @@
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="Preset" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ComboBox x:Name="PresetComboBox" Width="200" IsEditable="True" VerticalAlignment="Center" IsEnabled="False"
+                    <ComboBox x:Name="PresetComboBox" Width="200" IsEditable="True" IsTextSearchEnabled="False" VerticalAlignment="Center" IsEnabled="False"
                               SelectionChanged="PresetComboBox_SelectionChanged"
                               ToolTip="Choose a saved preset for this body to set every slider, or type a name and choose Save preset." />
                     <Button x:Name="SavePresetButton" Content="Save preset" Margin="6,0,18,0" IsEnabled="False" Click="SavePresetButton_Click"

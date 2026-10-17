@@ -314,9 +314,24 @@ internal static class Program
             Check(text.IsVisible && editable.Text == "Typed name", "An editable combo box (the Preset box) cannot be typed into.");
             Check(fixedChoice.Template.FindName("PART_EditableTextBox", fixedChoice) is TextBox { IsVisible: false },
                 "A choice-only combo box shows a text box.");
+            // Typing a new preset name must not pick (and apply) an existing preset whose name starts the same way.
+            editable.ItemsSource = new[] { "preset 1" };
+            editable.IsTextSearchEnabled = false;
+            text.Text = "";
+            // Auto-complete only runs while the box has keyboard focus, as when someone types into it.
+            host.Activate();
+            text.Focus();
+            var selections = 0;
+            editable.SelectionChanged += (_, _) => selections++;
+            foreach (var character in "preset 3")
+                System.Windows.Input.TextCompositionManager.StartComposition(
+                    new System.Windows.Input.TextComposition(System.Windows.Input.InputManager.Current, text, character.ToString()));
+            host.UpdateLayout();
+            Check(selections == 0 && editable.Text == "preset 3",
+                $"Typing a new preset name selected (and would apply) an existing preset: selections={selections}, text={editable.Text}.");
         }
         finally { host.Close(); }
-        Console.WriteLine("PASS: editable combo boxes take typed text and choice-only ones do not");
+        Console.WriteLine("PASS: editable combo boxes take typed text, choice-only ones do not, and typing a name selects no preset");
     }
 
     private static async Task SearchLibraryAsync(MainWindow window, string query)
