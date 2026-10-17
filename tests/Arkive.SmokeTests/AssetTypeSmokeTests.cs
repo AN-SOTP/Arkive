@@ -49,7 +49,8 @@ internal static class AssetTypeSmokeTests
             ("PhysicalMaterial", AssetKind.Material, AssetKind.Object, null, []),
             ("ParticleSystem", AssetKind.Object, AssetKind.Object, null, []),
             ("SoundCue", AssetKind.Object, AssetKind.Object, null, []),
-            ("SwfMovie", AssetKind.Object, AssetKind.Object, null, []),
+            ("efswfmovie", AssetKind.Object, AssetKind.Object, null, []),
+            ("particlesystem", AssetKind.Object, AssetKind.Object, null, []),
             ("AnimSet", AssetKind.Object, AssetKind.Object, null, []),
         ];
         foreach (var (className, catalog, umodel, editable, accepts) in cases)
