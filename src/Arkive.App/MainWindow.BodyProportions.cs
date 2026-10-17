@@ -36,6 +36,7 @@ public partial class MainWindow
     {
         ProportionBodyComboBox.ItemsSource = new[] { "All bodies" }.Concat(BodyProfiles.All.Select(profile => profile.DisplayName)).ToArray();
         ProportionBodyComboBox.SelectedIndex = 0;
+        RefreshProportionPresets();
     }
 
     private async void ProportionSearchButton_Click(object sender, RoutedEventArgs e) => await SearchProportionAssetsAsync();
@@ -214,6 +215,110 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>
+    /// About how long one piece takes from start to finish (working copy, reshaping, then the skeleton and animation
+    /// checks when the mod is saved; measured at 5 s on 89 Female Warrior pieces), and how much disk its working files and
+    /// its share of the mod take (about 7 MB and 1.8 MB).
+    /// </summary>
+    private const double ProportionSecondsPerPiece = 5.5;
+    private const double ProportionMegabytesPerPiece = 9;
+
+    private CancellationTokenSource? _proportionBatchCancellation;
+
+    /// <summary>
+    /// Reshapes every player outfit of the chosen preset's body with that preset and saves them all as one new mod,
+    /// after saying how many outfits that is and roughly how long it will take.
+    /// </summary>
+    private async void ProportionApplyBodyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_proportionBusy || ProportionPresetComboBox.SelectedItem is not BodyProportionPreset preset) return;
+        if (string.IsNullOrWhiteSpace(_libraryRootPath))
+        {
+            ProportionStatusText.Text = "Choose or restore the indexed Packages folder in Asset library first.";
+            return;
+        }
+        var profile = BodyProfiles.All.FirstOrDefault(item => item.Id == preset.ProfileId);
+        if (profile is null || profile.IsNpc) return;
+        _proportionBusy = true;
+        UpdateProportionActions();
+        try
+        {
+            ProportionStatusText.Text = $"Finding every {profile.DisplayName} outfit…";
+            var found = await _packageIndexStore.SearchAsync(_libraryRootPath, "pc_", "SkeletalMesh", _gameMetadataIndex,
+                PackageIndexSearchScope.ObjectName, null, resultLimit: 200_000);
+            var pieces = found.Matches
+                .Where(match => CanReconnoitreSkeletalMesh(match.Kind, match.ClassName) && BodyProfiles.IsReshapeable(match.ObjectName) &&
+                                BodyProfiles.ForObjectName(match.ObjectName)?.Id == profile.Id)
+                .ToArray();
+            var outfits = pieces.Select(match => BodyProfiles.OutfitStem(match.ObjectName) ?? match.ObjectName)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            if (pieces.Length == 0)
+            {
+                ProportionStatusText.Text = $"No {profile.DisplayName} outfits were found in the index.";
+                return;
+            }
+            var minutes = Math.Max(1, (int)Math.Round(pieces.Length * ProportionSecondsPerPiece / 60));
+            var gigabytes = pieces.Length * ProportionMegabytesPerPiece / 1024;
+            var answer = MessageBox.Show(this,
+                $"This reshapes all {outfits:N0} {profile.DisplayName} outfits ({pieces.Length:N0} pieces) with {preset.Name} " +
+                "and saves them as one new mod.\n\n" +
+                $"It takes a long time: about {(minutes < 90 ? $"{minutes:N0} minutes" : $"{minutes / 60.0:N1} hours")} on this PC, " +
+                "since every piece gets a working copy and is checked against the game's skeleton and animations. " +
+                $"The working files and the mod take about {gigabytes:N1} GB. Arkive stays busy until it finishes; " +
+                "Stop ends it after the current piece and keeps the pieces done so far as a draft in Edit mods.\n\n" +
+                "Start now?",
+                "Apply preset to every outfit", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+            {
+                ProportionStatusText.Text = "Nothing was changed.";
+                return;
+            }
+            var requests = new List<BodyProportionPieceRequest>();
+            foreach (var package in pieces.GroupBy(match => match.SourcePath, StringComparer.OrdinalIgnoreCase))
+            {
+                var clean = await _arkiveModApply.ResolveCleanPackageAsync(package.Key);
+                foreach (var name in package.Select(match => match.ObjectName).Distinct(StringComparer.OrdinalIgnoreCase)
+                             .Order(StringComparer.OrdinalIgnoreCase))
+                    requests.Add(new BodyProportionPieceRequest(clean, package.First().PackageAlias, name, Path.GetDirectoryName(package.Key)));
+            }
+            _proportionBatchCancellation = new CancellationTokenSource();
+            ProportionCancelButton.Visibility = Visibility.Visible;
+            Log($"Proportion preset applied to every outfit of a body: preset={preset.Name}, body={profile.Id}, outfits={outfits}, pieces={requests.Count}.");
+            var started = DateTime.UtcNow;
+            ProportionStatusText.Text = await SaveProportionModAsync(new ProportionSaveRequest(
+                $"{preset.Name} · every {profile.DisplayName} outfit", profile, requests,
+                new Dictionary<string, double>(preset.Settings), preset.Follow)
+            {
+                Cancellation = _proportionBatchCancellation.Token,
+            });
+            Log($"Body-wide proportion mod finished in {(DateTime.UtcNow - started).TotalMinutes:N1} min for {requests.Count} pieces.");
+        }
+        catch (OperationCanceledException)
+        {
+            ProportionStatusText.Text = "Stopped. The pieces reshaped so far are in a draft in Edit mods: save it there to keep them as a mod, or remove it.";
+            Log("Body-wide proportion mod stopped by the user.");
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            ProportionStatusText.Text = $"The preset was not applied: {exception.Message}";
+            Log($"Body-wide proportion preset failed: {exception}");
+        }
+        finally
+        {
+            _proportionBatchCancellation?.Dispose();
+            _proportionBatchCancellation = null;
+            ProportionCancelButton.Visibility = Visibility.Collapsed;
+            _proportionBusy = false;
+            UpdateProportionActions();
+        }
+    }
+
+    private void ProportionCancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        _proportionBatchCancellation?.Cancel();
+        ProportionStatusText.Text = "Stopping after the current piece…";
+    }
+
     private void UpdateProportionActions()
     {
         if (ProportionOpenButton is null) return;
@@ -223,6 +328,9 @@ public partial class MainWindow
         ProportionApplyPresetButton.IsEnabled = !_proportionBusy && selected.Length > 0 &&
             ProportionPresetComboBox.SelectedItem is BodyProportionPreset preset &&
             selected.All(row => row.Profile.Id == preset.ProfileId);
+        ProportionApplyBodyButton.IsEnabled = !_proportionBusy &&
+            ProportionPresetComboBox.SelectedItem is BodyProportionPreset bodyPreset &&
+            BodyProfiles.All.FirstOrDefault(profile => profile.Id == bodyPreset.ProfileId) is { IsNpc: false };
     }
 
     private void ProportionPreviewButton_Click(object sender, RoutedEventArgs e)
@@ -303,9 +411,12 @@ public partial class MainWindow
                           $". Pieces: {string.Join(", ", request.Pieces.Select(piece => piece.ObjectName))}.";
         _authoringDraft = await _modAuthoringWorkspace.CreateAsync(new ArkiveModMetadata(request.ModName, "1.0.0", "", description));
         LoadAuthoringMetadata();
-        foreach (var piece in request.Pieces)
+        foreach (var (piece, index) in request.Pieces.Select((piece, index) => (piece, index)))
         {
+            request.Cancellation.ThrowIfCancellationRequested();
             AuthoringStatusText.Text = $"Reshaping {piece.ObjectName}…";
+            if (request.Pieces.Count > 1)
+                ProportionStatusText.Text = $"Reshaping piece {index + 1:N0} of {request.Pieces.Count:N0}: {piece.ObjectName}…";
             var created = await Task.Run(() => _modMaterializer.CreateEditableAsync(
                 new ArkiveModAssetSelection(piece.CleanPackagePath, piece.PackageAlias, "SkeletalMesh", piece.ObjectName)));
             var glb = EditablePath(created) ?? throw new InvalidDataException($"{piece.ObjectName} has no working GLB.");
@@ -320,6 +431,10 @@ public partial class MainWindow
                 EditIds = _authoringDraft.EditIds.Append(created.EditId).ToArray(),
             });
         }
+        request.Cancellation.ThrowIfCancellationRequested();
+        if (request.Pieces.Count > 1)
+            ProportionStatusText.Text = $"Checking all {request.Pieces.Count:N0} pieces against the game's skeleton and animations " +
+                                        "and saving them as one mod. This is the longest step…";
         var saved = await SaveAuthoringAsync();
         Log($"Proportion mod saved: name={request.ModName}, body={request.Profile.Id}, pieces={request.Pieces.Count}, " +
             $"settings={string.Join(", ", request.Settings.Where(pair => pair.Value != 0).Select(pair => $"{pair.Key}={pair.Value}"))}, " +

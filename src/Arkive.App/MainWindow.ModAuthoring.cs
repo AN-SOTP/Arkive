@@ -102,11 +102,13 @@ public partial class MainWindow : Window
                 edit is not null && ArkiveModTargetKey.From(asset) == edit.TargetKey);
             var changed = edit is not null && asset is not null && mod?.BindingFor(asset.AssetId) is { } binding &&
                 (binding.EditId != id || await ArkiveModAuthoringService.IsModifiedAsync(edit, binding));
+            var check = edit is null ? null : AuthoringCheck(edit);
             rows.Add(new AuthoringAssetRow(edit?.DisplayName ?? asset?.DisplayName ?? "Missing working asset",
                 edit?.Kind.ToString() ?? asset?.Kind.ToString() ?? "—",
                 asset?.Target.PackageAlias ?? Path.GetFileNameWithoutExtension(edit?.SourcePackagePath ?? string.Empty),
                 edit?.ObjectPath ?? edit?.ObjectName ?? asset?.Target.ObjectPath ?? asset?.Target.ObjectName ?? "—",
-                edit is null ? "Prepare for editing" : changed ? "Unsaved edits" : asset is null ? "Draft" : "Saved",
+                edit is null ? "Prepare for editing" : check is { Passed: false } ? "Fails mesh check"
+                    : changed ? "Unsaved edits" : asset is null ? "Draft" : "Saved",
                 _authoringDraft.EditIds.Contains(id), edit, asset?.AssetId, id));
         }
         if (mod is not null)
@@ -121,6 +123,86 @@ public partial class MainWindow : Window
         AuthoringSummaryText.Text = $"{rows.Count(row => row.Included):N0} asset(s) in the mod · " +
                                    $"{rows.Select(row => row.Package).Distinct().Count():N0} package(s)";
         UpdateAuthoringActions();
+        ShowAuthoringCheck();
+        _ = CheckChangedAuthoringMeshesAsync();
+    }
+
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+        if (WorkshopTab?.IsSelected == true) _ = CheckChangedAuthoringMeshesAsync();
+    }
+
+    // Mesh checks in place: a working mesh saved again outside Arkive (Blender) is checked as soon as Edit mods shows
+    // it or Arkive gets focus back, and its problems show under the list instead of only when the mod is saved.
+    private bool _authoringMeshCheckRunning;
+    private readonly Dictionary<string, string> _authoringMeshCheckedHashes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _authoringMeshCheckFailures = new(StringComparer.OrdinalIgnoreCase);
+
+    private ArkiveModEditCheckResult? AuthoringCheck(ArkiveModLocalEdit edit) =>
+        ArkiveModEditCheck.CheckedFile(edit) is { } file && _authoringMeshCheckFailures.TryGetValue(file.Path, out var failure)
+            ? new ArkiveModEditCheckResult(false, [$"Arkive could not check the edited file: {failure}"])
+            : ArkiveModEditCheck.Read(edit);
+
+    private async Task CheckChangedAuthoringMeshesAsync()
+    {
+        if (_authoringMeshCheckRunning || _authoringBusy || _authoringDraft is null || AuthoringAssetsGrid is null) return;
+        _authoringMeshCheckRunning = true;
+        try
+        {
+            var changed = new List<(ArkiveModLocalEdit Edit, string Path, string Hash)>();
+            foreach (var edit in AuthoringAssetsGrid.Items.OfType<AuthoringAssetRow>().Select(row => row.Edit).OfType<ArkiveModLocalEdit>())
+            {
+                if (ArkiveModEditCheck.CheckedFile(edit) is not { } file || !File.Exists(file.Path)) continue;
+                var hash = await ArkiveModEditCheck.Sha256Async(file.Path);
+                if (hash.Equals(file.CheckedSha256, StringComparison.OrdinalIgnoreCase) ||
+                    _authoringMeshCheckedHashes.GetValueOrDefault(file.Path) == hash) continue;
+                changed.Add((edit, file.Path, hash));
+            }
+            if (changed.Count == 0) return;
+            await RunAuthoringOperationAsync(async () =>
+            {
+                foreach (var (edit, path, hash) in changed)
+                {
+                    _authoringMeshCheckedHashes[path] = hash;
+                    AuthoringStatusText.Text = $"Checking the changed {edit.DisplayName}…";
+                    try
+                    {
+                        var checkedEdit = await Task.Run(() => _arkiveModAuthoring.ValidateEditAsync(edit));
+                        _authoringMeshCheckFailures.Remove(path);
+                        var result = ArkiveModEditCheck.Read(checkedEdit);
+                        Log($"Changed mesh checked: {edit.DisplayName}, passed={result?.Passed}, problems={string.Join(" | ", result?.Problems ?? [])}.");
+                    }
+                    catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+                    {
+                        _authoringMeshCheckFailures[path] = exception.Message;
+                        Log($"Changed mesh could not be checked: {edit.DisplayName}, error={exception}");
+                    }
+                }
+                AuthoringStatusText.Text = changed.Count == 1
+                    ? $"Checked the changed {changed[0].Edit.DisplayName}."
+                    : $"Checked {changed.Count:N0} changed meshes.";
+            });
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            Log($"Mesh check of the changed working files failed: {exception}");
+        }
+        finally { _authoringMeshCheckRunning = false; }
+    }
+
+    /// <summary>Shows the selected working meshes' check problems, with what to do about them.</summary>
+    private void ShowAuthoringCheck()
+    {
+        if (AuthoringCheckPanel is null) return;
+        var failing = AuthoringAssetsGrid.SelectedItems.OfType<AuthoringAssetRow>()
+            .Select(row => (row, check: row.Edit is null ? null : AuthoringCheck(row.Edit)))
+            .Where(item => item.check is { Passed: false }).ToArray();
+        AuthoringCheckPanel.Visibility = failing.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AuthoringCheckText.Text = string.Join(Environment.NewLine + Environment.NewLine, failing.Select(item =>
+            $"{item.row.Name} fails the mesh check and cannot be saved into the mod until this is fixed:" + Environment.NewLine +
+            string.Join(Environment.NewLine, item.check!.Problems.DefaultIfEmpty("The check found a problem; see the session log.")
+                .Select(problem => "• " + problem))));
     }
 
     private ArkiveModMetadata AuthoringMetadata() => new(
@@ -247,7 +329,11 @@ public partial class MainWindow : Window
             ? "Edit material" : "Open edited file";
     }
 
-    private void AuthoringAssetsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateAuthoringActions();
+    private void AuthoringAssetsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateAuthoringActions();
+        ShowAuthoringCheck();
+    }
 
     private void AuthoringAddAssetsButton_Click(object sender, RoutedEventArgs e)
     { AuthoringSearchExpander.IsExpanded = true; WorkshopSearchTextBox.Focus(); }

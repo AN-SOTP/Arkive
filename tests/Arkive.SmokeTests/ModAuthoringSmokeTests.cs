@@ -15,6 +15,7 @@ internal static class ModAuthoringSmokeTests
         new("prepares editing from a verified clean backup while another mod stays installed", TestPrepareInstalledPackage),
         new("refuses unsaved edits and invalidates a reviewed apply plan when saved content changes", TestSaveApplyConsistency),
         new("revalidates in-place mesh edits on save and preserves the portable mod on failure", TestMeshSaveValidation),
+        new("packs logs, mod list and mesh checks into a problem report without game files", TestProblemReport),
         new("exports clean assets into independent working copies without changing game files", TestDirectAssetExport),
         new("reports asset-export stages and honours cancellation without adding a working edit", TestAssetExportCancellation),
         new("refuses changed retained mesh evidence before invoking the asset-kit exporter", TestRetainedKitEvidence),
@@ -280,8 +281,45 @@ internal static class ModAuthoringSmokeTests
         WriteSkeletalMeshMaterialRename(export.GlbPath, registered.EditedGlbPath);
         Assert(ArkiveModAuthoringService.IsModifiedAsync(local, mod.BindingFor(asset.AssetId)!).GetAwaiter().GetResult(),
             "in-place mesh change was hidden by a stale preflight hash");
-        Expect("AUT020", () => author.SaveDraftAsync(draft with { ModId = mod.ModId }).GetAwaiter().GetResult());
+        Assert(ArkiveModEditCheck.Read(local) is { Passed: true } && ArkiveModEditCheck.IsStaleAsync(local).GetAwaiter().GetResult(),
+            "a working mesh changed after its check was not reported as needing a new check");
+        var rechecked = author.ValidateEditAsync(local).GetAwaiter().GetResult();
+        Assert(ArkiveModEditCheck.Read(rechecked) is { Passed: false, Problems: [var problem, ..] } && problem.StartsWith("SMT013", StringComparison.Ordinal) &&
+               !ArkiveModEditCheck.IsStaleAsync(rechecked).GetAwaiter().GetResult(),
+            "the in-place check did not name the failing mesh's problem");
+        var refusal = Expect("AUT020", () => author.SaveDraftAsync(draft with { ModId = mod.ModId }).GetAwaiter().GetResult());
+        Assert(refusal.Contains("SMT013", StringComparison.Ordinal), "the save refusal did not name the mesh check's error");
         Assert(File.ReadAllBytes(env.Library.GetModFilePath(mod)).SequenceEqual(portable), "invalid mesh save changed the portable mod");
+    }
+
+    private static void TestProblemReport()
+    {
+        var root = Path.Combine(fixtureDirectory, "problem-report");
+        Directory.CreateDirectory(root);
+        var log = Path.Combine(root, "arkive-current.log");
+        File.WriteAllText(log, "older lines\n");
+        using var writer = new FileStream(log, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        writer.Write("still being written\n"u8);
+        writer.Flush();
+        var large = Path.Combine(root, "large.log");
+        using (var stream = File.Create(large))
+        {
+            stream.Write(new byte[ArkiveProblemReport.MaximumFileBytes]);
+            stream.Write("the end"u8);
+        }
+        var path = ArkiveProblemReport.CreateAsync(Path.Combine(root, "reports"), new ArkiveProblemReportContent("Arkive test",
+                new Dictionary<string, string> { ["mods.txt"] = "[on] A mod" },
+                new Dictionary<string, string> { ["logs/current.log"] = log, ["logs/large.log"] = large, ["logs/missing.log"] = Path.Combine(root, "missing.log") }))
+            .GetAwaiter().GetResult();
+        using var zip = ZipFile.OpenRead(path);
+        string Read(string name) { using var reader = new StreamReader(zip.GetEntry(name)!.Open()); return reader.ReadToEnd(); }
+        Assert(zip.Entries.Select(entry => entry.FullName).Order().SequenceEqual(["logs/current.log", "logs/large.log", "mods.txt", "summary.txt"]),
+            "the problem report holds unexpected entries: " + string.Join(", ", zip.Entries.Select(entry => entry.FullName)));
+        Assert(Read("summary.txt") == "Arkive test" && Read("logs/current.log").Contains("still being written", StringComparison.Ordinal),
+            "the problem report lost the summary or the log being written");
+        Assert(zip.GetEntry("logs/large.log")!.Length == ArkiveProblemReport.MaximumFileBytes && Read("logs/large.log").EndsWith("the end", StringComparison.Ordinal),
+            "a long log was not cut to its end");
+        Assert(!Directory.EnumerateFiles(Path.Combine(root, "reports"), "*.tmp").Any(), "a partial problem report was left behind");
     }
 
     private static string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
@@ -415,9 +453,9 @@ internal static class ModAuthoringSmokeTests
         finally { Environment.CurrentDirectory = previous; }
     }
 
-    private static void Expect(string code, Action action)
+    private static string Expect(string code, Action action)
     {
         try { action(); throw new InvalidOperationException($"Expected refusal {code}."); }
-        catch (ArkiveModRefusalException refusal) when (refusal.Code == code) { }
+        catch (ArkiveModRefusalException refusal) when (refusal.Code == code) { return refusal.Message; }
     }
 }

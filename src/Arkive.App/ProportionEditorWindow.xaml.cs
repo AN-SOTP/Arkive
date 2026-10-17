@@ -14,7 +14,11 @@ public sealed record ProportionSaveRequest(
     BodyProfile Profile,
     IReadOnlyList<BodyProportionPieceRequest> Pieces,
     IReadOnlyDictionary<string, double> Settings,
-    BodyProportionFollow Follow);
+    BodyProportionFollow Follow)
+{
+    /// <summary>Stops reshaping between pieces; the pieces done so far stay in the mod's draft.</summary>
+    public CancellationToken Cancellation { get; init; }
+}
 
 /// <summary>
 /// Arkive's model viewer with body proportion sliders: shows every chosen piece of an outfit together, reshapes

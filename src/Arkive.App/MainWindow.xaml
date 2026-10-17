@@ -130,6 +130,8 @@
                                        Text="Create, edit, and apply portable Lost Ark mods." />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Report a problem" Click="ReportProblemButton_Click"
+                                    ToolTip="Pack Arkive's recent logs, your mod list and the checks of the meshes you're editing into one file and copy it, ready to send. No game files or settings are included." />
                             <Button Content="Edit mods" Click="OpenWorkshopButton_Click" />
                             <Button Content="Open package…" Click="OpenPackage_Click"
                                     Style="{StaticResource PrimaryButtonStyle}" />
@@ -185,6 +187,7 @@
                                               IsEnabled="False" Click="BaselineAssetButton_Click" />
                                     <Separator />
                                     <MenuItem Header="Open session logs" Click="OpenLogsButton_Click" />
+                                    <MenuItem Header="Report a problem…" Click="ReportProblemButton_Click" />
                                     <MenuItem Header="About / licence" Click="AboutLicenseButton_Click" />
                                 </ContextMenu>
                             </Button.ContextMenu>
@@ -804,6 +807,11 @@
                                     </WrapPanel>
                                     <TextBlock x:Name="AuthoringSummaryText" Text="Include the assets you want this mod to replace."
                                                Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,5,0,0" />
+                                    <Border x:Name="AuthoringCheckPanel" Visibility="Collapsed" Margin="0,6,0,0" Padding="8,6"
+                                            Background="{DynamicResource DangerSurfaceBrush}" BorderBrush="{DynamicResource DangerBorderBrush}"
+                                            BorderThickness="1">
+                                        <TextBlock x:Name="AuthoringCheckText" TextWrapping="Wrap" Foreground="{DynamicResource DangerTextBrush}" />
+                                    </Border>
                                 </StackPanel>
                                 <DataGrid x:Name="AuthoringAssetsGrid" IsReadOnly="True" AutoGenerateColumns="False"
                                           CanUserAddRows="False" CanUserResizeColumns="True" SelectionMode="Extended" SelectionUnit="FullRow"
@@ -857,6 +865,12 @@
                                 <Button x:Name="ProportionApplyPresetButton" Content="Apply preset to selected outfits" IsEnabled="False"
                                         Click="ProportionApplyPresetButton_Click"
                                         ToolTip="Reshape every selected outfit (and, with Open the whole outfit, its other pieces) with the chosen preset and save them all as one new mod." />
+                                <Button x:Name="ProportionApplyBodyButton" Content="Apply preset to every outfit of its body" IsEnabled="False"
+                                        Click="ProportionApplyBodyButton_Click"
+                                        ToolTip="Reshape every player outfit of the preset's body (for example every Female Warrior outfit) with the chosen preset and save them all as one new mod. This takes a long time; Arkive asks first." />
+                                <Button x:Name="ProportionCancelButton" Content="Stop" Visibility="Collapsed"
+                                        Click="ProportionCancelButton_Click"
+                                        ToolTip="Stop after the piece being reshaped. The pieces done so far stay in a draft in Edit mods." />
                             </WrapPanel>
                             <TextBlock x:Name="ProportionStatusText" Margin="0,6,0,0" TextWrapping="Wrap"
                                        Text="Search for a player outfit or one of the supported NPCs to begin." />
