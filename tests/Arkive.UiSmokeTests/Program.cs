@@ -99,6 +99,7 @@ internal static class Program
         CheckSimpleUpscalePresets(window, root);
         CheckEditModsUpscaleAndMeshChecks(window);
         CheckEditableComboBox();
+        await CheckCleanUpWorkingFilesAsync(window);
         var advanced = Control<Button>(window, "AdvancedSectionsButton").ContextMenu;
         var modTools = advanced.Items.OfType<MenuItem>().Single(item => item.Header.ToString() == "Mod tools");
         modTools.Items.OfType<MenuItem>().Single(item => item.Tag?.ToString() == "PackageProjects")
@@ -270,6 +271,25 @@ internal static class Program
         Invoke<object?>(window, "UpdateAuthoringActions");
         Check(shown, "Edit in proportion editor is not offered for a saved upscale mod.");
         Console.WriteLine("PASS: Edit mods offers Edit in proportion editor for upscale mods and keeps the mesh check panel hidden until a mesh fails");
+    }
+
+    // Nothing in a fresh library qualifies (and anything under an hour old is kept), so no confirmation opens.
+    private static async Task CheckCleanUpWorkingFilesAsync(MainWindow window)
+    {
+        var field = (string name) => (MenuItem)typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+        var cleanUp = field("ModLibraryCleanUpWorkingFilesButton");
+        Check(cleanUp.Header.ToString() == "Clean up working files…" &&
+              ReferenceEquals(cleanUp.Parent, field("ModLibraryRestoreOtherFolderButton").Parent),
+            "Clean up working files is not in Mods > More actions.");
+        var status = Control<TextBlock>(window, "ModLibraryStatusText");
+        Invoke<object?>(window, "ModLibraryCleanUpWorkingFilesButton_Click", cleanUp, new RoutedEventArgs(MenuItem.ClickEvent));
+        await UntilAsync(() => status.Text.StartsWith("No other working files", StringComparison.Ordinal) ||
+                               status.Text.StartsWith("Freed", StringComparison.Ordinal) ||
+                               status.Text.StartsWith("Working files were not", StringComparison.Ordinal),
+            () => $"Clean up working files did not finish: {status.Text}");
+        Check(status.Text.Contains("No other working files to clean up", StringComparison.Ordinal),
+            "Clean up working files found something to delete in a fresh library: " + status.Text);
+        Console.WriteLine("PASS: Mods > More actions > Clean up working files finds nothing to delete in a fresh library without asking");
     }
 
     private static void CheckEditableComboBox()
