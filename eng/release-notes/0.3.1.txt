@@ -1,0 +1,7 @@
+Animations, game lighting and skies in the model viewer, body presets, and safer restores.
+
+- The model viewer and the Simple upscale editor can play the character's own game animations (idles, character select, walking and running, emotes, dances and poses; NPCs and monsters their own), with pause and speed, to check clipping in motion.
+- New Lighting panel: light the model with the game's own environment maps, show one of about 75 of the game's skies behind it (optionally lighting the model too), and aim, dim and recolour a sun (Shift-drag in the view moves it). Daylight, Overcast, Evening and Interior presets.
+- Simple upscale: save slider settings as presets per body and apply a preset to many outfits in one mod. Reshaped meshes now turn their normals and tangents with the new shape, so lighting and shadows follow it instead of looking blocky. Game shader colours work and are the default in the editor, also for outfits that already have a mod applied.
+- Arkive now notices when a game file it manages was changed outside this Arkive (for example by another Arkive data folder or a game update) and can restore originals kept by another Arkive folder (Mods > Restore from another Arkive folder…).
+- Mesh edits from Blender: scaling, sculpting or smoothing a whole mesh no longer fails preflight because of the game mesh's own zero-area triangles; unweighted new geometry gets a clear explanation, and a mod that fails preflight names the errors.
