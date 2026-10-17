@@ -2613,7 +2613,20 @@
                                               SelectionMode="Single" SelectionUnit="FullRow"
                                               SelectionChanged="ModLibraryGrid_SelectionChanged"
                                               CellEditEnding="ModLibraryGrid_CellEditEnding"
+                                              PreviewMouseRightButtonDown="ModLibraryGrid_PreviewMouseRightButtonDown"
+                                              PreviewKeyDown="ModLibraryGrid_PreviewKeyDown"
                                               GridLinesVisibility="Horizontal" HeadersVisibility="Column">
+                                        <DataGrid.ContextMenu>
+                                            <ContextMenu x:Name="ModLibraryRowMenu" Opened="ModLibraryRowMenu_Opened">
+                                                <MenuItem x:Name="ModLibraryRowEnableItem" Header="Disable" Click="ModLibraryEnableButton_Click" />
+                                                <MenuItem x:Name="ModLibraryRowPriorityUpItem" Header="Increase priority" InputGestureText="Ctrl+Up"
+                                                          Click="ModLibraryPriorityUpButton_Click" />
+                                                <MenuItem x:Name="ModLibraryRowPriorityDownItem" Header="Decrease priority" InputGestureText="Ctrl+Down"
+                                                          Click="ModLibraryPriorityDownButton_Click" />
+                                                <MenuItem x:Name="ModLibraryRowRenameItem" Header="Rename" InputGestureText="F2"
+                                                          Click="ModLibraryRowRenameItem_Click" />
+                                            </ContextMenu>
+                                        </DataGrid.ContextMenu>
                                         <DataGrid.Columns>
                                             <DataGridTemplateColumn Header="On" Width="45">
                                                 <DataGridTemplateColumn.CellTemplate>
@@ -2625,8 +2638,32 @@
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTextColumn Header="Priority" Binding="{Binding Priority, Mode=OneWay}" Width="70" />
-                                            <DataGridTextColumn Header="Mod" Binding="{Binding DisplayName}" Width="320" IsReadOnly="True" />
+                                            <DataGridTemplateColumn Header="Priority" Width="70" IsReadOnly="True">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBox Text="{Binding Priority, Mode=OneWay}" MinWidth="44" Padding="3,0"
+                                                                 VerticalAlignment="Center" HorizontalContentAlignment="Right"
+                                                                 PreviewKeyDown="ModLibraryPriorityBox_PreviewKeyDown"
+                                                                 LostKeyboardFocus="ModLibraryPriorityBox_LostKeyboardFocus"
+                                                                 ToolTip="Type a priority and press Enter, or use the Up and Down keys. When two enabled mods change the same asset, the higher priority wins." />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <!-- A template column: a bound text column with a one-way binding can never be edited. -->
+                                            <DataGridTemplateColumn x:Name="ModLibraryNameColumn" Header="Mod" Width="320" SortMemberPath="DisplayName">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" Padding="2,0"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                                <DataGridTemplateColumn.CellEditingTemplate>
+                                                    <DataTemplate>
+                                                        <TextBox Text="{Binding DisplayName, Mode=OneWay}" Loaded="ModLibraryNameBox_Loaded"
+                                                                 ToolTip="Type a new name and press Enter, or Escape to keep the old one." />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellEditingTemplate>
+                                            </DataGridTemplateColumn>
                                             <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="70" IsReadOnly="True" />
                                             <DataGridTextColumn Header="Author" Binding="{Binding Author}" Width="120" IsReadOnly="True" />
                                             <DataGridTextColumn Header="Assets" Binding="{Binding AssetSummary}" Width="190" IsReadOnly="True" />

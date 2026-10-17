@@ -168,6 +168,7 @@ internal static class Program
             "The all-fields search scope was not restored.");
         Console.WriteLine("PASS: reopening restores authoring identity and metadata");
         WorkflowLayoutChecks.VerifyRestored(window, root);
+        await ModLibraryRowChecks.VerifyAsync(window, root);
         if (screenshotDirectory is not null)
         {
             tabs = Control<TabControl>(window, "MainTabControl");

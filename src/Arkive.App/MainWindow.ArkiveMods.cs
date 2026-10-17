@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Arkive.Core.Mods;
 using Microsoft.Win32;
@@ -266,6 +268,7 @@ public partial class MainWindow : Window
         {
             _modLibraryBusy = false;
             await RefreshArkiveModsAsync(title, selectModId);
+            UpdateModLibraryActionState();
         }
     }
 
@@ -313,24 +316,133 @@ public partial class MainWindow : Window
             return $"{row.DisplayName} {(enabled ? "enabled" : "disabled")}. Choose Apply changes to update the game.";
         }, row.Entry.ModId);
 
+    /// <summary>Renames a mod typed into the Mod column (F2, a slow second click or right-click, Rename).</summary>
     private void ModLibraryGrid_CellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
     {
         if (e.EditAction != DataGridEditAction.Commit || e.Row.Item is not ModLibraryRow row ||
-            e.EditingElement is not TextBox textBox || !"Priority".Equals(e.Column.Header as string, StringComparison.Ordinal))
+            e.Column != ModLibraryNameColumn || FindChild<TextBox>(e.EditingElement) is not { } textBox)
             return;
-        if (!int.TryParse(textBox.Text.Trim().Replace('−', '-'), System.Globalization.NumberStyles.AllowLeadingSign,
-                System.Globalization.CultureInfo.CurrentCulture, out var priority))
+        var name = textBox.Text.Trim();
+        if (name.Length == 0 || name == row.DisplayName) return;
+        // The grid is still inside its edit; finish it before the list is rebuilt, or the rebuild fails and the
+        // list and its buttons stay stale until another tab is opened.
+        _ = Dispatcher.InvokeAsync(async () =>
         {
-            textBox.Text = row.Priority.ToString(System.Globalization.CultureInfo.CurrentCulture);
-            MessageBox.Show(this,
-                $"Priority must be a whole number between {ArkiveModLibrary.MinimumPriority:N0} and {ArkiveModLibrary.MaximumPriority:N0}.",
-                "Mod priority", MessageBoxButton.OK, MessageBoxImage.Information);
+            ModLibraryGrid.CommitEdit(DataGridEditingUnit.Row, exitEditingMode: true);
+            await SaveModMetadataAsync(row, ModMetadata(row) with { Name = name }, "Rename mod");
+        }, DispatcherPriority.Background);
+    }
+
+    private void ModLibraryNameBox_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TextBox box) return;
+        box.Focus();
+        box.SelectAll();
+    }
+
+    private static T? FindChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        if (parent is T self) return self;
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+            if (FindChild<T>(VisualTreeHelper.GetChild(parent, index)) is { } found) return found;
+        return null;
+    }
+
+    private void ModLibraryRowRenameItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (ModLibraryGrid.SelectedItem is not ModLibraryRow row || !ModLibraryIdle) return;
+        ModLibraryGrid.ScrollIntoView(row, ModLibraryNameColumn);
+        ModLibraryGrid.Focus();
+        ModLibraryGrid.CurrentCell = new DataGridCellInfo(row, ModLibraryNameColumn);
+        ModLibraryGrid.BeginEdit();
+    }
+
+    /// <summary>F2 renames the selected mod; Ctrl+Up and Ctrl+Down change its priority.</summary>
+    private async void ModLibraryGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.OriginalSource is TextBox || ModLibraryGrid.SelectedItem is not ModLibraryRow row || !ModLibraryIdle) return;
+        if (e.Key == Key.F2)
+        {
+            e.Handled = true;
+            ModLibraryRowRenameItem_Click(sender, e);
+        }
+        else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key is Key.Up or Key.Down)
+        {
+            e.Handled = true;
+            await SetModPriorityAsync(row, Math.Clamp(row.Priority + (e.Key == Key.Up ? 1 : -1),
+                ArkiveModLibrary.MinimumPriority, ArkiveModLibrary.MaximumPriority));
+        }
+    }
+
+    /// <summary>Selects the row under the mouse, so the right-click menu acts on it.</summary>
+    private void ModLibraryGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        for (var element = e.OriginalSource as DependencyObject; element is not null && element != ModLibraryGrid;
+             element = VisualTreeHelper.GetParent(element))
+        {
+            if (element is not DataGridRow { Item: ModLibraryRow row }) continue;
+            ModLibraryGrid.SelectedItem = row;
             return;
         }
-        if (priority == row.Priority) return;
-        // Changing ItemsSource while the grid is still committing the edit is not allowed.
+    }
+
+    private void ModLibraryRowMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        var row = ModLibraryGrid.SelectedItem as ModLibraryRow;
+        var enabled = ModLibraryIdle && row is not null;
+        ModLibraryRowEnableItem.Header = row?.Enabled == true ? "Disable" : "Enable";
+        ModLibraryRowEnableItem.IsEnabled = ModLibraryRowPriorityUpItem.IsEnabled =
+            ModLibraryRowPriorityDownItem.IsEnabled = enabled;
+        ModLibraryRowRenameItem.IsEnabled = enabled && !row!.Status.FileMissing;
+    }
+
+    /// <summary>The priority box: Enter applies a typed number, Up and Down step it, Escape puts it back.</summary>
+    private void ModLibraryPriorityBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox { DataContext: ModLibraryRow row } box) return;
+        switch (e.Key)
+        {
+            case Key.Enter:
+                e.Handled = true;
+                CommitPriorityBox(box, row);
+                break;
+            case Key.Escape:
+                e.Handled = true;
+                box.Text = row.Priority.ToString(System.Globalization.CultureInfo.CurrentCulture);
+                break;
+            case Key.Up or Key.Down:
+                e.Handled = true;
+                var current = ReadPriority(box.Text) ?? row.Priority;
+                box.Text = Math.Clamp(current + (e.Key == Key.Up ? 1 : -1), ArkiveModLibrary.MinimumPriority,
+                    ArkiveModLibrary.MaximumPriority).ToString(System.Globalization.CultureInfo.CurrentCulture);
+                CommitPriorityBox(box, row);
+                break;
+        }
+    }
+
+    private void ModLibraryPriorityBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is TextBox { DataContext: ModLibraryRow row } box) CommitPriorityBox(box, row);
+    }
+
+    private void CommitPriorityBox(TextBox box, ModLibraryRow row)
+    {
+        if (ReadPriority(box.Text) is not { } priority)
+        {
+            box.Text = row.Priority.ToString(System.Globalization.CultureInfo.CurrentCulture);
+            ModLibraryStatusText.Text =
+                $"Priority must be a whole number between {ArkiveModLibrary.MinimumPriority:N0} and {ArkiveModLibrary.MaximumPriority:N0}.";
+            return;
+        }
+        if (priority == row.Priority || !ModLibraryIdle) return;
         _ = Dispatcher.InvokeAsync(() => SetModPriorityAsync(row, priority), DispatcherPriority.Background);
     }
+
+    private static int? ReadPriority(string text) =>
+        int.TryParse(text.Trim().Replace('−', '-'), System.Globalization.NumberStyles.AllowLeadingSign,
+            System.Globalization.CultureInfo.CurrentCulture, out var priority) &&
+        priority >= ArkiveModLibrary.MinimumPriority && priority <= ArkiveModLibrary.MaximumPriority
+            ? priority : null;
 
     private async void ModLibraryPriorityUpButton_Click(object sender, RoutedEventArgs e)
     {
@@ -533,7 +645,16 @@ public partial class MainWindow : Window
             ModDetailsDescriptionTextBox.Text,
             ModDetailsWebsiteTextBox.Text,
             row.Entry.Manifest.Tags);
-        await RunModLibraryOperationAsync("Save mod details", async () =>
+        await SaveModMetadataAsync(row, metadata, "Save mod details");
+    }
+
+    private static ArkiveModMetadata ModMetadata(ModLibraryRow row) => new(
+        row.Entry.Manifest.Name, row.Entry.Manifest.Version, row.Entry.Manifest.Author,
+        row.Entry.Manifest.Description, row.Entry.Manifest.Website, row.Entry.Manifest.Tags);
+
+    /// <summary>Writes new details into the mod's .arkive file and any open draft of it.</summary>
+    private Task SaveModMetadataAsync(ModLibraryRow row, ArkiveModMetadata metadata, string title) =>
+        RunModLibraryOperationAsync(title, async () =>
         {
             var saved = await _arkiveModAuthoring.SaveModAsync(row.Entry.ModId, metadata);
             var drafts = await _modAuthoringWorkspace.LoadAsync();
@@ -546,7 +667,6 @@ public partial class MainWindow : Window
             Log($"Mod details saved: mod={saved.ModId}, name={saved.Manifest.Name}, version={saved.Manifest.Version}.");
             return $"Saved details for {saved.Manifest.Name} {saved.Manifest.Version}.";
         }, row.Entry.ModId);
-    }
 
     private async void ModLibraryUpdateButton_Click(object sender, RoutedEventArgs e)
     {
