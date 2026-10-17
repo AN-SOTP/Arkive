@@ -225,10 +225,10 @@ public partial class MainWindow
 
     /// <summary>
     /// About how long one piece takes from start to finish (working copy, reshaping, then the skeleton and animation
-    /// checks when the mod is saved; measured at 5 s on 89 Female Warrior pieces), and how much disk its working files and
-    /// its share of the mod take (about 7 MB and 1.8 MB).
+    /// checks when the mod is saved; about 3 s on a 536-piece Female Warrior run), and how much disk its working files
+    /// and its share of the mod take (about 7 MB and 1.8 MB).
     /// </summary>
-    private const double ProportionSecondsPerPiece = 5.5;
+    private const double ProportionSecondsPerPiece = 3;
     private const double ProportionMegabytesPerPiece = 9;
 
     private CancellationTokenSource? _proportionBatchCancellation;
@@ -265,12 +265,12 @@ public partial class MainWindow
                 ProportionStatusText.Text = $"No {profile.DisplayName} outfits were found in the index.";
                 return;
             }
-            var minutes = Math.Max(1, (int)Math.Round(pieces.Length * ProportionSecondsPerPiece / 60));
+            var minutes = pieces.Length * ProportionSecondsPerPiece / 60;
             var gigabytes = pieces.Length * ProportionMegabytesPerPiece / 1024;
             var answer = MessageBox.Show(this,
                 $"This reshapes all {outfits:N0} {profile.DisplayName} outfits ({pieces.Length:N0} pieces) with {preset.Name} " +
                 "and saves them as one new mod.\n\n" +
-                $"It takes a long time: about {(minutes < 90 ? $"{minutes:N0} minutes" : $"{minutes / 60.0:N1} hours")} on this PC, " +
+                $"It takes a long time: about {Duration(minutes)} on this PC, " +
                 "since every piece gets a working copy and is checked against the game's skeleton and animations. " +
                 $"The working files and the mod take about {gigabytes:N1} GB. Arkive stays busy until it finishes; " +
                 "Stop ends it after the current piece and keeps the pieces done so far as a draft in Edit mods.\n\n" +
@@ -280,6 +280,20 @@ public partial class MainWindow
             {
                 ProportionStatusText.Text = "Nothing was changed.";
                 return;
+            }
+            var parallelism = 1;
+            if (ProportionParallelism > 1)
+            {
+                var together = ProportionParallelism;
+                var faster = MessageBox.Show(this,
+                    $"Reshape {together} pieces at once?\n\n" +
+                    $"Working on {together} pieces at the same time takes about {Duration(minutes / ProportionSpeedUp(together))} " +
+                    $"instead of {Duration(minutes)}. It is more taxing on this PC: it keeps {together} of its " +
+                    $"{Environment.ProcessorCount} processor threads busy and uses about twice the memory (around 1 GB), so the PC " +
+                    "and other programs (and the game, if it is open) may feel slower and its fans louder until it finishes.\n\n" +
+                    $"Yes: {together} at once. No: one piece at a time.",
+                    "Apply preset to every outfit", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+                if (faster == MessageBoxResult.Yes) parallelism = together;
             }
             var requests = new List<BodyProportionPieceRequest>();
             foreach (var package in pieces.GroupBy(match => match.SourcePath, StringComparer.OrdinalIgnoreCase))
@@ -291,13 +305,15 @@ public partial class MainWindow
             }
             _proportionBatchCancellation = new CancellationTokenSource();
             ProportionCancelButton.Visibility = Visibility.Visible;
-            Log($"Proportion preset applied to every outfit of a body: preset={preset.Name}, body={profile.Id}, outfits={outfits}, pieces={requests.Count}.");
+            Log($"Proportion preset applied to every outfit of a body: preset={preset.Name}, body={profile.Id}, outfits={outfits}, " +
+                $"pieces={requests.Count}, at once={parallelism}.");
             var started = DateTime.UtcNow;
             ProportionStatusText.Text = await SaveProportionModAsync(new ProportionSaveRequest(
                 $"{preset.Name} · every {profile.DisplayName} outfit", profile, requests,
                 new Dictionary<string, double>(preset.Settings), preset.Follow)
             {
                 Cancellation = _proportionBatchCancellation.Token,
+                Parallelism = parallelism,
             });
             Log($"Body-wide proportion mod finished in {(DateTime.UtcNow - started).TotalMinutes:N1} min for {requests.Count} pieces.");
         }
@@ -328,6 +344,59 @@ public partial class MainWindow
     }
 
     private const int MaximumEditorPieces = 20;
+
+    /// <summary>
+    /// Gives every piece a working copy and reshapes it, one after another or several at the same time (each has its
+    /// own working copy, so they share no files), then adds them to the draft in their original order. Stopping keeps
+    /// the pieces finished so far in the draft.
+    /// </summary>
+    private async Task ReshapePiecesAsync(ProportionSaveRequest request)
+    {
+        var editIds = new string?[request.Pieces.Count];
+        var finished = 0;
+        try
+        {
+            await Parallel.ForEachAsync(Enumerable.Range(0, request.Pieces.Count),
+                new ParallelOptions { MaxDegreeOfParallelism = request.Parallelism, CancellationToken = request.Cancellation },
+                async (index, token) =>
+                {
+                    var piece = request.Pieces[index];
+                    if (request.Parallelism == 1 && request.Pieces.Count > 1)
+                        _ = Dispatcher.InvokeAsync(() => ProportionStatusText.Text =
+                            $"Reshaping piece {index + 1:N0} of {request.Pieces.Count:N0}: {piece.ObjectName}…");
+                    var created = await _modMaterializer.CreateEditableAsync(
+                        new ArkiveModAssetSelection(piece.CleanPackagePath, piece.PackageAlias, "SkeletalMesh", piece.ObjectName), token);
+                    var glb = EditablePath(created) ?? throw new InvalidDataException($"{piece.ObjectName} has no working GLB.");
+                    var bytes = await File.ReadAllBytesAsync(glb, token);
+                    var model = BodyProportionEngine.Build(bytes, request.Follow, request.Profile, piece.ObjectName);
+                    await File.WriteAllBytesAsync(glb, BodyProportionEngine.Apply(bytes, model, request.Settings), token);
+                    editIds[index] = created.EditId;
+                    var count = Interlocked.Increment(ref finished);
+                    if (request.Parallelism > 1)
+                        _ = Dispatcher.InvokeAsync(() => ProportionStatusText.Text =
+                            $"Reshaped {count:N0} of {request.Pieces.Count:N0} pieces ({request.Parallelism} at a time)…");
+                });
+        }
+        finally
+        {
+            _authoringDraft = await _modAuthoringWorkspace.SaveAsync(_authoringDraft! with
+            {
+                EditIds = _authoringDraft.EditIds.Concat(editIds.OfType<string>()).ToArray(),
+            });
+        }
+    }
+
+    /// <summary>
+    /// How many pieces a body-wide run can reshape at once on this PC: half its processor cores, two to four. One on
+    /// PCs with fewer than four cores, where it would only slow everything else down.
+    /// </summary>
+    private static int ProportionParallelism => Environment.ProcessorCount < 4 ? 1 : Math.Clamp(Environment.ProcessorCount / 2, 2, 4);
+
+    /// <summary>How many times faster several at once is: measured 2.5 times with four on 60 Female Warrior pieces.</summary>
+    private static double ProportionSpeedUp(int parallelism) => 1 + (parallelism - 1) * 0.5;
+
+    private static string Duration(double minutes) =>
+        minutes < 90 ? $"{Math.Max(1, Math.Round(minutes)):N0} minutes" : $"{minutes / 60:N1} hours";
 
     /// <summary>Reopens the Simple upscale mod open in Edit mods in the proportion editor, with its sliders.</summary>
     private async void AuthoringProportionsButton_Click(object sender, RoutedEventArgs e)
@@ -506,32 +575,13 @@ public partial class MainWindow
             _authoringDraft = await _modAuthoringWorkspace.CreateAsync(new ArkiveModMetadata(request.ModName, "1.0.0", "", description,
                 Tags: tags));
         LoadAuthoringMetadata();
-        foreach (var (piece, index) in request.Pieces.Select((piece, index) => (piece, index)))
-        {
-            request.Cancellation.ThrowIfCancellationRequested();
-            AuthoringStatusText.Text = $"Reshaping {piece.ObjectName}…";
-            if (request.Pieces.Count > 1)
-                ProportionStatusText.Text = $"Reshaping piece {index + 1:N0} of {request.Pieces.Count:N0}: {piece.ObjectName}…";
-            var created = await Task.Run(() => _modMaterializer.CreateEditableAsync(
-                new ArkiveModAssetSelection(piece.CleanPackagePath, piece.PackageAlias, "SkeletalMesh", piece.ObjectName)));
-            var glb = EditablePath(created) ?? throw new InvalidDataException($"{piece.ObjectName} has no working GLB.");
-            await Task.Run(async () =>
-            {
-                var bytes = await File.ReadAllBytesAsync(glb);
-                var model = BodyProportionEngine.Build(bytes, request.Follow, request.Profile, piece.ObjectName);
-                await File.WriteAllBytesAsync(glb, BodyProportionEngine.Apply(bytes, model, request.Settings));
-            });
-            _authoringDraft = await _modAuthoringWorkspace.SaveAsync(_authoringDraft with
-            {
-                EditIds = _authoringDraft.EditIds.Append(created.EditId).ToArray(),
-            });
-        }
+        await ReshapePiecesAsync(request);
         request.Cancellation.ThrowIfCancellationRequested();
         if (request.Pieces.Count > 1)
             ProportionStatusText.Text = $"Checking all {request.Pieces.Count:N0} pieces against the game's skeleton and animations " +
                                         "and saving them as one mod. This is the longest step…";
         // A batch keeps going past a piece these settings can't reshape safely; a single outfit reports it instead.
-        var saved = await SaveAuthoringAsync(request.Pieces.Count > 1 ? skipped : null);
+        var saved = await SaveAuthoringAsync(request.Pieces.Count > 1 ? skipped : null, request.Parallelism);
         foreach (var piece in skipped) Log($"Proportion piece left out of the mod (failed the mesh check): {piece}");
         Log($"Proportion mod saved: name={request.ModName}, body={request.Profile.Id}, pieces={request.Pieces.Count}, " +
             $"settings={string.Join(", ", request.Settings.Where(pair => pair.Value != 0).Select(pair => $"{pair.Key}={pair.Value}"))}, " +

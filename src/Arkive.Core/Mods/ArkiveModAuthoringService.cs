@@ -330,18 +330,28 @@ public sealed class ArkiveModAuthoringService
     /// When given, meshes that fail their check are left out of the mod (each is added here with its first problem)
     /// instead of refusing the whole save; used when one batch reshapes hundreds of pieces.
     /// </param>
+    /// <param name="parallelism">How many working assets to check at the same time (each check is independent).</param>
     public async Task<ArkiveModLibraryEntry> SaveDraftAsync(
-        ArkiveModAuthoringDraft draft, CancellationToken cancellationToken = default, ICollection<string>? skippedMeshes = null)
+        ArkiveModAuthoringDraft draft, CancellationToken cancellationToken = default, ICollection<string>? skippedMeshes = null,
+        int parallelism = 1)
     {
         ArgumentNullException.ThrowIfNull(draft);
         if (string.IsNullOrWhiteSpace(draft.Metadata.Name)) Refuse("AUT090", "Give the mod a name before saving.");
         var snapshot = await ArkiveModEditSnapshot.LoadAsync(_edits, cancellationToken).ConfigureAwait(false);
+        var locals = draft.EditIds.Select(editId => snapshot.Find(editId) ??
+            throw new ArkiveModRefusalException("AUT091", "A working asset is missing. Prepare the mod for editing again.")).ToArray();
+        var validated = new ArkiveModLocalEdit[locals.Length];
+        if (parallelism > 1)
+            await Parallel.ForEachAsync(Enumerable.Range(0, locals.Length),
+                new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = cancellationToken },
+                async (index, token) => validated[index] = await ValidateEditAsync(locals[index], token).ConfigureAwait(false))
+                .ConfigureAwait(false);
+        else
+            for (var index = 0; index < locals.Length; index++)
+                validated[index] = await ValidateEditAsync(locals[index], cancellationToken).ConfigureAwait(false);
         var captured = new List<ArkiveModCapturedAsset>();
-        foreach (var editId in draft.EditIds)
+        foreach (var local in validated)
         {
-            var local = snapshot.Find(editId) ??
-                throw new ArkiveModRefusalException("AUT091", "A working asset is missing. Prepare the mod for editing again.");
-            local = await ValidateEditAsync(local, cancellationToken).ConfigureAwait(false);
             if (skippedMeshes is not null && ArkiveModEditCheck.Read(local) is { Passed: false } check)
             {
                 skippedMeshes.Add($"{local.DisplayName}: {check.Problems.FirstOrDefault() ?? "failed the mesh check"}");

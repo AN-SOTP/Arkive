@@ -292,12 +292,12 @@ internal static class ModAuthoringSmokeTests
         var refusal = Expect("AUT020", () => author.SaveDraftAsync(draft with { ModId = mod.ModId }).GetAwaiter().GetResult());
         Assert(refusal.Contains("SMT013", StringComparison.Ordinal), "the save refusal did not name the mesh check's error");
         Assert(File.ReadAllBytes(env.Library.GetModFilePath(mod)).SequenceEqual(portable), "invalid mesh save changed the portable mod");
-        // A batch save leaves a failing mesh out instead of refusing everything.
+        // A batch save checks pieces side by side and leaves a failing mesh out instead of refusing everything.
         var passing = env.Edits.SkeletalMeshEdits.RegisterAsync(source, export.GlbPath).GetAwaiter().GetResult().Entry;
         var skipped = new List<string>();
         var kept = author.SaveDraftAsync(new ArkiveModAuthoringDraft(1, Guid.NewGuid().ToString("N"), null,
                 new ArkiveModMetadata("Mesh batch", "1.0.0"), [registered.Manifest.EditId, passing.Manifest.EditId], DateTimeOffset.UtcNow),
-            skippedMeshes: skipped).GetAwaiter().GetResult();
+            skippedMeshes: skipped, parallelism: 2).GetAwaiter().GetResult();
         Assert(skipped is [var left] && left.Contains("SMT013", StringComparison.Ordinal) && kept.Manifest.Assets.Count == 1 &&
                kept.Bindings.Single().EditId == passing.Manifest.EditId,
             "a batch save did not leave out the failing mesh: " + string.Join(" | ", skipped));

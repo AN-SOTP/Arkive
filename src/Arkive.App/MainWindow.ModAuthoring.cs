@@ -407,11 +407,12 @@ public partial class MainWindow : Window
     private async void AuthoringPrepareButton_Click(object sender, RoutedEventArgs e) =>
         await RunAuthoringOperationAsync(PrepareAuthoringAsync);
 
-    private async Task<ArkiveModLibraryEntry> SaveAuthoringAsync(ICollection<string>? skippedMeshes = null)
+    private async Task<ArkiveModLibraryEntry> SaveAuthoringAsync(ICollection<string>? skippedMeshes = null, int parallelism = 1)
     {
         await PersistAuthoringDraftAsync();
         if (_authoringDraft is null) throw new InvalidOperationException("Create or select a mod first.");
-        var saved = await _arkiveModAuthoring.SaveDraftAsync(_authoringDraft, skippedMeshes: skippedMeshes);
+        var draft = _authoringDraft;
+        var saved = await Task.Run(() => _arkiveModAuthoring.SaveDraftAsync(draft, skippedMeshes: skippedMeshes, parallelism: parallelism));
         _authoringDraft = await _modAuthoringWorkspace.SaveAsync(_authoringDraft with
         {
             ModId = saved.ModId,

@@ -21,6 +21,9 @@ public sealed record ProportionSaveRequest(
 
     /// <summary>The Simple upscale mod to update instead of creating a new one.</summary>
     public string? ExistingModId { get; init; }
+
+    /// <summary>How many pieces to reshape and check at the same time (1: one after another).</summary>
+    public int Parallelism { get; init; } = 1;
 }
 
 /// <summary>

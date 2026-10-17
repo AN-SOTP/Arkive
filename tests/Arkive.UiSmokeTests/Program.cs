@@ -245,6 +245,9 @@ internal static class Program
         Check((presets.SelectedItem as BodyProportionPreset)?.Name == "UI preset", "A preset saved in the editor did not appear in Simple upscale.");
         Check(body.IsEnabled && body.Content.ToString() == "Apply preset to every outfit of its body",
             "Apply preset to every outfit of its body is not offered for a player body's preset.");
+        var together = (int)typeof(MainWindow).GetProperty("ProportionParallelism", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        Check(together == (Environment.ProcessorCount < 4 ? 1 : Math.Clamp(Environment.ProcessorCount / 2, 2, 4)),
+            $"Body-wide upscales would run {together} pieces at once on {Environment.ProcessorCount} processor threads.");
         Console.WriteLine("PASS: Simple upscale lists presets saved in the editor and offers them for every outfit of their body");
     }
 
