@@ -110,6 +110,11 @@ public static partial class BodyProportionEngine
                 foreach (var (offsets, scale) in active)
                     position += new Vector3(offsets[vertex * 3], offsets[vertex * 3 + 1], offsets[vertex * 3 + 2]) * scale;
                 after[vertex] = position;
+            }
+            KeepEdgesFromCollapsing(container, meshArray[basis.MeshIndex]!.AsObject(), before, after);
+            for (var vertex = 0; vertex < view.Count; vertex++)
+            {
+                var position = after[vertex];
                 container.WriteFloat(view, vertex, 0, position.X);
                 container.WriteFloat(view, vertex, 1, position.Y);
                 container.WriteFloat(view, vertex, 2, position.Z);
@@ -121,6 +126,82 @@ public static partial class BodyProportionEngine
             TurnNormals(container, meshArray[basis.MeshIndex]!.AsObject(), before, after);
         }
         return container.ToBytes();
+    }
+
+    /// <summary>Shortest share of its game length an edge may keep after reshaping.</summary>
+    public const float MinimumEdgeShare = 0.5f;
+
+    /// <summary>
+    /// Keeps reshaping from folding the surface. Where neighbouring points would end up much closer than the game
+    /// placed them (pushes meeting at a crease, such as the crotch where both thighs widen), they keep only part of
+    /// their move, easing back to the full move over the next two rings of points. A folded edge stretches many times
+    /// over once the body animates, which the stress poses checked when a mod is saved refuse.
+    /// </summary>
+    private static void KeepEdgesFromCollapsing(GlbContainer container, JsonObject mesh, Vector3[] before, Vector3[] after)
+    {
+        // Split vertices (UV seams, hard edges) share a position and must keep moving together.
+        var groups = new int[before.Length];
+        var keys = new Dictionary<(int, int, int), int>();
+        for (var vertex = 0; vertex < before.Length; vertex++)
+        {
+            var p = before[vertex];
+            var key = ((int)MathF.Round(p.X * 1e5f), (int)MathF.Round(p.Y * 1e5f), (int)MathF.Round(p.Z * 1e5f));
+            if (!keys.TryGetValue(key, out var group)) keys[key] = group = keys.Count;
+            groups[vertex] = group;
+        }
+        var start = new Vector3[keys.Count];
+        var move = new Vector3[keys.Count];
+        for (var vertex = before.Length - 1; vertex >= 0; vertex--)
+        {
+            start[groups[vertex]] = before[vertex];
+            move[groups[vertex]] = after[vertex] - before[vertex];
+        }
+        var edges = new HashSet<(int, int)>();
+        foreach (var primitive in mesh["primitives"]!.AsArray())
+        {
+            if (primitive?["indices"] is null) continue;
+            var indices = container.Accessor((int)primitive["indices"]!);
+            for (var corner = 0; corner + 2 < indices.Count; corner += 3)
+            {
+                var a = groups[container.ReadInt(indices, corner, 0)];
+                var b = groups[container.ReadInt(indices, corner + 1, 0)];
+                var c = groups[container.ReadInt(indices, corner + 2, 0)];
+                foreach (var (x, y) in new[] { (a, b), (b, c), (c, a) })
+                    if (x != y) edges.Add(x < y ? (x, y) : (y, x));
+            }
+        }
+        var factor = new float[keys.Count];
+        Array.Fill(factor, 1f);
+        var limited = false;
+        for (var pass = 0; pass < 12; pass++)
+        {
+            var collapsed = false;
+            foreach (var (a, b) in edges)
+            {
+                var length = Vector3.Distance(start[a], start[b]);
+                if (length < 1e-5f) continue;
+                var reshaped = Vector3.Distance(start[a] + move[a] * factor[a], start[b] + move[b] * factor[b]);
+                if (reshaped >= length * MinimumEdgeShare) continue;
+                factor[a] *= 0.6f;
+                factor[b] *= 0.6f;
+                collapsed = limited = true;
+            }
+            if (!collapsed) break;
+        }
+        if (!limited) return;
+        // Ease back to the full move over two rings, so the held-back points don't leave a dent.
+        for (var ring = 0; ring < 2; ring++)
+        {
+            var eased = (float[])factor.Clone();
+            foreach (var (a, b) in edges)
+            {
+                eased[a] = Math.Min(eased[a], factor[b] + 0.35f);
+                eased[b] = Math.Min(eased[b], factor[a] + 0.35f);
+            }
+            factor = eased;
+        }
+        for (var vertex = 0; vertex < before.Length; vertex++)
+            after[vertex] = before[vertex] + move[groups[vertex]] * factor[groups[vertex]];
     }
 
     /// <summary>

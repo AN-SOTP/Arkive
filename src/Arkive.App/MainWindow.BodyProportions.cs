@@ -454,20 +454,26 @@ public partial class MainWindow
             throw new InvalidOperationException("Arkive is busy with another mod task. Try again when it finishes.");
         ArkiveModLibraryEntry? saved = null;
         Exception? failure = null;
+        var skipped = new List<string>();
         await RunAuthoringOperationAsync(async () =>
         {
-            try { saved = await CreateProportionModAsync(request); }
+            try { saved = await CreateProportionModAsync(request, skipped); }
             catch (Exception exception) { failure = exception; throw; }
         });
         if (failure is not null) throw failure;
         if (saved is null) throw new InvalidOperationException(AuthoringStatusText.Text);
         await RefreshArkiveModsAsync("proportion mod saved", saved.ModId);
-        return request.ExistingModId is null
+        var result = request.ExistingModId is null
             ? $"Saved {saved.FileName}. Enable it in Mods to apply it to the game; it is also open in Edit mods."
             : $"Updated {saved.FileName}. If it is enabled, apply it again in Mods to put the new shape in the game.";
+        if (skipped.Count > 0)
+            result += $" {skipped.Count:N0} piece(s) were left out because they failed the mesh check with these settings " +
+                      $"(see the session log): {string.Join(", ", skipped.Take(5).Select(item => item.Split(':')[0]))}" +
+                      (skipped.Count > 5 ? ", …" : "") + ".";
+        return result;
     }
 
-    private async Task<ArkiveModLibraryEntry> CreateProportionModAsync(ProportionSaveRequest request)
+    private async Task<ArkiveModLibraryEntry> CreateProportionModAsync(ProportionSaveRequest request, List<string> skipped)
     {
         await PersistAuthoringDraftAsync();
         var modSettings = new BodyProportionModSettings(request.Profile, request.Settings, request.Follow);
@@ -524,7 +530,9 @@ public partial class MainWindow
         if (request.Pieces.Count > 1)
             ProportionStatusText.Text = $"Checking all {request.Pieces.Count:N0} pieces against the game's skeleton and animations " +
                                         "and saving them as one mod. This is the longest step…";
-        var saved = await SaveAuthoringAsync();
+        // A batch keeps going past a piece these settings can't reshape safely; a single outfit reports it instead.
+        var saved = await SaveAuthoringAsync(request.Pieces.Count > 1 ? skipped : null);
+        foreach (var piece in skipped) Log($"Proportion piece left out of the mod (failed the mesh check): {piece}");
         Log($"Proportion mod saved: name={request.ModName}, body={request.Profile.Id}, pieces={request.Pieces.Count}, " +
             $"settings={string.Join(", ", request.Settings.Where(pair => pair.Value != 0).Select(pair => $"{pair.Key}={pair.Value}"))}, " +
             $"follow={request.Follow}.");

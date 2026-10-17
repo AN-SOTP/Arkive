@@ -12,6 +12,7 @@ internal static class ProportionSmokeTests
         new("saves, reloads and limits body proportion presets per body", TestPresets),
         new("keeps an upscale mod's sliders in its tags and reads older mods from their description", TestModSettings),
         new("keeps a body-wide upscale mod's description within the mod file's limit", TestLongDescription),
+        new("holds back reshaping that would fold the surface onto itself", TestFoldGuard),
     ];
 
     private static void TestPlayerPieceNames()
@@ -56,6 +57,30 @@ internal static class ProportionSmokeTests
                old.Settings["chestHeight"] == 50 && old.Settings["belly"] == 30 && old.Settings["buttocks"] == 10 && old.Settings.Count == 4,
             "an older upscale mod's sliders were not read from its description");
         Assert(BodyProportionModTags.Read(["outfit"], "A recoloured dress.") is null, "an ordinary mod was taken for an upscale mod");
+    }
+
+    private static void TestFoldGuard()
+    {
+        var glb = BuildMesh(
+            [("bip001-pelvis", new(0, 0.734f, 0)), ("bip001-spine", new(0, 0.80f, 0)), ("bip001-spine2", new(0.02f, 0.90f, 0)),
+             ("bip001-head", new(0, 1.152f, 0)), ("bip001-l-thigh", new(0, 0.734f, -0.06f)), ("bip001-l-calf", new(0, 0.40f, -0.06f)),
+             ("bip001-l-foot", new(0, 0.07f, -0.06f))],
+            [(new(0.10f, 0.948f, -0.044f), 2), (new(0, 0.55f, -0.12f), 4), (new(0.02f, 0.05f, -0.06f), 6)]);
+        var original = Positions(glb);
+        // Offsets that push the first point almost onto the second, as opposite pushes meeting at a crease do.
+        var offsets = new float[9];
+        var push = (original[1] - original[0]) * 0.95f;
+        (offsets[0], offsets[1], offsets[2]) = (push.X, push.Y, push.Z);
+        var warrior = BodyProfiles.All.First(profile => profile.Id == "female-warrior");
+        var model = new BodyProportionModel(warrior, BodyProportionFollow.All,
+            [new BodyProportionMeshBasis(0, "test", 3, new Dictionary<string, float[]> { ["chest"] = offsets })], 0, 0);
+        var reshaped = Positions(BodyProportionEngine.Apply(glb, model, new Dictionary<string, double> { ["chest"] = 100 }));
+        var length = Vector3.Distance(original[0], original[1]);
+        Assert(Vector3.Distance(reshaped[0], reshaped[1]) >= length * BodyProportionEngine.MinimumEdgeShare - 1e-4f,
+            $"an edge folded to {Vector3.Distance(reshaped[0], reshaped[1]) / length:P0} of its length");
+        Assert(Vector3.Distance(reshaped[0], original[0]) > 0.01f, "the guarded point no longer moves at all");
+        var gentle = Positions(BodyProportionEngine.Apply(glb, model, new Dictionary<string, double> { ["chest"] = 20 }));
+        Assert(Vector3.Distance(gentle[0], original[0] + push * 0.2f) < 1e-5f, "a move that folds nothing was held back");
     }
 
     private static void TestLongDescription()

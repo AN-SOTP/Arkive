@@ -326,8 +326,12 @@ public sealed class ArkiveModAuthoringService
         }
     }
 
+    /// <param name="skippedMeshes">
+    /// When given, meshes that fail their check are left out of the mod (each is added here with its first problem)
+    /// instead of refusing the whole save; used when one batch reshapes hundreds of pieces.
+    /// </param>
     public async Task<ArkiveModLibraryEntry> SaveDraftAsync(
-        ArkiveModAuthoringDraft draft, CancellationToken cancellationToken = default)
+        ArkiveModAuthoringDraft draft, CancellationToken cancellationToken = default, ICollection<string>? skippedMeshes = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         if (string.IsNullOrWhiteSpace(draft.Metadata.Name)) Refuse("AUT090", "Give the mod a name before saving.");
@@ -338,6 +342,11 @@ public sealed class ArkiveModAuthoringService
             var local = snapshot.Find(editId) ??
                 throw new ArkiveModRefusalException("AUT091", "A working asset is missing. Prepare the mod for editing again.");
             local = await ValidateEditAsync(local, cancellationToken).ConfigureAwait(false);
+            if (skippedMeshes is not null && ArkiveModEditCheck.Read(local) is { Passed: false } check)
+            {
+                skippedMeshes.Add($"{local.DisplayName}: {check.Problems.FirstOrDefault() ?? "failed the mesh check"}");
+                continue;
+            }
             captured.Add(await CaptureAsync(local, cancellationToken: cancellationToken).ConfigureAwait(false));
         }
         if (captured.Select(asset => ArkiveModTargetKey.From(asset.Descriptor)).Distinct().Count() != captured.Count)
