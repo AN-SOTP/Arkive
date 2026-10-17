@@ -1,0 +1,7 @@
+Faster startup with large drafts, an easier Mods list, and body-wide upscales that reach more outfits.
+
+- Startup no longer slows down as drafts grow: edit records are read once, file hashes are kept between sessions, and package projects are read once per refresh. A small window shows mods and game database loading when startup takes a while.
+- In Mods, type a priority straight into each row (Enter applies, Up and Down step it). Right-click a mod to enable or disable it, change its priority or rename it; F2 renames and Ctrl+Up/Down changes priority. Changes show at once instead of after switching tabs.
+- Body-wide upscales: pieces a preset leaves unchanged (shoulder pads, arms) no longer fail the whole game file, so the reshaped pieces beside them are applied. New runs leave unchanged pieces out of the mod.
+- Pieces read from clean backups (outfits that already have another mod installed) keep their material names, so they pass the mesh check.
+- Outfits that the bundled UModel cannot read even unmodified (such as Female Warrior Desert Light) can now be installed when the edit only moves the mesh and Arkive's own decode-back check passes.
