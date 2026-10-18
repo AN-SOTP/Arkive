@@ -1,0 +1,12 @@
+Skill previews for every class and for bosses, particle effect, interface and sound mods.
+
+- New Skills tab in the model viewer, which is now called the Arkive Asset Viewer: a class plays any of its skills with its weapon, animation and every effect at its time and socket, drawn with the game's own effect shaders.
+- Bosses and NPCs have skills too: open a boss's model (Kazeros, Thaemine, Echidna, Serca and others) and the Skills tab lists its skills.
+- Skills load with a progress bar, replay and loop without reloading, switch as you pick another, and offer each skill's versions and effect sets.
+- Particle effects are a new mod type, edited in a live preview window: tint, brightness, opacity, size, lifetime, spawn rate and speed.
+- Interface movies are a new mod type; interface pictures are searchable by name, and textures open in the new Arkive Texture Viewer, which recolours them whole or part by part.
+- New Sounds tab: listen to the game's sound effects, voices and music and replace single clips with your own audio, with one-click restore.
+- The Asset Library can filter by particle effects, interface movies and sounds.
+- Asset Viewer fixes: Serca's broom and big Echidna's dress show, and materials whose textures the game leaves to defaults draw correctly.
+- Preview animations no longer bend and stretch limbs (from 0.3.7, which was not released).
+- Simple upscale batches show progress with time left, and the Mods list refreshes faster with large mods (from 0.3.7).
