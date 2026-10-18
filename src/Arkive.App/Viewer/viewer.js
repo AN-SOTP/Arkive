@@ -939,6 +939,8 @@ async function load(message) {
     `${scene.object.packageAlias}.${scene.object.objectName} · ${scene.materials.length} materials ` +
     `(${games} using the game's shader; recipes: ${counts.verified ?? 0} verified, ${counts.inferred ?? 0} inferred, ${counts.fallback ?? 0} stored-texture) · ` +
     `${scene.textures.length} textures · prepared in ${scene.preparationSeconds}s`;
+  // The skill preview's scene adds the outfit's other half: stand the grid at its feet.
+  if (message.skillScene && state.model) grid.position.y = new THREE.Box3().setFromObject(state.model).min.y;
   $('loading').hidden = true;
   requestRender();
   post({ type: 'loaded' });
