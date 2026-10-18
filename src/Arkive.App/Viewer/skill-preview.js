@@ -61,22 +61,25 @@ export function createSkillPreview(context) {
       <progress id="skillBar" class="skill-progress" max="1"${ui.progress == null ? ' hidden' : ''}></progress>
       <div id="skillStatus" class="muted"></div>
       <div id="skillTimeline" class="mono"></div>`;
-    $('skillClass').addEventListener('change', (e) => { ui.classFile = e.target.value; ui.skill = 0; ui.branch = 0; render(); });
-    $('skillSelect').addEventListener('change', (e) => { ui.skill = Number(e.target.value); ui.branch = 0; ui.effectSet = DEFAULT_SET; render(); });
-    $('skillBranch')?.addEventListener('change', (e) => { ui.branch = Number(e.target.value); });
+    // Choosing another skill while one plays switches to it.
+    const switchTo = () => { const playing = player.playing; render(); if (playing) { stop(); play(); } };
+    $('skillClass').addEventListener('change', (e) => { ui.classFile = e.target.value; ui.skill = 0; ui.branch = 0; switchTo(); });
+    $('skillSelect').addEventListener('change', (e) => { ui.skill = Number(e.target.value); ui.branch = 0; ui.effectSet = DEFAULT_SET; switchTo(); });
+    $('skillBranch')?.addEventListener('change', (e) => { ui.branch = Number(e.target.value); switchTo(); });
     $('skillSpeed').addEventListener('change', (e) => { player.speed = Number(e.target.value); });
     $('skillLoop').addEventListener('change', (e) => { player.loop = e.target.checked; });
     $('skillSet')?.addEventListener('change', (e) => { ui.effectSet = e.target.value; restart(); renderTimeline(); });
-    $('skillPlay').addEventListener('click', () => {
-      if (player.playing) { stop(); return; }
-      // The skill already loaded plays again straight away.
-      const key = `${ui.classFile}|${ui.skill}|${ui.branch}`;
-      if (player.data && player.loadedKey === key) { replay(); return; }
-      player.pendingKey = key;
-      progress('Preparing the skill…', 0);
-      post({ type: 'playSkill', classFile: ui.classFile, skill: ui.skill, branch: ui.branch });
-    });
+    $('skillPlay').addEventListener('click', () => { if (player.playing) stop(); else play(); });
     renderTimeline();
+  }
+
+  function play() {
+    // The skill already loaded plays again straight away.
+    const key = `${ui.classFile}|${ui.skill}|${ui.branch}`;
+    if (player.data && player.loadedKey === key) { replay(); return; }
+    player.pendingKey = key;
+    progress('Preparing the skill…', 0);
+    post({ type: 'playSkill', classFile: ui.classFile, skill: ui.skill, branch: ui.branch });
   }
 
   function status(text) { progress(text, null); }
@@ -254,6 +257,12 @@ export function createSkillPreview(context) {
     player.warm = null;
   }
 
+  function loopAgain() {
+    for (const item of player.effects) item.effect.deactivate();
+    player.fired = new Set();
+    player.time = 0;
+  }
+
   function restart() {
     for (const { effect, anchor } of player.effects) { effect.dispose(); anchor.removeFromParent(); }
     player.effects = [];
@@ -322,11 +331,11 @@ export function createSkillPreview(context) {
       if (done) { item.effect.dispose(); item.anchor.removeFromParent(); }
       return !done;
     });
-    // The skill starts again once its effects have played out (at most TAIL seconds after its last stage).
-    if (t > player.length + 0.25 && (t > player.length + TAIL || !player.effects.some((item) => item.effect.alive && item.effect.active === false || item.effect.particleCount > 0))) {
-      if (player.loop) restart();
-      else stop();
-    }
+    // Looping, the skill starts again just after its last stage, as a player recasting it would; effects still
+    // playing carry on and fade out. Without looping it stops once its effects have played out.
+    if (player.loop && t > player.length + 0.4) loopAgain();
+    else if (!player.loop && t > player.length + 0.25 &&
+             (t > player.length + TAIL || !player.effects.some((item) => item.effect.particleCount > 0))) stop();
     requestRender();
   }
   requestAnimationFrame(tick);

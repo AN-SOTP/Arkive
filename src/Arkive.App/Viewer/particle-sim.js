@@ -842,6 +842,8 @@ class Emitter {
         `fparticle${dynamic}vertexfactory`, `fparticleoffsetcenter${dynamic}vertexfactory`, 'fparticlevertexfactory',
         'fparticledynamicparametervertexfactory', 'fparticlesubuvvertexfactory', 'fparticlepointspritevertexfactory');
       names.push(...Object.keys(factories).filter((name) => name.startsWith('fparticle') && !name.includes('mesh')));
+      // Decal and mesh materials used on sprites (ground marks laid flat) have only their own factories.
+      names.push('flocaldecalvertexfactory', 'flandscapedecalvertexfactory', 'flocalvertexfactory');
     }
     for (const name of names) {
       const id = factories[name];

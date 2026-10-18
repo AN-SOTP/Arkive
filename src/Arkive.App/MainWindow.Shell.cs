@@ -300,6 +300,12 @@ public partial class MainWindow : Window
 
     private void Log(string message)
     {
+        // Work running side by side (skill and particle preparation) logs from other threads.
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => Log(message));
+            return;
+        }
         var line = _sessionLog.Write(message);
         if (DiagnosticsTextBox is null)
         {

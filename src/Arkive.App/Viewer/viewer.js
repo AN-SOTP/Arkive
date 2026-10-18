@@ -1651,12 +1651,12 @@ function renderLighting(source) {
       <button data-preset="studio">Studio</button></div>
     <label class="row">Environment <select data-light="name">${options}</select></label>
     <label class="row"><input type="checkbox" data-light="background" ${lighting.background ? 'checked' : ''}> Show a background</label>
-    <div class="muted">The environment maps are small reflection captures; the background is one of the game's skies below.</div>
-    <h3>Sky</h3>
-    <div class="muted">${lighting.skies.length ? 'The game’s own skies, shown behind the model.' : 'The game’s skies were not found.'}</div>
-    <label class="row">Sky <select data-light="sky"><option value="">None</option>${lighting.skies.map((item) =>
+    <div class="muted">The environment maps are small reflection captures; the background is one of the backdrops below.</div>
+    <h3>Backdrop</h3>
+    <div class="muted">${lighting.skies.length ? 'Panoramic sky textures from the game’s LV_DYNAMICSKY package. They are generic backdrops, not the sky of any particular zone, and not every one wraps cleanly.' : 'The game’s backdrop textures were not found.'}</div>
+    <label class="row">Backdrop <select data-light="sky"><option value="">None</option>${lighting.skies.map((item) =>
       `<option value="${escapeHtml(item.name)}" ${item.name === lighting.sky ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></label>
-    <label class="row"><input type="checkbox" data-light="skyLight" ${lighting.skyLight ? 'checked' : ''}> Light the model from the sky</label>
+    <label class="row"><input type="checkbox" data-light="skyLight" ${lighting.skyLight ? 'checked' : ''}> Light the model from the backdrop</label>
     ${slider('skyHorizon', 'Sky horizon', -30, 20, 1, 'degrees')}
     ${slider('blur', 'Background blur', 0, 1, 0.05)}
     ${slider('rotation', 'Rotate environment', 0, 360, 1, 'degrees')}
@@ -1672,7 +1672,7 @@ function renderLighting(source) {
     const read = () => input.type === 'checkbox' ? input.checked : input.type === 'range' || input.type === 'number' ? Number(input.value) : input.value;
     input.addEventListener(input.type === 'range' || input.type === 'color' ? 'input' : 'change', () => {
       const changes = { [key]: read() };
-      // A sky reads best sharp; the blur suits the soft environment maps.
+      // A backdrop reads best sharp; the blur suits the soft environment maps.
       if (key === 'sky' && changes.sky && !lighting.sky) changes.blur = 0;
       // The environment maps are 128-pixel reflection captures: a background shows one of the game's skies instead.
       if (key === 'background' && changes.background && !lighting.sky && lighting.skies.length) {
