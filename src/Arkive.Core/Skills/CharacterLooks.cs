@@ -10,7 +10,7 @@ public sealed record LookMesh(string Package, string Object);
 public sealed record LookWeapon(string Item, LookMesh Mesh, string Slot, string? AnimSetPackage, string? AnimSetName)
 {
     /// <summary>The body socket the weapon is held by during skills (WP_DDK_R_Battle).</summary>
-    public string BattleSocket => Slot + "_Battle";
+    public string BattleSocket { get; init; } = Slot + "_Battle";
 }
 
 /// <summary>A class's default look: the outfit parts a new character wears and its first weapon in each hand.</summary>
@@ -49,8 +49,8 @@ public static partial class CharacterLooks
             cancellationToken.ThrowIfCancellationRequested();
             var strings = Strings(entry);
             if (!strings.Any(value => value.Equals(classFile, StringComparison.OrdinalIgnoreCase))) continue;
-            var slots = strings.Where(value => WeaponSlot().IsMatch(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (slots.Length == 0) continue;
+            var lookName = Path.GetFileNameWithoutExtension(entry.Path);
+            if (ClassCode().Match(lookName) is not { Success: true } code) continue;
             var parts = new Dictionary<string, LookMesh>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in strings.Where(value => value.StartsWith("EFDLItem_", StringComparison.OrdinalIgnoreCase)))
             {
@@ -58,34 +58,87 @@ public static partial class CharacterLooks
                 if (part is null || !items.TryGetValue(item, out var itemEntry)) continue;
                 if (Mesh(Strings(itemEntry)) is { } mesh) parts.TryAdd(part, mesh);
             }
-            return new ClassLook(Path.GetFileNameWithoutExtension(entry.Path), Mesh(strings), parts,
-                slots.Select(slot => Weapon(slot, items, Strings)).OfType<LookWeapon>().ToArray());
+            return new ClassLook(lookName, Mesh(strings), parts, Weapons(strings, code.Groups["code"].Value, items, Strings));
         }
         return null;
     }
 
-    // The class's first weapon for a socket: the lowest-numbered weapon item of its code that is not an avatar
-    // (WP_DDK_HR_00) and goes in that socket.
-    private static LookWeapon? Weapon(string slot, IReadOnlyDictionary<string, LostArkDataEntry> items,
-        Func<LostArkDataEntry, IReadOnlyList<string>> strings)
+    // The class's first weapon: an item whose pieces go in the look's weapon sockets, preferring items named after the
+    // look's own code (PC_WBK_F -> WP_WBK_F_HR_00), then its class or socket code (WP_WBK_HR_00, WP_DDM for PC_DMN),
+    // then other non-avatar items, then avatars. An item lists each piece's mesh followed by its socket (WP_DDM_2,
+    // WP_DDM_1); fighters' items name no socket, so their _L/_R meshes go in the look's left and right hands.
+    private static IReadOnlyList<LookWeapon> Weapons(IReadOnlyList<string> look, string lookCode,
+        IReadOnlyDictionary<string, LostArkDataEntry> items, Func<LostArkDataEntry, IReadOnlyList<string>> strings)
     {
-        var code = WeaponSlot().Match(slot).Groups["code"].Value;
+        var battle = look.Where(value => value.EndsWith("_Battle", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var slots = look.Concat(battle.Select(value => value[..^"_Battle".Length]))
+            .Where(value => WeaponSlot().IsMatch(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var classCode = GenderSuffix().Replace(lookCode, "");
+        // Looks without weapon sockets (the fighters) hold them by the class code's hands.
+        if (slots.Count == 0) slots = [$"WP_{classCode}_L", $"WP_{classCode}_R"];
+        var slotCodes = slots.Select(slot => WeaponSlot().Match(slot).Groups["code"].Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        int Rank(string name)
+        {
+            var rest = name["EFDLItem_WP_".Length..];
+            if (rest.StartsWith(lookCode + "_", StringComparison.OrdinalIgnoreCase) &&
+                (lookCode.Length != classCode.Length || !GenderedItem().IsMatch(rest[(lookCode.Length + 1)..]))) return 0;
+            if (rest.StartsWith(classCode + "_", StringComparison.OrdinalIgnoreCase) ||
+                slotCodes.Any(code => rest.StartsWith(code + "_", StringComparison.OrdinalIgnoreCase))) return 1;
+            return 2;
+        }
         var candidates = items.Keys
-            .Where(name => name.StartsWith($"EFDLItem_WP_{code}_", StringComparison.OrdinalIgnoreCase) &&
-                           !name.Contains("_AV_", StringComparison.OrdinalIgnoreCase))
-            .Order(StringComparer.OrdinalIgnoreCase);
-        foreach (var name in candidates)
+            .Where(name => name.StartsWith("EFDLItem_WP_", StringComparison.OrdinalIgnoreCase))
+            .Select(name => (name, rank: Rank(name)))
+            .OrderBy(item => item.rank)
+            .ThenBy(item => item.name.Contains("_AV_", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(item => item.name.Contains("_HR_", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(item => item.name, StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, rank) in candidates)
         {
             var values = strings(items[name]);
-            if (Mesh(values) is not { } mesh) continue;
-            var itemSlot = values.FirstOrDefault(value => WeaponSlot().IsMatch(value)) ?? slot;
-            if (!itemSlot.Equals(slot, StringComparison.OrdinalIgnoreCase)) continue;
             var animSet = values.Select(value => ObjectPath().Match(value)).FirstOrDefault(match => match.Success &&
                 match.Groups["class"].Value.Equals("AnimSet", StringComparison.OrdinalIgnoreCase));
-            return new LookWeapon(name, mesh, itemSlot, animSet?.Groups["package"].Value, animSet?.Groups["object"].Value);
+            var weapons = new List<LookWeapon>();
+            foreach (var (mesh, named) in Pieces(values))
+            {
+                // A piece without a socket goes in the hand its mesh is named for, and only for the class's own items.
+                var slot = named ?? (rank < 2 ? HandSlot(mesh, slots) : null);
+                if (slot is null || !slots.Contains(slot, StringComparer.OrdinalIgnoreCase)) continue;
+                var held = BattleSocket(slot, battle);
+                if (weapons.Any(weapon => weapon.BattleSocket.Equals(held, StringComparison.OrdinalIgnoreCase))) continue;
+                weapons.Add(new LookWeapon(name, mesh, slot, animSet?.Groups["package"].Value, animSet?.Groups["object"].Value) { BattleSocket = held });
+            }
+            if (weapons.Count > 0) return weapons;
         }
-        return null;
+        return [];
     }
+
+    // An item's pieces: each skeletal mesh and the weapon socket named after it, if any, before the next mesh.
+    private static List<(LookMesh Mesh, string? Slot)> Pieces(IReadOnlyList<string> values)
+    {
+        var pieces = new List<(LookMesh Mesh, string? Slot)>();
+        foreach (var value in values)
+        {
+            if (Mesh([value]) is { } mesh) pieces.Add((mesh, null));
+            else if (pieces.Count > 0 && pieces[^1].Slot is null && WeaponSlot().IsMatch(value)) pieces[^1] = (pieces[^1].Mesh, value);
+        }
+        return pieces;
+    }
+
+    // WP_FIF_HR_00_L_SK -> the look's left-hand socket; a single socket takes any piece.
+    private static string? HandSlot(LookMesh mesh, IReadOnlyList<string> slots)
+    {
+        if (slots.Count == 1) return slots[0];
+        var hand = HandMesh().Match(mesh.Object) is { Success: true } match ? match.Groups["hand"].Value : "R";
+        return slots.FirstOrDefault(slot => slot.EndsWith("_" + hand, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // The socket a weapon is held by in battle: WP_DDK_R_Battle, or for a holstered one (WP_GDH_H_R) its hand's
+    // (WP_GDH_R_Battle); otherwise its own socket.
+    private static string BattleSocket(string slot, IReadOnlyList<string> battle) =>
+        new[] { slot + "_Battle", Holster().Replace(slot, "_") + "_Battle" }
+            .FirstOrDefault(name => battle.Contains(name, StringComparer.OrdinalIgnoreCase)) ?? slot + "_Battle";
 
     private static LookMesh? Mesh(IReadOnlyList<string> strings) =>
         strings.Select(value => ObjectPath().Match(value))
@@ -98,9 +151,28 @@ public static partial class CharacterLooks
     private static partial Regex ObjectPath();
 
     // WP_DDK_R, WP_DBL_1: the socket prefix of a class weapon, by the class's weapon code and hand.
-    [GeneratedRegex(@"^WP_(?<code>[A-Za-z0-9]+(?:_[FM])?)_(?:[LR]|\d)$", RegexOptions.IgnoreCase)]
+    // WP_GDH_H_R (holstered) and WP_GDH_S (slung) too.
+    [GeneratedRegex(@"^WP_(?<code>[A-Za-z0-9]+(?:_[FM])?)_(?:H_)?(?:[LRS]|\d)$", RegexOptions.IgnoreCase)]
     private static partial Regex WeaponSlot();
+
+    [GeneratedRegex(@"_H_(?=[LR]$)", RegexOptions.IgnoreCase)]
+    private static partial Regex Holster();
+
+    // WP_FIF_HR_00_L_SK, WP_GDH_F_HR_00H_SK: the hand a socketless piece is for.
+    [GeneratedRegex(@"[_\d](?<hand>[LR])_SK$", RegexOptions.IgnoreCase)]
+    private static partial Regex HandMesh();
+
+    [GeneratedRegex(@"_[FM]$", RegexOptions.IgnoreCase)]
+    private static partial Regex GenderSuffix();
+
+    // The rest of an item name after the class code: F_HR_00 is the female class's item.
+    [GeneratedRegex(@"^[FM]_", RegexOptions.IgnoreCase)]
+    private static partial Regex GenderedItem();
 
     [GeneratedRegex(@"_ISBZ_|Dummy|Cust|_\d\d$", RegexOptions.IgnoreCase)]
     private static partial Regex SpecialLook();
+
+    // EFDLChar_PC_WBK_F.PC_WBK_F -> WBK_F: the look's code its own items are named by.
+    [GeneratedRegex(@"^EFDLChar_PC_(?<code>[A-Za-z0-9]+(?:_[FM])?)\.", RegexOptions.IgnoreCase)]
+    private static partial Regex ClassCode();
 }
