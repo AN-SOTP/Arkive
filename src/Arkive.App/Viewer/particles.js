@@ -164,7 +164,7 @@ function buildEmitterList() {
     label.append(box, document.createTextNode(emitter.model.name));
     const detail = document.createElement('span');
     detail.className = 'detail';
-    const kind = emitter.isMesh ? 'mesh' : emitter.isDecal ? 'decal' : null;
+    const kind = emitter.isLight ? 'light (not drawn)' : emitter.isDistortion ? 'distortion (not drawn)' : emitter.isMesh ? 'mesh' : emitter.isDecal ? 'decal' : null;
     detail.textContent = [kind, emitter.model.enabled ? null : 'off in game', emitter.materialName].filter(Boolean).join(' · ');
     label.title = detail.textContent;
     label.append(detail);

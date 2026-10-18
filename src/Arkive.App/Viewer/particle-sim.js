@@ -189,6 +189,8 @@ const SPRITE_VERTEX = `
       center = modelViewMatrix * vec4(iPos + vec3(r.x, 0.5, r.y), 1.0);
     } else {
       center = modelViewMatrix * vec4(iPos, 1.0);
+      // Sizes are in the effect's own units; view space has the effect's scale (centimetres to metres) applied.
+      float unit = length(modelMatrix[0].xyz);
       vec2 offset;
       if (alignMode > 0.5) {
         // Velocity-aligned: the sprite's up axis follows its motion on screen.
@@ -201,7 +203,7 @@ const SPRITE_VERTEX = `
         vec2 scaled = corner * iSize;
         offset = vec2(c * scaled.x - s * scaled.y, s * scaled.x + c * scaled.y);
       }
-      center.xy += offset;
+      center.xy += offset * unit;
     }
     gl_Position = projectionMatrix * center;
     vColor = iColor;
@@ -266,6 +268,10 @@ class Emitter {
     this.meshName = model.mesh;
     this.isMesh = !!model.mesh;
     this.isDecal = model.modules.some((module) => module.class.includes('typedatadecal'));
+    // Light emitters light the scene and distortion materials bend what is behind them; neither is drawn as particles.
+    this.isLight = model.modules.some((module) => module.class.includes('typedatalight'));
+    this.isDistortion = /(^|_)(dist|distort|circledisort|worldoffset)(_|\d)|defaultparticle/.test(model.material ?? '');
+    if (this.isLight || this.isDistortion) this.visible = false;
     this.alignMode = this.isDecal ? 2 : alignment === 'psa_velocity' ? 1 : 0;
     this.squareSprites = alignment === 'psa_square' || alignment === 'psa_typespecific';
     this.particles = [];
@@ -373,10 +379,11 @@ class Emitter {
       const parent = this.effect.parent;
       parent.updateWorldMatrix(true, false);
       p.pos.applyMatrix4(parent.matrixWorld);
+      const scale = new THREE.Vector3().setFromMatrixScale(parent.matrixWorld).x;
       const speed = p.vel.length();
-      p.vel.transformDirection(parent.matrixWorld).multiplyScalar(speed);
-      const scale = new THREE.Vector3().setFromMatrixScale(parent.matrixWorld);
-      p.size = p.size.map((v) => v * scale.x);
+      p.vel.transformDirection(parent.matrixWorld).multiplyScalar(speed * scale);
+      p.size = p.size.map((v) => v * scale);
+      p.worldScale = scale;
     }
     this.particles.push(p);
   }
@@ -411,7 +418,7 @@ class Emitter {
     this.particles = this.particles.filter((p) => {
       p.age += dt;
       if (p.age >= p.life) return false;
-      if (acceleration) p.vel.addScaledVector(acceleration, dt);
+      if (acceleration) p.vel.addScaledVector(acceleration, dt * (p.worldScale ?? 1));
       p.pos.addScaledVector(p.vel, dt);
       p.rot += p.rotRate * dt;
       if (this.isMesh) p.meshRot.addScaledVector(p.meshRotRate, dt);

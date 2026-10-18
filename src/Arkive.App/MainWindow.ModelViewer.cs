@@ -44,6 +44,9 @@ public partial class MainWindow
     {
         Animations = FindViewerAnimationsAsync,
         Environments = FindViewerEnvironmentsAsync,
+        SkillOffer = FindSkillPreviewAsync,
+        SkillPlayback = PrepareSkillPreviewAsync,
+        ParticleAssetRoot = ParticleTextureRoot,
     };
 
     /// <summary>

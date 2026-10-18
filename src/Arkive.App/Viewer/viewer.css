@@ -112,3 +112,10 @@ details > div { padding: 2px 8px 8px; }
 .proportionActions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .zoneGroup { margin: 4px 0; }
 .zoneGroup > summary { cursor: pointer; font-weight: 600; padding: 6px 2px; border-bottom: 1px solid var(--line); }
+
+/* Skill preview */
+#tab-skills { padding: 8px; }
+#tab-skills label.field { display: flex; margin: 6px 0; }
+#tab-skills label.field select { flex: 1; min-width: 0; }
+#tab-skills .skill-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+#tab-skills #skillTimeline { margin-top: 8px; font-size: 11px; }

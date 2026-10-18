@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
 import { VertexTangentsHelper } from 'three/addons/helpers/VertexTangentsHelper.js';
+import { createSkillPreview } from './skill-preview.js';
 
 const $ = (id) => document.getElementById(id);
 const host = window.chrome?.webview;
@@ -1383,6 +1384,43 @@ host?.addEventListener('message', (event) => {
   }
 });
 window.arkiveAnimation = { animation, playAnimation, poseAt };
+// Exposed for Arkive's tests.
+window.arkiveViewer = { camera, controls, requestRender };
+
+// The skill preview plays clips from the class's skill animations instead of the chosen animation, which comes back
+// when the skill stops.
+async function loadSkillClip(baseUrl, bones, info) {
+  if (!animation.restPose && animation.restUrl) {
+    animation.restPose = await (await fetch(animation.restUrl)).json();
+    animation.rest = null;
+  }
+  const clip = parseClip(await (await fetch(baseUrl + info.file)).arrayBuffer(), info);
+  rememberRestPose();
+  const byName = animationBones();
+  clip.bones = bones.map((name) => byName.get(name) ?? null);
+  return clip;
+}
+
+const skillAnimation = { saved: null };
+const skillPreview = createSkillPreview({
+  world, $, post, requestRender, socketOffset,
+  model: () => state.model,
+  scene: () => state.scene,
+  animation: {
+    load: loadSkillClip,
+    begin() { skillAnimation.saved = { clip: animation.clip, playing: animation.playing, time: animation.time }; animation.playing = false; },
+    pose(clip, time) { animation.clip = clip; poseAt(time); },
+    end() {
+      const saved = skillAnimation.saved;
+      skillAnimation.saved = null;
+      animation.clip = saved?.clip ?? null;
+      animation.playing = saved?.playing ?? true;
+      animation.time = saved?.time ?? 0;
+      if (animation.clip) poseAt(animation.time); else restorePose();
+    },
+  },
+});
+host?.addEventListener('message', (event) => skillPreview.handle(event.data));
 
 // Game environment lighting: one of the game's own environment cubemaps (the reflections and sky light it uses for
 // characters) lights the model and can be shown as the background, with a sun that can be moved, recoloured and

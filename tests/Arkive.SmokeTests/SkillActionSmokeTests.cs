@@ -7,6 +7,7 @@ internal static class SkillActionSmokeTests
     public static IReadOnlyList<SmokeTestCase> Cases { get; } =
     [
         new("reads a skill action's stages, effect timings, sockets and effect parameters", TestReader),
+        new("splits a skill action into the versions the preview offers", TestBranches),
     ];
 
     // A Guardian Clash-like action as the client serialises it: classes and names as length-prefixed strings (a
@@ -49,5 +50,21 @@ internal static class SkillActionSmokeTests
                effect.Parameters[1] is { Name: "Lifetime", IsVector: false } && Math.Abs(effect.Parameters[1].Value - 0.4f) < 1e-6,
             "the effect's parameters were not read");
         Assert(actions[0].ParticleSystems.SequenceEqual(["FX_PC_DDK_03.Par_S_DDK_NotosCrash_Wing_01"]), "the action's effects were not listed");
+    }
+
+    private static void TestBranches()
+    {
+        static SkillActionStage Stage(string name, string? anim) =>
+            new(name, 1, 1, anim is null ? [] : [new SkillActionNotify("Anim", 0, 1, null, anim, null, [])]);
+        // A state check, the normal form (three stages), the dragon form (same animations), then a rune version.
+        var action = new SkillAction(1, "test", [
+            Stage("StageName", null), Stage("Normal", "SK_A_01"), Stage("StageName", "SK_A_02"), Stage("StageName", "SK_A_03"),
+            Stage("Dragon", "SK_A_01"), Stage("StageName", "SK_A_02"), Stage("StageName", "SK_A_03"),
+            Stage("StageName", null), Stage("Main", "SK_A_Custom_01"), Stage("StageName", "SK_A_03"),
+        ]);
+        var branches = SkillCatalog.Branches(action);
+        Assert(branches.Count == 2 && branches[0].Name == "Normal" && branches[0].Stages.Count == 3 &&
+               branches[1].Name == "SK_A_Custom_01" && branches[1].Stages.Count == 2,
+            "skill versions were not split as expected: " + string.Join(", ", branches.Select(branch => $"{branch.Name}({branch.Stages.Count})")));
     }
 }

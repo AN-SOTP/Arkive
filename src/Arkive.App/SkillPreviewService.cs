@@ -1,0 +1,220 @@
+using System.IO;
+using Arkive.Core.Archives;
+using Arkive.Core.Assets;
+using Arkive.Core.Discovery;
+using Arkive.Core.Packages;
+using Arkive.Core.Particles;
+using Arkive.Core.Proportions;
+using Arkive.Core.Skills;
+using Arkive.Core.Viewer;
+
+namespace Arkive.App;
+
+/// <summary>The classes and skills the viewer offers for a player body, and the class it starts on.</summary>
+public sealed record SkillPreviewOffer(string DefaultClass, IReadOnlyList<SkillPreviewClass> Classes);
+
+public sealed record SkillPreviewClass(string File, string Name, IReadOnlyList<SkillPreviewSkill> Skills);
+
+public sealed record SkillPreviewSkill(int Id, string Name, IReadOnlyList<string> Branches);
+
+/// <summary>
+/// The model viewer's skill preview: a player character plays one of its class's skills from the game's own action
+/// data, with every effect the skill starts placed at its time and socket.
+/// </summary>
+public sealed class SkillPreviewService(
+    PackageIndexStore index,
+    Func<string?> libraryRoot,
+    Func<GameAssetMetadataIndex?> metadata,
+    UpkPackageReader reader,
+    IChunkProtectionProvider protectionProvider,
+    ModelViewerAnimationService animations,
+    string sceneCacheRoot,
+    Func<IReadOnlyList<string>, IReadOnlyList<string>, CancellationToken, Task<ParticleEditorAssets>> findAssets,
+    Action<string> log)
+{
+    private Task<SkillCatalog?>? _catalog;
+
+    // The class each player body is most often seen as; the viewer lets the user pick another.
+    private static readonly IReadOnlyDictionary<string, string> DefaultClass = new Dictionary<string, string>
+    {
+        ["guardianknight"] = "DRAGONKNIGHT", ["female-assassin"] = "BLADE", ["female-warrior"] = "BERSERKER_FEMALE",
+        ["male-warrior"] = "BERSERKER", ["female-mage"] = "ELEMENTALMASTER", ["female-martial-artist"] = "BATTLEMASTER",
+        ["male-gunner"] = "DEVILHUNTER", ["female-specialist"] = "YINYANGSHI", ["male-specialist"] = "SPECIALIST_MALE",
+    };
+
+    private Task<SkillCatalog?> CatalogAsync() => _catalog ??= Task.Run(() =>
+    {
+        try
+        {
+            return libraryRoot() is { Length: > 0 } root ? SkillCatalog.Load(root) : null;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            log($"Skill preview unavailable: {exception.Message}");
+            _catalog = null;
+            return null;
+        }
+    });
+
+    /// <summary>Null when the mesh is not a player body or the game's skill data can't be read.</summary>
+    public async Task<SkillPreviewOffer?> OfferAsync(ModelViewerRequest request, CancellationToken cancellationToken)
+    {
+        if (!request.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase) ||
+            BodyProfiles.ForObjectName(request.ObjectName) is not { IsNpc: false } profile)
+            return null;
+        if (await CatalogAsync() is not { } catalog) return null;
+        var classNames = metadata()?.Entities
+            .Where(entity => entity.EntityType.Equals("PC", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(entity => entity.EntityId).ToDictionary(group => group.Key, group => group.First().DisplayName) ?? [];
+        var classes = catalog.Classes.Where(file => catalog.Skills(file).Any(skill => skill.LearnClass != 0)).Select(file =>
+        {
+            var skills = catalog.Skills(file);
+            var learnClass = skills.Where(skill => skill.LearnClass != 0).GroupBy(skill => skill.LearnClass)
+                .OrderByDescending(group => group.Count()).Select(group => group.Key).FirstOrDefault();
+            var name = classNames.TryGetValue(learnClass, out var display) ? GameClassNames.Label(display) : file;
+            // Only the class's own skills: an action file also holds shared actions (dying, standing up).
+            return new SkillPreviewClass(file, name, skills.Where(skill => skill.LearnClass != 0).Select(skill => new SkillPreviewSkill(skill.Id, skill.Name,
+                SkillCatalog.Branches(skill.Action).Select(branch => branch.Name).ToArray())).ToArray());
+        }).OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        var preferred = DefaultClass.GetValueOrDefault(profile.Id);
+        var start = classes.FirstOrDefault(item => item.File.Equals(preferred, StringComparison.OrdinalIgnoreCase)) ?? classes.FirstOrDefault();
+        return start is null ? null : new SkillPreviewOffer(start.File, classes);
+    }
+
+    /// <summary>
+    /// Everything the viewer needs to play one branch of a skill: the class's skill animations, each effect's
+    /// particle model (from the game's current packages, so installed mods show) and their textures and meshes.
+    /// </summary>
+    public async Task<object> PrepareAsync(string classFile, int skillId, int branchIndex,
+        Action<string> progress, CancellationToken cancellationToken)
+    {
+        var catalog = await CatalogAsync() ?? throw new InvalidDataException("The game's skill data could not be read.");
+        var skill = catalog.Skills(classFile).FirstOrDefault(item => item.Id == skillId) ??
+                    throw new InvalidDataException("That skill is not in the game's data.");
+        var branches = SkillCatalog.Branches(skill.Action);
+        var branch = branches[Math.Clamp(branchIndex, 0, branches.Count - 1)];
+        var root = libraryRoot() ?? throw new InvalidOperationException("Choose the game's Packages folder first.");
+
+        // The class's skill animations: the AnimSet holding the skill's first animation, exported once with its SK_ sequences.
+        progress("Preparing the skill's animations (the first time for a class takes a while)…");
+        var animNames = branch.Stages.SelectMany(stage => stage.Notifies)
+            .Where(notify => notify.Kind == "Anim" && notify.Asset is not null).Select(notify => notify.Asset!).ToArray();
+        var animSet = await FindAnimSetAsync(root, animNames[0], cancellationToken) ??
+                      throw new InvalidDataException($"The animation {animNames[0]} was not found in the indexed packages.");
+        var set = await animations.PrepareAsync(animSet.Package, animSet.Name, cancellationToken: cancellationToken, skills: true);
+
+        // Each effect's particle model, by "Package.Object".
+        progress("Reading the skill's effects…");
+        var notifies = branch.Stages.SelectMany(stage => stage.Notifies)
+            .Where(notify => notify.IsParticle && !notify.IsCamera && notify.Asset is not null &&
+                             // FX_Post effects are screen effects (blur, colour noise) drawn over the whole view.
+                             !notify.Asset.StartsWith("FX_Post.", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var systems = new Dictionary<string, ParticleEffectModel>(StringComparer.OrdinalIgnoreCase);
+        foreach (var asset in notifies.Select(notify => notify.Asset!).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var separator = asset.IndexOf('.');
+            var (alias, name) = (asset[..separator], asset[(separator + 1)..]);
+            var found = await index.SearchAsync(root, name, null, metadata(), PackageIndexSearchScope.ObjectName, null, resultLimit: 50);
+            var match = found.Matches.FirstOrDefault(item => item.ObjectName.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                                                             item.PackageAlias.Equals(alias, StringComparison.OrdinalIgnoreCase) &&
+                                                             item.ClassName.Equals("ParticleSystem", StringComparison.OrdinalIgnoreCase) &&
+                                                             File.Exists(item.SourcePath));
+            if (match is null)
+            {
+                log($"Skill preview: effect {asset} was not found in the index.");
+                continue;
+            }
+            try
+            {
+                systems[asset] = await Task.Run(() => ParticleEffectModels.Build(match.SourcePath, match.PackageAlias, match.ObjectName, null,
+                    protectionProvider), cancellationToken);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException)
+            {
+                log($"Skill preview: effect {asset} could not be read: {exception.Message}");
+            }
+        }
+
+        progress("Preparing the effects' textures and meshes…");
+        var emitters = systems.Values.SelectMany(model => model.Emitters).ToArray();
+        var assets = await findAssets(
+            emitters.Select(emitter => emitter.Material).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            emitters.Select(emitter => emitter.Mesh).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            cancellationToken);
+        var animationFolder = Path.GetRelativePath(sceneCacheRoot, set.Directory).Replace('\\', '/');
+        log($"Skill preview ready: class={classFile}, skill={skill.Id} {skill.Name}, branch={branch.Name}, stages={branch.Stages.Count}, " +
+            $"effects={systems.Count}/{notifies.Select(notify => notify.Asset).Distinct().Count()}, animset={set.AnimSetName}.");
+        return new
+        {
+            type = "skill",
+            name = skill.Name,
+            branch = branch.Name,
+            animations = new
+            {
+                baseUrl = $"https://scenes.arkive.local/{animationFolder}/",
+                bones = set.Bones,
+                list = set.Animations.Select(item => new { name = item.Name, frames = item.Frames, rate = item.Rate, file = item.File }),
+            },
+            stages = branch.Stages.Select(stage => new
+            {
+                name = stage.Name,
+                duration = stage.Duration,
+                rate = stage.Rate,
+                anim = stage.Notifies.FirstOrDefault(notify => notify.Kind == "Anim")?.Asset,
+                notifies = stage.Notifies.Where(notify => notify.IsParticle && !notify.IsCamera && notify.Asset is not null &&
+                                                          systems.ContainsKey(notify.Asset))
+                    .Select(notify => new
+                    {
+                        start = notify.Start, duration = notify.Duration, system = notify.Asset, socket = notify.Socket,
+                        parameters = notify.Parameters.Select(parameter => new
+                        {
+                            name = parameter.Name, isVector = parameter.IsVector, value = parameter.Value,
+                            x = parameter.X, y = parameter.Y, z = parameter.Z,
+                        }),
+                    }),
+            }),
+            systems,
+            assets = ParticleEditorWindow.AssetsMessage(assets),
+        };
+    }
+
+    private readonly Dictionary<string, (string Package, string Name)> _animSets = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The package and AnimSet holding an animation sequence. The asset index does not list sequences, so the player
+    /// AnimSets it lists are checked for the sequence's name in their package's name table.
+    /// </summary>
+    private async Task<(string Package, string Name)?> FindAnimSetAsync(string root, string sequence, CancellationToken cancellationToken)
+    {
+        if (_animSets.TryGetValue(sequence, out var known)) return known;
+        var found = await index.SearchAsync(root, "_ani", "Object", metadata(), PackageIndexSearchScope.ObjectName, null, resultLimit: 5000);
+        var candidates = found.Matches
+            .Where(item => item.ClassName.Equals("AnimSet", StringComparison.OrdinalIgnoreCase) &&
+                           item.PackageAlias.StartsWith("pc_", StringComparison.OrdinalIgnoreCase) && File.Exists(item.SourcePath))
+            .GroupBy(item => item.SourcePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var result = await Task.Run(() =>
+        {
+            foreach (var package in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                AssetCatalog catalogue;
+                try
+                {
+                    catalogue = new AssetCatalogReader(reader, protectionProvider).Read(package.Key);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException)
+                {
+                    continue;
+                }
+                if (!catalogue.Names.Any(name => name.Value.Equals(sequence, StringComparison.OrdinalIgnoreCase))) continue;
+                var set = catalogue.Assets.FirstOrDefault(asset => asset.ClassName.Equals("AnimSet", StringComparison.OrdinalIgnoreCase));
+                if (set is not null) return ((string Package, string Name)?)(package.Key, set.ObjectName);
+            }
+            return null;
+        }, cancellationToken);
+        if (result is { } value) _animSets[sequence] = value;
+        return result;
+    }
+}

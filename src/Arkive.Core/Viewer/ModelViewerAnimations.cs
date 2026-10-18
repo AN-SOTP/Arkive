@@ -35,13 +35,14 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
     public string CacheRoot { get; } = Path.GetFullPath(cacheRoot);
 
     /// <param name="keepAll">Keep every animation (NPC and monster sets are small and named differently).</param>
+    /// <param name="skills">Keep the skill animations (SK_...) instead, for the skill preview.</param>
     public async Task<ModelViewerAnimationSet> PrepareAsync(
-        string packagePath, string animSetName, bool keepAll = false, CancellationToken cancellationToken = default)
+        string packagePath, string animSetName, bool keepAll = false, CancellationToken cancellationToken = default, bool skills = false)
     {
         var package = new FileInfo(packagePath);
         if (!package.Exists) throw new FileNotFoundException("The animation package was not found.", packagePath);
         var key = System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"{package.FullName}|{package.Length}|{package.LastWriteTimeUtc.Ticks}|{animSetName}|{keepAll}|{FormatVersion}")))[..24];
+            $"{package.FullName}|{package.Length}|{package.LastWriteTimeUtc.Ticks}|{animSetName}|{keepAll}|{(skills ? "skills|" : "")}{FormatVersion}")))[..24];
         var directory = Path.Combine(CacheRoot, key);
         var indexPath = Path.Combine(directory, "animations.json");
         if (File.Exists(indexPath))
@@ -62,7 +63,7 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
             var staging = directory + ".tmp";
             if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
             Directory.CreateDirectory(staging);
-            var set = await Task.Run(() => Convert(psa, animSetName, staging, keepAll, cancellationToken), cancellationToken).ConfigureAwait(false);
+            var set = await Task.Run(() => Convert(psa, animSetName, staging, keepAll, skills, cancellationToken), cancellationToken).ConfigureAwait(false);
             await File.WriteAllTextAsync(Path.Combine(staging, "animations.json"), JsonSerializer.Serialize(set, Json), cancellationToken)
                 .ConfigureAwait(false);
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
@@ -157,7 +158,7 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
     private static readonly string[] GroupOrder = ["Idle", "Character select", "Walk and run", "Emotes", "Dances", "Poses", "Other"];
 
     private static ModelViewerAnimationSet Convert(string psaPath, string animSetName, string outputDirectory, bool keepAll,
-        CancellationToken cancellationToken)
+        bool skills, CancellationToken cancellationToken)
     {
         using var stream = File.OpenRead(psaPath);
         using var reader = new BinaryReader(stream);
@@ -197,7 +198,9 @@ public sealed partial class ModelViewerAnimationService(UmodelBridge bridge, str
         foreach (var (name, first, frames, rate) in sequences)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var group = GroupOf(name) ?? (keepAll ? "Other" : null);
+            var group = skills
+                ? name.StartsWith("sk_", StringComparison.OrdinalIgnoreCase) ? "Skills" : null
+                : GroupOf(name) ?? (keepAll ? "Other" : null);
             if (group is null || frames <= 0) continue;
             var length = checked(frames * bones.Length * keyChunk.Size);
             if (keys.Length < length) keys = new byte[length];

@@ -135,6 +135,7 @@ public partial class ModelViewerWindow : Window
             if (_pageReady) Browser.CoreWebView2.PostWebMessageAsJson(message);
             else _pendingLoadMessage = message;
             if (!keepView) _ = OfferAnimationsAsync(request, loading.Token);
+            if (!keepView) _ = OfferSkillsAsync(request, loading.Token);
         }
         catch (OperationCanceledException) when (loading.IsCancellationRequested)
         {
@@ -345,6 +346,11 @@ public partial class ModelViewerWindow : Window
             Directory.CreateDirectory(_service.Cache.RootDirectory);
             core.SetVirtualHostNameToFolderMapping(SceneHost,
                 _service.Cache.RootDirectory, CoreWebView2HostResourceAccessKind.Allow);
+            if (ParticleAssetRoot is not null)
+            {
+                Directory.CreateDirectory(ParticleAssetRoot);
+                core.SetVirtualHostNameToFolderMapping("particles.arkive.local", ParticleAssetRoot, CoreWebView2HostResourceAccessKind.Allow);
+            }
             core.WebMessageReceived += OnWebMessage;
             core.NewWindowRequested += (_, args) => args.Handled = true;
             core.Navigate($"https://{ViewerHost}/index.html");
@@ -406,6 +412,9 @@ public partial class ModelViewerWindow : Window
                 break;
             case "browse":
                 if (_browse(root.GetProperty("delta").GetInt32()) is { } next) _ = ShowObjectAsync(next);
+                break;
+            case "playSkill":
+                _ = PlaySkillAsync(root.Clone());
                 break;
             case "showEdits":
                 _showEdits = root.GetProperty("value").GetBoolean();
