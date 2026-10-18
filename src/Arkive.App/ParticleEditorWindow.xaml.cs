@@ -13,7 +13,8 @@ public sealed record ParticleEditorRequest(string PackagePath, string PackageAli
 
 /// <summary>A texture the preview can draw for one of the effect's materials, and the material's blend mode.</summary>
 /// <param name="Tint">The material's colour, which multiplies the particles' own.</param>
-public sealed record ParticleEditorTexture(string? RelativePath, string Blend, float[]? Tint = null);
+public sealed record ParticleEditorTexture(string? RelativePath, string Blend, float[]? Tint = null,
+    IReadOnlyDictionary<string, float>? Scalars = null);
 
 /// <summary>What the preview draws the effect with: textures by material, and mesh files (glTF) by mesh name, all relative to the texture folder.</summary>
 public sealed record ParticleEditorAssets(
@@ -122,6 +123,7 @@ public partial class ParticleEditorWindow : Window
             url = pair.Value.RelativePath is null ? null : TextureUrl(pair.Value.RelativePath),
             blend = pair.Value.Blend,
             tint = pair.Value.Tint,
+            scalars = pair.Value.Scalars,
         }),
         meshes = assets.Meshes.ToDictionary(pair => pair.Key, pair => TextureUrl(pair.Value)),
     };

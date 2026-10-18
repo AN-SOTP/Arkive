@@ -131,8 +131,8 @@ public partial class MainWindow
         {
             cancellationToken.ThrowIfCancellationRequested();
             var folder = Path.Combine(ParticleTextureRoot, SafeFolderName(material));
-            // Version 2 records also hold the material's colour.
-            var record = Path.Combine(folder, "texture2.json");
+            // Version 3 records also hold the material's colour and scalar settings.
+            var record = Path.Combine(folder, "texture3.json");
             try
             {
                 if (File.Exists(record) && JsonSerializer.Deserialize<ParticleEditorTexture>(await File.ReadAllTextAsync(record, cancellationToken)) is { } cached)
@@ -150,7 +150,7 @@ public partial class MainWindow
                 var files = await _umodelBridge!.ExportNamedObjectAsync(match.SourcePath, material, Path.Combine(folder, "export"), cancellationToken);
                 var info = ParticleMaterialInfo.Read(files, material);
                 var result = new ParticleEditorTexture(info.TexturePath is null ? null : Path.GetRelativePath(ParticleTextureRoot, info.TexturePath),
-                    info.Additive ? "additive" : "translucent", info.Tint);
+                    info.Additive ? "additive" : "translucent", info.Tint, info.Scalars);
                 Directory.CreateDirectory(folder);
                 await File.WriteAllTextAsync(record, JsonSerializer.Serialize(result), cancellationToken);
                 found[material] = result;

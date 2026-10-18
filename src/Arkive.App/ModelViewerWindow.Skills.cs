@@ -13,8 +13,10 @@ public partial class ModelViewerWindow
     /// <summary>The classes and skills a mesh can preview (null when it can't); set by Arkive's main window.</summary>
     public Func<ModelViewerRequest, CancellationToken, Task<SkillPreviewOffer?>>? SkillOffer { get; init; }
 
-    /// <summary>Prepares one skill branch for the page (class file, skill id, branch, progress); set by Arkive's main window.</summary>
-    public Func<string, int, int, Action<string>, CancellationToken, Task<object>>? SkillPlayback { get; init; }
+    /// <summary>Prepares one skill branch for the page (shown mesh, class file, skill id, branch, progress); set by Arkive's main window.</summary>
+    public Func<ModelViewerRequest, string, int, int, Action<string>, CancellationToken, Task<SkillPlayback>>? SkillPlayback { get; init; }
+
+    private string? _skillScene;
 
     /// <summary>The folder the effects' textures and meshes are kept in, served to the page as particles.arkive.local.</summary>
     public string? ParticleAssetRoot { get; init; }
@@ -29,6 +31,7 @@ public partial class ModelViewerWindow
         if (SkillOffer is null) return;
         try
         {
+            _skillScene = null;
             var offer = await SkillOffer(request, cancellationToken);
             await _pageReadyTask.Task.WaitAsync(cancellationToken);
             if (offer is null || cancellationToken.IsCancellationRequested) return;
@@ -45,7 +48,7 @@ public partial class ModelViewerWindow
 
     private async Task PlaySkillAsync(JsonElement root)
     {
-        if (SkillPlayback is null) return;
+        if (SkillPlayback is null || _request is not { } request) return;
         _skillLoading?.Cancel();
         var loading = _skillLoading = new CancellationTokenSource();
         var classFile = root.GetProperty("classFile").GetString() ?? string.Empty;
@@ -53,9 +56,21 @@ public partial class ModelViewerWindow
         var branch = root.TryGetProperty("branch", out var branchElement) ? branchElement.GetInt32() : 0;
         try
         {
-            var message = await SkillPlayback(classFile, skill, branch,
+            var playback = await SkillPlayback(request, classFile, skill, branch,
                 text => Dispatcher.Invoke(() => PostSkill(new { type = "skillStatus", text })), loading.Token);
-            if (!loading.IsCancellationRequested) PostSkill(message);
+            if (loading.IsCancellationRequested) return;
+            // The character with its weapon (and any missing outfit half) replaces the shown mesh while skills play.
+            if (playback.SceneJson is { } sceneJson && sceneJson != _skillScene)
+            {
+                if (_sceneLoaded.Task.IsCompleted) _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                Browser.CoreWebView2.PostWebMessageAsJson(
+                    $"{{\"type\":\"load\",\"theme\":\"{_theme}\",\"keepView\":true,\"skillScene\":true,\"hasEdits\":false," +
+                    $"\"remember\":{(RememberViewSettings ? "true" : "false")}," +
+                    $"\"baseUrl\":\"https://{SceneHost}/\",\"scene\":{sceneJson}}}");
+                await _sceneLoaded.Task.WaitAsync(TimeSpan.FromMinutes(5), loading.Token);
+                _skillScene = sceneJson;
+            }
+            PostSkill(playback.Message);
         }
         catch (OperationCanceledException) when (loading.IsCancellationRequested)
         {

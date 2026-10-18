@@ -90,6 +90,17 @@ function sampleParameter(model, time, random, parameters) {
 // Unreal is Z-up; three.js is Y-up.
 export const toThree = (v) => new THREE.Vector3(v[0], v[2], v[1]);
 
+// An Unreal rotator (pitch, yaw, roll; degrees, or 65536 units a turn) as a three.js rotation. Unreal is left-handed
+// with Z up and the viewer maps (X, Y, Z) to (X, Z, Y): yaw turns about Y the other way, pitch about Z and roll about
+// X the other way, applied roll first, then pitch, then yaw.
+const AXIS_X = new THREE.Vector3(1, 0, 0), AXIS_Y = new THREE.Vector3(0, 1, 0), AXIS_Z = new THREE.Vector3(0, 0, 1);
+export function ueRotator(values, perTurn = 360) {
+  const [pitch, yaw, roll] = (values ?? [0, 0, 0]).map((value) => (value ?? 0) * Math.PI * 2 / perTurn);
+  return new THREE.Quaternion().setFromAxisAngle(AXIS_Y, -yaw)
+    .multiply(new THREE.Quaternion().setFromAxisAngle(AXIS_Z, pitch))
+    .multiply(new THREE.Quaternion().setFromAxisAngle(AXIS_X, -roll));
+}
+
 // The values a skill passes to an effect it starts scale its colour, opacity, size, lifetime, spawn rate and
 // placement; 0 (or a missing value) leaves that part unchanged.
 export function effectScales(parameters) {
@@ -103,6 +114,10 @@ export function effectScales(parameters) {
     lifetime: scalar('lifetime') ?? 1, spawn: scalar('spawn') ?? 1, location: vector('location') ?? [1, 1, 1], named,
   };
 }
+
+// A mesh particle's rotation module gives turns about Unreal's X (roll), Y (pitch) and Z (yaw); as angles about the
+// viewer's X, Y and Z axes (see ueRotator for the signs).
+const meshTurns = (v) => new THREE.Vector3(-v[0], -v[2], v[1]).multiplyScalar(Math.PI * 2);
 
 const NO_SCALES = effectScales([]);
 const WHITE = [1, 1, 1];
@@ -177,10 +192,11 @@ export class EffectAssets {
 const SPRITE_VERTEX = `
   attribute vec3 iPos; attribute vec2 iSize; attribute vec4 iColor; attribute float iRot; attribute vec3 iVel; attribute float iFrame;
   uniform float alignMode; uniform vec2 subImages;
-  varying vec4 vColor; varying vec2 vUv; varying vec2 vLocal;
+  varying vec4 vColor; varying vec2 vUv; varying vec2 vLocal; varying float vFacing;
   void main() {
     vec2 corner = position.xy;
     vLocal = corner;
+    vFacing = 1.0;
     vec4 center;
     if (alignMode > 1.5) {
       // A decal: lies flat on the ground under the particle.
@@ -217,23 +233,30 @@ const SPRITE_VERTEX = `
 
 const MESH_VERTEX = `
   attribute vec3 iPos; attribute vec3 iScale; attribute vec4 iQuat; attribute vec4 iColor;
-  varying vec4 vColor; varying vec2 vUv; varying vec2 vLocal;
+  varying vec4 vColor; varying vec2 vUv; varying vec2 vLocal; varying float vFacing;
   vec3 rotate(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
   void main() {
     vec3 local = rotate(iQuat, position * iScale);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(iPos + local, 1.0);
+    vec4 view = modelViewMatrix * vec4(iPos + local, 1.0);
+    gl_Position = projectionMatrix * view;
+    vec3 n = normalize(normalMatrix * rotate(iQuat, normal / max(iScale, vec3(1e-4))));
+    vFacing = abs(dot(n, normalize(-view.xyz)));
     vColor = iColor; vUv = uv; vLocal = vec2(0.0);
   }`;
 
 const FRAGMENT = `
   uniform sampler2D map; uniform float hasMap; uniform float roundEdge;
-  varying vec4 vColor; varying vec2 vUv; varying vec2 vLocal;
+  uniform float texturePower; uniform float strength; uniform float fresnelPower; uniform float fresnelStrength;
+  varying vec4 vColor; varying vec2 vUv; varying vec2 vLocal; varying float vFacing;
   void main() {
     vec4 tex = hasMap > 0.5 ? texture2D(map, vUv) : vec4(1.0);
     float edge = roundEdge > 0.5 ? smoothstep(0.5, 0.3, length(vLocal)) : 1.0;
-    // Exported effect textures are mostly grey masks without alpha: their brightness is the coverage.
+    // Exported effect textures are mostly grey masks without alpha: their brightness is the coverage, sharpened by
+    // the material's power and scaled by its strength.
     float strongest = max(tex.r, max(tex.g, tex.b));
-    float mask = (hasMap > 0.5 ? tex.a * strongest : 1.0) * edge;
+    float mask = (hasMap > 0.5 ? tex.a * pow(strongest, texturePower) : 1.0) * edge * strength;
+    // Fresnel materials show mostly towards a mesh's edges.
+    if (fresnelStrength > 0.0) mask *= clamp(pow(1.0 - vFacing, max(0.25, fresnelPower)) * fresnelStrength, 0.0, 1.0);
     float a = vColor.a * mask;
     if (a <= 0.002) discard;
     // The game's colours are HDR (often far above 1); roll them off so bright effects keep their hue.
@@ -270,7 +293,8 @@ class Emitter {
     this.isDecal = model.modules.some((module) => module.class.includes('typedatadecal'));
     // Light emitters light the scene and distortion materials bend what is behind them; neither is drawn as particles.
     this.isLight = model.modules.some((module) => module.class.includes('typedatalight'));
-    this.isDistortion = /(^|_)(dist|distort|circledisort|worldoffset)(_|\d)|defaultparticle/.test(model.material ?? '');
+    this.isDistortion = /(^|_)(dist|distort|circledisort|worldoffset)(_|\d)|defaultparticle/.test(model.material ?? '') ||
+      /distort|(^|[_-])dist([_-]|$)/i.test(model.name ?? '');
     if (this.isLight || this.isDistortion) this.visible = false;
     this.alignMode = this.isDecal ? 2 : alignment === 'psa_velocity' ? 1 : 0;
     this.squareSprites = alignment === 'psa_square' || alignment === 'psa_typespecific';
@@ -346,9 +370,9 @@ class Emitter {
       rot: t.startrotation ? this.value(t.startrotation, time, rnd()) * Math.PI * 2 : 0,
       rotRate: t.startrotationrate ? this.value(t.startrotationrate, time, rnd()) * Math.PI * 2 : 0,
       meshRot: t.startrotation && this.isMesh && Array.isArray(this.value(t.startrotation, time, [0.5]))
-        ? toThree(this.value(t.startrotation, time, rnd())).multiplyScalar(Math.PI * 2) : new THREE.Vector3(),
+        ? meshTurns(this.value(t.startrotation, time, rnd())) : new THREE.Vector3(),
       meshRotRate: t.startrotationrate && this.isMesh && Array.isArray(this.value(t.startrotationrate, time, [0.5]))
-        ? toThree(this.value(t.startrotationrate, time, rnd())).multiplyScalar(Math.PI * 2) : new THREE.Vector3(),
+        ? meshTurns(this.value(t.startrotationrate, time, rnd())) : new THREE.Vector3(),
       frame: this.interpolation.startsWith('psuvim_random') ? Math.floor(this.random() * this.subImages[0] * this.subImages[1]) : 0,
       seeds: rnd(),
     };
@@ -457,7 +481,7 @@ class Emitter {
       if (this.drawMesh) {
         // Unreal sizes are X, Y, Z with Z up.
         this.scales.set([size[0], size[2], size[1]], i * 3);
-        quat.setFromEuler(euler.set(p.meshRot.x, p.meshRot.y, p.meshRot.z));
+        quat.setFromEuler(euler.set(p.meshRot.x, p.meshRot.y, p.meshRot.z, 'YZX'));
         this.quats.set([quat.x, quat.y, quat.z, quat.w], i * 4);
       } else {
         this.sizes.set(this.squareSprites ? [size[0], size[0]] : [size[0], size[1]], i * 2);
@@ -480,10 +504,16 @@ class Emitter {
       this.material.dispose();
     }
     const geometry = new THREE.InstancedBufferGeometry();
+    // A mesh emitter's type data turns its mesh (pitch, yaw, roll in degrees) before particles place it.
+    const turn = this.module('typedatamesh')?.values;
+    if (meshGeometry && turn && (turn.pitch || turn.yaw || turn.roll)) {
+      meshGeometry = meshGeometry.clone().applyQuaternion(ueRotator([turn.pitch ?? 0, turn.yaw ?? 0, turn.roll ?? 0]));
+    }
     const base = meshGeometry ?? QUAD;
     geometry.index = base.index;
     geometry.setAttribute('position', base.attributes.position);
     if (base.attributes.uv) geometry.setAttribute('uv', base.attributes.uv);
+    if (base.attributes.normal) geometry.setAttribute('normal', base.attributes.normal);
     const instanced = (name, size) => {
       const array = new Float32Array(MAX_PARTICLES * size);
       geometry.setAttribute(name, new THREE.InstancedBufferAttribute(array, size).setUsage(THREE.DynamicDrawUsage));
@@ -508,6 +538,7 @@ class Emitter {
         map: { value: null }, hasMap: { value: 0 }, alignMode: { value: this.alignMode },
         subImages: { value: new THREE.Vector2(this.subImages[0], this.subImages[1]) },
         roundEdge: { value: drawMesh ? 0 : 1 },
+        texturePower: { value: 1 }, strength: { value: 1 }, fresnelPower: { value: 1 }, fresnelStrength: { value: 0 },
       },
       vertexShader: drawMesh ? MESH_VERTEX : SPRITE_VERTEX,
       fragmentShader: FRAGMENT,
@@ -528,6 +559,14 @@ class Emitter {
     const found = assets.textures[this.materialName ?? ''];
     if (!found) return;
     this.materialTint = found.tint ?? null;
+    const scalars = found.scalars ?? {};
+    // Distortion materials bend the image behind them; the preview leaves them out.
+    if (scalars.distortion > 0 && found.blend !== 'additive') { this.isDistortion = true; this.visible = false; }
+    const uniforms = this.material.uniforms;
+    uniforms.texturePower.value = scalars.power > 0 ? Math.min(scalars.power, 8) : 1;
+    uniforms.strength.value = scalars.strength > 0 ? Math.min(scalars.strength, 4) : 1;
+    uniforms.fresnelStrength.value = this.isMesh && scalars.fresnelStrength > 0 ? scalars.fresnelStrength : 0;
+    uniforms.fresnelPower.value = scalars.fresnelPower > 0 ? scalars.fresnelPower : 1;
     this.material.blending = found.blend === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending;
     this.material.needsUpdate = true;
     // Mesh particles draw a texture only once their mesh (and so its UVs) is loaded.

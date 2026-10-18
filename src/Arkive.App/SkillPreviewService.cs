@@ -17,6 +17,10 @@ public sealed record SkillPreviewClass(string File, string Name, IReadOnlyList<S
 
 public sealed record SkillPreviewSkill(int Id, string Name, IReadOnlyList<string> Branches);
 
+/// <summary>A prepared skill: the scene to show it on (the character with its weapon and any missing outfit half;
+/// null to keep the shown scene) and the playback message for the page.</summary>
+public sealed record SkillPlayback(string? SceneJson, object Message);
+
 /// <summary>
 /// The model viewer's skill preview: a player character plays one of its class's skills from the game's own action
 /// data, with every effect the skill starts placed at its time and socket.
@@ -28,11 +32,13 @@ public sealed class SkillPreviewService(
     UpkPackageReader reader,
     IChunkProtectionProvider protectionProvider,
     ModelViewerAnimationService animations,
+    ModelViewerSceneService scenes,
     string sceneCacheRoot,
     Func<IReadOnlyList<string>, IReadOnlyList<string>, CancellationToken, Task<ParticleEditorAssets>> findAssets,
     Action<string> log)
 {
     private Task<SkillCatalog?>? _catalog;
+    private readonly Dictionary<string, ClassLook?> _looks = new(StringComparer.OrdinalIgnoreCase);
 
     // The class each player body is most often seen as; the viewer lets the user pick another.
     private static readonly IReadOnlyDictionary<string, string> DefaultClass = new Dictionary<string, string>
@@ -85,7 +91,7 @@ public sealed class SkillPreviewService(
     /// Everything the viewer needs to play one branch of a skill: the class's skill animations, each effect's
     /// particle model (from the game's current packages, so installed mods show) and their textures and meshes.
     /// </summary>
-    public async Task<object> PrepareAsync(string classFile, int skillId, int branchIndex,
+    public async Task<SkillPlayback> PrepareAsync(ModelViewerRequest request, string classFile, int skillId, int branchIndex,
         Action<string> progress, CancellationToken cancellationToken)
     {
         var catalog = await CatalogAsync() ?? throw new InvalidDataException("The game's skill data could not be read.");
@@ -136,6 +142,11 @@ public sealed class SkillPreviewService(
             }
         }
 
+        // The character as the skill shows it: the class's weapon in its hand and, for half an outfit, the class's
+        // default other half.
+        progress("Preparing the class's weapon…");
+        var (sceneJson, weapons) = await PrepareLookAsync(request, root, classFile, cancellationToken);
+
         progress("Preparing the effects' textures and meshes…");
         var emitters = systems.Values.SelectMany(model => model.Emitters).ToArray();
         var assets = await findAssets(
@@ -145,9 +156,10 @@ public sealed class SkillPreviewService(
         var animationFolder = Path.GetRelativePath(sceneCacheRoot, set.Directory).Replace('\\', '/');
         log($"Skill preview ready: class={classFile}, skill={skill.Id} {skill.Name}, branch={branch.Name}, stages={branch.Stages.Count}, " +
             $"effects={systems.Count}/{notifies.Select(notify => notify.Asset).Distinct().Count()}, animset={set.AnimSetName}.");
-        return new
+        return new SkillPlayback(sceneJson, new
         {
             type = "skill",
+            weapons,
             name = skill.Name,
             branch = branch.Name,
             animations = new
@@ -167,6 +179,7 @@ public sealed class SkillPreviewService(
                     .Select(notify => new
                     {
                         start = notify.Start, duration = notify.Duration, system = notify.Asset, socket = notify.Socket,
+                        offset = notify.Offset, rotation = notify.Rotation, scale = notify.Scale,
                         parameters = notify.Parameters.Select(parameter => new
                         {
                             name = parameter.Name, isVector = parameter.IsVector, value = parameter.Value,
@@ -176,7 +189,82 @@ public sealed class SkillPreviewService(
             }),
             systems,
             assets = ParticleEditorWindow.AssetsMessage(assets),
-        };
+        });
+    }
+
+    /// <summary>
+    /// The scene a skill plays on: the shown mesh, the class's weapons and, when the mesh is only an outfit's upper or
+    /// lower half, the class's default other half; joined like the proportion editor's outfit. Null when nothing is
+    /// added. The weapons list says which socket holds each weapon and the weapon's own sockets.
+    /// </summary>
+    private async Task<(string? SceneJson, object[] Weapons)> PrepareLookAsync(
+        ModelViewerRequest request, string root, string classFile, CancellationToken cancellationToken)
+    {
+        if (!_looks.TryGetValue(classFile, out var look))
+        {
+            try
+            {
+                look = await Task.Run(() => CharacterLooks.ForClass(root, classFile, cancellationToken), cancellationToken);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException)
+            {
+                log($"Skill preview: the class look of {classFile} could not be read: {exception.Message}");
+                look = null;
+            }
+            _looks[classFile] = look;
+        }
+        if (look is null) return (null, []);
+        var name = request.ObjectName.ToLowerInvariant();
+        var halves = new List<LookMesh>();
+        if (name.Contains("upper", StringComparison.Ordinal) && look.Parts.TryGetValue("Lower", out var lower)) halves.Add(lower);
+        if (name.Contains("lower", StringComparison.Ordinal) && look.Parts.TryGetValue("Upper", out var upper)) halves.Add(upper);
+        var pieces = new List<ModelViewerSceneResult> { await Task.Run(() => scenes.PrepareAsync(request, null, cancellationToken), cancellationToken) };
+        foreach (var half in halves)
+            if (await FindMeshAsync(root, half, cancellationToken) is { } halfRequest)
+                pieces.Add(await Task.Run(() => scenes.PrepareAsync(halfRequest, null, cancellationToken), cancellationToken));
+        var weapons = new List<object>();
+        // The class's skeleton mesh carries the sockets skills place effects at; outfit pieces often have none.
+        if (look.DefaultMesh is { } skeleton && await FindMeshAsync(root, skeleton, cancellationToken) is { } skeletonRequest)
+        {
+            try
+            {
+                var sockets = await Task.Run(() => scenes.PrepareAsync(skeletonRequest, null, cancellationToken), cancellationToken);
+                weapons.Add(new { part = (string?)null, socket = (string?)null, sockets = sockets.Scene.Sockets });
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or Arkive.Core.External.UmodelBridgeException)
+            {
+                log($"Skill preview: the sockets of {skeleton.Object} could not be read: {exception.Message}");
+            }
+        }
+        foreach (var weapon in look.Weapons)
+        {
+            if (await FindMeshAsync(root, weapon.Mesh, cancellationToken) is not { } weaponRequest) continue;
+            var scene = await Task.Run(() => scenes.PrepareAsync(weaponRequest, null, cancellationToken), cancellationToken);
+            pieces.Add(scene);
+            weapons.Add(new { part = scene.Scene.Object.ObjectName, socket = weapon.BattleSocket, sockets = scene.Scene.Sockets });
+        }
+        if (pieces.Count == 1) return (null, weapons.ToArray());
+        log($"Skill preview look: class={classFile}, look={look.Name}, halves={halves.Count}, weapons={weapons.Count}.");
+        return (BodyProportionSceneCombiner.Combine(pieces, sceneCacheRoot).SceneJson, weapons.ToArray());
+    }
+
+    private async Task<ModelViewerRequest?> FindMeshAsync(string root, LookMesh mesh, CancellationToken cancellationToken)
+    {
+        var found = await index.SearchAsync(root, mesh.Object, null, metadata(), PackageIndexSearchScope.ObjectName, null, resultLimit: 50);
+        var match = found.Matches.FirstOrDefault(item => item.ObjectName.Equals(mesh.Object, StringComparison.OrdinalIgnoreCase) &&
+                                                         item.PackageAlias.Equals(mesh.Package, StringComparison.OrdinalIgnoreCase) &&
+                                                         item.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase) &&
+                                                         File.Exists(item.SourcePath))
+                    ?? found.Matches.FirstOrDefault(item => item.ObjectName.Equals(mesh.Object, StringComparison.OrdinalIgnoreCase) &&
+                                                            item.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase) &&
+                                                            File.Exists(item.SourcePath));
+        if (match is null)
+        {
+            log($"Skill preview: {mesh.Package}.{mesh.Object} was not found in the index.");
+            return null;
+        }
+        return new ModelViewerRequest(match.SourcePath, match.PackageAlias, root, match.ExportIndex, match.SerialOffset,
+            match.SerialSize, match.ClassName, match.ObjectName);
     }
 
     private readonly Dictionary<string, (string Package, string Name)> _animSets = new(StringComparer.OrdinalIgnoreCase);

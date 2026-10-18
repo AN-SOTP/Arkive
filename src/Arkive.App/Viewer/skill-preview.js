@@ -2,7 +2,7 @@
 // describes it. Each stage plays its animation; each effect the skill starts appears at its time, follows its socket
 // (or bone) and takes the colour, size and other values the skill hands it.
 import * as THREE from 'three';
-import { ParticleEffect, EffectAssets } from './particle-sim.js';
+import { ParticleEffect, EffectAssets, ueRotator as rotator } from './particle-sim.js';
 
 const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -15,7 +15,7 @@ export function createSkillPreview(context) {
   const panel = $('tab-skills');
   const ui = { offer: null, classFile: '', skill: 0, branch: 0 };
   const assets = new EffectAssets();
-  const player = { data: null, clips: new Map(), time: 0, playing: false, speed: 1, loop: true, effects: [], fired: new Set(), last: 0, stages: [] };
+  const player = { data: null, clips: new Map(), time: 0, playing: false, speed: 1, loop: true, effects: [], fired: new Set(), last: 0, stages: [], weapons: [] };
   window.arkiveSkills = { ui, player };
 
   function render() {
@@ -68,36 +68,92 @@ export function createSkillPreview(context) {
   }
 
   // ---- Playback ----
-  function bonesByName() {
+  function bonesIn(root, attached) {
     const bones = new Map();
-    model()?.traverse((object) => { if (object.isBone) bones.set(object.name.replace(/__ARKIVE_\d+$/, '').toLowerCase(), object); });
+    const visit = (object, inAttached) => {
+      const here = inAttached || !!object.userData.attached;
+      if (object.isBone && here === attached) {
+        const name = object.name.replace(/__ARKIVE_\d+$/, '').toLowerCase();
+        if (!bones.has(name)) bones.set(name, object);
+      }
+      for (const child of object.children) visit(child, here);
+    };
+    if (root) visit(root, attached && !!root.userData.attached);
     return bones;
   }
 
-  // The object an effect follows: the named socket, else a bone of that name, else the character itself. Its scale
-  // turns the effect's Unreal centimetres into the viewer's units.
-  function attachment(socketName) {
+  // Where a socket is: its bone, offset and rotation. The character's own sockets come first, then its weapons'.
+  function findSocket(name) {
+    const lower = name.toLowerCase();
+    // The shown mesh's sockets, then the class skeleton's (sent as a weapon entry without a part).
+    const bodySockets = [...(scene()?.sockets ?? []), ...(player.data?.weapons ?? []).filter((item) => !item.part).flatMap((item) => item.sockets ?? [])];
+    for (const body of bodySockets.filter((item) => item.name.toLowerCase() === lower)) {
+      const bone = bonesIn(model(), false).get(body.bone.toLowerCase());
+      if (bone) return { bone, socket: body };
+    }
+    for (const weapon of player.weapons) {
+      const socket = weapon.sockets?.find((item) => item.name.toLowerCase() === lower);
+      const bone = socket ? bonesIn(weapon.root, true).get(socket.bone.toLowerCase()) : null;
+      if (bone) return { bone, socket };
+    }
+    // Some effects name a bone instead (B_Wing_Root, B_EffectRoot).
+    const bone = bonesIn(model(), false).get(lower) ?? player.weapons.map((weapon) => bonesIn(weapon.root, true).get(lower)).find(Boolean);
+    return bone ? { bone, socket: null } : null;
+  }
+
+  // Puts the class's weapons in the character's hand: each weapon part of the scene goes in its battle socket.
+  function attachWeapons(weapons) {
+    player.weapons = [];
+    const root = model();
+    if (!root) return;
+    for (const weapon of (weapons ?? []).filter((item) => item.part)) {
+      const part = root.children.find((child) => child.userData.partName?.toLowerCase() === weapon.part.toLowerCase());
+      const holder = findSocket(weapon.socket);
+      if (!part || !holder) continue;
+      part.userData.attached = true;
+      holder.bone.add(part);
+      part.position.copy(holder.socket ? socketOffset(holder.socket) : new THREE.Vector3());
+      part.quaternion.copy(holder.socket ? rotator(holder.socket.rotation, 65536) : new THREE.Quaternion());
+      part.scale.setScalar(1);
+      player.weapons.push({ ...weapon, root: part });
+    }
+    requestRender();
+  }
+
+  // The object an effect follows: the named socket or bone, else the character itself, moved by the effect's own
+  // offset, rotation and scale. Its scale also turns the effect's Unreal centimetres into the viewer's metres.
+  function attachment(notify) {
     const root = model();
     if (!root) return null;
-    const bones = bonesByName();
-    let parent = root, offset = new THREE.Vector3();
-    if (socketName) {
-      const socket = scene()?.sockets?.find((item) => item.name.toLowerCase() === socketName.toLowerCase());
-      const bone = socket ? bones.get(socket.bone.toLowerCase()) : bones.get(socketName.toLowerCase());
-      if (bone) { parent = bone; if (socket) offset = socketOffset(socket); }
-    }
+    let parent = root;
     const object = new THREE.Object3D();
-    object.position.copy(offset);
+    const holder = notify.socket ? findSocket(notify.socket) : null;
+    if (holder) {
+      parent = holder.bone;
+      if (holder.socket) {
+        object.position.copy(socketOffset(holder.socket));
+        object.quaternion.copy(rotator(holder.socket.rotation, 65536));
+      }
+    }
     parent.add(object);
     parent.updateWorldMatrix(true, false);
     const scale = new THREE.Vector3().setFromMatrixScale(parent.matrixWorld).x || 1;
-    object.scale.setScalar(0.01 / scale);
+    const units = 0.01 / scale;
+    const effectScale = notify.scale ?? [1, 1, 1];
+    // The offset is in the socket's frame, in Unreal units; the effect's rotation turns it within that frame.
+    if (notify.offset) {
+      const [x, y, z] = notify.offset;
+      object.position.add(new THREE.Vector3(x, z, y).multiplyScalar(units).applyQuaternion(object.quaternion));
+    }
+    if (notify.rotation) object.quaternion.multiply(rotator(notify.rotation));
+    object.scale.set(units * effectScale[0], units * effectScale[2], units * effectScale[1]);
     return object;
   }
 
   async function start(data) {
     stop();
     player.data = data;
+    attachWeapons(data.weapons);
     assets.add({ textures: data.assets?.items, meshes: data.assets?.meshes });
     let at = 0;
     player.stages = data.stages.map((stage) => {
@@ -166,7 +222,7 @@ export function createSkillPreview(context) {
           if (player.fired.has(key) || t < player.stages[s].begins + notify.start) return;
           player.fired.add(key);
           const model = player.data.systems[notify.system];
-          const anchor = model ? attachment(notify.socket) : null;
+          const anchor = model ? attachment(notify) : null;
           if (!model || !anchor) return;
           const effect = new ParticleEffect({ model, root: world, parent: anchor, assets, parameters: notify.parameters });
           player.effects.push({ effect, anchor, stopAt: notify.duration > 0 ? t + notify.duration : Infinity, startedAt: t });

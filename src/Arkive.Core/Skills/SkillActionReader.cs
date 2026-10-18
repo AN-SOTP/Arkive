@@ -27,6 +27,15 @@ public sealed record SkillActionNotify(
     public bool IsParticle => Kind is "PlayParticleEffect" or "PlayCameraParticleEffect";
 
     public bool IsCamera => Kind == "PlayCameraParticleEffect";
+
+    /// <summary>An effect's offset from its socket (or the character) in Unreal units, when the action sets one.</summary>
+    public float[]? Offset { get; init; }
+
+    /// <summary>An effect's rotation from its socket as pitch, yaw and roll in degrees, when the action sets one.</summary>
+    public float[]? Rotation { get; init; }
+
+    /// <summary>An effect's scale, when the action sets one.</summary>
+    public float[]? Scale { get; init; }
 }
 
 public sealed record SkillActionStage(string Name, float Duration, float Rate, IReadOnlyList<SkillActionNotify> Notifies);
@@ -126,17 +135,25 @@ public static class SkillActionReader
         var duration = Finite(Float(data, head.End + 24));
         var name = start + 1 < end && tokens[start + 1].Offset == head.End + 40 ? tokens[start + 1].Value : null;
         string? asset = null, socket = null;
+        var transformStart = -1;
         var parameters = new List<SkillEffectParameter>();
         for (var index = start + 1; index < end; index++)
         {
             var token = tokens[index];
             if (token.Value.StartsWith(ParticlePrefix, StringComparison.Ordinal) && token.Value.EndsWith('\''))
             {
-                asset ??= PackageAndObject(token.Value[ParticlePrefix.Length..^1]);
+                if (asset is not null) continue;
+                asset = PackageAndObject(token.Value[ParticlePrefix.Length..^1]);
                 // The socket the effect follows is the next plain name, when there is one before its parameters.
-                if (index + 1 < end && tokens[index + 1].Offset - token.End <= 200 && IsName(tokens[index + 1].Value) &&
-                    !IsParameter(data, tokens, index + 1, end))
-                    socket = tokens[index + 1].Value;
+                var next = index + 1;
+                // A socket's name sits about 60 bytes after the path; an effect without one has its fields there instead.
+                if (next < end && tokens[next].Offset - token.End <= 80 && tokens[next].Value != "None" &&
+                    IsName(tokens[next].Value) && !IsParameter(data, tokens, next, end))
+                {
+                    socket = tokens[next].Value;
+                    transformStart = tokens[next].End;
+                }
+                else transformStart = token.End;
             }
             else if (IsParameter(data, tokens, index, end))
             {
@@ -153,8 +170,30 @@ public static class SkillActionReader
                 asset ??= token.Value[8..^1];
             }
         }
-        return new SkillActionNotify(kind, startTime, duration, name, asset, socket, parameters);
+        var notify = new SkillActionNotify(kind, startTime, duration, name, asset, socket, parameters);
+        return transformStart > 0 ? WithTransform(data, notify, transformStart) : notify;
     }
+
+    // After an effect's path (and socket) come a few flags, two 1.0 floats, then its offset (3 floats), rotation
+    // (pitch, yaw, roll in degrees), nine unused floats and its scale (3). The fields are not always 4-byte aligned, so
+    // the pair of 1.0s marks where they start.
+    private static SkillActionNotify WithTransform(ReadOnlySpan<byte> data, SkillActionNotify notify, int start)
+    {
+        ReadOnlySpan<byte> marker = [0, 0, 0x80, 0x3F, 0, 0, 0x80, 0x3F];
+        var window = data[start..Math.Min(data.Length, start + 120)];
+        var at = window.IndexOf(marker);
+        if (at < 0 || start + at + 8 + 72 > data.Length) return notify;
+        var fields = start + at + 8;
+        var offset = Vector(data, fields);
+        var rotation = Vector(data, fields + 12);
+        var scale = Vector(data, fields + 60);
+        static bool Sane(float value) => value == 0 || Math.Abs(value) is > 1e-4f and < 1e5f;
+        if (!offset.Concat(rotation).All(Sane) || !scale.All(value => value is > 1e-3f and < 1e3f)) return notify;
+        return notify with { Offset = offset, Rotation = rotation, Scale = scale };
+    }
+
+    private static float[] Vector(ReadOnlySpan<byte> data, int offset) =>
+        [Finite(Float(data, offset)), Finite(Float(data, offset + 4)), Finite(Float(data, offset + 8))];
 
     // A parameter is a name, its 56-byte value (type, float, vector) and "None".
     private static bool IsParameter(ReadOnlySpan<byte> data, List<Token> tokens, int index, int end)
@@ -186,6 +225,9 @@ public static class SkillActionReader
         offset >= 0 && offset + 4 <= data.Length ? BinaryPrimitives.ReadSingleLittleEndian(data[offset..]) : 0;
 
     private static float Finite(float value, float fallback = 0) => float.IsFinite(value) && Math.Abs(value) < 1e7 ? value : fallback;
+
+    /// <summary>Every string of a file in the client's serialisation, in order (look files, actions...).</summary>
+    public static IReadOnlyList<string> Strings(ReadOnlySpan<byte> data) => Tokenise(data).Select(token => token.Value).ToArray();
 
     // Every length-prefixed string in the file, scanning byte by byte so fields between them are skipped.
     private static List<Token> Tokenise(ReadOnlySpan<byte> data)

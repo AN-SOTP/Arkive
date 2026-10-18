@@ -413,6 +413,7 @@ async function loadModel() {
   const root = new THREE.Group();
   for (const [partIndex, part] of parts.entries()) {
     const gltf = await new GLTFLoader().loadAsync(state.base + part.modelUrl);
+    gltf.scene.userData.partName = part.objectName;
     root.add(gltf.scene);
     if (!scene.parts?.length) continue;
     gltf.scene.traverse((object) => {
@@ -1198,14 +1199,20 @@ window.arkiveProportions = { proportions, setZone };
 // becomes inverse(C of parent) * L * C. At rest that gives the mesh's own pose; in motion the bone turns as in game.
 const animation = { base: '', list: [], clip: null, playing: true, time: 0, speed: 1, rest: null, last: 0, restPose: null, restUrl: '' };
 
-function animationBones() {
+// The character's bones by name. A weapon the skill preview put in the character's hand has its own skeleton (its
+// bone names can repeat the body's), so it is left out unless asked for.
+function animationBones(includeAttached = false) {
   const byName = new Map();
-  state.model?.traverse((object) => {
-    if (!object.isBone) return;
-    const name = object.name.replace(/__ARKIVE_\d+$/, '');
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push(object);
-  });
+  const visit = (object, inAttached) => {
+    const here = inAttached || !!object.userData.attached;
+    if (object.isBone && (!here || includeAttached)) {
+      const name = object.name.replace(/__ARKIVE_\d+$/, '');
+      if (!byName.has(name)) byName.set(name, []);
+      byName.get(name).push(object);
+    }
+    for (const child of object.children) visit(child, here);
+  };
+  if (state.model) visit(state.model, false);
   return byName;
 }
 
@@ -1384,8 +1391,6 @@ host?.addEventListener('message', (event) => {
   }
 });
 window.arkiveAnimation = { animation, playAnimation, poseAt };
-// Exposed for Arkive's tests.
-window.arkiveViewer = { camera, controls, requestRender };
 
 // The skill preview plays clips from the class's skill animations instead of the chosen animation, which comes back
 // when the skill stops.
@@ -1849,6 +1854,7 @@ window.arkiveViewer = {
   renderer,
   camera,
   controls,
+  requestRender,
   // Automated check: renders each material alone from the front and reports its pixel statistics
   // (share of near-white and near-black pixels, mean colour) and shader compile errors.
   materialStats: () => {
