@@ -1065,12 +1065,16 @@ public sealed class ArkiveModDeploymentService
         string path,
         CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(
-            path, FileMode.Open, FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete,
-            BufferBytes, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        return Convert.ToHexString(
-            await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+        var before = new FileInfo(path);
+        string hash;
+        await using (var stream = new FileStream(
+                         path, FileMode.Open, FileAccess.Read,
+                         FileShare.ReadWrite | FileShare.Delete,
+                         BufferBytes, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+        // Install and restore always read every byte; the next start's status check reuses what they just read.
+        ArkiveModEditSnapshot.RememberHash(path, before.Length, before.LastWriteTimeUtc, hash);
+        return hash;
     }
 
     private static FileStream AcquireDeploymentLock(string stateRootDirectory)

@@ -234,6 +234,10 @@ public sealed record ArkiveModApplyContext(
 
 public sealed class ArkiveModApplyService
 {
+    // Package rebuilds that run at once in Apply. Crunch already uses every core, so a few at a time is enough; each
+    // build holds a few copies of its package in memory.
+    private static readonly int RebuildParallelism = Math.Clamp(Environment.ProcessorCount / 4, 1, 4);
+
     public const string UtilitySetId = "apply-arkive-mods";
     private readonly ArkiveModApplyContext _context;
     private readonly ArkiveModMaterializationService _materializer;
@@ -588,7 +592,7 @@ public sealed class ArkiveModApplyService
             changing.Count(package => package.Action == ArkiveModPackageAction.Rebuild) + 3);
         var step = 0;
         void Report(string package, string message) =>
-            progress?.Report(new ArkiveModApplyProgress(++step, totalSteps, package, message));
+            progress?.Report(new ArkiveModApplyProgress(Interlocked.Increment(ref step), totalSteps, package, message));
 
         var restored = 0;
         var restoredForRebuild = new List<ArkiveModPackagePlan>();
@@ -647,9 +651,21 @@ public sealed class ArkiveModApplyService
         var rebuilt = 0;
         var installable = new List<GuidedTexturePackageEntry>();
         var projects = await _context.Packages.LoadAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var package in changing.Where(package => !outcomes.ContainsKey(package.PhysicalPackageName)))
+        // Packages are rebuilt a few at a time: each build reads only its own clean package and writes only its own
+        // revision folder, and nothing is installed until every build has finished and been verified. The builds are
+        // byte-identical to one-at-a-time builds; the gain is the stages that use a single core.
+        var waiting = changing.Where(package => !outcomes.ContainsKey(package.PhysicalPackageName)).ToArray();
+        var rebuilds = waiting.Where(package => package.Action == ArkiveModPackageAction.Rebuild).ToArray();
+        var builds = new (GuidedTexturePackageEntry? Package, string? Error)[rebuilds.Length];
+        await Parallel.ForEachAsync(Enumerable.Range(0, rebuilds.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = RebuildParallelism, CancellationToken = cancellationToken },
+            async (index, token) =>
+            {
+                Report(rebuilds[index].PhysicalPackageName, "Rebuilding the package from the clean client...");
+                builds[index] = await RebuildAsync(rebuilds[index], token).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        foreach (var package in waiting)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             if (package.Action == ArkiveModPackageAction.Install)
             {
                 installable.Add(projects.First(item => item.Manifest.PackageProjectId.Equals(
@@ -657,8 +673,7 @@ public sealed class ArkiveModApplyService
                 continue;
             }
             if (package.Action != ArkiveModPackageAction.Rebuild) continue;
-            Report(package.PhysicalPackageName, "Rebuilding the package from the clean client...");
-            var built = await RebuildAsync(package, cancellationToken).ConfigureAwait(false);
+            var built = builds[Array.IndexOf(rebuilds, package)];
             if (built.Error is not null)
             {
                 outcomes[package.PhysicalPackageName] = new ArkiveModPackageOutcome(

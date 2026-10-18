@@ -229,6 +229,18 @@ public sealed class ArkiveModEditSnapshot
         return hash;
     }
 
+    /// <summary>
+    /// Records a hash a caller has just computed by reading the whole file, if the file still has the length and write
+    /// time it had before it was read (so a file changed while it was read is not recorded).
+    /// </summary>
+    public static void RememberHash(string path, long length, DateTime writeTimeUtc, string sha256)
+    {
+        var full = Path.GetFullPath(path);
+        var info = new FileInfo(full);
+        if (info.Exists && info.Length == length && info.LastWriteTimeUtc == writeTimeUtc)
+            HashCache[full] = (length, writeTimeUtc, sha256);
+    }
+
     private sealed record SavedHash(string Path, long Length, long WriteTimeTicks, string Sha256);
 
     /// <summary>

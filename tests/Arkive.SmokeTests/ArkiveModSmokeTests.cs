@@ -11,6 +11,7 @@ internal static class ArkiveModSmokeTests
         new("imports, scans, and persists .arkive library state and priorities", TestArkiveLibraryImportAndPriorities),
         new("resolves .arkive conflicts by priority, merges disjoint assets, and blocks ties", TestArkiveConflictResolution),
         new("applies the higher-priority .arkive mod and rebuilds when priorities change", TestArkiveApplyPriorityEndToEnd),
+        new("rebuilds and installs several packages in one apply", TestArkiveApplySeveralPackages),
         new("migrates package projects to .arkive mods without changing installed game files", TestArkivePackageProjectMigration),
         new("saves package-project drafts into its own .arkive mod without overriding priorities", TestArkivePackageProjectAuthoring),
         new("rebuilds .arkive mods after unchanged and breaking client updates", TestArkiveClientUpdate),
@@ -255,6 +256,38 @@ internal static class ArkiveModSmokeTests
                tied.PriorityToWinAll(b.ModId) == 6 &&
                tied.ConflictsFor(a.ModId).Single().Outcome.StartsWith("Tie", StringComparison.Ordinal),
             "equal-priority conflicts were not reported as blocking ties with a winning-priority suggestion");
+    }
+
+    private static void TestArkiveApplySeveralPackages()
+    {
+        // Apply rebuilds packages a few at a time; each must still get its own mod's values and install together.
+        var root = Path.Combine(fixtureDirectory, "arkive-apply-several");
+        var first = CreateMaterialClient(root, out _);
+        var packages = new[] { first }.Concat(Enumerable.Range(2, 4).Select(index =>
+        {
+            var path = Path.Combine(Path.GetDirectoryName(first)!, $"material-instance-{index}.upk");
+            WriteMaterialInstancePackage(path);
+            return path;
+        })).ToArray();
+        var player = CreateEnvironment(Path.Combine(root, "player"));
+        for (var index = 0; index < packages.Length; index++)
+        {
+            var mod = AuthorMaterialMod(root, packages[index], $"Face {index}", roughness: 0.6f + 0.05f * index, blue: null);
+            var entry = player.Library.ImportAsync(mod).GetAwaiter().GetResult().Entry;
+            player.Library.SetEnabledAsync(entry.ModId, true).GetAwaiter().GetResult();
+        }
+        var service = CreateApplyService(player, Path.GetDirectoryName(first)!);
+        var plan = service.PlanAsync().GetAwaiter().GetResult();
+        Assert(plan.CanApply && plan.Packages.Count == packages.Length &&
+               plan.Packages.All(package => package.Action == ArkiveModPackageAction.Rebuild),
+            "every package with a mod was not planned for a rebuild: " + plan.Summary);
+        var applied = service.ApplyAsync(plan.Fingerprint).GetAwaiter().GetResult();
+        Assert(applied.Succeeded && applied.RebuiltPackageCount == packages.Length && applied.InstalledPackageCount == packages.Length,
+            "the packages were not all rebuilt and installed: " + string.Join(" | ", applied.Packages.Select(item => item.Message)));
+        for (var index = 0; index < packages.Length; index++)
+            Assert(ReadMaterial(packages[index]).ScalarParameters.Single().Value == 0.6f + 0.05f * index,
+                $"{Path.GetFileName(packages[index])} did not get its own mod's value");
+        Assert(!service.PlanAsync().GetAwaiter().GetResult().HasChanges, "the applied packages still reported pending changes");
     }
 
     private static void TestArkiveApplyPriorityEndToEnd()
