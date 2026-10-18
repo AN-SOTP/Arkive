@@ -1,0 +1,5 @@
+Mods with recoloured skies apply, and packages rebuild about twice as fast.
+
+- Fixed: textures that don't compress well (such as recoloured skies) failed to apply with a UModel "appDecompress" error. Arkive now stores them compressed, as the game's own packages do.
+- Fixed: Arkive misread the rare compressed blocks in game packages that are exactly as long as their data.
+- Applying mods and rebuilding packages is about twice as fast: texture compression now uses every CPU core and produces the same files.
