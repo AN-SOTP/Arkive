@@ -12,7 +12,13 @@ namespace Arkive.App;
 public sealed record ParticleEditorRequest(string PackagePath, string PackageAlias, string SystemObjectName, string? SystemObjectPath);
 
 /// <summary>A texture the preview can draw for one of the effect's materials, and the material's blend mode.</summary>
-public sealed record ParticleEditorTexture(string? RelativePath, string Blend);
+/// <param name="Tint">The material's colour, which multiplies the particles' own.</param>
+public sealed record ParticleEditorTexture(string? RelativePath, string Blend, float[]? Tint = null);
+
+/// <summary>What the preview draws the effect with: textures by material, and mesh files (glTF) by mesh name, all relative to the texture folder.</summary>
+public sealed record ParticleEditorAssets(
+    IReadOnlyDictionary<string, ParticleEditorTexture> Textures,
+    IReadOnlyDictionary<string, string> Meshes);
 
 /// <summary>
 /// Arkive's particle effect window: plays the effect live from the game's own settings and shows every change to
@@ -31,7 +37,7 @@ public partial class ParticleEditorWindow : Window
     private readonly string _theme;
     private readonly IChunkProtectionProvider _protectionProvider;
     private readonly Func<ParticleEffectRecipe, Task<string>>? _save;
-    private readonly Func<IReadOnlyList<string>, CancellationToken, Task<IReadOnlyDictionary<string, ParticleEditorTexture>>>? _textures;
+    private readonly Func<IReadOnlyList<string>, IReadOnlyList<string>, CancellationToken, Task<ParticleEditorAssets>>? _assets;
     private readonly Action<string> _log;
     private readonly CancellationTokenSource _closing = new();
     private readonly TaskCompletionSource _pageReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -45,7 +51,7 @@ public partial class ParticleEditorWindow : Window
         string effectiveTheme,
         IChunkProtectionProvider protectionProvider,
         Func<ParticleEffectRecipe, Task<string>>? save,
-        Func<IReadOnlyList<string>, CancellationToken, Task<IReadOnlyDictionary<string, ParticleEditorTexture>>>? textures,
+        Func<IReadOnlyList<string>, IReadOnlyList<string>, CancellationToken, Task<ParticleEditorAssets>>? assets,
         Action<string> log)
     {
         _request = request;
@@ -54,7 +60,7 @@ public partial class ParticleEditorWindow : Window
         _theme = effectiveTheme.Equals("Light", StringComparison.OrdinalIgnoreCase) ? "light" : "dark";
         _protectionProvider = protectionProvider;
         _save = save;
-        _textures = textures;
+        _assets = assets;
         _log = log;
         _saved = recipe;
         Recipe = recipe;
@@ -91,19 +97,9 @@ public partial class ParticleEditorWindow : Window
                 : "Change the settings on the left; Save changes writes them into this mod's working copy.");
             _log($"Particle editor opened: system={_request.SystemObjectName}, package={_request.PackageAlias}, emitters={model.Emitters.Count}.");
             var materials = model.Emitters.Select(emitter => emitter.Material).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (_textures is not null && materials.Length > 0)
-            {
-                var found = await _textures(materials, token);
-                Post(new
-                {
-                    type = "textures",
-                    items = found.ToDictionary(pair => pair.Key, pair => new
-                    {
-                        url = pair.Value.RelativePath is null ? null : $"https://{TextureHost}/{pair.Value.RelativePath.Replace('\\', '/')}",
-                        blend = pair.Value.Blend,
-                    }),
-                });
-            }
+            var meshes = model.Emitters.Select(emitter => emitter.Mesh).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (_assets is not null && materials.Length + meshes.Length > 0)
+                Post(AssetsMessage(await _assets(materials, meshes, token)));
         }
         catch (OperationCanceledException) when (_closing.IsCancellationRequested)
         {
@@ -116,6 +112,22 @@ public partial class ParticleEditorWindow : Window
             Status($"The effect could not be read: {exception.Message}");
         }
     }
+
+    /// <summary>The preview's "textures" message: texture and mesh URLs on the texture host.</summary>
+    internal static object AssetsMessage(ParticleEditorAssets assets) => new
+    {
+        type = "textures",
+        items = assets.Textures.ToDictionary(pair => pair.Key, pair => new
+        {
+            url = pair.Value.RelativePath is null ? null : TextureUrl(pair.Value.RelativePath),
+            blend = pair.Value.Blend,
+            tint = pair.Value.Tint,
+        }),
+        meshes = assets.Meshes.ToDictionary(pair => pair.Key, pair => TextureUrl(pair.Value)),
+    };
+
+    internal static string TextureUrl(string relativePath) =>
+        $"https://{TextureHost}/" + string.Join('/', relativePath.Split('\\', '/').Select(Uri.EscapeDataString));
 
     private async Task<bool> InitializeBrowserAsync()
     {

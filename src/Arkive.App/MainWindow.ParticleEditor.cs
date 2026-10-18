@@ -60,11 +60,63 @@ public partial class MainWindow
     {
         var window = new ParticleEditorWindow(request, recipe, Path.Combine(_projectRoot, "cache", "webview2"), ParticleTextureRoot,
             _effectiveAppearanceTheme, _protectionProvider, save,
-            _umodelBridge is null || string.IsNullOrWhiteSpace(_libraryRootPath) ? null : FindParticleTexturesAsync, Log)
+            _umodelBridge is null || string.IsNullOrWhiteSpace(_libraryRootPath) ? null : FindParticleAssetsAsync, Log)
         {
             Owner = this,
         };
         window.Show();
+    }
+
+    /// <summary>The textures and meshes an effect's emitters draw with, exported once and kept under cache\particle-textures.</summary>
+    private async Task<ParticleEditorAssets> FindParticleAssetsAsync(
+        IReadOnlyList<string> materials, IReadOnlyList<string> meshes, CancellationToken cancellationToken) =>
+        new(await FindParticleTexturesAsync(materials, cancellationToken),
+            await FindParticleMeshesAsync(meshes, cancellationToken));
+
+    /// <summary>
+    /// Each mesh particle's static mesh as glTF, exported once with UModel from the package the asset index finds it in.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> FindParticleMeshesAsync(
+        IReadOnlyList<string> meshes, CancellationToken cancellationToken)
+    {
+        var found = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var mesh in meshes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var folder = Path.Combine(ParticleTextureRoot, "meshes", SafeFolderName(mesh));
+            var record = Path.Combine(folder, "mesh.txt");
+            try
+            {
+                if (File.Exists(record))
+                {
+                    var cached = (await File.ReadAllTextAsync(record, cancellationToken)).Trim();
+                    if (cached.Length > 0 && File.Exists(Path.Combine(ParticleTextureRoot, cached))) found[mesh] = cached;
+                    continue;
+                }
+                var search = await _packageIndexStore.SearchAsync(_libraryRootPath!, mesh, null, _gameMetadataIndex,
+                    PackageIndexSearchScope.ObjectName, null, resultLimit: 20);
+                var match = search.Matches.FirstOrDefault(item => item.ObjectName.Equals(mesh, StringComparison.OrdinalIgnoreCase) &&
+                                                                  item.ClassName.Contains("staticmesh", StringComparison.OrdinalIgnoreCase) &&
+                                                                  File.Exists(item.SourcePath));
+                if (match is null) continue;
+                if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+                var export = await _umodelBridge!.ExportForViewerAsync(match.SourcePath,
+                    new Core.External.UmodelAssetEntry(match.ExportIndex, match.SerialOffset, match.SerialSize, match.ClassName, match.ObjectName),
+                    Path.Combine(folder, "export"), _libraryRootPath, cancellationToken);
+                var model = export.OutputFiles.FirstOrDefault(path => path.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase) ||
+                                                                path.EndsWith(".glb", StringComparison.OrdinalIgnoreCase));
+                var relative = model is null ? string.Empty : Path.GetRelativePath(ParticleTextureRoot, model);
+                Directory.CreateDirectory(folder);
+                await File.WriteAllTextAsync(record, relative, cancellationToken);
+                if (relative.Length > 0) found[mesh] = relative;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  Core.External.UmodelBridgeException)
+            {
+                Log($"Particle mesh not exported: mesh={mesh}, error={exception.Message}");
+            }
+        }
+        return found;
     }
 
     /// <summary>
@@ -79,7 +131,8 @@ public partial class MainWindow
         {
             cancellationToken.ThrowIfCancellationRequested();
             var folder = Path.Combine(ParticleTextureRoot, SafeFolderName(material));
-            var record = Path.Combine(folder, "texture.json");
+            // Version 2 records also hold the material's colour.
+            var record = Path.Combine(folder, "texture2.json");
             try
             {
                 if (File.Exists(record) && JsonSerializer.Deserialize<ParticleEditorTexture>(await File.ReadAllTextAsync(record, cancellationToken)) is { } cached)
@@ -95,10 +148,9 @@ public partial class MainWindow
                 if (match is null) continue;
                 if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
                 var files = await _umodelBridge!.ExportNamedObjectAsync(match.SourcePath, material, Path.Combine(folder, "export"), cancellationToken);
-                var texture = ParticleMaterialTexture(files, material);
-                var blend = files.Where(path => path.EndsWith(".props.txt", StringComparison.OrdinalIgnoreCase))
-                    .Any(path => File.ReadAllText(path).Contains("BLEND_Additive", StringComparison.OrdinalIgnoreCase)) ? "additive" : "translucent";
-                var result = new ParticleEditorTexture(texture is null ? null : Path.GetRelativePath(ParticleTextureRoot, texture), blend);
+                var info = ParticleMaterialInfo.Read(files, material);
+                var result = new ParticleEditorTexture(info.TexturePath is null ? null : Path.GetRelativePath(ParticleTextureRoot, info.TexturePath),
+                    info.Additive ? "additive" : "translucent", info.Tint);
                 Directory.CreateDirectory(folder);
                 await File.WriteAllTextAsync(record, JsonSerializer.Serialize(result), cancellationToken);
                 found[material] = result;
@@ -110,22 +162,6 @@ public partial class MainWindow
             }
         }
         return found;
-    }
-
-    /// <summary>The material's first texture as exported: UModel lists a material's textures in its .mat file.</summary>
-    private static string? ParticleMaterialTexture(IReadOnlyList<string> files, string material)
-    {
-        var mat = files.FirstOrDefault(path => Path.GetFileName(path).Equals(material + ".mat", StringComparison.OrdinalIgnoreCase));
-        var pngs = files.Where(path => path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)).ToArray();
-        if (mat is not null)
-            foreach (var line in File.ReadLines(mat))
-            {
-                var value = line.Split('=', 2) is [_, var name] ? name.Trim() : null;
-                if (value is null) continue;
-                var png = pngs.FirstOrDefault(path => Path.GetFileNameWithoutExtension(path).Equals(value, StringComparison.OrdinalIgnoreCase));
-                if (png is not null) return png;
-            }
-        return pngs.FirstOrDefault();
     }
 
     private static string SafeFolderName(string value) => Regex.Replace(value, @"[^A-Za-z0-9_.-]", "_");
