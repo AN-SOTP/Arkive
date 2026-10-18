@@ -205,7 +205,7 @@ public sealed class SkillPreviewService(
                                                           systems.ContainsKey(notify.Asset))
                     .Select(notify => new
                     {
-                        start = notify.Start, duration = notify.Duration, system = notify.Asset, socket = notify.Socket, group = notify.Group,
+                        start = notify.Start, duration = notify.Duration, system = notify.Asset, socket = notify.Socket, group = notify.Group, attach = notify.Attach,
                         offset = notify.Offset, rotation = notify.Rotation, scale = notify.Scale,
                         parameters = notify.Parameters.Select(parameter => new
                         {

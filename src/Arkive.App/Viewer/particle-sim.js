@@ -77,18 +77,16 @@ function sampleParameter(model, time, random, parameters, out = null) {
   const dims = model.dimensions;
   const result = dims === 1 ? [0] : (out ?? new Array(dims));
   for (let d = 0; d < dims; d++) {
+    // As in UE3, a parameter the effect is not given reads as the distribution's constant, mapped the same way.
+    const input = given === undefined ? model.constant[d] : Array.isArray(given) ? given[d] ?? given[0] : given;
+    const mode = model.modes[d];
     let value;
-    if (given === undefined) value = model.constant[d];
+    if (mode === 'dpm_direct') value = input;
     else {
-      const input = Array.isArray(given) ? given[d] ?? given[0] : given;
-      const mode = model.modes[d];
-      if (mode === 'dpm_direct') value = input;
-      else {
-        const x = mode === 'dpm_abs' ? Math.abs(input) : input;
-        const span = model.maxInput[d] - model.minInput[d];
-        const t = span === 0 ? 0 : Math.min(1, Math.max(0, (x - model.minInput[d]) / span));
-        value = model.minOutput[d] + (model.maxOutput[d] - model.minOutput[d]) * t;
-      }
+      const x = mode === 'dpm_abs' ? Math.abs(input) : input;
+      const span = model.maxInput[d] - model.minInput[d];
+      const t = span === 0 ? (x >= model.maxInput[d] ? 1 : 0) : Math.min(1, Math.max(0, (x - model.minInput[d]) / span));
+      value = model.minOutput[d] + (model.maxOutput[d] - model.minOutput[d]) * t;
     }
     result[d] = value;
   }
@@ -115,25 +113,20 @@ export function ueRotator(values, perTurn = 360) {
     .multiply(new THREE.Quaternion().setFromAxisAngle(AXIS_X, -roll));
 }
 
-// The values a skill passes to an effect it starts scale its colour, opacity, size, lifetime, spawn rate and
-// placement; 0 (or a missing value) leaves that part unchanged.
-export function effectScales(parameters) {
-  const find = (name) => parameters?.find((p) => p.name.toLowerCase() === name);
-  const vector = (name) => { const p = find(name); return p && p.isVector && (p.x || p.y || p.z) ? [p.x, p.y, p.z] : null; };
-  const scalar = (name) => { const p = find(name); return p && !p.isVector && p.value ? p.value : null; };
+// The values a skill passes to an effect it starts, by name. As in the game they reach only the effect settings that
+// read a parameter of that name (a particle parameter distribution); nothing else is scaled. 0 is a value like any
+// other (a Scale of 0 switches an emitter's particles off).
+export function effectParameters(parameters) {
   const named = {};
-  for (const p of parameters ?? []) named[p.name.toLowerCase()] = p.isVector ? [p.x, p.y, p.z] : p.value;
-  return {
-    color: vector('color') ?? [1, 1, 1], alpha: scalar('alpha') ?? 1, size: vector('size') ?? (scalar('size') ? Array(3).fill(scalar('size')) : [1, 1, 1]),
-    lifetime: scalar('lifetime') ?? 1, spawn: scalar('spawn') ?? 1, location: vector('location') ?? [1, 1, 1], named,
-  };
+  for (const p of parameters ?? []) named[p.name.toLowerCase()] = p.isVector ? [p.x ?? 0, p.y ?? 0, p.z ?? 0] : p.value ?? 0;
+  return named;
 }
 
 // A mesh particle's rotation module gives turns about Unreal's X (roll), Y (pitch) and Z (yaw); as angles about the
 // viewer's X, Y and Z axes (see ueRotator for the signs).
 const meshTurns = (v) => new THREE.Vector3(-v[0], -v[2], v[1]).multiplyScalar(Math.PI * 2);
 
-const NO_SCALES = effectScales([]);
+const NO_PARAMETERS = {};
 const WHITE = [1, 1, 1];
 
 // ---- Assets: textures, meshes and shaders by material and mesh name, loaded once and shared ----
@@ -433,7 +426,7 @@ const BLEND = {
 const DYNAMIC_METHODS = ['edpv_userset', 'edpv_velocityx', 'edpv_velocityy', 'edpv_velocityz', 'edpv_velocitymag'];
 
 // Scratch values for writing particles without allocating.
-const scratch = { color: [0, 0, 0], scale: [0, 0, 0], size: [0, 0, 0], m: [0, 0, 0] };
+const scratch = { color: [0, 0, 0], scale: [0, 0, 0], size: [0, 0, 0], m: [0, 0, 0], v: [0, 0, 0] };
 const euler = new THREE.Euler(), quat = new THREE.Quaternion();
 
 // ---- One emitter ----
@@ -501,10 +494,15 @@ class Emitter {
   applyRecipe(recipe) {
     // Each setting is the first table of that name among the modules; over-life multipliers stack.
     const tables = {};
-    const lists = { lifemultiplier: [], colorscaleoverlife: [], alphascaleoverlife: [], startlocation: [] };
+    const lists = { lifemultiplier: [], colorscaleoverlife: [], alphascaleoverlife: [], startlocation: [], veloverlife: [],
+      rotationratelife: [], meshrotationratelife: [] };
     for (const module of this.model.modules) {
-      for (const [name, value] of Object.entries(module.values)) {
+      for (const [property, value] of Object.entries(module.values)) {
         if (!value || (!Array.isArray(value.values) && !value.modes)) continue;
+        // Size, sprite spin and mesh spin over life all name their curve LifeMultiplier.
+        const name = property !== 'lifemultiplier' ? property
+          : module.class.includes('meshrotationratemultiplylife') ? 'meshrotationratelife'
+          : module.class.includes('rotationratemultiplylife') ? 'rotationratelife' : property;
         const effective = applyRecipe(value, name, recipe);
         const isSpawnRate = name === 'rate' || name === 'spawnrate';
         if (name in lists) lists[name].push({ table: effective, module });
@@ -519,7 +517,7 @@ class Emitter {
   }
 
   value(table, time, random, out = null) {
-    return table.modes ? sampleParameter(table, time, random, this.effect.scales.named, out) : sample(table, time, random, out);
+    return table.modes ? sampleParameter(table, time, random, this.effect.parameters, out) : sample(table, time, random, out);
   }
 
   reset() {
@@ -538,8 +536,8 @@ class Emitter {
     const rate = this.tables.rate ?? this.tables.spawnrate;
     // An emitter whose spawn rate the package leaves out emits the engine's default 20 a second.
     let value = rate ? this.value(rate, time, [0.5]) : 20 * this.effect.recipe.spawnRate;
-    if (this.tables.ratescale) value *= this.value(this.tables.ratescale, time / this.duration, [0.5]);
-    return Math.max(0, value * this.effect.scales.spawn);
+    if (this.tables.ratescale) value *= this.value(this.tables.ratescale, time, [0.5]);
+    return Math.max(0, value);
   }
 
   // A particle's dynamic parameters at its relative age (or the emitter's time).
@@ -560,12 +558,12 @@ class Emitter {
   spawn() {
     if (this.particles.length >= MAX_PARTICLES) return;
     const rnd = () => [this.random(), this.random(), this.random()];
-    const t = this.tables, s = this.effect.scales, time = this.emitTime;
+    const t = this.tables, time = this.emitTime;
     // A particle without a lifetime lives until its emitter is done; without a size it is one unit across (mesh
-    // particles keep their mesh's size), and the skill that starts the effect usually scales it.
-    const life = t.lifetime ? Math.max(0.01, this.value(t.lifetime, time, rnd()) * s.lifetime) : Infinity;
+    // particles keep their mesh's size).
+    const life = t.lifetime ? Math.max(0.01, this.value(t.lifetime, time, rnd())) : Infinity;
     const size = t.startsize ? this.value(t.startsize, time, rnd()) : [1, 1, 1];
-    const sized = [0, 1, 2].map((axis) => Math.abs(size[axis] ?? size[0]) * s.size[axis]);
+    const sized = [0, 1, 2].map((axis) => Math.abs(size[axis] ?? size[0]));
     // Every location module moves the particle by its own offset.
     const location = [0, 0, 0];
     for (const { table } of this.lists.startlocation) {
@@ -575,7 +573,7 @@ class Emitter {
     const p = {
       age: 0, life,
       size: sized,
-      pos: toThree(location.map((v, axis) => v * s.location[axis])),
+      pos: toThree(location),
       vel: t.startvelocity ? toThree(this.value(t.startvelocity, time, rnd())) : new THREE.Vector3(),
       color: t.startcolor ? this.value(t.startcolor, time, rnd()) : [1, 1, 1],
       alpha: t.startalpha ? this.value(t.startalpha, time, rnd()) : 1,
@@ -591,6 +589,16 @@ class Emitter {
       worldScale: 1,
     };
     if (this.isMesh && t.startrotation && !Array.isArray(this.value(t.startrotation, time, [0.5]))) p.meshRot.y = p.rot;
+    // Orbit (sampled at spawn, the module's default): an offset in Unreal units, a rotation in turns about X, Y and Z
+    // and a rate in turns a second; the particle is drawn at the offset turned by the rotation.
+    if (t.offsetamount || t.rotationamount || t.rotationrateamount) {
+      p.orbit = {
+        offset: t.offsetamount ? this.value(t.offsetamount, time, rnd()) : [0, 0, 0],
+        rotation: t.rotationamount ? this.value(t.rotationamount, time, rnd()) : [0, 0, 0],
+        rate: t.rotationrateamount ? this.value(t.rotationrateamount, time, rnd()) : [0, 0, 0],
+        frame: null, scale: 1,
+      };
+    }
     const sphere = this.sphere, cylinder = this.cylinder;
     if (sphere || cylinder) {
       const radius = t.startradius ? Math.abs(this.value(t.startradius, time, rnd())) : 50;
@@ -630,6 +638,7 @@ class Emitter {
       p.vel.transformDirection(parent.matrixWorld).multiplyScalar(speed * scale);
       p.size = p.size.map((v) => v * scale);
       p.worldScale = scale;
+      if (p.orbit) { p.orbit.frame = parent.getWorldQuaternion(new THREE.Quaternion()); p.orbit.scale = scale; }
     }
     // Placed on the ground under where it would be (the character's feet in the preview).
     if (this.onGround) {
@@ -664,23 +673,46 @@ class Emitter {
         while (this.spawnCarry >= 1) { this.spawn(); this.spawnCarry -= 1; }
         for (let i = 0; i < this.bursts.length; i++) {
           const burst = this.bursts[i];
-          if (this.burstsFired.has(i) || loopTime / this.duration < burst.time) continue;
+          if (this.burstsFired.has(i) || loopTime < burst.time) continue;
           this.burstsFired.add(i);
           const count = burst.low >= 0 ? burst.low + Math.floor(this.random() * (burst.count - burst.low + 1)) : burst.count;
-          for (let n = 0; n < count * Math.max(this.effect.scales.spawn, 0); n++) this.spawn();
+          for (let n = 0; n < count; n++) this.spawn();
         }
       }
     }
     const t = this.tables;
     if (t.acceleration && !this.acceleration) this.acceleration = toThree(this.value(t.acceleration, 0, [0.5, 0.5, 0.5]));
     const acceleration = t.acceleration ? this.acceleration : null;
+    const { veloverlife, rotationratelife, meshrotationratelife } = this.lists;
     this.keep((p) => {
       p.age += dt;
       if (p.age >= p.life) return false;
       if (acceleration) p.vel.addScaledVector(acceleration, dt * p.worldScale);
-      p.pos.addScaledVector(p.vel, dt);
-      p.rot += p.rotRate * dt;
-      if (this.isMesh) p.meshRot.addScaledVector(p.meshRotRate, dt);
+      const life = Number.isFinite(p.life) ? p.age / p.life : 0;
+      if (veloverlife.length) {
+        // Unreal X, Y, Z are the viewer's X, Z, Y.
+        let x = 1, y = 1, z = 1;
+        for (const { table } of veloverlife) {
+          const m = this.value(table, life, p.seeds, scratch.v);
+          if (Array.isArray(m)) { x *= m[0]; y *= m[2]; z *= m[1]; } else { x *= m; y *= m; z *= m; }
+        }
+        p.pos.x += p.vel.x * x * dt; p.pos.y += p.vel.y * y * dt; p.pos.z += p.vel.z * z * dt;
+      } else p.pos.addScaledVector(p.vel, dt);
+      let spin = 1;
+      for (const { table } of rotationratelife) {
+        const m = this.value(table, life, p.seeds, scratch.v);
+        spin *= Array.isArray(m) ? m[0] : m;
+      }
+      p.rot += p.rotRate * spin * dt;
+      if (this.isMesh) {
+        let x = 1, y = 1, z = 1;
+        for (const { table } of meshrotationratelife) {
+          const m = this.value(table, life, p.seeds, scratch.v);
+          if (Array.isArray(m)) { x *= m[0]; y *= m[2]; z *= m[1]; } else { x *= m; y *= m; z *= m; }
+        }
+        p.meshRot.x += p.meshRotRate.x * x * dt; p.meshRot.y += p.meshRotRate.y * y * dt; p.meshRot.z += p.meshRotRate.z * z * dt;
+      }
+      if (p.orbit) for (let axis = 0; axis < 3; axis++) p.orbit.rotation[axis] += p.orbit.rate[axis] * dt;
       return true;
     });
   }
@@ -696,7 +728,7 @@ class Emitter {
   write() {
     const count = this.visible ? Math.min(this.particles.length, MAX_PARTICLES) : 0;
     if (count > this.capacity) this.allocate(Math.min(MAX_PARTICLES, Math.max(count, this.capacity * 2)));
-    const t = this.tables, s = this.effect.scales;
+    const t = this.tables;
     const frames = this.subImages[0] * this.subImages[1];
     const linearFrames = frames > 1 && (this.interpolation === 'psuvim_linear' || this.interpolation === 'psuvim_linear_blend');
     const tint = this.materialTint ?? WHITE;
@@ -707,8 +739,7 @@ class Emitter {
       const life = Number.isFinite(p.life) ? p.age / p.life : 0;
       const color = t.coloroverlife ? this.value(t.coloroverlife, life, p.seeds, scratch.color) : p.color;
       let alpha = t.alphaoverlife ? this.value(t.alphaoverlife, life, p.seeds) : p.alpha;
-      let r = color[0] * s.color[0] * tint[0], g = color[1] * s.color[1] * tint[1], b = color[2] * s.color[2] * tint[2];
-      alpha *= s.alpha;
+      let r = color[0] * tint[0], g = color[1] * tint[1], b = color[2] * tint[2];
       for (const { table } of this.lists.colorscaleoverlife) {
         const scale = this.value(table, life, p.seeds, scratch.scale);
         r *= scale[0]; g *= scale[1]; b *= scale[2];
@@ -726,6 +757,13 @@ class Emitter {
       if (this.dynamic.length) this.dynamicValues(p, life);
       const i3 = i * 3, i4 = i * 4;
       positions[i4] = p.pos.x; positions[i4 + 1] = p.pos.y; positions[i4 + 2] = p.pos.z;
+      if (p.orbit) {
+        const { offset, rotation } = p.orbit;
+        // A rotation in turns about Unreal's X (roll), Y (pitch) and Z (yaw).
+        const turned = toThree(offset).applyQuaternion(ueRotator([rotation[1], rotation[2], rotation[0]], 1));
+        if (p.orbit.frame) turned.applyQuaternion(p.orbit.frame).multiplyScalar(p.orbit.scale);
+        positions[i4] += turned.x; positions[i4 + 1] += turned.y; positions[i4 + 2] += turned.z;
+      }
       colors[i4] = Math.max(0, r); colors[i4 + 1] = Math.max(0, g); colors[i4 + 2] = Math.max(0, b);
       colors[i4 + 3] = Math.max(0, alpha);
       dynamics[i4] = p.dyn[0]; dynamics[i4 + 1] = p.dyn[1]; dynamics[i4 + 2] = p.dyn[2]; dynamics[i4 + 3] = p.dyn[3];
@@ -957,7 +995,7 @@ export class ParticleEffect {
     this.parent = parent;
     this.assets = assets;
     this.recipe = recipe;
-    this.scales = parameters ? effectScales(parameters) : NO_SCALES;
+    this.parameters = parameters ? effectParameters(parameters) : NO_PARAMETERS;
     this.group = new THREE.Group();
     (parent ?? root).add(this.group);
     this.worldGroup = parent ? new THREE.Group() : this.group;

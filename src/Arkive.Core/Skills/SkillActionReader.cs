@@ -42,6 +42,13 @@ public sealed record SkillActionNotify(
     /// lists the same moment's effects once per set; FX-00 is the set every character plays.
     /// </summary>
     public string? Group { get; init; }
+
+    /// <summary>
+    /// Whether the effect stays attached to its socket and follows it (UE3's bAttach). An effect that is not attached
+    /// is only placed at the socket when it starts and then stays where it is in the world (dust, decals, impacts).
+    /// Null when the action does not say.
+    /// </summary>
+    public bool? Attach { get; init; }
 }
 
 public sealed record SkillActionStage(string Name, float Duration, float Rate, IReadOnlyList<SkillActionNotify> Notifies);
@@ -142,6 +149,7 @@ public static class SkillActionReader
         var name = start + 1 < end && tokens[start + 1].Offset == head.End + 40 ? tokens[start + 1].Value : null;
         var group = name is not null && start + 2 < end && tokens[start + 2].Offset == tokens[start + 1].End ? tokens[start + 2].Value : null;
         string? asset = null, socket = null;
+        bool? attach = null;
         var transformStart = -1;
         var parameters = new List<SkillEffectParameter>();
         for (var index = start + 1; index < end; index++)
@@ -151,6 +159,9 @@ public static class SkillActionReader
             {
                 if (asset is not null) continue;
                 asset = PackageAndObject(token.Value[ParticlePrefix.Length..^1]);
+                // The effect's flags follow its path as 4-byte booleans; the third says whether it follows its socket.
+                if (token.End + 12 <= data.Length && BinaryPrimitives.ReadInt32LittleEndian(data[(token.End + 8)..]) is var flag and (0 or 1))
+                    attach = flag == 1;
                 // The socket the effect follows is the next plain name, when there is one before its parameters.
                 var next = index + 1;
                 // A socket's name sits about 60 bytes after the path; an effect without one has its fields there instead.
@@ -177,7 +188,7 @@ public static class SkillActionReader
                 asset ??= token.Value[8..^1];
             }
         }
-        var notify = new SkillActionNotify(kind, startTime, duration, name, asset, socket, parameters) { Group = group };
+        var notify = new SkillActionNotify(kind, startTime, duration, name, asset, socket, parameters) { Group = group, Attach = attach };
         return transformStart > 0 ? WithTransform(data, notify, transformStart) : notify;
     }
 

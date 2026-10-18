@@ -6,8 +6,8 @@ import { ParticleEffect, EffectAssets, ueRotator as rotator } from './particle-s
 
 const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-// How long effects may play on after the last stage, so their particles can finish.
-const TAIL = 2.5;
+// The longest effects may play on after the last stage while their particles finish (most are gone well before).
+const TAIL = 6;
 
 // A skill lists the same moment's effects once per effect set (FX-00, FX-01, FX-Exmove...): the game plays one set,
 // FX-00 unless the character's build calls for another, along with the effects every set shares (FX, or none).
@@ -187,6 +187,14 @@ export function createSkillPreview(context) {
     }
     if (notify.rotation) object.quaternion.multiply(rotator(notify.rotation));
     object.scale.set(units * effectScale[0], units * effectScale[2], units * effectScale[1]);
+    // An effect the skill does not attach (UE3's bAttach off: dust, decals, impacts) is only placed at its socket when
+    // it starts and stays there in the world while the character and its weapon move on. Actions that do not say
+    // attach the effects that last a while.
+    const attached = notify.attach ?? notify.duration > 0;
+    if (!attached) {
+      object.updateWorldMatrix(true, false);
+      world.attach(object);
+    }
     return object;
   }
 
@@ -334,8 +342,11 @@ export function createSkillPreview(context) {
     // Looping, the skill starts again just after its last stage, as a player recasting it would; effects still
     // playing carry on and fade out. Without looping it stops once its effects have played out.
     if (player.loop && t > player.length + 0.4) loopAgain();
-    else if (!player.loop && t > player.length + 0.25 &&
-             (t > player.length + TAIL || !player.effects.some((item) => item.effect.particleCount > 0))) stop();
+    else if (!player.loop && t > player.length + 0.25) {
+      // The skill is over: its effects stop emitting and what they have already emitted lives out its life.
+      for (const item of player.effects) if (item.effect.active) item.effect.deactivate();
+      if (t > player.length + TAIL || !player.effects.some((item) => item.effect.particleCount > 0)) stop();
+    }
     requestRender();
   }
   requestAnimationFrame(tick);

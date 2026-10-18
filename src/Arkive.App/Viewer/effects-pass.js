@@ -1,7 +1,7 @@
 // Draws particle effects the way the game composites them: in high dynamic range, on their own layer, over the
 // already-drawn scene. Effects add light and translucency into a half-float buffer (so a glow five times brighter
 // than white stays five times brighter while effects pile up), test against the scene's depth, and bloom where they
-// are brighter than white. The result is brought into range keeping its hue and laid over the scene.
+// are brighter than white. The result is brought into range by a smooth tone curve and laid over the scene.
 import * as THREE from 'three';
 
 // Particles live on this layer; the scene's own camera does not draw it.
@@ -15,14 +15,17 @@ const FULLSCREEN_VERTEX = `
   varying vec2 vUv;
   void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
-// The part of the effects brighter than white, which glows.
+// The part of the effects brighter than white, which glows; a soft knee eases light in around the threshold so glows
+// do not switch on abruptly.
 const BRIGHT = `
-  uniform sampler2D source; uniform float threshold;
+  uniform sampler2D source; uniform float threshold; uniform float knee;
   varying vec2 vUv;
   void main() {
     vec3 c = texture2D(source, vUv).rgb;
     float m = max(c.r, max(c.g, c.b));
-    gl_FragColor = vec4(c * max(0.0, m - threshold) / max(m, 1e-4), 1.0);
+    float soft = clamp(m - threshold + knee, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee + 1e-4);
+    gl_FragColor = vec4(c * max(soft, m - threshold) / max(m, 1e-4), 1.0);
   }`;
 
 const BLUR = `
@@ -35,8 +38,10 @@ const BLUR = `
     gl_FragColor = vec4(sum, 1.0);
   }`;
 
-// Effects are premultiplied (colour already scaled by coverage); the composite keeps the hue of over-bright colour
-// and encodes for the screen.
+// Effects are premultiplied (colour already scaled by coverage). The composite tone-maps them: up to a knee colour is
+// unchanged (the scene underneath is not tone-mapped, so effects at normal brightness must match it); above it the
+// brightest channel rolls off smoothly towards white, keeping the hue, and very bright light desaturates gradually
+// as it does on film. The curve is monotonic: brighter in is never darker out.
 const COMPOSITE = `
   uniform sampler2D effects; uniform sampler2D bloomNear; uniform sampler2D bloomFar; uniform float bloomStrength;
   varying vec2 vUv;
@@ -46,8 +51,12 @@ const COMPOSITE = `
     vec3 glow = (texture2D(bloomNear, vUv).rgb + texture2D(bloomFar, vUv).rgb) * bloomStrength;
     vec3 c = max(fx.rgb, vec3(0.0)) + glow;
     float m = max(c.r, max(c.g, c.b));
-    // Brighter than white keeps its hue, washing towards white only as it gets far brighter.
-    vec3 ranged = m > 1.0 ? mix(c / m, vec3(1.0), clamp((m - 1.0) / 16.0, 0.0, 0.2)) : c;
+    const float KNEE = 0.6;
+    float mapped = m <= KNEE ? m : KNEE + (1.0 - KNEE) * (1.0 - exp(-(m - KNEE) / (1.0 - KNEE)));
+    vec3 ranged = c * (mapped / max(m, 1e-4));
+    // Light far brighter than white takes on some white, at most half, approaching it slowly.
+    float over = max(m - 1.0, 0.0);
+    ranged = mix(ranged, vec3(mapped), 0.5 * over / (over + 6.0));
     float coverage = clamp(fx.a, 0.0, 1.0);
     gl_FragColor = vec4(encode(ranged), coverage);
   }`;
@@ -73,11 +82,11 @@ export function createEffectsPass(renderer, { ground = () => null } = {}) {
   const shader = (fragmentShader, uniforms, extra = {}) => new THREE.ShaderMaterial({
     vertexShader: FULLSCREEN_VERTEX, fragmentShader, uniforms, depthTest: false, depthWrite: false, ...extra,
   });
-  const bright = shader(BRIGHT, { source: { value: null }, threshold: { value: 1 } });
+  const bright = shader(BRIGHT, { source: { value: null }, threshold: { value: 1 }, knee: { value: 0.5 } });
   const blur = shader(BLUR, { source: { value: null }, step: { value: new THREE.Vector2() } });
   const composite = shader(COMPOSITE, {
     effects: { value: effects.texture }, bloomNear: { value: bloom[0].texture }, bloomFar: { value: bloom[3].texture },
-    bloomStrength: { value: 0.6 },
+    bloomStrength: { value: 0.35 },
   }, {
     transparent: true, blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
     blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,

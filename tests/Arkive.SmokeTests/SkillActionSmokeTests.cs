@@ -66,5 +66,15 @@ internal static class SkillActionSmokeTests
         Assert(branches.Count == 2 && branches[0].Name == "Normal" && branches[0].Stages.Count == 3 &&
                branches[1].Name == "SK_A_Custom_01" && branches[1].Stages.Count == 2,
             "skill versions were not split as expected: " + string.Join(", ", branches.Select(branch => $"{branch.Name}({branch.Stages.Count})")));
+
+        // A charged skill whose overcharge plays its charge again: the overcharged version keeps the opening.
+        var charged = new SkillAction(2, "test", [
+            Stage("Main", "SK_B_01"), Stage("Charge", "SK_B_02"), Stage("StageName", "SK_B_03"),
+            Stage("OverCharge", "SK_B_02"), Stage("StageName", "SK_B_03"),
+        ]);
+        var versions = SkillCatalog.Branches(charged);
+        Assert(versions.Count == 2 && versions[0].Stages.Count == 3 && versions[1].Name == "OverCharge" &&
+               versions[1].Stages.Select(stage => stage.Name).SequenceEqual(["Main", "OverCharge", "StageName"]),
+            "an overcharged version was not split off: " + string.Join(", ", versions.Select(branch => $"{branch.Name}({string.Join("/", branch.Stages.Select(stage => stage.Name))})")));
     }
 }

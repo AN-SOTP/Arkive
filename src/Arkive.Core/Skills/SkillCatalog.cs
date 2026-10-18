@@ -64,23 +64,25 @@ public sealed class SkillCatalog
 
     /// <summary>
     /// The ways a skill plays. One action holds each version of a skill (its tripod and rune variants, and Guardianknight
-    /// forms) one after another: a version starts at a "Main" stage, after a stage without an animation (a state
-    /// check), or where the first animation of the version before comes round again. Versions that play the same
-    /// animations are listed once.
+    /// forms) one after another: a version starts at a "Main" stage, or after a stage without an animation (a state
+    /// check). Where a stage plays an animation its version has already played, it is a different way through the same
+    /// opening (Brutal Impact's overcharge plays its charge again): it starts a version made of the opening before that
+    /// animation and the stages from there on. Versions that play the same stages are listed once.
     /// </summary>
     public static IReadOnlyList<SkillBranch> Branches(SkillAction action)
     {
         var branches = new List<SkillBranch>();
         List<SkillActionStage>? current = null;
-        string? first = null;
+        string? named = null;
         var previousAnimated = false;
         static string? AnimOf(SkillActionStage stage) =>
             stage.Notifies.FirstOrDefault(notify => notify.Kind == "Anim" && notify.Asset is not null)?.Asset;
+        static bool Meaningful(string name) => name.Length > 0 && name is not ("StageName" or "Main");
         void Close()
         {
             if (current is not { Count: > 0 }) return;
             var lead = current[0];
-            var name = lead.Name.Length > 0 && lead.Name is not ("StageName" or "Main") ? lead.Name : AnimOf(lead) ?? "Default";
+            var name = named ?? (Meaningful(lead.Name) ? lead.Name : AnimOf(lead) ?? "Default");
             branches.Add(new SkillBranch(name, current));
         }
         foreach (var stage in action.Stages)
@@ -91,22 +93,36 @@ public sealed class SkillCatalog
                 previousAnimated = false;
                 continue;
             }
-            var starts = current is null || !previousAnimated || stage.Name == "Main" ||
-                         string.Equals(anim, first, StringComparison.OrdinalIgnoreCase);
-            if (starts)
+            if (current is null || !previousAnimated || stage.Name == "Main")
             {
                 Close();
                 current = [];
-                first = anim;
+                named = null;
+            }
+            else if (current.FindIndex(earlier => string.Equals(AnimOf(earlier), anim, StringComparison.OrdinalIgnoreCase)) is var again and >= 0)
+            {
+                Close();
+                current = current.Take(again).ToList();
+                named = Meaningful(stage.Name) ? stage.Name : anim;
             }
             current!.Add(stage);
             previousAnimated = true;
         }
         Close();
-        return branches
-            .GroupBy(branch => string.Join("|", branch.Stages.Select(AnimOf)), StringComparer.OrdinalIgnoreCase)
+        // Versions are told apart by their animations and the names of their later stages (the first stage's name is
+        // the state the version is for, which often differs between versions that play the same).
+        var distinct = branches
+            .GroupBy(branch => string.Join("|", branch.Stages.Select((stage, i) => (i > 0 ? stage.Name + ":" : "") + AnimOf(stage))),
+                StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
-            .ToArray();
+            .ToList();
+        // Names are how the preview offers them, so each is different.
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        return distinct.Select(branch =>
+        {
+            var count = seen[branch.Name] = seen.GetValueOrDefault(branch.Name) + 1;
+            return count == 1 ? branch : branch with { Name = $"{branch.Name} ({count})" };
+        }).ToArray();
     }
 
     // "가디언즈 크래쉬 (구) 노토스 크래시" -> the current name before "(구)" ("old"), or the id when there is none.
