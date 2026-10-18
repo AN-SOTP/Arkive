@@ -24,7 +24,7 @@ namespace Arkive.Core.Viewer;
 /// </summary>
 public sealed class ModelViewerSceneService
 {
-    public const int CurrentSchemaVersion = 14;
+    public const int CurrentSchemaVersion = 15;
     public const string UmodelFolder = "umodel";
     public const string ModelFile = "model.glb";
     public const string PropertiesFile = "properties.txt";

@@ -126,6 +126,11 @@ public static partial class CharacterLooks
                 }
             }
             if (mesh is null) continue;
+            // Another monster's model (Echidna's mirror, MN_SDSM_00) is a companion her skills summon with their own
+            // events, not something she wears.
+            if (mesh.Package.StartsWith("MN_", StringComparison.OrdinalIgnoreCase) &&
+                !mesh.Package.Equals(name[(name.LastIndexOf('.') + 1)..], StringComparison.OrdinalIgnoreCase) &&
+                !mesh.Package.Equals(Mesh(strings)?.Package, StringComparison.OrdinalIgnoreCase)) continue;
             if (socket is null) parts.TryAdd($"Part{parts.Count + 1}", mesh);
             else weapons.Add(new LookWeapon(name, mesh, socket, null, null) { BattleSocket = socket });
         }

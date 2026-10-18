@@ -98,6 +98,12 @@ public static class MaterialInstanceDescriptionReader
                         switches[parameter] = string.Equals(element.ChildValue("Value"), "true", StringComparison.OrdinalIgnoreCase);
         }
 
+        // A breakable boss part (Echidna's dress pieces) is a channel of texture_mask_variation, shown while that channel
+        // of mask_variation_visible is on. Instances store all channels off and the game switches on the intact parts
+        // at runtime, so a model shown whole has them all on.
+        if (vectors.TryGetValue("mask_variation_visible", out var visible) && visible.All(channel => channel == 0))
+            vectors["mask_variation_visible"] = [1f, 1f, 1f, 1f];
+
         var root = chain[^1];
         var blendMode = root.Tree.ChildValue("BlendMode") ?? "BLEND_Opaque";
         var clip = UmodelPropertyTree.TryParseFloat(root.Tree.ChildValue("OpacityMaskClipValue"), out var parsedClip)

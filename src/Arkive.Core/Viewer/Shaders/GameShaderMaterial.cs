@@ -177,6 +177,7 @@ public static class GameShaderMaterial
         // unknown, to the slot matching its position).
         var slotTextures = new Dictionary<int, string>();
         var neutralSlots = new Dictionary<int, string>();
+        var slotParameters = new Dictionary<int, (string? Parameter, bool Customization)>();
         for (var expression = 0; expression < expressions.Textures.Count; expression++)
         {
             if (expressions.Textures[expression] is not UniformTexture texture) continue;
@@ -203,14 +204,24 @@ public static class GameShaderMaterial
             // The engine's "null" texture is transparent black; its exported PNG has lost the alpha, which as a
             // decal mask would paint the whole region (Beatrice's face turned white).
             if (string.Equals(name, "null", StringComparison.OrdinalIgnoreCase)) neutralSlots[slot] = "vec4(0.0)";
-            else if (!string.IsNullOrWhiteSpace(name)) slotTextures[slot] = name;
+            else if (!string.IsNullOrWhiteSpace(name))
+            {
+                slotTextures[slot] = name;
+                slotParameters[slot] = (texture.Parameter, customization);
+            }
             else if (texture.Parameter is { } unset) neutralSlots[slot] = NeutralTexture(unset, customization);
             if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
                 Console.Error.WriteLine($"[texture] {material.Name} t{slot} <- {texture.Parameter ?? "-"} #{texture.TextureIndex} = {name ?? "(none)"}");
         }
         var samplers = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (slot, name) in slotTextures)
+        {
             if (textureUrl(name) is { } url) samplers[$"ark_gt{slot}"] = url;
+            // A texture that was not exported (an engine noise for a death dissolve, say) reads what an unset parameter
+            // would; left unbound it would read black, which dissolves or masks out the whole surface.
+            else if (slotParameters.GetValueOrDefault(slot) is { Parameter: { } parameter } owner)
+                neutralSlots[slot] = NeutralTexture(parameter, owner.Customization);
+        }
 
         DxbcTranslation translation;
         try
