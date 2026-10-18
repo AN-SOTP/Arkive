@@ -70,6 +70,71 @@ public static partial class CharacterLooks
         return null;
     }
 
+    /// <summary>
+    /// The look of a monster or NPC model (LookInfo\Monster\EFDLChar_MN_CDKCN_00.MN_CDKCN_00): its mesh, AnimSet and
+    /// extra parts. Parts the look puts in a socket (a boss's sword in wpn_02) are its weapons; parts without one share
+    /// the body's skeleton (armour plates, a cape) and are listed in <see cref="ClassLook.Parts"/> as Part1, Part2...
+    /// The look whose mesh is <paramref name="meshObject"/> is preferred among the looks named after the package.
+    /// </summary>
+    public static ClassLook? ForModel(string packagesRoot, string package, string meshObject, CancellationToken cancellationToken = default)
+    {
+        if (FindArchive(packagesRoot) is not { } archive) return null;
+        using var stream = File.OpenRead(archive);
+        var prefix = "EFDLChar_" + package + ".";
+        var candidates = LostArkDataArchive.ReadEntries(stream, cancellationToken)
+            .Where(entry => entry.Path.Contains("/LookInfo/", StringComparison.OrdinalIgnoreCase) &&
+                            Path.GetFileNameWithoutExtension(entry.Path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        ClassLook? first = null;
+        foreach (var entry in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var look = ModelLook(Path.GetFileNameWithoutExtension(entry.Path), SkillActionReader.Strings(LostArkDataArchive.Read(stream, entry)));
+            if (look.DefaultMesh?.Object.Equals(meshObject, StringComparison.OrdinalIgnoreCase) == true) return look;
+            first ??= look;
+        }
+        return first;
+    }
+
+    private static ClassLook ModelLook(string name, IReadOnlyList<string> strings)
+    {
+        var animSets = strings.Select(value => ObjectPath().Match(value))
+            .Where(match => match.Success && match.Groups["class"].Value.Equals("AnimSet", StringComparison.OrdinalIgnoreCase))
+            .Select(match => new LookMesh(match.Groups["package"].Value, match.Groups["object"].Value)).ToArray();
+        var parts = new Dictionary<string, LookMesh>(StringComparer.OrdinalIgnoreCase);
+        var weapons = new List<LookWeapon>();
+        // Each part: CEFData_PartsMesh, its SkeletalMesh, materials and physics, then the socket it goes in (or NONE).
+        for (var index = 0; index < strings.Count; index++)
+        {
+            if (!strings[index].Equals("CEFData_PartsMesh", StringComparison.OrdinalIgnoreCase)) continue;
+            LookMesh? mesh = null;
+            string? socket = null;
+            for (var next = index + 1; next < strings.Count && !strings[next].StartsWith("CEFData_", StringComparison.OrdinalIgnoreCase); next++)
+            {
+                var value = strings[next];
+                if (ObjectPath().Match(value) is { Success: true } path)
+                {
+                    if (mesh is null && path.Groups["class"].Value.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase))
+                        mesh = new LookMesh(path.Groups["package"].Value, path.Groups["object"].Value);
+                }
+                else if (mesh is not null)
+                {
+                    // The first plain name after the part's paths is its socket; NONE (or anything else) means it has none.
+                    if (SocketName().IsMatch(value) && !value.Equals("NONE", StringComparison.OrdinalIgnoreCase) &&
+                        !value.StartsWith("CEF", StringComparison.OrdinalIgnoreCase)) socket = value;
+                    break;
+                }
+            }
+            if (mesh is null) continue;
+            if (socket is null) parts.TryAdd($"Part{parts.Count + 1}", mesh);
+            else weapons.Add(new LookWeapon(name, mesh, socket, null, null) { BattleSocket = socket });
+        }
+        return new ClassLook(name, Mesh(strings), parts, weapons) { AnimSets = animSets };
+    }
+
+    [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9_]*$")]
+    private static partial Regex SocketName();
+
     // The class's first weapon: an item whose pieces go in the look's weapon sockets, preferring items named after the
     // look's own code (PC_WBK_F -> WP_WBK_F_HR_00), then its class or socket code (WP_WBK_HR_00, WP_DDM for PC_DMN),
     // then other non-avatar items, then avatars. An item lists each piece's mesh followed by its socket (WP_DDM_2,

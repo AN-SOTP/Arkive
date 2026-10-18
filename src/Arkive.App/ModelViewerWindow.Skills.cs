@@ -32,7 +32,8 @@ public partial class ModelViewerWindow
         try
         {
             _skillScene = null;
-            // A player body shows the Skills tab at once; the class list fills it in once the game's skill data is read.
+            // A player body or NPC model shows the Skills tab at once; the list fills it in once the game's skill data is
+            // read (the tab goes away again for a model with no skills).
             if (SkillPreviewService.CanOffer(request))
             {
                 await _pageReadyTask.Task.WaitAsync(cancellationToken);
@@ -46,7 +47,7 @@ public partial class ModelViewerWindow
                 PostSkill(new { type = "skillsUnavailable" });
                 return;
             }
-            PostSkill(new { type = "skills", defaultClass = offer.DefaultClass, classes = offer.Classes });
+            PostSkill(new { type = "skills", defaultClass = offer.DefaultClass, classes = offer.Classes, npc = offer.Npc });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

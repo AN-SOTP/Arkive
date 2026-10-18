@@ -43,8 +43,8 @@ export function createSkillPreview(context) {
     panel.innerHTML = `
       <p class="muted">Plays a skill as the game's own skill data describes it: its animations, and each effect at its time and
         socket with the colours and sizes the skill gives it. Effects are drawn with their materials' own game shaders where the
-        game's shader cache has them.</p>
-      <label class="field">Class <select id="skillClass">${classes.map((item) =>
+        game's shader cache has them.${offer.npc ? " NPC skills have no names in the game's text: they show the developers' (Korean) names and their first animation." : ""}</p>
+      <label class="field">${offer.npc ? 'NPC' : 'Class'} <select id="skillClass">${classes.map((item) =>
         `<option value="${escapeHtml(item.file)}"${item.file === ui.classFile ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>
       <label class="field">Skill <select id="skillSelect">${(current?.skills ?? []).map((item) =>
         `<option value="${item.id}"${item.id === ui.skill ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>

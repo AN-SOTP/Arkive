@@ -10,8 +10,9 @@ using Arkive.Core.Viewer;
 
 namespace Arkive.App;
 
-/// <summary>The classes and skills the viewer offers for a player body, and the class it starts on.</summary>
-public sealed record SkillPreviewOffer(string DefaultClass, IReadOnlyList<SkillPreviewClass> Classes);
+/// <summary>The classes and skills the viewer offers for a player body (or the NPCs that use a monster model), and
+/// the one it starts on.</summary>
+public sealed record SkillPreviewOffer(string DefaultClass, IReadOnlyList<SkillPreviewClass> Classes, bool Npc = false);
 
 public sealed record SkillPreviewClass(string File, string Name, IReadOnlyList<SkillPreviewSkill> Skills);
 
@@ -23,7 +24,8 @@ public sealed record SkillPlayback(string? SceneJson, object Message);
 
 /// <summary>
 /// The model viewer's skill preview: a player character plays one of its class's skills from the game's own action
-/// data, with every effect the skill starts placed at its time and socket.
+/// data, with every effect the skill starts placed at its time and socket. A monster or NPC model plays the skills of
+/// the NPCs that use it: each NPC names its model (a LookInfo\Monster look) and its action file in the game's NPC table.
 /// </summary>
 public sealed class SkillPreviewService(
     PackageIndexStore index,
@@ -40,6 +42,7 @@ public sealed class SkillPreviewService(
     private Task<SkillCatalog?>? _catalog;
     private IReadOnlyList<SkillPreviewClass>? _classes;
     private readonly Dictionary<string, ClassLook?> _looks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyList<SkillPreviewClass>> _npcClasses = new(StringComparer.OrdinalIgnoreCase);
 
     // The class each player body is most often seen as; the viewer lets the user pick another.
     private static readonly IReadOnlyDictionary<string, string> DefaultClass = new Dictionary<string, string>
@@ -63,15 +66,31 @@ public sealed class SkillPreviewService(
         }
     });
 
-    /// <summary>Whether the mesh is a player body, which can play its class's skills (decided without reading anything).</summary>
+    /// <summary>
+    /// Whether the mesh is a player body, which can play its class's skills, or a monster/NPC model, which may have
+    /// skills of its own (decided without reading anything).
+    /// </summary>
     public static bool CanOffer(ModelViewerRequest request) =>
         request.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase) &&
-        BodyProfiles.ForObjectName(request.ObjectName) is { IsNpc: false };
+        (BodyProfiles.ForObjectName(request.ObjectName) is { IsNpc: false } || IsNpcModel(request));
 
-    /// <summary>Null when the mesh is not a player body or the game's skill data can't be read.</summary>
+    // Monster and NPC models live in packages named after them (MN_CDKCN_00, NP_ASCT_00).
+    private static bool IsNpcModel(ModelViewerRequest request) =>
+        request.PackageAlias.StartsWith("MN_", StringComparison.OrdinalIgnoreCase) ||
+        request.PackageAlias.StartsWith("NP_", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPlayer(ModelViewerRequest request) => BodyProfiles.ForObjectName(request.ObjectName) is { IsNpc: false };
+
+    /// <summary>Null when the mesh is not a player body or an NPC model with skills, or the game's skill data can't be read.</summary>
     public async Task<SkillPreviewOffer?> OfferAsync(ModelViewerRequest request, CancellationToken cancellationToken)
     {
-        if (!CanOffer(request) || BodyProfiles.ForObjectName(request.ObjectName) is not { } profile) return null;
+        if (!CanOffer(request)) return null;
+        if (!IsPlayer(request))
+        {
+            var npcs = await NpcClassesAsync(request, cancellationToken);
+            return npcs is { Count: > 0 } ? new SkillPreviewOffer(npcs[0].File, npcs, Npc: true) : null;
+        }
+        if (BodyProfiles.ForObjectName(request.ObjectName) is not { } profile) return null;
         var classes = _classes ??= await Task.Run(ClassesAsync, cancellationToken);
         if (classes is null) return null;
         var preferred = DefaultClass.GetValueOrDefault(profile.Id);
@@ -100,6 +119,47 @@ public sealed class SkillPreviewService(
     }
 
     /// <summary>
+    /// The action files of the NPCs that use a monster model, named after the NPCs. The NPC table names each NPC's model
+    /// as a look ("EFDLChar_MN_CDKCN_00-1.MN_CDKCN_00-1", a variant of MN_CDKCN_00) and its action file (MN_CDKCN_00, or
+    /// another model's: Brelshaza's MN_CUAS_04 plays MN_CUAS_03); action files named after the package are offered too.
+    /// NPC skills have no names in the game's text, so they show the developers' names with their first animation.
+    /// </summary>
+    private async Task<IReadOnlyList<SkillPreviewClass>?> NpcClassesAsync(ModelViewerRequest request, CancellationToken cancellationToken)
+    {
+        var package = request.PackageAlias;
+        if (_npcClasses.TryGetValue(package, out var known)) return known;
+        if (await CatalogAsync() is not { } catalog) return null;
+        cancellationToken.ThrowIfCancellationRequested();
+        static string ModelObject(string model) => model[(model.LastIndexOf('.') + 1)..];
+        static string Base(string name) => System.Text.RegularExpressions.Regex.Replace(name, @"-\d+$", "");
+        bool OfThisModel(string model) =>
+            ModelObject(model).Equals(package, StringComparison.OrdinalIgnoreCase) ||
+            Base(ModelObject(model)).Equals(package, StringComparison.OrdinalIgnoreCase);
+        var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var npc in catalog.Npcs.Where(npc => OfThisModel(npc.Model) && catalog.Skills(npc.ActionGroup).Count > 0)
+                     .OrderBy(npc => npc.Name.Length == 0 ? 1 : 0))
+            names.TryAdd(npc.ActionGroup, npc.Name.Length > 0 ? npc.Name : npc.ActionGroup);
+        foreach (var file in catalog.Classes.Where(file => file.Equals(package, StringComparison.OrdinalIgnoreCase) ||
+                                                           file.StartsWith(package + "-", StringComparison.OrdinalIgnoreCase) ||
+                                                           file.StartsWith(package + "_", StringComparison.OrdinalIgnoreCase)))
+            names.TryAdd(file, file);
+        var classes = names.Select(pair =>
+        {
+            var skills = catalog.Skills(pair.Key).Select(skill =>
+            {
+                var anim = skill.Action.Notifies.FirstOrDefault(notify => notify.Kind == "Anim" && notify.Asset is not null)?.Asset;
+                return new SkillPreviewSkill(skill.Id, anim is null ? skill.Name : $"{skill.Name} ({anim})",
+                    SkillCatalog.Branches(skill.Action).Select(branch => branch.Name).ToArray());
+            }).OrderBy(skill => skill.Id).ToArray();
+            var label = pair.Value.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) ? pair.Key : $"{pair.Value} ({pair.Key})";
+            return new SkillPreviewClass(pair.Key, label, skills);
+        }).Where(item => item.Skills.Count > 0).OrderBy(item => item.File.Equals(package, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+          .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        log($"Skill preview: {package} is used by {classes.Length} NPC action file(s) with skills.");
+        return _npcClasses[package] = classes;
+    }
+
+    /// <summary>
     /// Everything the viewer needs to play one branch of a skill: the class's skill animations, each effect's
     /// particle model (from the game's current packages, so installed mods show) and their textures and meshes.
     /// </summary>
@@ -117,7 +177,8 @@ public sealed class SkillPreviewService(
         var branches = SkillCatalog.Branches(skill.Action);
         var branch = branches[Math.Clamp(branchIndex, 0, branches.Count - 1)];
         var root = libraryRoot() ?? throw new InvalidOperationException("Choose the game's Packages folder first.");
-        var look = await LookAsync(root, classFile, cancellationToken);
+        var npc = !IsPlayer(request);
+        var look = npc ? await NpcLookAsync(root, request, cancellationToken) : await LookAsync(root, classFile, cancellationToken);
         Mark("look");
 
         // The class's skill animations: the AnimSet holding the skill's first animation, exported once with its SK_ sequences.
@@ -126,7 +187,8 @@ public sealed class SkillPreviewService(
             .Where(notify => notify.Kind == "Anim" && notify.Asset is not null).Select(notify => notify.Asset!).ToArray();
         var animSet = await FindAnimSetAsync(root, animNames[0], look, cancellationToken) ??
                       throw new InvalidDataException($"The animation {animNames[0]} was not found in the indexed packages.");
-        var set = await animations.PrepareAsync(animSet.Package, animSet.Name, cancellationToken: cancellationToken, skills: true);
+        // Player skills are the SK_ sequences; a monster's attacks are named anything (Att_Battle_1_01), so all are kept.
+        var set = await animations.PrepareAsync(animSet.Package, animSet.Name, keepAll: npc, cancellationToken: cancellationToken, skills: !npc);
         Mark("animations");
 
         // Each effect's particle model, by "Package.Object", read side by side from the packages the skill names.
@@ -239,14 +301,35 @@ public sealed class SkillPreviewService(
         return _looks[classFile] = look;
     }
 
+    private async Task<ClassLook?> NpcLookAsync(string root, ModelViewerRequest request, CancellationToken cancellationToken)
+    {
+        var key = "npc|" + request.PackageAlias + "|" + request.ObjectName;
+        if (_looks.TryGetValue(key, out var look)) return look;
+        try
+        {
+            look = await Task.Run(() => CharacterLooks.ForModel(root, request.PackageAlias, request.ObjectName, cancellationToken), cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException)
+        {
+            log($"Skill preview: the look of {request.PackageAlias} could not be read: {exception.Message}");
+            look = null;
+        }
+        return _looks[key] = look;
+    }
+
     private async Task<(string? SceneJson, object[] Weapons)> PrepareLookAsync(
         ModelViewerRequest request, string root, string classFile, ClassLook? look, CancellationToken cancellationToken)
     {
         if (look is null) return (null, []);
         var name = request.ObjectName.ToLowerInvariant();
         var halves = new List<LookMesh>();
-        if (name.Contains("upper", StringComparison.Ordinal) && look.Parts.TryGetValue("Lower", out var lower)) halves.Add(lower);
-        if (name.Contains("lower", StringComparison.Ordinal) && look.Parts.TryGetValue("Upper", out var upper)) halves.Add(upper);
+        if (IsPlayer(request))
+        {
+            if (name.Contains("upper", StringComparison.Ordinal) && look.Parts.TryGetValue("Lower", out var lower)) halves.Add(lower);
+            if (name.Contains("lower", StringComparison.Ordinal) && look.Parts.TryGetValue("Upper", out var upper)) halves.Add(upper);
+        }
+        // A monster's extra parts (armour, a cape) share its skeleton and are drawn with it.
+        else halves.AddRange(look.Parts.Values.Where(part => !part.Object.Equals(request.ObjectName, StringComparison.OrdinalIgnoreCase)));
         var pieces = new List<ModelViewerSceneResult> { await Task.Run(() => scenes.PrepareAsync(request, null, cancellationToken), cancellationToken) };
         foreach (var half in halves)
             if (await FindMeshAsync(root, half, cancellationToken) is { } halfRequest)

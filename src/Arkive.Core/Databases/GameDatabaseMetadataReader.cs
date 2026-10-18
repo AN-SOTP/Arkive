@@ -111,6 +111,32 @@ internal static class GameDatabaseMetadataReader
         return skills;
     }
 
+    /// <summary>
+    /// Every NPC's name, model (its look, "EFDLChar_MN_CDKCN_00.MN_CDKCN_00") and action file
+    /// (OriginalActionObjectGroupName, MN_CDKCN_00), from EFTable_Npc and GameMsg. NPCs without a model or action file
+    /// are left out.
+    /// </summary>
+    internal static IReadOnlyList<GameNpcAction> ReadNpcActions(string root, string language, CancellationToken cancellation)
+    {
+        var rows = new List<(long Id, string Key, string Model, string Group)>();
+        VisitRows(Path.Combine(root, "EFTable_Npc.db"), "Npc", ["PrimaryKey", "Name", "Model", "OriginalActionObjectGroupName"], cancellation, reader =>
+        {
+            var model = Text(reader, "Model");
+            var group = Text(reader, "OriginalActionObjectGroupName");
+            if (model.Length > 0 && group.Length > 0) rows.Add((Number(reader, "PrimaryKey"), Text(reader, "Name"), model, group));
+        });
+        var wanted = rows.Select(row => row.Key).ToHashSet(StringComparer.Ordinal);
+        var messages = new Dictionary<string, string>(StringComparer.Ordinal);
+        VisitRows(Path.Combine(root, "EFTable_GameMsg.db"), "GameMsg_" + language, ["KEY", "MSG"], cancellation, reader =>
+        {
+            var key = Text(reader, "KEY");
+            if (!wanted.Contains(key)) return;
+            var value = Clean(Text(reader, "MSG"));
+            if (value.Length > 0) messages[key] = value;
+        });
+        return rows.Select(row => new GameNpcAction(row.Id, DisplayName(messages, row.Key), row.Model, row.Group)).ToArray();
+    }
+
     private static IReadOnlyList<GameEntityDefinition> ReadEntities(string root,
         IReadOnlyDictionary<string, string> messages, CancellationToken cancellation)
     {

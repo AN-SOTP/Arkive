@@ -20,7 +20,14 @@ public sealed class SkillCatalog
 {
     private readonly Dictionary<string, IReadOnlyList<SkillCatalogEntry>> _classes;
 
-    private SkillCatalog(Dictionary<string, IReadOnlyList<SkillCatalogEntry>> classes) => _classes = classes;
+    private SkillCatalog(Dictionary<string, IReadOnlyList<SkillCatalogEntry>> classes, IReadOnlyList<GameNpcAction> npcs)
+    {
+        _classes = classes;
+        Npcs = npcs;
+    }
+
+    /// <summary>Every NPC's model and action file, from the game's NPC table (empty when it could not be read).</summary>
+    public IReadOnlyList<GameNpcAction> Npcs { get; }
 
     /// <summary>The action files with skills, by name (DRAGONKNIGHT, BLADE...).</summary>
     public IReadOnlyList<string> Classes => _classes.Keys.Order(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -33,7 +40,9 @@ public sealed class SkillCatalog
         var data3 = SkillEffectNameSidecar.FindArchive(packagesRoot) ??
                     throw new FileNotFoundException("The game's data3.lpk was not found beside its Packages folder.");
         var data2 = Path.GetFullPath(Path.Combine(packagesRoot, "..", "..", "data2.lpk"));
-        var names = File.Exists(data2) ? GameSkillNames.Read(data2, language, cancellationToken) : new Dictionary<long, GameSkillName>();
+        var (names, npcs) = File.Exists(data2)
+            ? GameSkillNames.ReadWithNpcs(data2, language, true, cancellationToken)
+            : (new Dictionary<long, GameSkillName>(), (IReadOnlyList<GameNpcAction>)[]);
         var classes = new Dictionary<string, IReadOnlyList<SkillCatalogEntry>>(StringComparer.OrdinalIgnoreCase);
         using var stream = File.OpenRead(data3);
         foreach (var entry in SkillEffectNameSidecar.FindActionFiles(LostArkDataArchive.ReadEntries(stream, cancellationToken)))
@@ -59,7 +68,7 @@ public sealed class SkillCatalog
                 .ToArray();
             if (skills.Length > 0) classes[file] = skills;
         }
-        return new SkillCatalog(classes);
+        return new SkillCatalog(classes, npcs);
     }
 
     /// <summary>
