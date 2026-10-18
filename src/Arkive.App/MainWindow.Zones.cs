@@ -44,14 +44,14 @@ public partial class MainWindow
     /// </summary>
     private async Task<PackageIndexSearchResult> AddZoneMatchesAsync(
         PackageIndexSearchResult result, string query, string? category, PackageIndexSearchScope scope, int resultLimit,
-        CancellationToken cancellationToken)
+        Action<string> showStatus, CancellationToken cancellationToken)
     {
         if (scope == PackageIndexSearchScope.ObjectName || _gameMetadataIndex is not { } metadata ||
             string.IsNullOrEmpty(_libraryRootPath)) return result;
         var zones = ZoneMapSidecar.Match(_zoneMap, query);
         if (zones.Count is 0 or > MaximumZonesPerSearch) return result;
         var watch = Stopwatch.StartNew();
-        LibraryCountText.Text = zones.Count == 1 ? $"Searching the map of {zones[0].Name}..." : $"Searching the maps of {zones.Count} zones...";
+        showStatus(zones.Count == 1 ? $"Searching the map of {zones[0].Name}..." : $"Searching the maps of {zones.Count} zones...");
         var maps = await _packageIndexStore.SearchZonesAsync(_libraryRootPath, zones, metadata, _protectionProvider, category,
             resultLimit, cancellationToken);
         var seen = maps.Matches.Select(match => (match.SourcePath, match.ExportIndex)).ToHashSet();
