@@ -73,6 +73,7 @@ public sealed class MaterialInstanceReconnaissanceService
         var scalars = new List<MaterialScalarParameterEvidence>();
         var vectors = new List<MaterialVectorParameterEvidence>();
         var textures = new List<MaterialTextureParameterEvidence>();
+        var collected = new List<MaterialCollectedTexture>();
         int? parentReference = null;
         string? parentObject = null;
         if (parse is not null)
@@ -102,6 +103,9 @@ public sealed class MaterialInstanceReconnaissanceService
                     if (!TryParseTextures(value, valueOffset, catalog, textures, out var refusal))
                         issues.Add(new("Error", "MAT112", refusal));
                 }
+                // Defaults only inform previews, so an unreadable list is skipped rather than reported.
+                else if (property.Name.Equals("CollectedTextureParameters", StringComparison.OrdinalIgnoreCase))
+                    TryParseCollectedTextures(value, catalog, collected);
             }
             if (scalars.Count == 0 && vectors.Count == 0 && textures.Count == 0 && parentReference is null)
                 issues.Add(new("Warning", "MAT120", "This material instance has no proven editable parameter or parent reference."));
@@ -137,7 +141,7 @@ public sealed class MaterialInstanceReconnaissanceService
             request.Kind, request.ClassName, request.ObjectName, request.SerialOffset,
             request.SerialSize, Sha256(bytes), parse?.StartOffset, parse?.EndOffset,
             parentReference, parentObject, parse?.Properties ?? [], scalars, vectors,
-            textures, readiness, issues);
+            textures, readiness, issues) { CollectedTextures = collected };
     }
 
     private static PropertyParseResult? FindPropertyStream(
@@ -317,6 +321,22 @@ public sealed class MaterialInstanceReconnaissanceService
         if (cursor != value.Length)
         { refusal = $"Texture parameter array has {value.Length - cursor:N0} trailing bytes."; return false; }
         return true;
+    }
+
+    // CollectedTextureParameters: an array of { Texture (object), Name (name) } structs.
+    private static void TryParseCollectedTextures(ReadOnlySpan<byte> value, AssetCatalog catalog, ICollection<MaterialCollectedTexture> output)
+    {
+        if (!TryGetArrayCount(value, out var count, out _)) return;
+        var cursor = 4;
+        for (var index = 0; index < count; index++)
+        {
+            if (!TryParseNestedProperties(value, ref cursor, catalog.Names, out var properties, out _)) return;
+            if (!TryGetNested(properties, "Name", "NameProperty", 8, out var nameProperty) ||
+                !TryGetNested(properties, "Texture", "ObjectProperty", 4, out var textureProperty)) continue;
+            var nameCursor = nameProperty.ValueOffset;
+            if (!TryReadName(value, ref nameCursor, catalog.Names, out var name)) continue;
+            output.Add(new(name, ResolveObject(ReadInt32(value, textureProperty.ValueOffset), catalog)));
+        }
     }
 
     private static bool TryGetArrayCount(ReadOnlySpan<byte> value, out int count, out string refusal)

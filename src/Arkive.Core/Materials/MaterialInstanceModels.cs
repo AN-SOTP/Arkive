@@ -103,7 +103,17 @@ public sealed record MaterialInstanceReconnaissanceReport(
     IReadOnlyList<MaterialVectorParameterEvidence> VectorParameters,
     IReadOnlyList<MaterialTextureParameterEvidence> TextureParameters,
     MaterialInstanceReadiness Readiness,
-    IReadOnlyList<MaterialReconnaissanceIssue> Issues);
+    IReadOnlyList<MaterialReconnaissanceIssue> Issues)
+{
+    /// <summary>
+    /// A base material's texture parameter defaults (Lost Ark's CollectedTextureParameters: name and texture), which an
+    /// instance that leaves a parameter unset draws with. Read for display only; never edited.
+    /// </summary>
+    public IReadOnlyList<MaterialCollectedTexture> CollectedTextures { get; init; } = [];
+}
+
+/// <summary>A base material's default for one texture parameter.</summary>
+public sealed record MaterialCollectedTexture(string Name, string ResolvedObject);
 
 public sealed record MaterialScalarEdit(string Name, float SourceValue, float Value)
 {

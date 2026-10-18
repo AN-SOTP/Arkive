@@ -454,7 +454,7 @@ class Emitter {
     this.isTrail = model.modules.some((module) => /typedata(beam|trail|ribbon|animtrail)/.test(module.class));
     // Light emitters light the scene and distortion materials bend what is behind them; neither is drawn as particles.
     this.isLight = model.modules.some((module) => module.class.includes('typedatalight'));
-    this.isDistortion = /(^|_)(dist|distort|circledisort|worldoffset)(_|\d)|defaultparticle/.test(model.material ?? '') ||
+    this.isDistortion = /(^|_)(dist|distort|distortion|circledisort|worldoffset)(_|\d)|defaultparticle/.test(model.material ?? '') ||
       /distort|(^|[_-])dist([_-]|$)/i.test(model.name ?? '');
     if (this.isLight || this.isDistortion || !model.material || /^(null|none)$/i.test(model.material)) this.visible = false;
     this.alignMode = this.isDecal ? 2 : alignment === 'psa_velocity' ? 1 : 0;
@@ -970,8 +970,11 @@ class Emitter {
     }
     this.materialTint = this.shaderId ? null : found.tint ?? null;
     const scalars = found.scalars ?? {};
-    // Distortion materials bend the image behind them; the preview leaves them out.
-    if (scalars.distortion > 0 && found.blend !== 'additive') { this.isDistortion = true; this.visible = false; }
+    // Distortion materials bend the image behind them; the preview leaves them out. The master material's name says so
+    // when the instance's does not (fx_k_pa_distortion_01_ad_ts draws BFX_I_Distortion_Ring_01_Ad).
+    if ((scalars.distortion > 0 && found.blend !== 'additive') || /distort/i.test(found.shader?.materialMap ?? '')) {
+      this.isDistortion = true; this.visible = false;
+    }
     if (this.shaderId) return;
     const uniforms = this.material.uniforms;
     uniforms.texturePower.value = scalars.power > 0 ? Math.min(scalars.power, 8) : 1;

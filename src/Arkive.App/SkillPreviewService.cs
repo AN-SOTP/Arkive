@@ -121,7 +121,7 @@ public sealed class SkillPreviewService(
     /// <summary>
     /// The action files of the NPCs that use a monster model, named after the NPCs. The NPC table names each NPC's model
     /// as a look ("EFDLChar_MN_CDKCN_00-1.MN_CDKCN_00-1", a variant of MN_CDKCN_00) and its action file (MN_CDKCN_00, or
-    /// another model's: Brelshaza's MN_CUAS_04 plays MN_CUAS_03); action files named after the package are offered too.
+    /// another model's: Brelshaza's MN_CUAS_04 plays MN_CUAS_03), or the file named after the package when none does.
     /// NPC skills have no names in the game's text, so they show the developers' names with their first animation.
     /// </summary>
     private async Task<IReadOnlyList<SkillPreviewClass>?> NpcClassesAsync(ModelViewerRequest request, CancellationToken cancellationToken)
@@ -139,18 +139,25 @@ public sealed class SkillPreviewService(
         foreach (var npc in catalog.Npcs.Where(npc => OfThisModel(npc.Model) && catalog.Skills(npc.ActionGroup).Count > 0)
                      .OrderBy(npc => npc.Name.Length == 0 ? 1 : 0))
             names.TryAdd(npc.ActionGroup, npc.Name.Length > 0 ? npc.Name : npc.ActionGroup);
-        foreach (var file in catalog.Classes.Where(file => file.Equals(package, StringComparison.OrdinalIgnoreCase) ||
-                                                           file.StartsWith(package + "-", StringComparison.OrdinalIgnoreCase) ||
-                                                           file.StartsWith(package + "_", StringComparison.OrdinalIgnoreCase)))
-            names.TryAdd(file, file);
+        // An action file named after the model itself, when the NPC table names none. Files named after its variants
+        // (MN_CDKCN_00-2, the mounted phase) belong to other models and stay with them.
+        if (catalog.Skills(package).Count > 0) names.TryAdd(package, package);
+        // Only skills the model can play: their first animation is in one of its look's AnimSet packages (an action file
+        // also holds actions for other forms that share it).
+        var sequences = new List<IReadOnlyList<Arkive.Core.Assets.UnrealNameEntry>>();
+        if (libraryRoot() is { Length: > 0 } root && await NpcLookAsync(root, request, cancellationToken) is { } look)
+            foreach (var named in look.AnimSets)
+                if (await assets.FindObjectAsync(named.Object, "animset", named.Package, cancellationToken) is { } located)
+                    sequences.Add(located.Catalog.Names);
+        bool Playable(string? anim) => anim is null || sequences.Count == 0 || sequences.Any(table => HasSequenceName(table, anim));
         var classes = names.Select(pair =>
         {
-            var skills = catalog.Skills(pair.Key).Select(skill =>
-            {
-                var anim = skill.Action.Notifies.FirstOrDefault(notify => notify.Kind == "Anim" && notify.Asset is not null)?.Asset;
-                return new SkillPreviewSkill(skill.Id, anim is null ? skill.Name : $"{skill.Name} ({anim})",
-                    SkillCatalog.Branches(skill.Action).Select(branch => branch.Name).ToArray());
-            }).OrderBy(skill => skill.Id).ToArray();
+            var skills = catalog.Skills(pair.Key).Select(skill => (skill,
+                    anim: skill.Action.Notifies.FirstOrDefault(notify => notify.Kind == "Anim" && notify.Asset is not null)?.Asset))
+                .Where(item => Playable(item.anim))
+                .Select(item => new SkillPreviewSkill(item.skill.Id, item.anim is null ? item.skill.Name : $"{item.skill.Name} ({item.anim})",
+                    SkillCatalog.Branches(item.skill.Action).Select(branch => branch.Name).ToArray()))
+                .OrderBy(skill => skill.Id).ToArray();
             var label = pair.Value.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) ? pair.Key : $"{pair.Value} ({pair.Key})";
             return new SkillPreviewClass(pair.Key, label, skills);
         }).Where(item => item.Skills.Count > 0).OrderBy(item => item.File.Equals(package, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
@@ -189,6 +196,22 @@ public sealed class SkillPreviewService(
                       throw new InvalidDataException($"The animation {animNames[0]} was not found in the indexed packages.");
         // Player skills are the SK_ sequences; a monster's attacks are named anything (Att_Battle_1_01), so all are kept.
         var set = await animations.PrepareAsync(animSet.Package, animSet.Name, keepAll: npc, cancellationToken: cancellationToken, skills: !npc);
+        // A monster package holds several sets (Thaemine's MN_CDKCN_00_Ani, MN_CDKCN_00-2_Ani for its mounted phase...)
+        // sharing one name table, so the set found by name may lack the clip: the package's other sets are tried.
+        if (npc && !set.Animations.Any(item => item.Name.Equals(animNames[0], StringComparison.OrdinalIgnoreCase)))
+        {
+            var others = assets.Catalogs.Read(animSet.Package).Assets
+                .Where(asset => asset.ClassName.Equals("AnimSet", StringComparison.OrdinalIgnoreCase) &&
+                                !asset.ObjectName.Equals(animSet.Name, StringComparison.OrdinalIgnoreCase))
+                .Select(asset => asset.ObjectName).ToArray();
+            foreach (var other in others)
+            {
+                var candidate = await animations.PrepareAsync(animSet.Package, other, keepAll: true, cancellationToken: cancellationToken, skills: false);
+                if (!candidate.Animations.Any(item => item.Name.Equals(animNames[0], StringComparison.OrdinalIgnoreCase))) continue;
+                set = candidate;
+                break;
+            }
+        }
         Mark("animations");
 
         // Each effect's particle model, by "Package.Object", read side by side from the packages the skill names.
@@ -394,13 +417,24 @@ public sealed class SkillPreviewService(
     private async Task<(string Package, string Name)?> FindAnimSetAsync(string root, string sequence, ClassLook? look,
         CancellationToken cancellationToken)
     {
-        if (_animSets.TryGetValue(sequence, out var known)) return known;
+        // Bosses share sequence names (Att_Battle_1_01, Idle_Battle_1), so the set found is remembered per look.
+        var cacheKey = $"{look?.Name ?? "-"}|{sequence}";
+        if (_animSets.TryGetValue(cacheKey, out var known)) return known;
         // The class look names its AnimSets; the class's own (listed after the body's) usually holds its skills.
+        (string Package, string Name)? first = null;
         foreach (var named in (look?.AnimSets ?? []).Reverse())
         {
             if (await assets.FindObjectAsync(named.Object, "animset", named.Package, cancellationToken) is not { } located) continue;
-            if (!located.Catalog.Names.Any(name => name.Value.Equals(sequence, StringComparison.OrdinalIgnoreCase))) continue;
-            return _animSets[sequence] = (located.PackagePath, located.Entry.ObjectName);
+            first ??= (located.PackagePath, located.Entry.ObjectName);
+            if (!HasSequenceName(located.Catalog.Names, sequence)) continue;
+            return _animSets[cacheKey] = (located.PackagePath, located.Entry.ObjectName);
+        }
+        // A monster's animations are only ever in its look's own sets (a player set with the same sequence name would
+        // play a human animation on it); the first set is tried and the missing clip reported.
+        if (look is { Name: var lookName } && !lookName.StartsWith("EFDLChar_PC_", StringComparison.OrdinalIgnoreCase))
+        {
+            if (first is { } own) _animSets[cacheKey] = own;
+            return first;
         }
         var found = await index.SearchAsync(root, "_ani", "Object", metadata(), PackageIndexSearchScope.ObjectName, null, resultLimit: 5000);
         var candidates = found.Matches
@@ -422,13 +456,24 @@ public sealed class SkillPreviewService(
                 {
                     continue;
                 }
-                if (!catalogue.Names.Any(name => name.Value.Equals(sequence, StringComparison.OrdinalIgnoreCase))) continue;
+                if (!HasSequenceName(catalogue.Names, sequence)) continue;
                 var set = catalogue.Assets.FirstOrDefault(asset => asset.ClassName.Equals("AnimSet", StringComparison.OrdinalIgnoreCase));
                 if (set is not null) return ((string Package, string Name)?)(package.Key, set.ObjectName);
             }
             return null;
         }, cancellationToken);
-        if (result is { } value) _animSets[sequence] = value;
+        if (result is { } value) _animSets[cacheKey] = value;
         return result;
+    }
+
+    /// <summary>
+    /// Whether a package's name table holds a sequence. A name ending in _N (N without a leading zero) is stored as
+    /// the base name with a number, so Thaemine's Idle_Battle_1 is the entry "Idle_Battle"; Att_Battle_1_01 is whole.
+    /// </summary>
+    private static bool HasSequenceName(IReadOnlyList<Arkive.Core.Assets.UnrealNameEntry> names, string sequence)
+    {
+        if (names.Any(name => name.Value.Equals(sequence, StringComparison.OrdinalIgnoreCase))) return true;
+        var split = System.Text.RegularExpressions.Regex.Match(sequence, @"^(?<base>.+)_(?<number>[1-9]\d*)$");
+        return split.Success && names.Any(name => name.Value.Equals(split.Groups["base"].Value, StringComparison.OrdinalIgnoreCase));
     }
 }

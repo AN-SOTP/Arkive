@@ -70,6 +70,12 @@ public static class MaterialInstanceDescriptionReader
         var vectors = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
         var textures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var switches = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        // Lost Ark's base materials list every parameter's default under Collected*Parameters. An instance that leaves a
+        // texture parameter unset draws with that default; the cooked shader data holds no other record of it.
+        foreach (var element in chain[^1].Tree.Elements("CollectedTextureParameters"))
+            if (element.ChildValue("Name") is { } parameter &&
+                UmodelPropertyTree.ParseObjectReference(element.ChildValue("Texture")) is { } texture)
+                textures[parameter] = texture.Name;
         // Apply from the root towards the leaf so the most specific instance wins.
         for (var index = chain.Count - 1; index >= 0; index--)
         {

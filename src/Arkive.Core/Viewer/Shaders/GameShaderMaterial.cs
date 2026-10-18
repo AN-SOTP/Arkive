@@ -196,6 +196,10 @@ public static class GameShaderMaterial
             if (name is null && texture.Parameter is null && material.ReferencedTextures is { } referenced &&
                 texture.TextureIndex >= 0 && texture.TextureIndex < referenced.Count)
                 name = referenced[texture.TextureIndex];
+            // A material that references exactly one texture leaves no doubt which one an unset parameter means
+            // (effect masters like FX_C_Pa_SmokeSeq_01_Tr keep no collected default for their texturesubuv).
+            if (name is null && texture.Parameter is not null && !customization && material.ReferencedTextures is { Count: 1 } only)
+                name = only[0];
             // The engine's "null" texture is transparent black; its exported PNG has lost the alpha, which as a
             // decal mask would paint the whole region (Beatrice's face turned white).
             if (string.Equals(name, "null", StringComparison.OrdinalIgnoreCase)) neutralSlots[slot] = "vec4(0.0)";

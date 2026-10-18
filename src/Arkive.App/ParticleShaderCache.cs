@@ -16,7 +16,7 @@ public sealed record LocatedObject(string PackagePath, AssetCatalog Catalog, Ass
 
 /// <summary>
 /// Effect materials' own compiled shaders (see <see cref="ParticleShaderPlanner"/>), built once from the game's shader
-/// cache and kept next to the material's exported textures (shader6.json), for the particle window and skill preview.
+/// cache and kept next to the material's exported textures (shader7.json), for the particle window and skill preview.
 /// Thread-safe: materials can be prepared side by side.
 /// </summary>
 public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkProtectionProvider provider)
@@ -37,7 +37,7 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
     public async Task<ParticleShaderSet?> GetAsync(ShaderCacheIndex index, string material, string? materialPackage, string folder,
         string root, Locate locate, Action<string> log, CancellationToken cancellationToken)
     {
-        var record = Path.Combine(folder, "shader6.json");
+        var record = Path.Combine(folder, "shader7.json");
         try
         {
             if (File.Exists(record))
@@ -112,6 +112,8 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
         var chain = new List<string>();
         var scalars = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
         var vectors = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
+        var textures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var blendMode = "BLEND_Opaque";
         var twoSided = false;
         var near = materialPackage;
@@ -126,6 +128,11 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
                 KnownPackageSha256: new string('0', 64)), cancellationToken);
             foreach (var scalar in report.ScalarParameters) scalars.TryAdd(scalar.Name, scalar.Value);
             foreach (var vector in report.VectorParameters) vectors.TryAdd(vector.Name, [vector.Red, vector.Green, vector.Blue, vector.Alpha]);
+            // Textures the instances set (the leaf's win), then the base material's defaults for the rest.
+            foreach (var texture in report.TextureParameters)
+                if (ObjectName(texture.ResolvedObject) is { Length: > 0 } value && value != "None" && !value.StartsWith('<')) textures.TryAdd(texture.Name, value);
+            foreach (var texture in report.CollectedTextures)
+                if (ObjectName(texture.ResolvedObject) is { Length: > 0 } value && value != "None" && !value.StartsWith('<')) defaults[texture.Name] = value;
             if (Read(found) is { } bytes && BlendModeOf(bytes, found.Catalog) is { } blend) blendMode = blend;
             if (report.Properties.Any(property => property.Name.Equals("TwoSided", StringComparison.OrdinalIgnoreCase) &&
                                                   property.ValuePreview.Equals("True", StringComparison.OrdinalIgnoreCase)))
@@ -137,8 +144,9 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
         if (blendMode == "BLEND_Opaque")
             blendMode = chain.Any(name => name.EndsWith("_ad", StringComparison.OrdinalIgnoreCase)) ? "BLEND_Additive"
                 : chain.Any(name => name.EndsWith("_tr", StringComparison.OrdinalIgnoreCase)) ? "BLEND_Translucent" : blendMode;
+        foreach (var (name, value) in defaults) textures.TryAdd(name, value);
         return new MaterialInstanceDescription(material, "MaterialInstanceConstant", chain.Skip(1).ToArray(), chain[^1],
-            scalars, vectors, new Dictionary<string, string>(), new Dictionary<string, bool>(), twoSided, false, blendMode, 0.3333f);
+            scalars, vectors, textures, new Dictionary<string, bool>(), twoSided, false, blendMode, 0.3333f);
     }
 
     // A base material's BlendMode tag: its name, "ByteProperty", size and index, the enum's name, then the value's name
