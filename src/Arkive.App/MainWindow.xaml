@@ -479,7 +479,7 @@
                                         Content="Preview"
                                         IsEnabled="False"
                                         Click="LibraryPreviewButton_Click"
-                                        ToolTip="Open the selected mesh in Arkive's model viewer (every LOD, game colours, materials, textures and UModel's object properties), or the selected texture in the asset viewer with the parts the game's interface names on it. You can also double-click a mesh result." />
+                                        ToolTip="Open the selected mesh in Arkive's Asset Viewer (every LOD, game colours, materials, textures and UModel's object properties), or the selected texture in the Texture Viewer with the parts the game's interface names on it. You can also double-click a mesh result." />
                                 <Button x:Name="LibraryInspectButton"
                                         Content="Inspect selected in UModel"
                                         IsEnabled="False"
@@ -711,7 +711,7 @@
                                                     Click="WorkshopExtractAssetKitButton_Click"
                                                     ToolTip="Add the editable skeletal mesh, export its exact dependency kit, and prepare linked texture/material working copies as optional references. References are excluded until you tick Include; the game is not changed." />
                                             <Button x:Name="WorkshopPreviewButton" Content="Preview original" Click="WorkshopPreviewButton_Click"
-                                                    ToolTip="Open the selected mesh in Arkive's model viewer. Textures and materials open in UModel." />
+                                                    ToolTip="Open the selected mesh in Arkive's Asset Viewer. Textures and materials open in UModel." />
                                             <Button x:Name="WorkshopUmodelButton" Content="Open in UModel" Click="WorkshopUmodelButton_Click"
                                                     ToolTip="Ask UModel to open the selected asset instead." />
                                         </WrapPanel>
@@ -751,14 +751,14 @@
                                         <Button x:Name="AuthoringPrepareButton" Content="Prepare for editing" Click="AuthoringPrepareButton_Click" />
                                         <Button x:Name="AuthoringOpenButton" Content="Open edited file" Click="AuthoringOpenButton_Click" />
                                         <Button x:Name="AuthoringColoursButton" Content="Edit colours" Click="AuthoringColoursButton_Click"
-                                                ToolTip="Open the selected texture in Arkive's asset viewer to recolour it, or one named part of an interface picture (such as the HP bar), and save it to the working file." />
+                                                ToolTip="Open the selected texture in Arkive's Texture Viewer to recolour it, or one named part of an interface picture (such as the HP bar), and save it to the working file." />
                                         <Button x:Name="AuthoringProportionsButton" Content="Edit in proportion editor" Visibility="Collapsed"
                                                 Click="AuthoringProportionsButton_Click"
                                                 ToolTip="Reopen this Simple upscale mod's outfit from the clean game files with the mod's sliders; saving there updates this mod." />
                                         <Button x:Name="AuthoringReplaceButton" Content="Replace file…" Click="AuthoringReplaceButton_Click" />
                                         <Button x:Name="AuthoringCompareButton" Content="Compare with original" Click="AuthoringCompareButton_Click" />
                                         <Button x:Name="AuthoringViewButton" Content="Preview with edits" Click="AuthoringViewButton_Click"
-                                                ToolTip="Open the selected mesh (or the mod's first mesh) in Arkive's model viewer with this mod's edited mesh, textures and material values. The view refreshes when you save a working file." />
+                                                ToolTip="Open the selected mesh (or the mod's first mesh) in Arkive's Asset Viewer with this mod's edited mesh, textures and material values. The view refreshes when you save a working file." />
                                         <Button x:Name="AuthoringPreviewButton" Content="Preview original" Click="AuthoringPreviewButton_Click" />
                                         <Button x:Name="AuthoringFolderButton" Content="Working folder" Click="AuthoringFolderButton_Click" />
                                         <Button x:Name="AuthoringRemoveButton" Content="Remove selected assets" Click="AuthoringRemoveButton_Click"

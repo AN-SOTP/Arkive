@@ -109,7 +109,7 @@ public partial class ModelViewerWindow : Window
         keepView &= _request == request && _edits == edits;
         _request = request;
         _edits = edits;
-        Title = $"Arkive model viewer · {request.PackageAlias}.{request.ObjectName}" + (edits is null ? "" : " · with your edits");
+        Title = $"Arkive Asset Viewer · {request.PackageAlias}.{request.ObjectName}" + (edits is null ? "" : " · with your edits");
         _loading?.Cancel();
         var loading = _loading = new CancellationTokenSource();
         if (_sceneLoaded.Task.IsCompleted) _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -325,7 +325,7 @@ public partial class ModelViewerWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or TimeoutException
                                               or OperationCanceledException)
         {
-            MessageBox.Show(this, exception.Message, "Arkive model viewer", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, exception.Message, "Arkive Asset Viewer", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -360,7 +360,7 @@ public partial class ModelViewerWindow : Window
         {
             _log($"Model viewer could not start WebView2: {exception}");
             UnavailableText.Text = exception is WebView2RuntimeNotFoundException
-                ? "Arkive's model viewer needs the Microsoft Edge WebView2 Runtime, which is part of Windows 10 and 11 " +
+                ? "Arkive's Asset Viewer needs the Microsoft Edge WebView2 Runtime, which is part of Windows 10 and 11 " +
                   "but appears to be missing here. Install it from Microsoft, or open the object in UModel."
                 : $"WebView2 could not start: {exception.Message}";
             UnavailablePanel.Visibility = Visibility.Visible;
@@ -441,7 +441,7 @@ public partial class ModelViewerWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                               System.ComponentModel.Win32Exception or UmodelBridgeException)
         {
-            MessageBox.Show(this, exception.Message, "Arkive model viewer", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, exception.Message, "Arkive Asset Viewer", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 

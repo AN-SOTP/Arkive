@@ -1,7 +1,7 @@
 <Window x:Class="Arkive.App.TextureViewerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Arkive asset viewer"
+        Title="Arkive Texture Viewer"
         Width="1180"
         Height="760"
         MinWidth="820"

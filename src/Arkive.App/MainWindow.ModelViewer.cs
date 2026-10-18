@@ -94,7 +94,7 @@ public partial class MainWindow
     private void OpenLibraryModelViewer(LibraryAssetRow row)
     {
         if (OpenModelViewer(row, LibraryGrid))
-            StatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's model viewer.";
+            StatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's Asset Viewer.";
     }
 
     /// <summary>Opens a search result; PgUp/PgDn in the viewer then move through <paramref name="results"/>.</summary>
@@ -124,7 +124,7 @@ public partial class MainWindow
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             Log($"Model viewer could not open: {exception}");
-            MessageBox.Show(this, exception.Message, "Arkive model viewer", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, exception.Message, "Arkive Asset Viewer", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
     }

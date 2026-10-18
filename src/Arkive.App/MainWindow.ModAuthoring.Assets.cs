@@ -395,7 +395,7 @@ public partial class MainWindow : Window
                     _libraryRootPath ?? Path.GetDirectoryName(edit.SourcePackagePath), match.ExportIndex, match.SerialOffset,
                     match.SerialSize, match.ClassName, match.ObjectName);
                 if (OpenModelViewer(request, edits: null))
-                    AuthoringStatusText.Text = $"Showing the original {edit.ObjectName} in Arkive's model viewer.";
+                    AuthoringStatusText.Text = $"Showing the original {edit.ObjectName} in Arkive's Asset Viewer.";
                 return;
             }
             _umodelBridge.StartAssetPreview(clean, new UmodelAssetEntry(match.ExportIndex, match.SerialOffset,

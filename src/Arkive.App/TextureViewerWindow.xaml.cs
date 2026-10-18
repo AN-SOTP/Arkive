@@ -10,7 +10,7 @@ using Arkive.Core.Textures;
 namespace Arkive.App;
 
 /// <summary>
-/// Arkive's 2D asset viewer for textures and interface pictures. It shows the picture with the parts the game's
+/// Arkive's 2D texture viewer for textures and interface pictures. It shows the picture with the parts the game's
 /// interface movies name on it, and, for a texture in a mod, recolours the whole picture or one part and saves the
 /// result to the mod's working file.
 /// </summary>
@@ -45,7 +45,7 @@ public partial class TextureViewerWindow : Window
         _workingPath = workingPath;
         _loadOriginal = loadOriginal;
         _log = log;
-        Title = $"Arkive asset viewer · {title}";
+        Title = $"Arkive Texture Viewer · {title}";
         HeaderText.Text = $"{title} · {picture.Width:N0}×{picture.Height:N0}";
         HintText.Text = workingPath is null
             ? "This is the game's picture. Add it to a mod, then use Edit colours there to change it."
@@ -85,7 +85,7 @@ public partial class TextureViewerWindow : Window
         Closing += (_, e) =>
         {
             if (_savedChanges || _workingPath is null) return;
-            if (MessageBox.Show(this, "Close without saving your colour changes?", "Arkive asset viewer",
+            if (MessageBox.Show(this, "Close without saving your colour changes?", "Arkive Texture Viewer",
                     MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
                 e.Cancel = true;
         };

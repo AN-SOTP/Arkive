@@ -202,7 +202,7 @@ public partial class MainWindow : Window
         else if (CanViewTexture(row.Kind)) _ = OpenTextureViewerAsync(row);
         else if (!CanPreviewInArkive(row.Kind)) OpenWorkshopRowInUmodel(row);
         else if (OpenModelViewer(row, WorkshopSearchResultsGrid))
-            WorkshopStatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's model viewer.";
+            WorkshopStatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's Asset Viewer.";
     }
 
     private void WorkshopUmodelButton_Click(object sender, RoutedEventArgs e)

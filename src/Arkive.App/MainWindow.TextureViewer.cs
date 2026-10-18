@@ -11,18 +11,18 @@ public partial class MainWindow
 {
     private static bool CanViewTexture(AssetKind kind) => kind == AssetKind.Texture;
 
-    /// <summary>Shows a texture from the game files in the asset viewer, with the parts the interface names on it.</summary>
+    /// <summary>Shows a texture from the game files in the Texture Viewer, with the parts the interface names on it.</summary>
     private async Task OpenTextureViewerAsync(LibraryAssetRow row)
     {
         if (_nativeTextureExportService is null)
         {
             MessageBox.Show(this, _nativeTextureExportUnavailableReason ?? "Arkive's texture decoder is unavailable.",
-                "Arkive asset viewer", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Arkive Texture Viewer", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
         try
         {
-            StatusText.Text = $"Opening {row.ObjectName} in the asset viewer…";
+            StatusText.Text = $"Opening {row.ObjectName} in the Texture Viewer…";
             var directory = Path.Combine(_projectRoot, "cache", "texture-viewer", Guid.NewGuid().ToString("N"));
             var report = await _textureReconnaissanceService.InspectAsync(new Arkive.Core.Inspection.TextureReconnaissanceRequest(
                 row.SourcePath, row.PackageAlias, row.ExportIndex - 1, AssetKind.Texture, row.ClassName, row.ObjectName,
@@ -35,17 +35,17 @@ public partial class MainWindow
             var picture = (await TextureEditableImageService.LoadAsync(path)).Image;
             ShowTextureViewer($"{row.PackageAlias}.{row.ObjectName}", picture, null,
                 () => Task.FromResult(picture.DeepCopy()), row.SourcePath, row.ObjectName);
-            StatusText.Text = $"Opened {row.ObjectName} in the asset viewer.";
+            StatusText.Text = $"Opened {row.ObjectName} in the Texture Viewer.";
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or
                                               UnauthorizedAccessException or InvalidOperationException)
         {
             Log($"Asset viewer could not open {row.ObjectName}: {exception}");
-            MessageBox.Show(this, exception.Message, "Arkive asset viewer", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, exception.Message, "Arkive Texture Viewer", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
-    /// <summary>Opens a mod's texture working copy in the asset viewer to change its colours.</summary>
+    /// <summary>Opens a mod's texture working copy in the Texture Viewer to change its colours.</summary>
     private async Task OpenTextureColourEditorAsync(ArkiveModLocalEdit edit)
     {
         if (edit.Entry is not GuidedTextureModProjectEntry texture) return;

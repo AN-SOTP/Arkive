@@ -650,7 +650,7 @@ static int ModelViewerScene(
         throw new InvalidOperationException($"Expected one object named '{objectName}', found {matches.Length:N0}.");
     var asset = matches[0];
     var executable = UmodelLocator.FindExecutable()
-        ?? throw new InvalidOperationException("The model viewer needs the Lost Ark UModel backend.");
+        ?? throw new InvalidOperationException("The Asset Viewer needs the Lost Ark UModel backend.");
     var cache = new ModelViewerCache(string.IsNullOrWhiteSpace(cachePath)
         ? Path.Combine(ArkiveRuntimePaths.ResolveDataRoot(), "cache", "model-viewer")
         : Path.GetFullPath(cachePath));
