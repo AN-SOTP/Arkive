@@ -143,7 +143,9 @@ public partial class ParticleEditorWindow : Window
                     declarations = item.Value.Declarations,
                     function = item.Value.Function,
                     constantBuffers = item.Value.ConstantBuffers,
-                    samplers = item.Value.Samplers.ToDictionary(sampler => sampler.Key, sampler => TextureUrl(sampler.Value)),
+                    // The scene depth is not a file: the page binds its own depth texture to that sampler (see particle-sim.js).
+                    samplers = item.Value.Samplers.ToDictionary(sampler => sampler.Key,
+                        sampler => sampler.Value == ParticleShaderPlanner.SceneDepth ? sampler.Value : TextureUrl(sampler.Value)),
                     inputs = item.Value.Inputs.Select(input => new { register = input.Register, semantic = input.Semantic, index = input.Index }),
                     timeRates = item.Value.TimeRates,
                     firstParameter = item.Value.FirstParameterRegister,

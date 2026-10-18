@@ -266,8 +266,10 @@ const SPRITE_VERTEX = `
       side = length(side) > 1e-4 ? normalize(side) : vec3(1.0, 0.0, 0.0);
       center.xyz += (side * corner.x * iSize.x + axis * corner.y * iSize.y) * unit;
     } else if (alignMode > 1.5) {
-      // Locked to a plane of the effect (lockU, lockV): flat on the ground for decals and Z locks.
-      center = modelViewMatrix * vec4(center3 + lockU * turned.x + lockV * turned.y + vec3(0.0, lift, 0.0), 1.0);
+      // Locked to a plane of the effect (lockU, lockV): flat on the ground for decals and Z locks, lifted by lift
+      // centimetres (in local or world space alike: world space is in metres) so it does not fight the floor.
+      vec3 up = vec3(0.0, lift * 0.01 / max(length(modelMatrix[1].xyz), 1e-6), 0.0);
+      center = modelViewMatrix * vec4(center3 + lockU * turned.x + lockV * turned.y + up, 1.0);
     } else {
       center = modelViewMatrix * vec4(center3, 1.0);
       // Sizes are in the effect's own units; view space has the effect's scale (centimetres to metres) applied.
@@ -459,6 +461,12 @@ class Emitter {
     // Axis locks: a locked plane (epal_x/y/z, its two in-plane axes as lockU and lockV in the viewer's axes) or an axis
     // the sprite turns about (epal_rotate_*).
     this.lockU = [1, 0, 0]; this.lockV = [0, 0, 1]; this.lift = this.isDecal ? 0.5 : 0;
+    // UE3's colour modules clamp alpha to 0-1 unless told not to (bClampAlpha defaults to true): the start alpha at
+    // spawn, the alpha over life each frame.
+    const colorModule = model.modules.find((module) => /^particlemodulecolor(_seeded)?$/.test(module.class));
+    const overLifeModule = model.modules.find((module) => module.class === 'particlemodulecoloroverlife');
+    this.clampStartAlpha = colorModule?.values?.bclampalpha !== false;
+    this.clampLifeAlpha = overLifeModule?.values?.bclampalpha !== false;
     const lock = this.module('orientationaxislock')?.values?.lockaxisflags ?? 'epal_none';
     const PLANES = {
       epal_x: [[0, 0, 1], [0, 1, 0]], epal_y: [[1, 0, 0], [0, 1, 0]], epal_z: [[1, 0, 0], [0, 0, 1]],
@@ -469,6 +477,8 @@ class Emitter {
     else if (AXES[lock]) { this.lockU = AXES[lock]; this.alignMode = 3; }
     this.cameraOffset = this.module('cameraoffset');
     this.onGround = this.module('locationonground');
+    // Glows locked flat on the ground sit a little above the preview's floor, as decals do.
+    if (this.onGround && this.alignMode === 2) this.lift = Math.max(this.lift, 1);
     this.squareSprites = alignment === 'psa_square' || alignment === 'psa_typespecific';
     this.sphere = this.module('locationprimitivesphere');
     this.cylinder = this.module('locationprimitivecylinder') ?? this.module('circlesurface');
@@ -490,6 +500,8 @@ class Emitter {
   }
 
   module(fragment) { return this.model.modules.find((module) => module.class.includes(fragment)); }
+
+  startAlpha(value) { return this.clampStartAlpha ? Math.min(1, Math.max(0, value)) : value; }
 
   applyRecipe(recipe) {
     // Each setting is the first table of that name among the modules; over-life multipliers stack.
@@ -576,7 +588,7 @@ class Emitter {
       pos: toThree(location),
       vel: t.startvelocity ? toThree(this.value(t.startvelocity, time, rnd())) : new THREE.Vector3(),
       color: t.startcolor ? this.value(t.startcolor, time, rnd()) : [1, 1, 1],
-      alpha: t.startalpha ? this.value(t.startalpha, time, rnd()) : 1,
+      alpha: t.startalpha ? this.startAlpha(this.value(t.startalpha, time, rnd())) : 1,
       rot: t.startrotation ? this.value(t.startrotation, time, rnd()) * Math.PI * 2 : 0,
       rotRate: t.startrotationrate ? this.value(t.startrotationrate, time, rnd()) * Math.PI * 2 : 0,
       meshRot: t.startrotation && this.isMesh && Array.isArray(this.value(t.startrotation, time, [0.5]))
@@ -739,6 +751,7 @@ class Emitter {
       const life = Number.isFinite(p.life) ? p.age / p.life : 0;
       const color = t.coloroverlife ? this.value(t.coloroverlife, life, p.seeds, scratch.color) : p.color;
       let alpha = t.alphaoverlife ? this.value(t.alphaoverlife, life, p.seeds) : p.alpha;
+      if (t.alphaoverlife && this.clampLifeAlpha) alpha = Math.min(1, Math.max(0, alpha));
       let r = color[0] * tint[0], g = color[1] * tint[1], b = color[2] * tint[2];
       for (const { table } of this.lists.colorscaleoverlife) {
         const scale = this.value(table, life, p.seeds, scratch.scale);

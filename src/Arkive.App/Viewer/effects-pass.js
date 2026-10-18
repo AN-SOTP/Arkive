@@ -42,10 +42,13 @@ const BLUR = `
 // unchanged (the scene underneath is not tone-mapped, so effects at normal brightness must match it); above it the
 // brightest channel rolls off smoothly towards white, keeping the hue, and very bright light desaturates gradually
 // as it does on film. The curve is monotonic: brighter in is never darker out.
+// The scene is already on the screen, sRGB-encoded; it is read back and decoded so the effects are laid over it in
+// linear light (blending encoded values made faint glows far too bright), then the result is encoded once.
 const COMPOSITE = `
-  uniform sampler2D effects; uniform sampler2D bloomNear; uniform sampler2D bloomFar; uniform float bloomStrength;
+  uniform sampler2D effects; uniform sampler2D bloomNear; uniform sampler2D bloomFar; uniform float bloomStrength; uniform sampler2D scene;
   varying vec2 vUv;
   vec3 encode(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
+  vec3 decode(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
   void main() {
     vec4 fx = texture2D(effects, vUv);
     vec3 glow = (texture2D(bloomNear, vUv).rgb + texture2D(bloomFar, vUv).rgb) * bloomStrength;
@@ -58,7 +61,8 @@ const COMPOSITE = `
     float over = max(m - 1.0, 0.0);
     ranged = mix(ranged, vec3(mapped), 0.5 * over / (over + 6.0));
     float coverage = clamp(fx.a, 0.0, 1.0);
-    gl_FragColor = vec4(encode(ranged), coverage);
+    vec3 base = decode(texture2D(scene, vUv).rgb);
+    gl_FragColor = vec4(encode(base * (1.0 - coverage) + ranged), coverage);
   }`;
 
 // ground: the world height of the ground effects sit on (null for none). The game always draws effects over its
@@ -84,12 +88,16 @@ export function createEffectsPass(renderer, { ground = () => null } = {}) {
   });
   const bright = shader(BRIGHT, { source: { value: null }, threshold: { value: 1 }, knee: { value: 0.5 } });
   const blur = shader(BLUR, { source: { value: null }, step: { value: new THREE.Vector2() } });
+  // A copy of the drawn scene for the composite to read (see COMPOSITE).
+  let sceneCopy = new THREE.FramebufferTexture(1, 1, THREE.RGBAFormat);
+  const origin = new THREE.Vector2();
   const composite = shader(COMPOSITE, {
     effects: { value: effects.texture }, bloomNear: { value: bloom[0].texture }, bloomFar: { value: bloom[3].texture },
-    bloomStrength: { value: 0.35 },
+    bloomStrength: { value: 0.35 }, scene: { value: sceneCopy },
   }, {
+    // The colour already holds the scene; only the coverage blends.
     transparent: true, blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
-    blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrc: THREE.OneFactor, blendDst: THREE.ZeroFactor,
     blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
   });
 
@@ -105,6 +113,9 @@ export function createEffectsPass(renderer, { ground = () => null } = {}) {
     if (effects.width !== width || effects.height !== height) {
       effects.setSize(width, height);
       depth.setSize(width, height);
+      sceneCopy.dispose();
+      sceneCopy = new THREE.FramebufferTexture(width, height, THREE.RGBAFormat);
+      composite.uniforms.scene.value = sceneCopy;
     }
     const near = [Math.max(1, width >> 2), Math.max(1, height >> 2)], far = [Math.max(1, width >> 3), Math.max(1, height >> 3)];
     bloom[0].setSize(...near); bloom[1].setSize(...near); bloom[2].setSize(...far); bloom[3].setSize(...far);
@@ -178,8 +189,10 @@ export function createEffectsPass(renderer, { ground = () => null } = {}) {
       pass(bloom[1], bloom[0], 0, 1);
       pass(bloom[0], bloom[2], 1, 0);
       pass(bloom[2], bloom[3], 0, 1);
-      // Laid over the scene.
+      // Laid over the scene, which is read back first.
       renderer.setClearColor(state.clearColor, state.clearAlpha);
+      renderer.setRenderTarget(state.target ?? target);
+      renderer.copyFramebufferToTexture(origin, sceneCopy);
       draw(composite, state.target ?? target);
       renderer.autoClear = state.autoClear;
       renderer.setRenderTarget(state.target);
