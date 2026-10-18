@@ -25,7 +25,7 @@ public partial class MainWindow : Window
         if (!AuthoringOpenButton.IsEnabled || AuthoringAssetsGrid.SelectedItem is not AuthoringAssetRow { Edit: { } edit }) return;
         if (edit.Entry is Arkive.Core.Particles.ParticleEffectEditEntry particle)
         {
-            await EditParticleColourAsync(particle);
+            OpenAuthoringParticleEditor(particle);
             return;
         }
         await RunAuthoringOperationAsync(async () =>
@@ -43,32 +43,6 @@ public partial class MainWindow : Window
                     Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             }
         });
-    }
-
-    /// <summary>
-    /// Asks for the effect's colour, then tints every colour table of the effect in its clean package again, so the
-    /// working copy always holds the patches for the colour shown.
-    /// </summary>
-    private async Task EditParticleColourAsync(Arkive.Core.Particles.ParticleEffectEditEntry particle)
-    {
-        var document = particle.Document;
-        var dialog = new ParticleTintWindow(document.DisplayName, document.Tint) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
-        var tint = dialog.Tint;
-        await RunAuthoringOperationAsync(async () =>
-        {
-            var hash = await ArkiveModEditSnapshot.HashFileCachedAsync(document.SourcePackagePath);
-            if (!hash.Equals(document.SourcePackageSha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"{document.PhysicalPackageName} changed since this effect was added. Add the effect again.");
-            var report = await Task.Run(() => Arkive.Core.Particles.ParticleEffects.Inspect(document.SourcePackagePath, hash,
-                document.SystemObjectName, document.SystemObjectPath, _protectionProvider));
-            var patches = Arkive.Core.Particles.ParticleEffects.TintPatches(report, tint);
-            await _arkiveModEdits.ParticleEdits.SaveAsync(particle with { Document = document with { Tint = tint, Patches = patches } });
-            AuthoringStatusText.Text = patches.Count == 0
-                ? $"{document.DisplayName} already has this colour; nothing changes."
-                : $"{document.DisplayName}: {patches.Count:N0} colour table(s) tinted. Save the mod to keep it.";
-            Log($"Particle effect colour set: effect={document.SystemObjectName}, tint={tint}, tables={patches.Count}.");
-        }, "Tinting the particle effect…");
     }
 
     // Blender treats a file passed on its command line as a .blend, so a .glb has to go through its glTF importer.

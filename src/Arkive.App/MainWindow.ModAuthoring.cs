@@ -339,7 +339,7 @@ public partial class MainWindow : Window
         AuthoringOpenButton.Content = selected?.Edit?.Kind switch
         {
             UnifiedPackageAssetKind.MaterialInstanceConstant => "Edit material",
-            UnifiedPackageAssetKind.ParticleSystem => "Edit colour",
+            UnifiedPackageAssetKind.ParticleSystem => "Edit effect",
             _ => "Open edited file",
         };
     }

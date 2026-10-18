@@ -88,10 +88,10 @@ public sealed record ArkiveModFileAsset(
 }
 
 /// <summary>
-/// A particle effect change: the tint it was made with and the value tables it writes. On a client whose effect is
-/// byte-identical the patches are written as they are; after a game update the tint is applied again to the new effect.
+/// A particle effect change: the recipe it was made with and the value tables it writes. On a client whose effect is
+/// byte-identical the patches are written as they are; after a game update the recipe is applied again to the new effect.
 /// </summary>
-public sealed record ArkiveModParticleData(ParticleEffectTint Tint, IReadOnlyList<ParticleEffectPatch> Patches);
+public sealed record ArkiveModParticleData(ParticleEffectRecipe Recipe, IReadOnlyList<ParticleEffectPatch> Patches);
 
 public sealed record ArkiveModFileManifest(
     string Format,

@@ -582,7 +582,7 @@ public sealed class ArkiveModApplyService
         var totalSteps = Math.Max(1,
             changing.Count(package => package.RestoreFirst || package.Action == ArkiveModPackageAction.Restore) +
             changing.Sum(package => package.Setups.Count) +
-            changing.Count(package => package.Action == ArkiveModPackageAction.Rebuild) + 2);
+            changing.Count(package => package.Action == ArkiveModPackageAction.Rebuild) + 3);
         var step = 0;
         void Report(string package, string message) =>
             progress?.Report(new ArkiveModApplyProgress(++step, totalSteps, package, message));
@@ -723,6 +723,8 @@ public sealed class ArkiveModApplyService
                 };
             }
         }
+        // Priorities, install and finish are the three fixed steps; install is skipped when nothing was rebuilt.
+        step = totalSteps - 1;
         Report("Mods", "Apply finished.");
         watch.Stop();
 

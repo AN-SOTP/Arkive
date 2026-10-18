@@ -3,8 +3,8 @@ using System.Text.Json;
 namespace Arkive.Core.Particles;
 
 /// <summary>
-/// A particle effect working copy: which system of which package it changes, the recipe (a tint) and the value
-/// patches the recipe produced for that package version.
+/// A particle effect working copy: which system of which package it changes, the recipe (tint and multipliers) and
+/// the value patches the recipe produced for that package version.
 /// </summary>
 public sealed record ParticleEffectEditDocument(
     int SchemaVersion,
@@ -18,7 +18,7 @@ public sealed record ParticleEffectEditDocument(
     string SystemObjectPath,
     int SystemExportIndex,
     string SystemExportSha256,
-    ParticleEffectTint Tint,
+    ParticleEffectRecipe Recipe,
     IReadOnlyList<ParticleEffectPatch> Patches,
     bool IncludedInPackageBuild,
     DateTimeOffset CreatedAt,
@@ -67,9 +67,9 @@ public sealed class ParticleEffectEditWorkspaceStore(string rootDirectory)
         return new ParticleEffectEditEntry(Path.GetDirectoryName(path)!, path, document);
     }
 
-    /// <summary>A new working copy that tints <paramref name="report"/>'s system; excluded from builds until selected.</summary>
+    /// <summary>A new working copy that applies <paramref name="recipe"/> to <paramref name="report"/>'s system; excluded from builds until selected.</summary>
     public async Task<ParticleEffectEditEntry> CreateAsync(
-        ParticleEffectReport report, string packageAlias, string displayName, ParticleEffectTint tint,
+        ParticleEffectReport report, string packageAlias, string displayName, ParticleEffectRecipe recipe,
         CancellationToken cancellationToken = default)
     {
         var editId = Guid.NewGuid().ToString("N");
@@ -77,7 +77,7 @@ public sealed class ParticleEffectEditWorkspaceStore(string rootDirectory)
         var document = new ParticleEffectEditDocument(
             CurrentSchemaVersion, editId, displayName, report.PackagePath, Path.GetFileName(report.PackagePath), packageAlias,
             report.PackageSha256, report.System.ObjectName, report.System.ObjectPath, report.System.ExportIndex,
-            report.SystemExportSha256, tint, ParticleEffects.TintPatches(report, tint), false, now, now);
+            report.SystemExportSha256, recipe, ParticleEffects.RecipePatches(report, recipe), false, now, now);
         var directory = Path.Combine(RootDirectory, editId);
         Directory.CreateDirectory(directory);
         return await SaveAsync(new ParticleEffectEditEntry(directory, Path.Combine(directory, DocumentFileName), document),

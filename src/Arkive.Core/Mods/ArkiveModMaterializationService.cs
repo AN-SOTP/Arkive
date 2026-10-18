@@ -232,12 +232,10 @@ public sealed class ArkiveModMaterializationService
                 progress?.Report(new("Reading the particle effect's colours", selection.ObjectName));
                 var particleReport = ParticleEffects.Inspect(selection.PackagePath, hash, export.ObjectName, export.ObjectPath,
                     _services.ProtectionProvider, cancellationToken);
-                if (particleReport.ColorTables.Count == 0)
-                    Refuse("AMM060", $"{export.ObjectName} has no colour values Arkive can change (its look comes only from its materials).");
+                if (particleReport.Tables.Count == 0)
+                    Refuse("AMM060", $"{export.ObjectName} has no settings Arkive can change (its look comes only from its materials).");
                 var particle = await _edits.ParticleEdits.CreateAsync(particleReport, selection.PackageAlias, export.ObjectName,
-                    new ParticleEffectTint(1, 1, 1), cancellationToken).ConfigureAwait(false);
-                particle = await _edits.ParticleEdits.SaveAsync(particle with { Document = particle.Document with { Patches = [] } },
-                    cancellationToken).ConfigureAwait(false);
+                    ParticleEffectRecipe.Unchanged, cancellationToken).ConfigureAwait(false);
                 entry = particle;
                 kind = UnifiedPackageAssetKind.ParticleSystem;
                 editId = particle.Document.EditId;
@@ -489,17 +487,17 @@ public sealed class ArkiveModMaterializationService
         var data = asset.Particle!;
         var report = ParticleEffects.Inspect(check.PackagePath, check.PackageSha256!, export.ObjectName, export.ObjectPath,
             _services.ProtectionProvider, cancellationToken);
-        var created = await _edits.ParticleEdits.CreateAsync(report, asset.Target.PackageAlias, asset.DisplayName, data.Tint,
+        var created = await _edits.ParticleEdits.CreateAsync(report, asset.Target.PackageAlias, asset.DisplayName, data.Recipe,
             cancellationToken).ConfigureAwait(false);
         try
         {
             var patches = created.Document.Patches;
             if (check.State == ArkiveModTargetState.Exact)
             {
-                var tables = report.ColorTables.ToDictionary(table => (table.Export.ObjectPath.ToUpperInvariant(), table.ValueOffset));
+                var tables = report.Tables.ToDictionary(table => (table.Export.ObjectPath.ToUpperInvariant(), table.ValueOffset));
                 if (data.Patches.Any(patch => !tables.TryGetValue((patch.ObjectPath.ToUpperInvariant(), patch.ValueOffset), out var table) ||
                                               !table.Values.Select(BitConverter.SingleToInt32Bits).SequenceEqual(patch.Original.Select(BitConverter.SingleToInt32Bits))))
-                    Refuse("AMM061", $"{asset.DisplayName}'s colour values do not match this client's {export.ObjectName}.");
+                    Refuse("AMM061", $"{asset.DisplayName}'s values do not match this client's {export.ObjectName}.");
                 patches = data.Patches.Select(patch =>
                 {
                     var table = tables[(patch.ObjectPath.ToUpperInvariant(), patch.ValueOffset)];

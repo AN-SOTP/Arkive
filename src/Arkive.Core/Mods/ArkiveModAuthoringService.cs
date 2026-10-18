@@ -182,7 +182,7 @@ public sealed class ArkiveModAuthoringService
     {
         var document = particle.Document;
         if (document.Patches.Count == 0)
-            Refuse("AUT045", $"{document.DisplayName} changes nothing in {document.SystemObjectName}; it has no colour to change.");
+            Refuse("AUT045", $"{document.DisplayName} changes nothing in {document.SystemObjectName} yet. Open it with Edit effect and change a setting first.");
         var descriptor = new ArkiveModFileAsset(
             assetId, UnifiedPackageAssetKind.ParticleSystem, document.DisplayName,
             new ArkiveModAssetTarget(
@@ -191,7 +191,7 @@ public sealed class ArkiveModAuthoringService
                 document.SystemExportSha256.ToUpperInvariant()),
             [])
         {
-            Particle = new ArkiveModParticleData(document.Tint, document.Patches),
+            Particle = new ArkiveModParticleData(document.Recipe, document.Patches),
         };
         return new ArkiveModCapturedAsset(descriptor, [], edit);
     }

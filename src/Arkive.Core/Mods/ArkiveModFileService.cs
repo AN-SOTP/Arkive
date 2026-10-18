@@ -425,9 +425,9 @@ public static class ArkiveModFileService
                 break;
             case UnifiedPackageAssetKind.ParticleSystem:
                 var particle = asset.Particle;
-                if (particle?.Tint is not { IsValid: true } || particle.Patches is not { Count: > 0 and <= 100_000 } || files.Count != 0 ||
+                if (particle?.Recipe is not { IsValid: true } || particle.Patches is not { Count: > 0 and <= 100_000 } || files.Count != 0 ||
                     asset.Texture is not null || asset.Mesh is not null || asset.Material is not null)
-                    Refuse("ARK044", $"Particle asset {asset.AssetId} must contain only a valid tint and its value patches.");
+                    Refuse("ARK044", $"Particle asset {asset.AssetId} must contain only a valid recipe and its value patches.");
                 if (particle.Patches.Any(patch => patch.Original is null || patch.Value is null ||
                                                   patch.Original.Length != patch.Value.Length || patch.Value.Length is 0 or > 65_536 ||
                                                   patch.ValueOffset < 0 || string.IsNullOrWhiteSpace(patch.ObjectPath) ||

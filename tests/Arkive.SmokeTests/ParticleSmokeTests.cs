@@ -9,6 +9,7 @@ internal static class ParticleSmokeTests
         new("reads Lost Ark particle property streams with their one-byte bools and named int tags", TestPropertyStream),
         new("tints particle colour tables by hue, keeping brightness, the header and darkening colours", TestTint),
         new("writes particle patches only over the values they were made for", TestPatches),
+        new("applies particle edit settings once per value, scaling base colours but not their over-life scales", TestRecipe),
     ];
 
     private static readonly UnrealNameEntry[] Names = new[] { "none", "lifetime", "structproperty", "rawdistributionfloat",
@@ -91,5 +92,31 @@ internal static class ParticleSmokeTests
         }
         Assert(ParticleEffects.ContentSha256([patch]) != ParticleEffects.ContentSha256([patch with { Value = [0.14f, 0.14f, 0.6f, 0.5f] }]),
             "the content hash ignores patched values");
+    }
+
+    private static void TestRecipe()
+    {
+        // Apply only reads the table's kind, property and values.
+        static ParticleValueTable Table(string property, ParticleTableKind kind, params float[] values) =>
+            new(null!, new string('0', 64), property, kind, 0, values);
+        var recipe = new ParticleEffectRecipe(new ParticleEffectTint(1, 0, 0), 1, Brightness: 2, Opacity: 0.5f, Size: 3, Lifetime: 1.5f, SpawnRate: 4, Speed: 0.25f);
+        Assert(ParticleEffects.Apply(Table("startcolor", ParticleTableKind.Color, 1, 1, 0.5f, 0.5f, 0.5f), recipe).SequenceEqual([2f, 2f, 1f, 0f, 0f]),
+            "a base colour was not tinted, then brightened with its header");
+        Assert(ParticleEffects.Apply(Table("colorscaleoverlife", ParticleTableKind.Color, 1, 1, 0.5f, 0.5f, 0.5f), recipe).SequenceEqual([1f, 1f, 0.5f, 0f, 0f]),
+            "a colour scale over life was brightened as well as the base colour");
+        Assert(ParticleEffects.Apply(Table("startalpha", ParticleTableKind.Alpha, 1, 1, 0.8f), recipe).SequenceEqual([0.5f, 0.5f, 0.4f]) &&
+               ParticleEffects.Apply(Table("alphascaleoverlife", ParticleTableKind.Alpha, 1, 1, 0.8f), recipe).SequenceEqual([1f, 1f, 0.8f]),
+            "opacity did not scale the base alpha only");
+        Assert(ParticleEffects.Apply(Table("startsize", ParticleTableKind.Size, 10, 20, 15), recipe).SequenceEqual([30f, 60f, 45f]) &&
+               ParticleEffects.Apply(Table("lifetime", ParticleTableKind.Lifetime, 2, 2, 2), recipe).SequenceEqual([3f, 3f, 3f]) &&
+               ParticleEffects.Apply(Table("spawnrate", ParticleTableKind.SpawnRate, 5, 5, 5), recipe).SequenceEqual([20f, 20f, 20f]) &&
+               ParticleEffects.Apply(Table("startvelocity", ParticleTableKind.Speed, 8, 8, 8), recipe).SequenceEqual([2f, 2f, 2f]),
+            "size, lifetime, spawn rate or speed did not scale their tables");
+        var unchanged = Table("startsize", ParticleTableKind.Size, 10, 20, 15);
+        Assert(ParticleEffects.Apply(unchanged, ParticleEffectRecipe.Unchanged).SequenceEqual(unchanged.Values) && ParticleEffectRecipe.Unchanged.IsUnchanged,
+            "the unchanged settings changed a table");
+        Assert(!(recipe with { Size = -1 }).IsValid && !(recipe with { Speed = ParticleEffectRecipe.MaximumMultiplier + 1 }).IsValid &&
+               !(recipe with { Tint = new ParticleEffectTint(0, 0, 0) }).IsValid && recipe.IsValid,
+            "settings out of range were accepted");
     }
 }

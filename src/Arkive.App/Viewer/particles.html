@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Arkive particle effect</title>
+  <link rel="stylesheet" href="particles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.min.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header id="toolbar">
+    <div class="group">
+      <button id="playButton" title="Play or pause (Space)">Pause</button>
+      <button id="restartButton" title="Start the effect again (R)">Restart</button>
+      <label class="field" title="Playback speed">Speed
+        <select id="speedSelect">
+          <option value="0.1">0.1×</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option><option value="2">2×</option>
+        </select>
+      </label>
+      <label class="field"><input type="checkbox" id="loopCheck" checked /> Loop</label>
+      <span id="timeText" class="muted"></span>
+    </div>
+    <div class="group">
+      <label class="field"><input type="checkbox" id="gridCheck" checked /> Grid</label>
+      <label class="field" title="Background">Background
+        <select id="backgroundSelect">
+          <option value="dark" selected>Dark</option><option value="black">Black</option><option value="grey">Grey</option><option value="light">Light</option>
+        </select>
+      </label>
+      <button id="focusButton" title="Frame the effect (F)">Focus</button>
+    </div>
+  </header>
+  <main>
+    <aside id="panel">
+      <section>
+        <h3>Colour</h3>
+        <label class="row"><input type="checkbox" id="tintCheck" /> Tint the effect</label>
+        <div id="swatches"></div>
+        <div class="slider"><span>Red</span><input type="range" id="tintRed" min="0" max="1" step="0.01" value="1" /><output id="tintRedText"></output></div>
+        <div class="slider"><span>Green</span><input type="range" id="tintGreen" min="0" max="1" step="0.01" value="1" /><output id="tintGreenText"></output></div>
+        <div class="slider"><span>Blue</span><input type="range" id="tintBlue" min="0" max="1" step="0.01" value="1" /><output id="tintBlueText"></output></div>
+        <div class="slider"><span>Strength</span><input type="range" id="tintStrength" min="0" max="1" step="0.01" value="1" /><output id="tintStrengthText"></output></div>
+        <div id="tintPreview"></div>
+        <h3>Adjust</h3>
+        <div id="multipliers"></div>
+        <button id="resetButton">Reset all</button>
+        <p class="hint">Every colour of the effect takes the tint's hue and keeps its own brightness. Parts drawn only by
+          their texture or material keep their look. The preview approximates the game's renderer.</p>
+      </section>
+      <section>
+        <h3>Emitters <span id="emitterCount" class="muted"></span></h3>
+        <div id="emitterList"></div>
+      </section>
+    </aside>
+    <div id="stage">
+      <canvas id="canvas"></canvas>
+      <div id="loading">Loading the effect…</div>
+    </div>
+  </main>
+  <footer id="status"></footer>
+  <script type="module" src="particles.js"></script>
+</body>
+</html>

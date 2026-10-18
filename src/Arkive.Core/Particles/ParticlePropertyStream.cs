@@ -45,6 +45,40 @@ public static class ParticlePropertyStream
         return null;
     }
 
+    /// <summary>
+    /// The elements of an array of structs (a spawn module's BurstList…): its count, then each element's own property
+    /// stream ending in None. Null when the array does not read that way.
+    /// </summary>
+    public static IReadOnlyList<IReadOnlyList<ParticleProperty>>? ReadStructArray(
+        ReadOnlySpan<byte> export, ParticleProperty array, IReadOnlyList<UnrealNameEntry> names)
+    {
+        if (array.Type != "arrayproperty" || array.Size < 4) return null;
+        var count = BinaryPrimitives.ReadInt32LittleEndian(export[array.ValueOffset..]);
+        var end = array.ValueOffset + array.Size;
+        if (count is < 0 or > 4096) return null;
+        var elements = new List<IReadOnlyList<ParticleProperty>>(count);
+        var cursor = array.ValueOffset + 4;
+        for (var index = 0; index < count; index++)
+        {
+            var element = new List<ParticleProperty>();
+            if (!TryParse(export, cursor, end, names, element, out cursor)) return null;
+            elements.Add(element);
+        }
+        return cursor == end ? elements : null;
+    }
+
+    /// <summary>The object references of an array of objects (a system's Emitters, a LOD level's Modules…).</summary>
+    public static IReadOnlyList<int>? ReadObjectArray(ReadOnlySpan<byte> export, ParticleProperty array)
+    {
+        if (array.Type != "arrayproperty" || array.Size < 4) return null;
+        var count = BinaryPrimitives.ReadInt32LittleEndian(export[array.ValueOffset..]);
+        if (count < 0 || array.Size != 4 + count * 4) return null;
+        var references = new int[count];
+        for (var index = 0; index < count; index++)
+            references[index] = BinaryPrimitives.ReadInt32LittleEndian(export[(array.ValueOffset + 4 + index * 4)..]);
+        return references;
+    }
+
     private static bool TryParse(ReadOnlySpan<byte> bytes, int start, int limit, IReadOnlyList<UnrealNameEntry> names,
         List<ParticleProperty> output, out int end)
     {

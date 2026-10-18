@@ -2384,7 +2384,7 @@ static int ArkiveParticleTint(string projectRoot, IReadOnlyList<string> packages
     if (packages.Count == 0) throw new ArgumentException("arkive-particle-tint requires at least one --package FILE.upk.");
     var channels = color.Split(',').Select(value => float.Parse(value, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
     if (channels.Length != 3) throw new ArgumentException("--color expects R,G,B, for example 1,0.05,0.03.");
-    var tint = new Arkive.Core.Particles.ParticleEffectTint(channels[0], channels[1], channels[2]);
+    var recipe = new Arkive.Core.Particles.ParticleEffectRecipe(new Arkive.Core.Particles.ParticleEffectTint(channels[0], channels[1], channels[2]));
     var words = match.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     var environment = CreateModEnvironment(projectRoot);
     var provider = ChunkProtectionProviderFactory.CreateWesternGlobal();
@@ -2402,8 +2402,8 @@ static int ArkiveParticleTint(string projectRoot, IReadOnlyList<string> packages
                                                                  words.Any(word => asset.ObjectName.Contains(word, StringComparison.OrdinalIgnoreCase))))
             {
                 var report = Arkive.Core.Particles.ParticleEffects.Inspect(clean, hash, system.ObjectName, system.ObjectPath, provider);
-                if (report.ColorTables.Count == 0) continue;
-                var edit = environment.Context.Edits.ParticleEdits.CreateAsync(report, alias, system.ObjectName, tint).GetAwaiter().GetResult();
+                if (report.Tables.Count == 0) continue;
+                var edit = environment.Context.Edits.ParticleEdits.CreateAsync(report, alias, system.ObjectName, recipe).GetAwaiter().GetResult();
                 created.Add(edit);
                 if (edit.Document.Patches.Count == 0) continue;
                 var local = new ArkiveModLocalEdit(UnifiedPackageAssetKind.ParticleSystem, edit.Document.EditId, edit.DocumentPath,
