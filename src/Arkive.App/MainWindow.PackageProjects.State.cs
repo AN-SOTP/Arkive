@@ -167,6 +167,15 @@ public partial class MainWindow : Window
                 packageEntries[Path.GetFullPath(package.Manifest.SourcePackagePath)] = package;
             }
             var packageRows = new List<GuidedTexturePackageRow>(packageEntries.Count);
+            // Each package's install state reads its builds, receipts and game file; hundreds of packages took 5-20 s
+            // one after another, so they are read a few at a time.
+            var deploymentGate = new SemaphoreSlim(8);
+            var deployments = packageEntries.Values.ToDictionary(package => package, async package =>
+            {
+                await deploymentGate.WaitAsync();
+                try { return await ResolveGuidedDeploymentStateAsync(package); }
+                finally { deploymentGate.Release(); }
+            });
             foreach (var package in packageEntries.Values)
             {
                 var projectEntries = entries.Where(entry => Path.GetFullPath(entry.Manifest.SourcePackagePath)
@@ -185,7 +194,7 @@ public partial class MainWindow : Window
                         package.Manifest.SourcePackagePath))
                     .ToArray();
                 packageRows.Add(await CreateGuidedPackageRowAsync(
-                    package, projectEntries, packageMeshEntries, packageStaticMeshEntries,
+                    package, await deployments[package], projectEntries, packageMeshEntries, packageStaticMeshEntries,
                     staticMeshSources, packageMaterialEntries));
             }
             var orderedPackageRows = packageRows
@@ -271,6 +280,7 @@ public partial class MainWindow : Window
 
     private async Task<GuidedTexturePackageRow> CreateGuidedPackageRowAsync(
         GuidedTexturePackageEntry package,
+        GuidedDeploymentRevisionState? deployment,
         IReadOnlyList<GuidedTextureModProjectEntry> projects,
         IReadOnlyList<SkeletalMeshEditWorkspaceEntry> meshProjects,
         IReadOnlyList<StaticMeshEditEntry> staticMeshProjects,
@@ -281,7 +291,6 @@ public partial class MainWindow : Window
             ? package.Manifest.Revisions.LastOrDefault()
             : package.Manifest.Revisions.FirstOrDefault(revision => revision.RevisionId.Equals(
                 package.Manifest.LatestRevisionId, StringComparison.OrdinalIgnoreCase));
-        var deployment = await ResolveGuidedDeploymentStateAsync(package);
         var inspection = deployment?.Inspection;
         var inspectionError = deployment?.Error;
 
@@ -381,7 +390,7 @@ public partial class MainWindow : Window
         try
         {
             var inspection = await _modDeploymentService.InspectForRecoveryAsync(
-                CreateModDeploymentRequest(latest.ModBundleManifestPath));
+                CreateModDeploymentRequest(latest.ModBundleManifestPath) with { ReuseKnownHashes = true });
             latestState = new GuidedDeploymentRevisionState(latest, inspection, null);
             if (HasActiveDeployment(inspection)) return latestState;
         }
@@ -409,7 +418,7 @@ public partial class MainWindow : Window
                         ModInstallationState.Installed or ModInstallationState.Prepared)) continue;
 
                 var inspection = await _modDeploymentService.InspectForDeletionIdentityAsync(
-                    CreateModDeploymentRequest(revision.ModBundleManifestPath));
+                    CreateModDeploymentRequest(revision.ModBundleManifestPath) with { ReuseKnownHashes = true });
                 if (!HasActiveDeployment(inspection)) continue;
                 Log(
                     $"Guided package active earlier revision resolved: " +
@@ -450,7 +459,7 @@ public partial class MainWindow : Window
             try
             {
                 var inspection = await _modDeploymentService.InspectForRecoveryAsync(
-                    CreateModDeploymentRequest(root.Revision.ModBundleManifestPath));
+                    CreateModDeploymentRequest(root.Revision.ModBundleManifestPath) with { ReuseKnownHashes = true });
                 if (inspection.State is not (
                         ModInstallationState.NotInstalled or ModInstallationState.Restored) ||
                     !inspection.CurrentTargetSha256!.Equals(

@@ -87,9 +87,9 @@ public partial class MainWindow : Window
         await InitializeArkiveModLibraryAsync();
         ReportStartup("Checking which mods are in the game…");
         await RefreshGuidedTextureModsAsync("workspace restore");
-        ReportStartup("Loading drafts, conflicts and mod sets…");
+        ReportStartup("Loading drafts and mod sets…");
         await RefreshModAuthoringAsync();
-        await RefreshModConflictDependencyAsync("workspace restore");
+        // The conflict audit is only shown in its advanced view, which runs it when opened.
         await RefreshClientUpdateAuditAsync("workspace restore");
         await RefreshModSetsAsync("workspace restore");
         await RefreshModifiedMeshUpksAsync("workspace restore");
@@ -115,11 +115,8 @@ public partial class MainWindow : Window
                 showErrors: false,
                 loadTrigger: "workspace restore");
             loadedMetadata = _gameMetadataIndex is not null;
-            if (loadedMetadata)
-            {
-                ReportStartup(database: "Matching your mods to in-game names…");
-                await RefreshGuidedTextureModsAsync("metadata restored");
-            }
+            // In-game names only show in the package workspace's advanced views; they reload it when opened.
+            if (loadedMetadata) _packageWorkspaceStale = true;
             ReportStartup(database: loadedMetadata ? "Loaded." : "Could not be loaded; see Diagnostics.", databaseDone: true);
         }
         else
@@ -636,7 +633,9 @@ public partial class MainWindow : Window
                 $"{index.CustomizationOptionCount:N0} customization options";
             RefreshEntityBrowserEntities(loadTrigger);
             RefreshOpenPackageMetadata();
-            await LoadLibraryDocumentsAsync(loadTrigger);
+            // At startup the restored Library search runs on its own (minutes when its routing index is rebuilt).
+            if (loadTrigger == "workspace restore") _ = LoadLibraryDocumentsAsync(loadTrigger);
+            else await LoadLibraryDocumentsAsync(loadTrigger);
             StatusText.Text =
                 $"Loaded {index.AssociationCount:N0} searchable in-game-name relationships.";
             Log(

@@ -144,6 +144,10 @@ public partial class MainWindow : Window
             MainTabControl.SelectedItem = ModifiedUpksTab;
             ModifiedUpksInnerTabControl.SelectedItem = modDestination;
             StatusText.Text = $"Advanced section opened: {modDestination.Header}.";
+            if (_packageWorkspaceStale && modDestination != ModConflictDependencyTab)
+                _ = RefreshStalePackageWorkspaceWithNoticeAsync();
+            if (modDestination == ModConflictDependencyTab && _modConflictDependencyReport is null)
+                _ = RefreshModConflictDependencyAsync("view opened");
             return;
         }
 

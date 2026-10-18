@@ -54,12 +54,15 @@ public sealed class SkeletalMeshEditableWorkspaceStore
         if (!Directory.Exists(RootDirectory))
             return new SkeletalMeshEditableWorkspaceSnapshot([], []);
 
-        var entries = new List<SkeletalMeshEditableWorkspaceEntry>();
-        var issues = new List<SkeletalMeshEditableWorkspaceIssue>();
-        foreach (var manifestPath in Directory.EnumerateFiles(
-                     RootDirectory, ManifestFileName, SearchOption.AllDirectories))
+        var paths = Directory.EnumerateFiles(RootDirectory, ManifestFileName, SearchOption.AllDirectories).ToArray();
+        var entries = new SkeletalMeshEditableWorkspaceEntry?[paths.Length];
+        var issues = new SkeletalMeshEditableWorkspaceIssue?[paths.Length];
+        // Records not parsed yet (at startup, all of them; thousands with large mods) are read in parallel.
+        await Parallel.ForEachAsync(Enumerable.Range(0, paths.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken },
+            async (index, token) =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var manifestPath = paths[index];
             try
             {
                 var fullManifestPath = EnsureWithinRoot(manifestPath);
@@ -75,7 +78,7 @@ public sealed class SkeletalMeshEditableWorkspaceStore
                         FileShare.ReadWrite | FileShare.Delete, 64 * 1024,
                         FileOptions.Asynchronous | FileOptions.SequentialScan);
                     manifest = await JsonSerializer.DeserializeAsync<SkeletalMeshEditableExportManifest>(
-                                   stream, JsonOptions, cancellationToken).ConfigureAwait(false) ??
+                                   stream, JsonOptions, token).ConfigureAwait(false) ??
                                throw new InvalidDataException("The manifest was empty.");
                     _parsed[fullManifestPath] = (info.Length, info.LastWriteTimeUtc, manifest);
                 }
@@ -92,32 +95,32 @@ public sealed class SkeletalMeshEditableWorkspaceStore
                 var glbPath = EnsureWithinDirectory(
                     directory, Path.Combine(directory, manifest.GlbRelativePath));
                 var glb = new FileInfo(glbPath);
-                entries.Add(new SkeletalMeshEditableWorkspaceEntry(
+                entries[index] = new SkeletalMeshEditableWorkspaceEntry(
                     directory,
                     fullManifestPath,
                     glbPath,
                     manifest,
                     glb.Exists,
                     glb.Exists && glb.Length == manifest.GlbBytes,
-                    manifest.SchemaVersion == SkeletalMeshEditableExportService.CurrentSchemaVersion));
+                    manifest.SchemaVersion == SkeletalMeshEditableExportService.CurrentSchemaVersion);
             }
             catch (Exception exception) when (
                 exception is IOException or UnauthorizedAccessException or
                     JsonException or InvalidDataException or ArgumentException or
                     NotSupportedException)
             {
-                issues.Add(new SkeletalMeshEditableWorkspaceIssue(
-                    Path.GetFullPath(manifestPath), exception.Message));
+                issues[index] = new SkeletalMeshEditableWorkspaceIssue(
+                    Path.GetFullPath(manifestPath), exception.Message);
             }
-        }
+        }).ConfigureAwait(false);
 
         return new SkeletalMeshEditableWorkspaceSnapshot(
-            entries
+            entries.OfType<SkeletalMeshEditableWorkspaceEntry>()
                 .OrderByDescending(entry => entry.Manifest.CreatedAt)
                 .ThenBy(entry => entry.Manifest.PackageAlias, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.Manifest.ObjectName, StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
-            issues.ToArray());
+            issues.OfType<SkeletalMeshEditableWorkspaceIssue>().ToArray());
     }
 
     public Task DeleteAsync(

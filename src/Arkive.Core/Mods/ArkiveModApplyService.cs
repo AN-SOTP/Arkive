@@ -196,7 +196,8 @@ public sealed record ArkiveModApplyContext(
 
     public async Task<(GuidedTexturePackageRevision Revision, ModDeploymentInspection Inspection)?> FindActiveDeploymentAsync(
         GuidedTexturePackageEntry package,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool reuseKnownHashes = false)
     {
         ArgumentNullException.ThrowIfNull(package);
         foreach (var revision in package.Manifest.Revisions
@@ -223,7 +224,8 @@ public sealed record ArkiveModApplyContext(
             if (!receipt.GameFilesModified &&
                 receipt.State is not (ModInstallationState.Installed or ModInstallationState.Prepared)) continue;
             var inspection = await Deployment.InspectForDeletionIdentityAsync(
-                DeploymentRequest(revision.ModBundleManifestPath), cancellationToken).ConfigureAwait(false);
+                DeploymentRequest(revision.ModBundleManifestPath) with { ReuseKnownHashes = reuseKnownHashes },
+                cancellationToken).ConfigureAwait(false);
             if (inspection.HasActiveDeployment) return (revision, inspection);
         }
         return null;
@@ -943,14 +945,16 @@ public sealed class ArkiveModApplyService
             cancellationToken.ThrowIfCancellationRequested();
             var path = Path.Combine(gameDirectory, group.Key);
             if (!File.Exists(path)) continue;
-            var project = FindPackageProject(group.Key, gameDirectory, packages);
-            if (project is not null &&
-                await _context.FindActiveDeploymentAsync(project, cancellationToken).ConfigureAwait(false) is not null)
-                continue;
+            // A clean file needs no install-state check, which reads every build of its package project.
             var hash = await ArkiveModEditSnapshot.HashFileCachedAsync(path, cancellationToken).ConfigureAwait(false);
             var clean = group.Select(asset => asset.Target.SourcePackageSha256.ToUpperInvariant())
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             if (clean.Contains(hash, StringComparer.OrdinalIgnoreCase)) continue;
+            var project = FindPackageProject(group.Key, gameDirectory, packages);
+            if (project is not null &&
+                await _context.FindActiveDeploymentAsync(project, cancellationToken, reuseKnownHashes: true)
+                    .ConfigureAwait(false) is not null)
+                continue;
             var assets = group.DistinctBy(asset => asset.Target.ObjectName, StringComparer.OrdinalIgnoreCase).ToArray();
             // The same changed file is compared object by object on every refresh of the Mods list; the answer only
             // changes with the file's bytes or the objects asked about.

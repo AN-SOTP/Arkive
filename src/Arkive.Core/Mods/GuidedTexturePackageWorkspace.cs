@@ -178,8 +178,7 @@ public sealed class GuidedTexturePackageWorkspace
     {
         if (!Directory.Exists(RootDirectory)) return [];
         var entries = new List<GuidedTexturePackageEntry>();
-        foreach (var path in Directory.EnumerateFiles(
-                     RootDirectory, ManifestFileName, SearchOption.AllDirectories))
+        foreach (var path in ProjectManifestPaths())
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -193,6 +192,22 @@ public sealed class GuidedTexturePackageWorkspace
         }
 
         return entries.OrderByDescending(entry => entry.Manifest.UpdatedAt).ToArray();
+    }
+
+    /// <summary>
+    /// Every package project manifest under the root. Build revisions live in _r, thousands of folders (17 GB with
+    /// large mods) that a full search walked on every load, about 5 s each and several loads per startup.
+    /// </summary>
+    private IEnumerable<string> ProjectManifestPaths()
+    {
+        foreach (var path in Directory.EnumerateFiles(RootDirectory, ManifestFileName, SearchOption.TopDirectoryOnly))
+            yield return path;
+        foreach (var directory in Directory.EnumerateDirectories(RootDirectory))
+        {
+            if (Path.GetFileName(directory).StartsWith('_')) continue;
+            foreach (var path in Directory.EnumerateFiles(directory, ManifestFileName, SearchOption.AllDirectories))
+                yield return path;
+        }
     }
 
     public async Task<GuidedTexturePackageEntry> GetOrCreateAsync(

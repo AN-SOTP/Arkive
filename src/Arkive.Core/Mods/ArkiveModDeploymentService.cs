@@ -46,7 +46,15 @@ public sealed record ModInstallationReceipt(
 public sealed record ArkiveModDeploymentRequest(
     string BundleManifestPath,
     string BackupRootDirectory,
-    string StateRootDirectory);
+    string StateRootDirectory)
+{
+    /// <summary>
+    /// For status display only: reuse a file's SHA-256 while its length and write time are unchanged instead of reading
+    /// every payload, backup and game package again (hundreds of packages at each startup). Install and restore
+    /// leave it off and hash the bytes.
+    /// </summary>
+    public bool ReuseKnownHashes { get; init; }
+}
 
 public sealed record ModDeploymentInspection(
     ArkiveModBundleManifest Bundle,
@@ -254,7 +262,10 @@ public sealed class ArkiveModDeploymentService
             Refuse("DEP003", $"The mod payload is missing: {payloadPath}");
         }
         var payloadInfo = new FileInfo(payloadPath);
-        var payloadHash = await HashFileAsync(payloadPath, cancellationToken).ConfigureAwait(false);
+        Task<string> Hash(string path) => request.ReuseKnownHashes
+            ? ArkiveModEditSnapshot.HashFileCachedAsync(path, cancellationToken)
+            : HashFileAsync(path, cancellationToken);
+        var payloadHash = await Hash(payloadPath).ConfigureAwait(false);
         var payloadVerified = payloadInfo.Length == bundle.PayloadBytes &&
                               payloadHash.Equals(bundle.PayloadSha256, StringComparison.OrdinalIgnoreCase);
         if (!payloadVerified)
@@ -293,7 +304,7 @@ public sealed class ArkiveModDeploymentService
         if (backupExists)
         {
             var backupInfo = new FileInfo(backupPath);
-            var backupHash = await HashFileAsync(backupPath, cancellationToken).ConfigureAwait(false);
+            var backupHash = await Hash(backupPath).ConfigureAwait(false);
             backupVerified = backupInfo.Length == bundle.RequiredSourcePackageBytes &&
                              backupHash.Equals(
                                  bundle.RequiredSourcePackageSha256,
@@ -311,7 +322,7 @@ public sealed class ArkiveModDeploymentService
         }
 
         var targetInfo = new FileInfo(targetPath);
-        var targetHash = await HashFileAsync(targetPath, cancellationToken).ConfigureAwait(false);
+        var targetHash = await Hash(targetPath).ConfigureAwait(false);
         var isOriginal = targetInfo.Length == bundle.RequiredSourcePackageBytes &&
                          targetHash.Equals(
                              bundle.RequiredSourcePackageSha256,
