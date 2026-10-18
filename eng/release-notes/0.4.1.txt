@@ -1,0 +1,6 @@
+Faster startup, and maps can be found by their zone names.
+
+- Search a zone's in-game name in the Asset Library (for example "Land of Death and Order") to list the textures, meshes, materials and effects its map uses.
+- Startup no longer re-checks every installed package each time: install status reuses known file hashes (about 20 s down to under a second after the first launch).
+- The check for game files changed outside Arkive takes 1 to 2 s instead of 20 to 30 s, and the package project list loads in a fraction of a second.
+- The mods list is no longer rebuilt a second time after the game DB loads, the conflict audit runs only when its view is opened, and the restored Library search no longer holds up startup.
