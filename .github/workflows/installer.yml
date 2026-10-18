@@ -76,7 +76,9 @@ jobs:
             }
             $entries = @(Get-ChildItem $directory).Count
             Write-Host "Install root holds $entries entries."
-            if ($entries -gt 40) { throw "The install root still holds $entries entries." }
+            # About 40 of Arkive's own files and libraries (0.4.0 added the Sounds tab's NAudio libraries); the runtime
+            # spilling back into the root would add about 270.
+            if ($entries -gt 60) { throw "The install root still holds $entries entries." }
             $banner = & (Join-Path $directory 'Arkive.Cli.exe') 2>&1 | Select-Object -First 1
             if ("$banner" -notmatch '^Arkive') { throw "Arkive.Cli.exe did not start: $banner" }
           }
