@@ -2820,23 +2820,17 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
     if (string.IsNullOrWhiteSpace(metadataPath))
         throw new ArgumentException("zone-names requires --metadata FILE (the names are saved beside it).");
     var watch = System.Diagnostics.Stopwatch.StartNew();
-    var document = ZoneMapSidecar.BuildAsync(metadataPath, packagesRoot, ChunkProtectionProviderFactory.CreateWesternGlobal())
-        .GetAwaiter().GetResult() ?? throw new FileNotFoundException("The game's leveldata1.lpk was not found beside its Packages folder.");
-    var zones = document.Zones
-        .Where(zone => string.IsNullOrWhiteSpace(filter) || AssetSearch.MatchesDisplayNames(filter, [zone.Name]))
-        .ToArray();
-    var ids = zones.Select(zone => zone.Id).ToHashSet();
-    var matches = document.Associations.Where(item => ids.Contains(item.EntityId)).ToArray();
-    if (json) WriteJson(new { Zones = document.Zones.Count, Names = document.Associations.Count, Matched = zones, Assets = matches });
+    var document = ZoneMapSidecar.BuildAsync(metadataPath, packagesRoot).GetAwaiter().GetResult() ??
+                   throw new FileNotFoundException("The game's leveldata1.lpk was not found beside its Packages folder.");
+    var zones = string.IsNullOrWhiteSpace(filter) ? document.Zones : ZoneMapSidecar.Match(document, filter);
+    if (json) WriteJson(new { Zones = document.Zones.Count, Matches = zones });
     else
     {
-        Console.WriteLine($"Zones:              {document.Zones.Count:N0}");
-        Console.WriteLine($"Map assets:         {document.Associations.Count:N0} in {watch.Elapsed.TotalSeconds:N1}s");
+        Console.WriteLine($"Zones:              {document.Zones.Count:N0} in {watch.Elapsed.TotalSeconds:N1}s");
         Console.WriteLine($"Saved:              {ZoneMapSidecar.GetDefaultPath(metadataPath)}");
         if (!string.IsNullOrWhiteSpace(filter))
-            foreach (var zone in zones.Take(50))
-                Console.WriteLine($"  {zone.Id} {zone.Name}: {string.Join(", ", zone.Levels)} " +
-                                  $"({matches.Count(item => item.EntityId == zone.Id):N0} assets)");
+            foreach (var zone in zones.Take(200))
+                Console.WriteLine($"  {zone.Id} {zone.Name}: {string.Join(", ", zone.Levels)}");
     }
     return 0;
 }
