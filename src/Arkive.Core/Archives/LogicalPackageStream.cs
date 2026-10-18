@@ -332,23 +332,23 @@ public sealed class LogicalPackageStream : Stream
             }
 
             byte[] uncompressed;
-            if (block.CompressedSize == block.UncompressedSize)
+            try
+            {
+                // Every block of a compressed chunk is LZ4, also one whose stream is exactly as long as its data (the
+                // game's own packages have them). Only Arkive 0.4.1 and earlier wrote blocks that did not shrink as raw
+                // bytes; those are the equal-size blocks that are not LZ4.
+                uncompressed = Lz4BlockDecoder.Decode(compressed, block.UncompressedSize);
+            }
+            catch (InvalidDataException) when (block.CompressedSize == block.UncompressedSize)
             {
                 uncompressed = compressed;
             }
-            else
+            catch (InvalidDataException exception)
             {
-                try
-                {
-                    uncompressed = Lz4BlockDecoder.Decode(compressed, block.UncompressedSize);
-                }
-                catch (InvalidDataException exception)
-                {
-                    throw new PackageFormatException(
-                        $"LZ4 block {blockIndex + 1} at physical chunk " +
-                        $"0x{chunk.CompressedOffset:X} could not be decoded.",
-                        exception);
-                }
+                throw new PackageFormatException(
+                    $"LZ4 block {blockIndex + 1} at physical chunk " +
+                    $"0x{chunk.CompressedOffset:X} could not be decoded.",
+                    exception);
             }
 
             uncompressed.CopyTo(output, outputOffset);

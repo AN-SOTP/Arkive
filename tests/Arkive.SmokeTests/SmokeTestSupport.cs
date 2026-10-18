@@ -914,9 +914,10 @@ internal static class SmokeTestSupport
         string path,
         byte[] payload,
         bool protect,
-        byte[]? protectionKey = null)
+        byte[]? protectionKey = null,
+        byte[]? compressedBlock = null)
     {
-        var compressed = EncodeLz4LiteralBlock(payload);
+        var compressed = compressedBlock ?? EncodeLz4LiteralBlock(payload);
         if (protect)
         {
             var encryptedLength = Math.Min(4096, compressed.Length);

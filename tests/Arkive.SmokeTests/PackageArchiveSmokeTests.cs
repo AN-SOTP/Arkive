@@ -7,6 +7,7 @@ internal static class PackageArchiveSmokeTests
         new("reads an empty Western package", TestEmptyPackage),
         new("reads a Lost Ark compressed-chunk record", TestCompressedPackage),
         new("decodes an unprotected LZ4 logical chunk", TestLogicalLz4Package),
+        new("decodes an LZ4 block exactly as long as its data as LZ4, not as raw bytes", TestEqualSizeLz4Block),
         new("decodes a protected logical chunk with an explicit provider", TestProtectedPackage),
         new("decodes a protected chunk with Arkive's Western profile", TestBuiltInWesternProvider),
         new("rejects a protected chunk without a provider", TestMissingProtectionProvider),
@@ -60,6 +61,29 @@ internal static class PackageArchiveSmokeTests
         var decoded = new byte[payload.Length];
         stream.ReadExactly(decoded);
         Assert(decoded.SequenceEqual(payload), "logical LZ4 payload did not round-trip");
+    }
+
+    private static void TestEqualSizeLz4Block()
+    {
+        // 20 literals, a 5-byte match 20 back, then 12 literals: 37 bytes of LZ4 for 37 bytes of data. The game's own
+        // packages have such blocks.
+        var payload = Enumerable.Range(1, 20).Select(value => (byte)value)
+            .Concat(Enumerable.Range(1, 5).Select(value => (byte)value))
+            .Concat(Enumerable.Range(100, 12).Select(value => (byte)value)).ToArray();
+        var block = new List<byte> { 0xF1, 5 };
+        block.AddRange(payload.Take(20));
+        block.AddRange([20, 0, 0xC0]);
+        block.AddRange(payload.Skip(25));
+        Assert(block.Count == payload.Length && Arkive.Core.Compression.Lz4BlockDecoder.Decode(block.ToArray(), payload.Length).SequenceEqual(payload),
+            "the fixture is not an equal-size LZ4 block");
+        var path = Path.Combine(fixtureDirectory, "logical-lz4-equal-size.upk");
+        WriteCompressedPayloadPackage(path, payload, protect: false, compressedBlock: block.ToArray());
+
+        using var stream = new LogicalPackageStream(new UpkPackageReader().Read(path));
+        stream.Position = 129;
+        var decoded = new byte[payload.Length];
+        stream.ReadExactly(decoded);
+        Assert(decoded.SequenceEqual(payload), "an LZ4 block as long as its data was read as raw bytes");
     }
 
     private static void TestProtectedPackage()

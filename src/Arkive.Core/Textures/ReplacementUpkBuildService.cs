@@ -847,8 +847,10 @@ public sealed class ReplacementUpkBuildService
             var compressed = forceLiteralOnlyLz4
                 ? Lz4BlockEncoder.EncodeLiteralOnly(raw)
                 : Lz4BlockEncoder.Encode(raw);
-            var storedRaw = compressed.Length >= raw.Length;
-            var plain = storedRaw ? raw.ToArray() : compressed;
+            // The game and UModel LZ4-decode every block of a compressed chunk, whatever its size: a block that does not
+            // shrink keeps its slightly larger LZ4 stream, as the game's own packages do, never the raw bytes.
+            const bool storedRaw = false;
+            var plain = compressed;
             var physical = plain.ToArray();
             if (sourceChunk.LostArkFlags == 1)
             {
@@ -859,9 +861,7 @@ public sealed class ReplacementUpkBuildService
             {
                 _protectionProvider.UnprotectBlock(summary, sourceChunk, blocks.Count, decodedStored);
             }
-            var decoded = storedRaw
-                ? decodedStored
-                : Lz4BlockDecoder.Decode(decodedStored, count);
+            var decoded = Lz4BlockDecoder.Decode(decodedStored, count);
             var verified = decoded.AsSpan().SequenceEqual(raw);
             if (!verified)
             {

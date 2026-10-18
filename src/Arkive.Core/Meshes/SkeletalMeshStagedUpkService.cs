@@ -1919,14 +1919,15 @@ public sealed class SkeletalMeshStagedUpkService
         {
             var raw = logical.Slice(offset, Math.Min(blockSize.Value, logical.Length - offset));
             var compressed = Lz4BlockEncoder.Encode(raw);
-            var storedRaw = compressed.Length >= raw.Length;
-            var physical = (storedRaw ? raw.ToArray() : compressed).ToArray();
+            // Every block of a compressed chunk is LZ4, even one that does not shrink (see ReplacementUpkBuildService).
+            const bool storedRaw = false;
+            var physical = compressed.ToArray();
             if (sourceChunk.LostArkFlags == 1)
                 _protectionProvider.ProtectBlock(summary, sourceChunk, encodedBlocks.Count, physical);
             var decodedStored = physical.ToArray();
             if (sourceChunk.LostArkFlags == 1)
                 _protectionProvider.UnprotectBlock(summary, sourceChunk, encodedBlocks.Count, decodedStored);
-            var decoded = storedRaw ? decodedStored : Lz4BlockDecoder.Decode(decodedStored, raw.Length);
+            var decoded = Lz4BlockDecoder.Decode(decodedStored, raw.Length);
             if (!decoded.AsSpan().SequenceEqual(raw))
                 Refuse("SMS047", $"Chunk {chunkIndex} block {encodedBlocks.Count} failed decode-back.");
             var protectedPrefix = sourceChunk.LostArkFlags == 1
