@@ -122,10 +122,11 @@ public static class AssetTypes
 
     /// <summary>
     /// The kind of an object read from a package index. Indexes made before a kind existed filed its objects as plain
-    /// objects; their class names still say what they are.
+    /// objects; their class names still say what they are. Test builds filed particle effects and interface movies
+    /// under each other's numbers before both were added, so those kinds are also read from the class name.
     /// </summary>
     public static AssetKind IndexedKind(AssetKind stored, string className) =>
-        stored == AssetKind.Object ? CatalogKind(className) : stored;
+        stored is AssetKind.Object or AssetKind.ParticleSystem or AssetKind.InterfaceMovie ? CatalogKind(className) : stored;
 
     /// <summary>How UModel's export list (and so its exports to files) files a class.</summary>
     public static AssetKind UmodelKind(string className) => className.ToLowerInvariant() switch

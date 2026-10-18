@@ -25,7 +25,9 @@ internal static class AssetTypeSmokeTests
             "particle systems in older package indexes are not recognised");
         Assert(AssetTypes.IndexedKind(AssetKind.Object, "efswfmovie") == AssetKind.InterfaceMovie &&
                AssetTypes.IndexedKind(AssetKind.Object, "SkeletalMesh3") == AssetKind.Object &&
-               AssetTypes.IndexedKind(AssetKind.Texture, "efswfmovie") == AssetKind.Texture,
+               AssetTypes.IndexedKind(AssetKind.Texture, "efswfmovie") == AssetKind.Texture &&
+               AssetTypes.IndexedKind(AssetKind.ParticleSystem, "efswfmovie") == AssetKind.InterfaceMovie &&
+               AssetTypes.IndexedKind(AssetKind.InterfaceMovie, "particlesystem") == AssetKind.ParticleSystem,
             "objects filed as plain objects by older package indexes are not given their newer kind");
         // Saved by number in the package index and by name in .arkive files: existing values never move.
         Assert((int)AssetKind.Texture == 1 && (int)AssetKind.StaticMesh == 2 && (int)AssetKind.SkeletalMesh == 3 && (int)AssetKind.Material == 4 &&
