@@ -458,7 +458,6 @@ public partial class MainWindow : Window
                 cancellationToken: searchCancellation.Token);
             if (!string.IsNullOrEmpty(query) && !searchCancellation.IsCancellationRequested)
             {
-                LibraryCountText.Text = "Reading the maps of matching zones...";
                 result = await AddZoneMatchesAsync(result, query, category, searchScope, resultLimit, searchCancellation.Token);
             }
         }
