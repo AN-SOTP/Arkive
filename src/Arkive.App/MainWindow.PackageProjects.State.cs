@@ -166,6 +166,22 @@ public partial class MainWindow : Window
                 var package = await PackageFor(source.PackageAlias, source.PhysicalPackageName, source.SourcePackagePath);
                 packageEntries[Path.GetFullPath(package.Manifest.SourcePackagePath)] = package;
             }
+            // Effect and interface movie edits are built into packages too; without a row, a package they alone change has
+            // no install state, and the Mods list never counts their mod as applied.
+            var otherEditSources = (await _arkiveModEdits.ParticleEdits.LoadAsync())
+                .Select(edit => (Alias: edit.Document.PackageAlias, Physical: edit.Document.PhysicalPackageName,
+                    Source: edit.Document.SourcePackagePath))
+                .Concat(_arkiveModEdits.InterfaceMovies is { } movies
+                    ? (await movies.LoadAsync()).Select(movie => (Alias: movie.Manifest.PackageAlias,
+                        Physical: Path.GetFileName(movie.Manifest.SourcePackagePath), Source: movie.Manifest.SourcePackagePath))
+                    : []);
+            foreach (var source in otherEditSources.DistinctBy(source => Path.GetFullPath(source.Source),
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                if (packageEntries.ContainsKey(Path.GetFullPath(source.Source))) continue;
+                var package = await PackageFor(source.Alias, source.Physical, source.Source);
+                packageEntries[Path.GetFullPath(package.Manifest.SourcePackagePath)] = package;
+            }
             var packageRows = new List<GuidedTexturePackageRow>(packageEntries.Count);
             // Each package's install state reads its builds, receipts and game file; hundreds of packages took 5-20 s
             // one after another, so they are read a few at a time.
