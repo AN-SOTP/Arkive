@@ -88,6 +88,29 @@ internal static class GameDatabaseMetadataReader
         return new(2, language, source, DateTimeOffset.UtcNow, filtered, entities, customizations);
     }
 
+    /// <summary>Every skill's name and the class that learns it (0 for none), from EFTable_Skill and GameMsg.</summary>
+    internal static Dictionary<long, (string Name, long LearnClass)> ReadSkills(string root, string language,
+        CancellationToken cancellation)
+    {
+        var messages = new Dictionary<string, string>(StringComparer.Ordinal);
+        VisitRows(Path.Combine(root, "EFTable_GameMsg.db"), "GameMsg_" + language, ["KEY", "MSG"], cancellation, reader =>
+        {
+            var key = Text(reader, "KEY");
+            if (key.StartsWith("tip.name.skill_", StringComparison.Ordinal) || key.StartsWith("tip.name.enum_playerclass_", StringComparison.Ordinal))
+            {
+                var value = Clean(Text(reader, "MSG"));
+                if (value.Length > 0) messages[key] = value;
+            }
+        }, required: true);
+        var skills = new Dictionary<long, (string Name, long LearnClass)>();
+        VisitRows(Path.Combine(root, "EFTable_Skill.db"), "Skill", ["PrimaryKey", "Name", "LearnClass"], cancellation, reader =>
+        {
+            var name = DisplayName(messages, Text(reader, "Name"));
+            if (name.Length > 0) skills.TryAdd(Number(reader, "PrimaryKey"), (name, Number(reader, "LearnClass")));
+        });
+        return skills;
+    }
+
     private static IReadOnlyList<GameEntityDefinition> ReadEntities(string root,
         IReadOnlyDictionary<string, string> messages, CancellationToken cancellation)
     {

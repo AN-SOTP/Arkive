@@ -591,6 +591,30 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Reads which skill starts each effect from the skills' action files when data3.lpk changed since they were last
+    /// read. Takes a few seconds; failures only reach the log.
+    /// </summary>
+    private async Task RefreshSkillEffectNamesAsync(string metadataPath)
+    {
+        var root = _libraryRootPath;
+        if (root is null || !Directory.Exists(root)) return;
+        try
+        {
+            if (await Task.Run(() => Arkive.Core.Skills.SkillEffectNameSidecar.IsCurrent(metadataPath, root))) return;
+            GameMetadataText.Text = "Game DB mapping: reading which skills use each effect...";
+            var watch = Stopwatch.StartNew();
+            var document = await Task.Run(() => Arkive.Core.Skills.SkillEffectNameSidecar.BuildAsync(metadataPath, root));
+            Log($"Skill effect names read: names={document?.Associations.Count ?? 0}, seconds={watch.Elapsed.TotalSeconds:N1}, " +
+                $"path={Arkive.Core.Skills.SkillEffectNameSidecar.GetDefaultPath(metadataPath)}.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                              System.Text.Json.JsonException)
+        {
+            Log($"Skill effect names were not read: {exception.Message}");
+        }
+    }
+
     private async Task LoadGameMetadataAsync(
         string path,
         bool showErrors,
@@ -600,6 +624,7 @@ public partial class MainWindow : Window
         try
         {
             await RefreshInterfaceNamesAsync(path);
+            await RefreshSkillEffectNamesAsync(path);
             var index = await Task.Run(() => GameAssetMetadataIndex.Load(path));
             _gameMetadataIndex = index;
             _gameMetadataPath = index.SourcePath;

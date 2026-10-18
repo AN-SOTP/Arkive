@@ -310,6 +310,7 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--color") ?? throw new ArgumentException("arkive-particle-tint requires --color R,G,B."),
                 ReadTextOption(arguments, "--name") ?? throw new ArgumentException("arkive-particle-tint requires --name TEXT."),
                 json),
+            "skill-actions" => SkillActions(target, ReadTextOption(arguments, "--class"), ReadIntegerOption(arguments, "--skill"), json),
             "arkive-apply" => ArkiveApply(
                 target, arguments.Contains("--confirm", StringComparer.OrdinalIgnoreCase), json),
             "arkive-update" => ArkiveUpdate(target, ReadTextOption(arguments, "--mod"), json),
@@ -2429,6 +2430,35 @@ static int ArkiveParticleTint(string projectRoot, IReadOnlyList<string> packages
         foreach (var edit in created)
             environment.Context.Edits.ParticleEdits.DeleteAsync(edit).GetAwaiter().GetResult();
     }
+}
+
+static int SkillActions(string archivePath, string? className, int? skillId, bool json)
+{
+    using var stream = File.OpenRead(archivePath);
+    var entries = Arkive.Core.Skills.LostArkDataArchive.ReadEntries(stream)
+        .Where(entry => entry.Path.Contains("/XmlData/Action/", StringComparison.OrdinalIgnoreCase) &&
+                        (className is null || Path.GetFileNameWithoutExtension(entry.Path).Equals(className, StringComparison.OrdinalIgnoreCase)))
+        .ToArray();
+    var found = new List<object>();
+    foreach (var entry in entries)
+    {
+        var actions = Arkive.Core.Skills.SkillActionReader.Read(Arkive.Core.Skills.LostArkDataArchive.Read(stream, entry));
+        foreach (var action in actions.Where(action => skillId is null || action.Id == skillId))
+        {
+            if (json) { found.Add(new { File = Path.GetFileName(entry.Path), action }); continue; }
+            Console.WriteLine($"{Path.GetFileName(entry.Path)} {action.Id} {action.Name}: {action.Stages.Count} stage(s), {action.ParticleSystems.Count()} effect(s)");
+            if (skillId is null) continue;
+            foreach (var stage in action.Stages)
+            {
+                Console.WriteLine($"  stage '{stage.Name}' {stage.Duration:0.###}s x{stage.Rate:0.##}");
+                foreach (var notify in stage.Notifies)
+                    Console.WriteLine($"    {notify.Start,6:0.###} {notify.Duration,6:0.###} {notify.Kind} {notify.Name} {notify.Asset} {(notify.Socket is null ? "" : "@" + notify.Socket)} " +
+                                      string.Join(" ", notify.Parameters.Select(p => p.IsVector ? $"{p.Name}=({p.X:0.##},{p.Y:0.##},{p.Z:0.##})" : $"{p.Name}={p.Value:0.###}")));
+            }
+        }
+    }
+    if (json) WriteJson(found);
+    return 0;
 }
 
 static int ArkivePlan(string projectRoot, bool json)
