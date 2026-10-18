@@ -415,6 +415,8 @@ public partial class MainWindow : Window
             return new PackageIndexSearchResult([], 0, 0, 0);
         }
 
+        if (category == LibrarySoundCategory) return await ApplyLibrarySoundFilterAsync(query);
+
         if (string.IsNullOrEmpty(query) && string.IsNullOrEmpty(category) &&
             string.IsNullOrEmpty(archetype))
         {
@@ -551,6 +553,11 @@ public partial class MainWindow : Window
     private void UpdateLibraryActionState()
     {
         var row = LibraryGrid.SelectedItem as LibraryAssetRow;
+        if (row is not null && IsLibrarySoundRow(row))
+        {
+            UpdateLibrarySoundActionState();
+            return;
+        }
         var hasSelection = row is not null;
         var backendAvailable = _umodelBridge is not null;
         var canExport = backendAvailable &&
@@ -588,7 +595,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_umodelBridge is not null && LibraryGrid.SelectedItem is LibraryAssetRow particle && IsParticleRow(particle))
+        if (LibraryGrid.SelectedItem is LibraryAssetRow sound && IsLibrarySoundRow(sound))
+            OpenLibrarySound(sound);
+        else if (_umodelBridge is not null && LibraryGrid.SelectedItem is LibraryAssetRow particle && IsParticleRow(particle))
             OpenLibraryParticleEditor(particle);
         else if (_umodelBridge is not null && LibraryGrid.SelectedItem is LibraryAssetRow row && CanPreviewInArkive(row.Kind))
             OpenLibraryModelViewer(row);

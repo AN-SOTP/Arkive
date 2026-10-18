@@ -436,6 +436,9 @@
                                     <ComboBoxItem Content="Skeletal meshes" Tag="SkeletalMesh" />
                                     <ComboBoxItem Content="Materials" Tag="Material" />
                                     <ComboBoxItem Content="MaterialInstanceConstant" Tag="MaterialInstanceConstant" />
+                                    <ComboBoxItem Content="Particle effects" Tag="ParticleSystem" />
+                                    <ComboBoxItem Content="Interface movies" Tag="InterfaceMovie" />
+                                    <ComboBoxItem Content="Sounds" Tag="Sound" />
                                     <ComboBoxItem Content="Metadata only" Tag="Object" />
                                 </ComboBox>
                                 <ComboBox x:Name="LibraryArchetypeComboBox"
@@ -566,7 +569,7 @@
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Decoded filename" Binding="{Binding PackageAlias}" Width="*" MinWidth="130" />
                                 <DataGridTextColumn Header="Physical package" Binding="{Binding PhysicalPackageName}" Width="*" MinWidth="140" />
-                                <DataGridTextColumn Header="Category" Binding="{Binding Kind}" Width="105" />
+                                <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="105" />
                                 <DataGridTextColumn Header="Reported UE class" Binding="{Binding ClassName}" Width="*" MinWidth="125" />
                                 <DataGridTextColumn Header="Object" Binding="{Binding ObjectName}" Width="2*" MinWidth="160" />
                                 <DataGridTextColumn Header="In-game name" Binding="{Binding InGameNames}" Width="2*" MinWidth="160" />

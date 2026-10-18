@@ -23,7 +23,8 @@ public partial class MainWindow
     private void LibraryPreviewButton_Click(object sender, RoutedEventArgs e)
     {
         if (LibraryGrid.SelectedItem is not LibraryAssetRow row) return;
-        if (IsParticleRow(row)) OpenLibraryParticleEditor(row);
+        if (IsLibrarySoundRow(row)) OpenLibrarySound(row);
+        else if (IsParticleRow(row)) OpenLibraryParticleEditor(row);
         else if (CanViewTexture(row.Kind)) _ = OpenTextureViewerAsync(row);
         else OpenLibraryModelViewer(row);
     }

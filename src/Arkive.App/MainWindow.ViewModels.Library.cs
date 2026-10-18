@@ -43,6 +43,9 @@ public partial class MainWindow : Window
     {
         public string Size => $"{SerialSize:N0}";
 
+        /// <summary>The category shown in the grid: sounds come from the audio folder, not a package index.</summary>
+        public string Category => ClassName == LibrarySoundClass ? "Sound" : AssetTypes.IndexedKind(Kind, ClassName).ToString();
+
         public string InGameNames => GameAssetMetadataIndex.FormatNames(GameMetadata);
 
         public string LinkEvidence
