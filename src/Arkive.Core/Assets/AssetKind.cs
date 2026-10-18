@@ -8,4 +8,5 @@ public enum AssetKind
     SkeletalMesh,
     Material,
     ParticleSystem,
+    InterfaceMovie,
 }

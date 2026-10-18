@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Arkive.Core.Interface;
 using Arkive.Core.Archives;
 using Arkive.Core.Assets;
 using Arkive.Core.Baselines;
@@ -387,7 +388,11 @@ public partial class MainWindow : Window
             Path.Combine(_projectRoot, "staging", "mod-library"));
         _arkiveModEdits = new ArkiveModEditWorkspaces(
             _guidedTextureModWorkspace, _skeletalMeshEditWorkspaceStore,
-            _staticMeshEditWorkspaceStore, _materialEditWorkspaceStore);
+            _staticMeshEditWorkspaceStore, _materialEditWorkspaceStore)
+        {
+            InterfaceMovies = new InterfaceMovieEditWorkspaceStore(
+                Path.Combine(_projectRoot, "staging", "interface-movie-edits"), _protectionProvider),
+        };
         _arkiveModContext = new ArkiveModApplyContext(
             _arkiveModLibrary, _arkiveModEdits, _guidedTexturePackageWorkspace, _modSetWorkspace,
             _modDeploymentService, Path.Combine(_projectRoot, "backups", "packages"),

@@ -3,6 +3,7 @@ using System.IO.Compression;
 using Arkive.Core.Archives;
 using Arkive.Core.Assets;
 using Arkive.Core.Baselines;
+using Arkive.Core.Interface;
 using Arkive.Core.Discovery;
 using Arkive.Core.Databases;
 using Arkive.Core.External;
@@ -317,6 +318,8 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--state-root"), json),
             "catalog" => Catalog(target, ReadTextOption(arguments, "--filter"), json),
             "umodel-list" => UmodelList(target, ReadTextOption(arguments, "--filter"), json),
+            "interface-names" => InterfaceNames(target, ReadTextOption(arguments, "--metadata"),
+                ReadTextOption(arguments, "--filter"), json),
             "metadata-resolve" => MetadataResolve(
                 target,
                 ReadTextOption(arguments, "--package"),
@@ -2757,6 +2760,29 @@ static int IndexBuild(
     return report.FailedPackages == 0 ? 0 : 1;
 }
 
+static int InterfaceNames(string packagesRoot, string? metadataPath, string? filter, bool json)
+{
+    if (string.IsNullOrWhiteSpace(metadataPath))
+        throw new ArgumentException("interface-names requires --metadata FILE (the names are saved beside it).");
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    var document = InterfaceNameSidecar.BuildAsync(metadataPath, packagesRoot, ChunkProtectionProviderFactory.CreateWesternGlobal())
+        .GetAwaiter().GetResult();
+    var matches = document.Associations
+        .Where(item => string.IsNullOrWhiteSpace(filter) || AssetSearch.MatchesDisplayNames(filter, [item.DisplayName]))
+        .ToArray();
+    if (json) WriteJson(new { document.Packages.Count, Names = document.Associations.Count, Matches = matches });
+    else
+    {
+        Console.WriteLine($"Interface packages: {document.Packages.Count:N0}");
+        Console.WriteLine($"Names:              {document.Associations.Count:N0} in {watch.Elapsed.TotalSeconds:N1}s");
+        Console.WriteLine($"Saved:              {InterfaceNameSidecar.GetDefaultPath(metadataPath)}");
+        if (!string.IsNullOrWhiteSpace(filter))
+            foreach (var match in matches.Take(200))
+                Console.WriteLine($"  {match.PackageName}.{match.ObjectName}: {match.DisplayName}");
+    }
+    return 0;
+}
+
 static int MetadataResolve(
     string metadataPath,
     string? packageName,
@@ -3441,6 +3467,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive arkive-update <Arkive-project-root> --mod ID|NAME [--json]");
     Console.WriteLine("  arkive client-update-check-all <Arkive-project-root> [--out DIR] [--state-root DIR] [--json]");
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
+    Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive umodel-list <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine(
         "  arkive metadata-resolve <metadata.json> --package NAME --object NAME [--json]");

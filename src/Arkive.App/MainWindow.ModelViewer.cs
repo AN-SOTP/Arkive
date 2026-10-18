@@ -24,6 +24,7 @@ public partial class MainWindow
     {
         if (LibraryGrid.SelectedItem is not LibraryAssetRow row) return;
         if (IsParticleRow(row)) OpenLibraryParticleEditor(row);
+        else if (CanViewTexture(row.Kind)) _ = OpenTextureViewerAsync(row);
         else OpenLibraryModelViewer(row);
     }
 

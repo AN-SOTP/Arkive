@@ -20,12 +20,16 @@ internal static class AssetTypeSmokeTests
         Assert(AssetTypes.For(AssetKind.Object) is null, "plain objects were made moddable");
         // Indexes built before particle effects were a type filed them as plain objects; they are filed again by class.
         Assert(AssetTypes.Editable(AssetKind.Object, "particlesystem") == AssetTypes.ParticleEffect &&
-               AssetTypes.Current(AssetKind.Object, "particlesystem") == AssetKind.ParticleSystem &&
+               AssetTypes.IndexedKind(AssetKind.Object, "particlesystem") == AssetKind.ParticleSystem &&
                AssetTypes.Editable(AssetKind.Object, "particlemodulecolor") is null,
             "particle systems in older package indexes are not recognised");
+        Assert(AssetTypes.IndexedKind(AssetKind.Object, "efswfmovie") == AssetKind.InterfaceMovie &&
+               AssetTypes.IndexedKind(AssetKind.Object, "SkeletalMesh3") == AssetKind.Object &&
+               AssetTypes.IndexedKind(AssetKind.Texture, "efswfmovie") == AssetKind.Texture,
+            "objects filed as plain objects by older package indexes are not given their newer kind");
         // Saved by number in the package index and by name in .arkive files: existing values never move.
         Assert((int)AssetKind.Texture == 1 && (int)AssetKind.StaticMesh == 2 && (int)AssetKind.SkeletalMesh == 3 && (int)AssetKind.Material == 4 &&
-               (int)AssetKind.ParticleSystem == 5,
+               (int)AssetKind.ParticleSystem == 5 && (int)AssetKind.InterfaceMovie == 6,
             "AssetKind values were reordered; existing package indexes would be read wrongly");
         Assert(AssetTypes.For(UnifiedPackageAssetKind.SkeletalMesh).Count(1) == "1 skeletal mesh" &&
                AssetTypes.For(UnifiedPackageAssetKind.Texture2D).Count(3) == "3 textures" &&
@@ -56,7 +60,8 @@ internal static class AssetTypeSmokeTests
             ("ParticleSystem", AssetKind.ParticleSystem, AssetKind.Object, UnifiedPackageAssetKind.ParticleSystem,
                 [UnifiedPackageAssetKind.ParticleSystem]),
             ("SoundCue", AssetKind.Object, AssetKind.Object, null, []),
-            ("efswfmovie", AssetKind.Object, AssetKind.Object, null, []),
+            ("efswfmovie", AssetKind.InterfaceMovie, AssetKind.Object, UnifiedPackageAssetKind.InterfaceMovie,
+                [UnifiedPackageAssetKind.InterfaceMovie]),
             ("particlesystem", AssetKind.ParticleSystem, AssetKind.Object, UnifiedPackageAssetKind.ParticleSystem,
                 [UnifiedPackageAssetKind.ParticleSystem]),
             ("particlemodulecolor", AssetKind.Object, AssetKind.Object, null, []),

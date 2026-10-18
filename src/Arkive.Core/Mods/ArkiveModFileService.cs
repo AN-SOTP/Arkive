@@ -434,6 +434,13 @@ public static class ArkiveModFileService
                                                   patch.Value.Any(value => !float.IsFinite(value)) || !IsSha256(patch.SourceExportSha256)))
                     Refuse("ARK044", $"Particle asset {asset.AssetId} has a malformed value patch.");
                 break;
+            case UnifiedPackageAssetKind.InterfaceMovie:
+                if (files.Count != 1 || files[0].Role != ArkiveModFileFormat.MovieRole ||
+                    !files[0].Path.EndsWith(".gfx", StringComparison.OrdinalIgnoreCase))
+                    Refuse("ARK045", $"Interface movie asset {asset.AssetId} must contain exactly one GFX movie.");
+                if (asset.Texture is not null || asset.Mesh is not null || asset.Material is not null || asset.Particle is not null)
+                    Refuse("ARK045", $"Interface movie asset {asset.AssetId} contains unrelated data.");
+                break;
         }
     }
 

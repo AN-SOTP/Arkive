@@ -1028,12 +1028,72 @@ public sealed class SkeletalMeshStagedUpkService
             candidateLayout is null)
             Refuse("SVX015", "The compiled StaticMesh failed an independent native parse: " + candidateRefusal);
 
+        return await AppendAndRetargetAsync(
+            request, candidate, evidencePath, evidence.CompilationId, evidence.SourcePackageSha256, "StaticMesh",
+            replacement => nativeParser.TryParse(replacement, request.SerialOffset,
+                               checked((int)request.NativeDataRelativeOffset), out var outputNative, out var outputRefusal) &&
+                           outputNative is not null && outputNative.Lods.Count == candidateLayout.Lods.Count
+                ? null
+                : "The retargeted StaticMesh failed independent native decode: " + outputRefusal,
+            new SkeletalMeshStagedUpkCheck("SVX_COLLISION", "Passed", "The compiler retained BodySetup and kDOP collision data from the source export."),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Appends an edited interface movie export (the game's export with only its RawData movie replaced, see
+    /// Interface.GfxMovieFile) and retargets its export-table record, as for variable-length StaticMeshes.
+    /// </summary>
+    public async Task<SkeletalMeshTopologyStagedUpkResult> BuildInterfaceMovieAsync(
+        VariableSerializedExportStagedUpkRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (!AssetTypes.InterfaceMovie.CanEditClass(request.ClassName))
+            Refuse("SVX040", "The interface movie route accepts interface movie exports only.");
+        var evidencePath = RequireFile(request.VerificationEvidencePath, "SVX041", "interface movie candidate manifest");
+        var evidence = await Interface.InterfaceMovieCandidateService.LoadManifestAsync(evidencePath, cancellationToken)
+            .ConfigureAwait(false);
+        if (!evidence.MovieReadBack || evidence.NativeExportIndex != request.NativeExportIndex ||
+            evidence.SerialOffset != request.SerialOffset || evidence.SourceSerialSize != request.SerialSize ||
+            !evidence.ObjectName.Equals(request.ObjectName, StringComparison.OrdinalIgnoreCase) ||
+            !evidence.SourceExportSha256.Equals(request.SourceExportSha256, StringComparison.OrdinalIgnoreCase) ||
+            !evidence.CandidateExportSha256.Equals(request.CandidateExportSha256, StringComparison.OrdinalIgnoreCase))
+            Refuse("SVX042", "The interface movie candidate does not identify this replacement exactly.");
+        var candidatePath = RequireFile(request.CandidateExportPath, "SVX043", "interface movie export");
+        var candidate = await File.ReadAllBytesAsync(candidatePath, cancellationToken).ConfigureAwait(false);
+        if (!Hash(candidate).Equals(request.CandidateExportSha256, StringComparison.OrdinalIgnoreCase))
+            Refuse("SVX044", "The interface movie export changed after it was checked.");
+        return await AppendAndRetargetAsync(
+            request, candidate, evidencePath, evidence.CandidateId, evidence.SourcePackageSha256, "interface movie",
+            replacement => Interface.InterfaceMovieCandidateService.HoldsMovie(replacement, evidence.EditedMovieSha256)
+                ? null
+                : "The retargeted export no longer holds the edited interface movie.",
+            new SkeletalMeshStagedUpkCheck("SVX_MOVIE", "Passed", "Only the movie bytes and their two length fields differ from the game's export."),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The package side of a variable-length replacement: appends the verified export, retargets only its export-table
+    /// record, then proves every other byte, export and chunk unchanged and the appended export readable.
+    /// </summary>
+    private async Task<SkeletalMeshTopologyStagedUpkResult> AppendAndRetargetAsync(
+        VariableSerializedExportStagedUpkRequest request,
+        byte[] candidate,
+        string evidencePath,
+        string evidenceId,
+        string evidenceSourcePackageSha256,
+        string label,
+        Func<byte[], string?> verifyReplacement,
+        SkeletalMeshStagedUpkCheck typeCheck,
+        CancellationToken cancellationToken)
+    {
+        var watch = Stopwatch.StartNew();
         var sourcePath = RequireFile(request.SourcePackagePath, "SVX016", "source package");
         var sourceInfo = new FileInfo(sourcePath);
         var sourceHashBefore = await HashFileAsync(sourcePath, cancellationToken).ConfigureAwait(false);
         if (!sourceHashBefore.Equals(request.ExpectedSourcePackageSha256, StringComparison.OrdinalIgnoreCase) ||
-            !sourceHashBefore.Equals(evidence.SourcePackageSha256, StringComparison.OrdinalIgnoreCase))
-            Refuse("SVX017", "The source UPK changed after StaticMesh compilation.");
+            !sourceHashBefore.Equals(evidenceSourcePackageSha256, StringComparison.OrdinalIgnoreCase))
+            Refuse("SVX017", $"The source UPK changed after the {label} was checked.");
         var sourceSummary = _summaryReader.Read(sourcePath);
         if (!sourceSummary.IsWesternLostArkProfile)
             Refuse("SVX018", "Only the Western Lost Ark 868/16 package profile is supported.");
@@ -1044,7 +1104,7 @@ public sealed class SkeletalMeshStagedUpkService
             targetSource.SerialOffset != request.SerialOffset || targetSource.SerialSize != request.SerialSize ||
             !targetAsset.ObjectName.Equals(request.ObjectName, StringComparison.OrdinalIgnoreCase) ||
             !targetAsset.ClassName.Equals(request.ClassName, StringComparison.OrdinalIgnoreCase))
-            Refuse("SVX019", "The source export table no longer identifies the compiled StaticMesh.");
+            Refuse("SVX019", $"The source export table no longer identifies the compiled {label}.");
 
         var sourceLogical = await ReadLogicalAsync(sourceSummary, cancellationToken).ConfigureAwait(false);
         var sourceLogicalHash = Hash(sourceLogical);
@@ -1053,7 +1113,7 @@ public sealed class SkeletalMeshStagedUpkService
         if (originalOffset < 0 || originalOffset > sourceLogical.Length - originalSize ||
             !Hash(sourceLogical.AsSpan(originalOffset, originalSize)).Equals(
                 request.SourceExportSha256, StringComparison.OrdinalIgnoreCase))
-            Refuse("SVX020", "The source logical export no longer matches StaticMesh compilation evidence.");
+            Refuse("SVX020", $"The source logical export no longer matches what the {label} was checked against.");
         var rawLayout = ReadExportTableLayouts(sourceLogical, sourceSummary, sourceCatalog.Exports)
             [request.NativeExportIndex - 1];
         if (rawLayout.SerialOffset != request.SerialOffset || rawLayout.SerialSize != request.SerialSize)
@@ -1089,7 +1149,7 @@ public sealed class SkeletalMeshStagedUpkService
         var outputName = SafePhysicalName(request.PhysicalPackageName);
         var outputPath = Path.Combine(outputDirectory, outputName);
         if (Path.GetFullPath(outputPath).Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
-            Refuse("SVX023", "The StaticMesh staging output cannot be the source UPK.");
+            Refuse("SVX023", $"The {label} staging output cannot be the source UPK.");
         var temporaryPath = outputPath + $".{Guid.NewGuid():N}.tmp";
         try
         {
@@ -1101,24 +1161,24 @@ public sealed class SkeletalMeshStagedUpkService
             var outputSummary = _summaryReader.Read(temporaryPath);
             var validation = PackageValidator.Validate(outputSummary);
             if (validation.Any(issue => issue.Severity == ValidationSeverity.Error))
-                Refuse("SVX024", "The StaticMesh staged UPK failed structural package validation.");
+                Refuse("SVX024", $"The {label} staged UPK failed structural package validation.");
             await VerifyPhysicalChunksAsync(sourcePath, temporaryPath, outputSummary, build.Chunks, cancellationToken)
                 .ConfigureAwait(false);
             var outputLogical = await ReadLogicalAsync(outputSummary, cancellationToken).ConfigureAwait(false);
             if (!outputLogical.AsSpan().SequenceEqual(build.ExpectedLogical))
-                Refuse("SVX025", "The StaticMesh staged UPK did not decode to its expected logical image.");
+                Refuse("SVX025", $"The {label} staged UPK did not decode to its expected logical image.");
             var outputCatalog = _catalogReader.Read(outputSummary);
             var targetOutput = outputCatalog.Exports.SingleOrDefault(item => item.TableIndex == request.NativeExportIndex);
             if (targetOutput is null || targetOutput.SerialOffset != appendedOffset ||
                 targetOutput.SerialSize != candidate.LongLength)
-                Refuse("SVX026", "The selected export was not retargeted to the appended StaticMesh payload.");
+                Refuse("SVX026", $"The selected export was not retargeted to the appended {label} payload.");
             var originalRetained = Hash(outputLogical.AsSpan(originalOffset, originalSize)).Equals(
                 request.SourceExportSha256, StringComparison.OrdinalIgnoreCase);
             var replacementVerified = Hash(outputLogical.AsSpan(
                 checked((int)appendedOffset), checked((int)candidate.LongLength))).Equals(
                 request.CandidateExportSha256, StringComparison.OrdinalIgnoreCase);
             if (!originalRetained || !replacementVerified)
-                Refuse("SVX027", "The retained original or appended StaticMesh export failed hash verification.");
+                Refuse("SVX027", $"The retained original or appended {label} export failed hash verification.");
             var metadataRanges = exportPatches.Select(item => (item.LogicalOffset, sizeof(int)))
                 .Concat(build.TablePatches.Where(item => item.Changed && item.PhysicalOffset < sourceLogical.LongLength)
                     .Select(item => (item.PhysicalOffset, sizeof(uint)))).ToArray();
@@ -1136,21 +1196,19 @@ public sealed class SkeletalMeshStagedUpkService
                                      .All(value => value) &&
                                  sourceCatalog.Assets.Count == outputCatalog.Assets.Count;
             if (!unrelatedEquivalent || !catalogueShape)
-                Refuse("SVX029", "An unrelated export or catalogue identity changed during StaticMesh staging.");
+                Refuse("SVX029", $"An unrelated export or catalogue identity changed during {label} staging.");
             var replacementBytes = outputLogical.AsSpan(
                 checked((int)appendedOffset), checked((int)candidate.LongLength)).ToArray();
-            if (!nativeParser.TryParse(replacementBytes, appendedOffset,
-                    checked((int)request.NativeDataRelativeOffset), out var outputNative, out var outputRefusal) ||
-                outputNative is null || outputNative.Lods.Count != candidateLayout.Lods.Count)
-                Refuse("SVX030", "The retargeted StaticMesh failed independent native decode: " + outputRefusal);
+            if (verifyReplacement(replacementBytes) is { } replacementRefusal)
+                Refuse("SVX030", replacementRefusal);
             var outputHash = await HashFileAsync(temporaryPath, cancellationToken).ConfigureAwait(false);
             var outputInfo = new FileInfo(temporaryPath);
             if (outputInfo.Length == sourceInfo.Length &&
                 outputHash.Equals(sourceHashBefore, StringComparison.OrdinalIgnoreCase))
-                Refuse("SVX031", "The StaticMesh staging package unexpectedly matches its source.");
+                Refuse("SVX031", $"The {label} staging package unexpectedly matches its source.");
             var sourceHashAfter = await HashFileAsync(sourcePath, cancellationToken).ConfigureAwait(false);
             if (!sourceHashAfter.Equals(sourceHashBefore, StringComparison.OrdinalIgnoreCase))
-                Refuse("SVX032", "The source UPK changed while Arkive built the StaticMesh staging copy.");
+                Refuse("SVX032", $"The source UPK changed while Arkive built the {label} staging copy.");
             File.Move(temporaryPath, outputPath, overwrite: true);
             watch.Stop();
             var rebuiltCount = build.Chunks.Count(item => item.Rebuilt);
@@ -1161,12 +1219,12 @@ public sealed class SkeletalMeshStagedUpkService
                 new SkeletalMeshStagedUpkCheck("SVX_SOURCE", "Passed", "The clean source UPK remained read-only and hash-identical."),
                 new SkeletalMeshStagedUpkCheck("SVX_APPEND", "Passed", $"Retained the original export and appended {candidate.LongLength:N0} bytes at logical 0x{appendedOffset:X}."),
                 new SkeletalMeshStagedUpkCheck("SVX_EXPORT_TABLE", "Passed", $"Patched only export {request.NativeExportIndex}'s SerialSize and SerialOffset."),
-                new SkeletalMeshStagedUpkCheck("SVX_COLLISION", "Passed", "The compiler retained BodySetup and kDOP collision data from the source export."),
-                new SkeletalMeshStagedUpkCheck("SVX_DECODE_BACK", "Passed", $"All {blockCount:N0} encoded blocks and the retargeted StaticMesh decoded successfully."),
+                typeCheck,
+                new SkeletalMeshStagedUpkCheck("SVX_DECODE_BACK", "Passed", $"All {blockCount:N0} encoded blocks and the retargeted {label} decoded successfully."),
             };
             var manifest = new SkeletalMeshTopologyStagedUpkManifest(
                 CurrentSchemaVersion, Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow,
-                evidencePath, evidence.CompilationId, sourcePath, sourceHashAfter, sourceInfo.Length,
+                evidencePath, evidenceId, sourcePath, sourceHashAfter, sourceInfo.Length,
                 sourceLogical.LongLength, sourceLogicalHash, outputName, outputHash, outputInfo.Length,
                 outputLogical.LongLength, Hash(outputLogical), request.PhysicalPackageName, request.PackageAlias,
                 request.ClassName, request.ObjectName, request.NativeExportIndex, request.SerialOffset,

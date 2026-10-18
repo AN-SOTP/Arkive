@@ -16,6 +16,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     DiscoverySmokeTests.Cases,
     AssetTypeSmokeTests.Cases,
     ParticleSmokeTests.Cases,
+    InterfaceSmokeTests.Cases,
     DatabaseSmokeTests.Cases,
     ExternalArtifactSmokeTests.Cases,
     UpdateSmokeTests.Cases,

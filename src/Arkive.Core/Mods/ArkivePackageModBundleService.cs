@@ -162,6 +162,11 @@ public sealed class ArkivePackageModBundleService
                 externalResults.Add(ValidateParticleExport(catalogue, asset));
                 continue;
             }
+            if (AssetTypes.InterfaceMovie.CanEditClass(asset.ClassName))
+            {
+                externalResults.Add(ValidateInterfaceMovie(catalogue, asset));
+                continue;
+            }
             try
             {
                 externalResults.Add(await _externalValidator.ValidateInPackageRootAsync(
@@ -216,9 +221,10 @@ public sealed class ArkivePackageModBundleService
         var staticMeshCount = assets.Count(asset =>
             asset.ClassName.Contains("StaticMesh", StringComparison.OrdinalIgnoreCase) &&
             !asset.ClassName.Contains("SkeletalMesh", StringComparison.OrdinalIgnoreCase));
-        var meshCount = skeletalMeshCount + staticMeshCount;
+        var interfaceMovieCount = assets.Count(asset => AssetTypes.InterfaceMovie.CanEditClass(asset.ClassName));
+        var meshCount = skeletalMeshCount + staticMeshCount + interfaceMovieCount;
         if (request.VariableSizeMeshCount > meshCount)
-            Refuse("CPB021", "The variable-size mesh count exceeds the combined skeletal/static mesh asset count.");
+            Refuse("CPB021", "The variable-size count exceeds the combined skeletal mesh, static mesh and interface movie count.");
         var variableSizeDeploymentApproved = request.VariableSizeMeshCount > 0 &&
                                              request.VariableSizeDeploymentGatePassed &&
                                              !request.PreviewOnly;
@@ -232,7 +238,8 @@ public sealed class ArkivePackageModBundleService
                 $"Clean source matches {sourceInfo.Length:N0} bytes and SHA-256 {sourceHashAfter}."),
             new("COMBINED_ASSET_SET", ModReadinessCheckStatus.Passed,
                 $"Composition {request.CompositionId} contains {textureCount:N0} texture(s), " +
-                $"{skeletalMeshCount:N0} skeletal mesh(es), and {staticMeshCount:N0} StaticMesh(es)."),
+                $"{skeletalMeshCount:N0} skeletal mesh(es), {staticMeshCount:N0} StaticMesh(es), and " +
+                $"{interfaceMovieCount:N0} interface movie(s)."),
             new("COMBINED_PAYLOAD_IDENTITY", ModReadinessCheckStatus.Passed,
                 $"One payload retains physical name {sourceName} and SHA-256 {payloadHash}."),
             new("COMBINED_PACKAGE_IDENTITY", ModReadinessCheckStatus.Passed,
@@ -354,6 +361,34 @@ public sealed class ArkivePackageModBundleService
         finally
         {
             if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
+    /// <summary>
+    /// UModel does not read interface movies, so Arkive reads the movie back out of the payload with its own Scaleform
+    /// reader instead.
+    /// </summary>
+    private ModExternalValidationResult ValidateInterfaceMovie(AssetCatalog catalogue, ArkiveModAsset asset)
+    {
+        var watch = Stopwatch.StartNew();
+        var export = catalogue.Assets.Single(candidate => candidate.ExportIndex == asset.NativeExportIndex);
+        try
+        {
+            using var logical = new LogicalPackageStream(catalogue.Summary, _protectionProvider);
+            var bytes = new byte[export.SerialSize];
+            logical.Position = export.SerialOffset;
+            logical.ReadExactly(bytes);
+            var movie = Interface.GfxMovieReader.Read(Interface.GfxMovieFile.Extract(bytes));
+            return new ModExternalValidationResult(
+                "Arkive Scaleform reader (UModel does not read interface movies)", 1, 1,
+                CataloguePassed: true, NativeLoadPassed: true, ExpectedObjectFound: true,
+                [$"{asset.ObjectName}: movie read back with {movie.Images.Count:N0} picture(s)."], watch.Elapsed);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException)
+        {
+            return new ModExternalValidationResult(
+                "Arkive Scaleform reader", 1, 0, CataloguePassed: true, NativeLoadPassed: false, ExpectedObjectFound: true,
+                [$"{asset.ObjectName}: {exception.Message}"], watch.Elapsed);
         }
     }
 

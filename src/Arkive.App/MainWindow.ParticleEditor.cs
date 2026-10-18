@@ -14,7 +14,7 @@ public partial class MainWindow
     private string ParticleTextureRoot => Path.Combine(_projectRoot, "cache", "particle-textures");
 
     private static bool IsParticleRow(LibraryAssetRow row) =>
-        AssetTypes.Current(row.Kind, row.ClassName) == AssetKind.ParticleSystem;
+        AssetTypes.IndexedKind(row.Kind, row.ClassName) == AssetKind.ParticleSystem;
 
     /// <summary>Opens a particle system found in the asset library or Edit mods search, to watch and try changes on.</summary>
     private async void OpenLibraryParticleEditor(LibraryAssetRow row)

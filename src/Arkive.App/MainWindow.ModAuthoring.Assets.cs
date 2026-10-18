@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Discovery;
 using Arkive.Core.External;
@@ -39,10 +40,29 @@ public partial class MainWindow : Window
             {
                 if (Path.GetExtension(path).Equals(".glb", StringComparison.OrdinalIgnoreCase) && ResolveBlender() is { } blender)
                     OpenGlbInBlender(blender, path);
+                else if (edit.Entry is InterfaceMovieEditEntry)
+                    OpenInterfaceMovie(path);
                 else
                     Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             }
         });
+    }
+
+    /// <summary>
+    /// Opens a working interface movie in the app Windows has for .gfx files. With none, Windows asks which app to use;
+    /// JPEXS Free Flash Decompiler opens and saves Scaleform movies.
+    /// </summary>
+    private void OpenInterfaceMovie(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            Process.Start(new ProcessStartInfo("rundll32.exe", $"shell32.dll,OpenAs_RunDLL \"{path}\"") { UseShellExecute = false });
+            AuthoringStatusText.Text = "Choose an app for .gfx files. JPEXS Free Flash Decompiler opens and saves the game's interface movies.";
+        }
     }
 
     // Blender treats a file passed on its command line as a .blend, so a .glb has to go through its glTF importer.
@@ -149,8 +169,12 @@ public partial class MainWindow : Window
         {
             Title = $"Replace {edit.ObjectName}",
             CheckFileExists = true,
-            Filter = edit.Kind == UnifiedPackageAssetKind.Texture2D
-                ? "Texture files (*.png;*.dds)|*.png;*.dds" : "Editable mesh (*.glb)|*.glb",
+            Filter = edit.Kind switch
+            {
+                UnifiedPackageAssetKind.Texture2D => "Texture files (*.png;*.dds)|*.png;*.dds",
+                UnifiedPackageAssetKind.InterfaceMovie => "Scaleform movie (*.gfx)|*.gfx",
+                _ => "Editable mesh (*.glb)|*.glb",
+            },
         };
         if (dialog.ShowDialog(this) != true) return;
         await RunAuthoringOperationAsync(async () =>
@@ -212,6 +236,23 @@ public partial class MainWindow : Window
                 }
                 await _staticMeshEditWorkspaceStore.SetIncludedAsync(staticEdit, false);
                 return edit with { EditId = staticEdit.Manifest.EditId, ManifestPath = staticEdit.ManifestPath, Entry = staticEdit };
+            case InterfaceMovieEditEntry movie when _arkiveModEdits.InterfaceMovies is { } movies:
+                var movieSource = movie.Manifest;
+                var export = new AssetCatalogEntry(movieSource.NativeExportIndex, movieSource.ObjectName, movieSource.ObjectName,
+                    movieSource.ClassName, AssetKind.InterfaceMovie, checked((int)movieSource.SerialSize), checked((int)movieSource.SerialOffset));
+                var replacedMovie = await movies.CreateAsync(movieSource.SourcePackagePath, movieSource.PackageAlias,
+                    movieSource.SourcePackageSha256, export, movieSource.DisplayName, path);
+                try
+                {
+                    await InterfaceMovieEditWorkspaceStore.ReadEditedMovieAsync(replacedMovie);
+                }
+                catch (InvalidDataException)
+                {
+                    await movies.DeleteAsync(replacedMovie);
+                    throw;
+                }
+                replacedMovie = await movies.SetIncludedAsync(replacedMovie, false);
+                return edit with { EditId = replacedMovie.Manifest.EditId, ManifestPath = replacedMovie.ManifestPath, Entry = replacedMovie };
             default: throw new NotSupportedException("Edit this asset in Arkive.");
         }
     }
@@ -240,6 +281,11 @@ public partial class MainWindow : Window
             {
                 await RefreshMaterialProjectsAsync("mod comparison", edit.EditId);
                 MaterialEditorTab.IsSelected = true;
+            }
+            else if (edit.Entry is InterfaceMovieEditEntry movie)
+            {
+                OpenFolder(Path.GetDirectoryName(movie.Manifest.OriginalMoviePath)!, "original interface movie for comparison");
+                AuthoringStatusText.Text = "Folder opened: original.gfx is the game's movie, the other .gfx is your working copy.";
             }
             else
             {

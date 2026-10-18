@@ -1,3 +1,4 @@
+using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.StaticMeshes;
@@ -92,6 +93,9 @@ public static class ArkiveModSelectionService
             case Particles.ParticleEffectEditEntry particle:
                 await edits.ParticleEdits.SetIncludedAsync(particle, included, cancellationToken).ConfigureAwait(false);
                 break;
+            case InterfaceMovieEditEntry movie when edits.InterfaceMovies is { } movies:
+                await movies.SetIncludedAsync(movie, included, cancellationToken).ConfigureAwait(false);
+                break;
         }
     }
 
@@ -118,6 +122,9 @@ public static class ArkiveModSelectionService
                 break;
             case Particles.ParticleEffectEditEntry particle:
                 await edits.ParticleEdits.DeleteAsync(particle, cancellationToken).ConfigureAwait(false);
+                break;
+            case InterfaceMovieEditEntry movie when edits.InterfaceMovies is { } movies:
+                await movies.DeleteAsync(movie, cancellationToken).ConfigureAwait(false);
                 break;
         }
     }

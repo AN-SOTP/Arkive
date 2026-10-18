@@ -44,7 +44,7 @@ public sealed record AssetType(
 /// Every asset type Arkive can mod, in one place. Code that asks "what is this object" or "what can Arkive do with it"
 /// reads it from here instead of matching class names itself.
 ///
-/// Adding a type (particle systems, sounds, UI movies): append its value to <see cref="AssetKind"/> and
+/// Adding a type (particle systems, sounds): append its value to <see cref="AssetKind"/> and
 /// <see cref="UnifiedPackageAssetKind"/> (both are saved, AssetKind by number in the package index and
 /// UnifiedPackageAssetKind by name in .arkive files, so never reorder or rename them), add its entry to
 /// <see cref="Moddable"/> and its classes to <see cref="CatalogKind"/> and <see cref="UmodelKind"/>, then give it the
@@ -81,8 +81,17 @@ public static class AssetTypes
         CanEditClass: IsParticleSystem, AcceptsClass: IsParticleSystem,
         Previewable: false, DiscoveryScore: 5, SearchCategory: "ParticleSystem");
 
+    /// <summary>
+    /// A screen of the game's interface: a Scaleform movie (Flash) holding its layout, text and scripts. Its pictures
+    /// are separate textures. Arkive gives the movie file to an editor such as JPEXS and puts the saved file back.
+    /// </summary>
+    public static readonly AssetType InterfaceMovie = new(
+        AssetKind.InterfaceMovie, UnifiedPackageAssetKind.InterfaceMovie, "Interface movie", "interface movie", "interface movies",
+        CanEditClass: IsInterfaceMovieClass, AcceptsClass: IsInterfaceMovieClass,
+        Previewable: false, DiscoveryScore: 3, SearchCategory: "InterfaceMovie");
+
     /// <summary>Every type that can be put in a mod.</summary>
-    public static IReadOnlyList<AssetType> Moddable { get; } = [Texture, SkeletalMesh, StaticMesh, Material, ParticleEffect];
+    public static IReadOnlyList<AssetType> Moddable { get; } = [Texture, SkeletalMesh, StaticMesh, Material, ParticleEffect, InterfaceMovie];
 
     /// <summary>The type a mod stores as <paramref name="kind"/>.</summary>
     public static AssetType For(UnifiedPackageAssetKind kind) =>
@@ -94,18 +103,11 @@ public static class AssetTypes
 
     /// <summary>The type Arkive can make a working copy of for this object, or null when it cannot edit it.</summary>
     public static AssetType? Editable(AssetKind kind, string className) =>
-        For(Current(kind, className)) is { } type && type.CanEditClass(className) ? type : null;
-
-    /// <summary>
-    /// An indexed object's kind by today's rules: package indexes built before a type existed filed its objects as
-    /// plain objects, so those are filed again from their class name.
-    /// </summary>
-    public static AssetKind Current(AssetKind kind, string className) =>
-        kind == AssetKind.Object ? CatalogKind(className) : kind;
+        For(IndexedKind(kind, className)) is { } type && type.CanEditClass(className) ? type : null;
 
     /// <summary>
     /// How the package index files a class. Its rules are saved with every index, so existing rules never change; a
-    /// new type only files classes that used to be plain objects (see <see cref="Current"/>).
+    /// new type only files classes that used to be plain objects (see <see cref="IndexedKind"/>).
     /// </summary>
     public static AssetKind CatalogKind(string className)
     {
@@ -114,8 +116,16 @@ public static class AssetTypes
         if (className.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase)) return AssetKind.SkeletalMesh;
         if (className.Contains("Material", StringComparison.OrdinalIgnoreCase)) return AssetKind.Material;
         if (IsParticleSystem(className)) return AssetKind.ParticleSystem;
+        if (IsInterfaceMovieClass(className)) return AssetKind.InterfaceMovie;
         return AssetKind.Object;
     }
+
+    /// <summary>
+    /// The kind of an object read from a package index. Indexes made before a kind existed filed its objects as plain
+    /// objects; their class names still say what they are.
+    /// </summary>
+    public static AssetKind IndexedKind(AssetKind stored, string className) =>
+        stored == AssetKind.Object ? CatalogKind(className) : stored;
 
     /// <summary>How UModel's export list (and so its exports to files) files a class.</summary>
     public static AssetKind UmodelKind(string className) => className.ToLowerInvariant() switch
@@ -149,6 +159,9 @@ public static class AssetTypes
 
     private static bool IsParticleSystem(string className) =>
         className.Equals("ParticleSystem", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsInterfaceMovieClass(string className) =>
+        className.Equals("EFSwfMovie", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsMaterialInstanceConstant(string className) =>
         className.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase);
