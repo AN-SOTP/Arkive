@@ -116,6 +116,8 @@ public sealed class SkillPreviewService(
                              // FX_Post effects are screen effects (blur, colour noise) drawn over the whole view.
                              !notify.Asset.StartsWith("FX_Post.", StringComparison.OrdinalIgnoreCase)).ToArray();
         var systems = new Dictionary<string, ParticleEffectModel>(StringComparer.OrdinalIgnoreCase);
+        // Effects share modules with effects in other packages, found by their package's alias.
+        var packageFiles = await index.PackageFilesByAliasAsync(root, metadata(), cancellationToken);
         foreach (var asset in notifies.Select(notify => notify.Asset!).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -134,7 +136,7 @@ public sealed class SkillPreviewService(
             try
             {
                 systems[asset] = await Task.Run(() => ParticleEffectModels.Build(match.SourcePath, match.PackageAlias, match.ObjectName, null,
-                    protectionProvider), cancellationToken);
+                    protectionProvider, alias => packageFiles?.GetValueOrDefault(alias)), cancellationToken);
             }
             catch (Exception exception) when (exception is IOException or InvalidDataException)
             {
@@ -178,7 +180,7 @@ public sealed class SkillPreviewService(
                                                           systems.ContainsKey(notify.Asset))
                     .Select(notify => new
                     {
-                        start = notify.Start, duration = notify.Duration, system = notify.Asset, socket = notify.Socket,
+                        start = notify.Start, duration = notify.Duration, system = notify.Asset, socket = notify.Socket, group = notify.Group,
                         offset = notify.Offset, rotation = notify.Rotation, scale = notify.Scale,
                         parameters = notify.Parameters.Select(parameter => new
                         {
@@ -236,7 +238,8 @@ public sealed class SkillPreviewService(
                 log($"Skill preview: the sockets of {skeleton.Object} could not be read: {exception.Message}");
             }
         }
-        foreach (var weapon in look.Weapons)
+        // A weapon used in both hands (Gunslinger's pistols) is one mesh; the preview shows it once.
+        foreach (var weapon in look.Weapons.DistinctBy(weapon => weapon.Mesh.Object, StringComparer.OrdinalIgnoreCase))
         {
             if (await FindMeshAsync(root, weapon.Mesh, cancellationToken) is not { } weaponRequest) continue;
             var scene = await Task.Run(() => scenes.PrepareAsync(weaponRequest, null, cancellationToken), cancellationToken);

@@ -36,6 +36,12 @@ public sealed record SkillActionNotify(
 
     /// <summary>An effect's scale, when the action sets one.</summary>
     public float[]? Scale { get; init; }
+
+    /// <summary>
+    /// The effect set the notify belongs to (FX-00, FX-01, FX-57...), named right after the notify's own name. A skill
+    /// lists the same moment's effects once per set; FX-00 is the set every character plays.
+    /// </summary>
+    public string? Group { get; init; }
 }
 
 public sealed record SkillActionStage(string Name, float Duration, float Rate, IReadOnlyList<SkillActionNotify> Notifies);
@@ -134,6 +140,7 @@ public static class SkillActionReader
         var startTime = Finite(Float(data, head.End + 16));
         var duration = Finite(Float(data, head.End + 24));
         var name = start + 1 < end && tokens[start + 1].Offset == head.End + 40 ? tokens[start + 1].Value : null;
+        var group = name is not null && start + 2 < end && tokens[start + 2].Offset == tokens[start + 1].End ? tokens[start + 2].Value : null;
         string? asset = null, socket = null;
         var transformStart = -1;
         var parameters = new List<SkillEffectParameter>();
@@ -170,7 +177,7 @@ public static class SkillActionReader
                 asset ??= token.Value[8..^1];
             }
         }
-        var notify = new SkillActionNotify(kind, startTime, duration, name, asset, socket, parameters);
+        var notify = new SkillActionNotify(kind, startTime, duration, name, asset, socket, parameters) { Group = group };
         return transformStart > 0 ? WithTransform(data, notify, transformStart) : notify;
     }
 

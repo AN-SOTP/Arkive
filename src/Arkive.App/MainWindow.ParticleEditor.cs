@@ -56,13 +56,20 @@ public partial class MainWindow
             });
     }
 
-    private void OpenParticleEditor(ParticleEditorRequest request, ParticleEffectRecipe recipe, Func<ParticleEffectRecipe, Task<string>>? save)
+    private async void OpenParticleEditor(ParticleEditorRequest request, ParticleEffectRecipe recipe, Func<ParticleEffectRecipe, Task<string>>? save)
     {
+        IReadOnlyDictionary<string, string>? packageFiles = null;
+        if (!string.IsNullOrWhiteSpace(_libraryRootPath))
+        {
+            try { packageFiles = await _packageIndexStore.PackageFilesByAliasAsync(_libraryRootPath, _gameMetadataIndex); }
+            catch (Exception exception) when (exception is IOException or InvalidDataException) { Log($"Particle editor: package aliases unavailable: {exception.Message}"); }
+        }
         var window = new ParticleEditorWindow(request, recipe, Path.Combine(_projectRoot, "cache", "webview2"), ParticleTextureRoot,
             _effectiveAppearanceTheme, _protectionProvider, save,
             _umodelBridge is null || string.IsNullOrWhiteSpace(_libraryRootPath) ? null : FindParticleAssetsAsync, Log)
         {
             Owner = this,
+            PackageFiles = packageFiles,
         };
         window.Show();
     }
@@ -127,17 +134,19 @@ public partial class MainWindow
         IReadOnlyList<string> materials, CancellationToken cancellationToken)
     {
         var found = new Dictionary<string, ParticleEditorTexture>(StringComparer.OrdinalIgnoreCase);
+        using var shaders = new ParticleShaderCache(_reader, _protectionProvider);
         foreach (var material in materials)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var folder = Path.Combine(ParticleTextureRoot, SafeFolderName(material));
-            // Version 3 records also hold the material's colour and scalar settings.
-            var record = Path.Combine(folder, "texture3.json");
+            // Version 3 records also hold the material's colour and scalar settings; version 4 follows instances that set
+            // no parameters to their parent.
+            var record = Path.Combine(folder, "texture4.json");
             try
             {
                 if (File.Exists(record) && JsonSerializer.Deserialize<ParticleEditorTexture>(await File.ReadAllTextAsync(record, cancellationToken)) is { } cached)
                 {
-                    found[material] = cached;
+                    found[material] = await WithParticleShaderAsync(material, folder, cached, shaders, cancellationToken);
                     continue;
                 }
                 var search = await _packageIndexStore.SearchAsync(_libraryRootPath!, material, null, _gameMetadataIndex,
@@ -153,7 +162,7 @@ public partial class MainWindow
                     info.Additive ? "additive" : "translucent", info.Tint, info.Scalars);
                 Directory.CreateDirectory(folder);
                 await File.WriteAllTextAsync(record, JsonSerializer.Serialize(result), cancellationToken);
-                found[material] = result;
+                found[material] = await WithParticleShaderAsync(material, folder, result, shaders, cancellationToken);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or
                                                   Core.External.UmodelBridgeException)
@@ -162,6 +171,29 @@ public partial class MainWindow
             }
         }
         return found;
+    }
+
+    /// <summary>The material's own compiled effect shaders, when the game's shader cache has them (see <see cref="ParticleShaderCache"/>).</summary>
+    private async Task<ParticleEditorTexture> WithParticleShaderAsync(string material, string folder, ParticleEditorTexture texture,
+        ParticleShaderCache shaders, CancellationToken cancellationToken)
+    {
+        if (_umodelBridge is null) return texture;
+        var index = await ModelViewerService().ShaderIndexAsync(_libraryRootPath, null, cancellationToken);
+        if (index is null) return texture;
+        return texture with
+        {
+            Shader = await shaders.GetAsync(index, material, folder, ParticleTextureRoot, FindGameObjectAsync, Log, cancellationToken),
+        };
+    }
+
+    private async Task<PackageIndexMatch?> FindGameObjectAsync(string name, string classFragment, CancellationToken cancellationToken)
+    {
+        var search = await _packageIndexStore.SearchAsync(_libraryRootPath!, name, null, _gameMetadataIndex,
+            PackageIndexSearchScope.ObjectName, null, resultLimit: 20);
+        cancellationToken.ThrowIfCancellationRequested();
+        return search.Matches.FirstOrDefault(item => item.ObjectName.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                                                     item.ClassName.Contains(classFragment, StringComparison.OrdinalIgnoreCase) &&
+                                                     File.Exists(item.SourcePath));
     }
 
     private static string SafeFolderName(string value) => Regex.Replace(value, @"[^A-Za-z0-9_.-]", "_");

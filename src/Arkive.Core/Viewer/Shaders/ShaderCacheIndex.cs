@@ -19,7 +19,14 @@ public sealed record ShaderCacheMaterialMap(
     string? BasePassPixelShaderId,
     string VariantKey,
     IReadOnlyList<string> OnSwitches,
-    int SwitchCount);
+    int SwitchCount)
+{
+    /// <summary>
+    /// The base-pass pixel shader compiled for each vertex factory the material is used with (lower-case type names
+    /// such as fparticledynamicparametervertexfactory); particles need their own, as their inputs differ from meshes'.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? VertexFactoryPixelShaders { get; init; }
+}
 
 /// <summary>The shader map chosen for a material, and how it was matched.</summary>
 /// <param name="Exact">The map was compiled for exactly the material's static parameters.</param>
@@ -61,7 +68,7 @@ public sealed record ShaderParameterBindings(
 /// </summary>
 public sealed class ShaderCacheIndex
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
     private const int IndexOffset = 0x1D;
     private const int EntrySize = 24;
     private const string BasePassPixelShader = "tbasepasspixelshaderfnolightmappolicyskylight";
@@ -174,7 +181,9 @@ public sealed class ShaderCacheIndex
         maps = maps.GroupBy(map => map.VariantKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.FirstOrDefault(map => map.BasePassPixelShaderId is not null) ?? group.First())
             .ToList();
-        var used = maps.Select(map => map.BasePassPixelShaderId).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var used = maps.Select(map => map.BasePassPixelShaderId).OfType<string>()
+            .Concat(maps.SelectMany(map => map.VertexFactoryPixelShaders?.Values ?? []))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         records = records.Where(pair => used.Contains(pair.Key))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
         var document = new ShaderCacheIndexDocument(CurrentSchemaVersion, caches, maps, records, blobOffsets);
@@ -235,6 +244,9 @@ public sealed class ShaderCacheIndex
         var nameIndex = names.Select((name, index) => (name.Value, index))
             .GroupBy(pair => pair.Value, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.First().index);
         if (!nameIndex.TryGetValue(BasePassPixelShader, out var basePassName)) basePassName = -1;
+        var vertexFactoryNames = names.Select((name, index) => (name.Value, index))
+            .Where(pair => pair.Value.EndsWith("vertexfactory", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(pair => pair.index, pair => pair.Value.ToLowerInvariant());
 
         // Skip the shader index and blobs; material maps follow them.
         stream.Position = cache.Offset + IndexOffset;
@@ -301,8 +313,13 @@ public sealed class ShaderCacheIndex
                 var absolute = bufferStart + i;
                 string? basePass = basePassName < 0 ? null
                     : FindLastShaderPair(buffer, Math.Max(0, (int)(previousEnd - bufferStart)), i, basePassName);
+                var perFactory = basePassName < 0 ? null
+                    : FindVertexFactoryShaders(buffer, Math.Max(0, (int)(previousEnd - bufferStart)), i, basePassName, vertexFactoryNames);
                 yield return new ShaderCacheMaterialMap(parameters.BaseMaterialId, friendly, cacheIndex, bufferStart + listAt,
-                    basePass, parameters.Key, parameters.OnSwitches, parameters.Switches.Count);
+                    basePass, parameters.Key, parameters.OnSwitches, parameters.Switches.Count)
+                {
+                    VertexFactoryPixelShaders = perFactory is { Count: > 0 } ? perFactory : null,
+                };
                 previousEnd = absolute + 4 + nameLength;
                 i = listAt;
             }
@@ -312,6 +329,35 @@ public sealed class ShaderCacheIndex
             bufferStart += length - overlap;
             carried = overlap;
         }
+    }
+
+    /// <summary>
+    /// A material map lists its shaders per vertex factory: the factory's type name, then (type, GUID, type) entries.
+    /// Returns the base-pass pixel shader GUID that follows each factory name in the range.
+    /// </summary>
+    private static Dictionary<string, string> FindVertexFactoryShaders(byte[] buffer, int from, int to, int typeName,
+        IReadOnlyDictionary<int, string> vertexFactories)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? factory = null;
+        for (var i = from; i + 32 <= to; i++)
+        {
+            var index = BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(i));
+            if (BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(i + 4)) != 0) continue;
+            if (vertexFactories.TryGetValue(index, out var name))
+            {
+                factory = name;
+                i += 7;
+                continue;
+            }
+            if (factory is null || index != typeName ||
+                BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(i + 24)) != typeName ||
+                BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(i + 28)) != 0) continue;
+            result.TryAdd(factory, Convert.ToHexString(buffer, i + 8, 16));
+            factory = null;
+            i += 31;
+        }
+        return result;
     }
 
     /// <summary>The GUID of the last "type, GUID, type" pair for <paramref name="typeName"/> in a range.</summary>

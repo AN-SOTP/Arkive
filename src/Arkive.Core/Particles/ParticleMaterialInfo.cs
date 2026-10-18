@@ -36,7 +36,9 @@ public sealed record ParticleMaterialInfo(string? TexturePath, bool Additive, fl
         var pngs = exportedFiles.Where(path => path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)).ToArray();
         string? Png(string name) => pngs.FirstOrDefault(path => Path.GetFileNameWithoutExtension(path).Equals(name, StringComparison.OrdinalIgnoreCase));
         var props = exportedFiles.Where(path => path.EndsWith(".props.txt", StringComparison.OrdinalIgnoreCase)).ToArray();
-        var own = props.FirstOrDefault(path => Path.GetFileName(path).Equals(material + ".props.txt", StringComparison.OrdinalIgnoreCase));
+        // An instance that sets no parameters is exported as its parent, which it draws as.
+        var own = props.FirstOrDefault(path => Path.GetFileName(path).Equals(material + ".props.txt", StringComparison.OrdinalIgnoreCase))
+                  ?? props.FirstOrDefault();
         var additive = props.Any(path => File.ReadAllText(path).Contains("BLEND_Additive", StringComparison.OrdinalIgnoreCase));
         string? texture = null;
         float[]? tint = null;
@@ -74,7 +76,8 @@ public sealed record ParticleMaterialInfo(string? TexturePath, bool Additive, fl
             }
         }
         // Otherwise the first texture UModel lists for the material.
-        var mat = exportedFiles.FirstOrDefault(path => Path.GetFileName(path).Equals(material + ".mat", StringComparison.OrdinalIgnoreCase));
+        var mat = exportedFiles.FirstOrDefault(path => Path.GetFileName(path).Equals(material + ".mat", StringComparison.OrdinalIgnoreCase))
+                  ?? exportedFiles.FirstOrDefault(path => path.EndsWith(".mat", StringComparison.OrdinalIgnoreCase));
         if (texture is null && mat is not null)
             foreach (var line in File.ReadLines(mat))
                 if (line.Split('=', 2) is [_, var name] && Png(name.Trim()) is { } png)

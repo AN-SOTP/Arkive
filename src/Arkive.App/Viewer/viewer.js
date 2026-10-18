@@ -1410,7 +1410,8 @@ async function loadSkillClip(baseUrl, bones, info) {
 
 const skillAnimation = { saved: null };
 const skillPreview = createSkillPreview({
-  world, $, post, requestRender, socketOffset,
+  world, $, post, requestRender, socketOffset, renderer, camera,
+  ground: () => grid.position.y,
   model: () => state.model,
   scene: () => state.scene,
   animation: {

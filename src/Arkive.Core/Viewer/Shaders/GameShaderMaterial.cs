@@ -63,10 +63,27 @@ public static class GameShaderMaterial
         Func<string, byte[]?> materialBytes,
         Func<string, string?> textureUrl,
         Func<string, bool> textureSrgb,
+        out string? failure,
+        string? pixelShaderId = null)
+    {
+        var notes = new List<string>();
+        if (SelectMap(index, material, materialBytes, notes, out var exactVariant, out failure) is not { } map) return null;
+        return Build(index, map, pixelShaderId ?? map.BasePassPixelShaderId, exactVariant, notes, material, textureUrl, textureSrgb, out failure);
+    }
+
+    /// <summary>
+    /// The compiled shader map of the material's static permutation: the first material in its parent chain with its
+    /// own permutation decides it, else one compiled variant of its base material.
+    /// </summary>
+    public static ShaderCacheMaterialMap? SelectMap(
+        ShaderCacheIndex index,
+        MaterialInstanceDescription material,
+        Func<string, byte[]?> materialBytes,
+        List<string> notes,
+        out bool exactVariant,
         out string? failure)
     {
         failure = null;
-        var notes = new List<string>();
         // The first material in the chain with its own static permutation decides the variant; a material
         // without one renders with its parent's.
         ShaderVariantMatch? match = null;
@@ -82,7 +99,7 @@ public static class GameShaderMaterial
             if (found.FromStaticParameters) break;
         }
         var map = match?.Map;
-        var exactVariant = match?.Exact == true;
+        exactVariant = match?.Exact == true;
         if (match is not null)
         {
             if (!owner!.Equals(material.Name, StringComparison.OrdinalIgnoreCase))
@@ -95,7 +112,7 @@ public static class GameShaderMaterial
         if (map is null)
         {
             var candidates = index.FindMapsByName(material.RootMaterial);
-            map = candidates.FirstOrDefault(candidate => candidate.BasePassPixelShaderId is not null);
+            map = candidates.FirstOrDefault(candidate => candidate.BasePassPixelShaderId is not null || candidate.VertexFactoryPixelShaders is { Count: > 0 });
             if (map is null)
             {
                 failure = $"The shader cache has no compiled shader for {material.RootMaterial}.";
@@ -105,7 +122,24 @@ public static class GameShaderMaterial
                 ? $"Using one of {candidates.Count} compiled variants of {map.FriendlyName}; this instance's own variant was not found."
                 : $"Using the base material's compiled shader ({map.FriendlyName}).");
         }
-        if (map.BasePassPixelShaderId is null)
+        return map;
+    }
+
+    /// <summary>Translates and binds one of the map's pixel shaders (its base pass, or a particle vertex factory's).</summary>
+    public static GameShaderPlan? Build(
+        ShaderCacheIndex index,
+        ShaderCacheMaterialMap map,
+        string? pixelShaderId,
+        bool exactVariant,
+        IReadOnlyList<string> mapNotes,
+        MaterialInstanceDescription material,
+        Func<string, string?> textureUrl,
+        Func<string, bool> textureSrgb,
+        out string? failure)
+    {
+        failure = null;
+        var notes = mapNotes.ToList();
+        if (pixelShaderId is null)
         {
             failure = $"{map.FriendlyName} has no base-pass pixel shader in the cache.";
             return null;
@@ -118,14 +152,14 @@ public static class GameShaderMaterial
             failure = $"Could not read {map.FriendlyName}'s uniform expressions: {exception.Message}";
             return null;
         }
-        var dxbc = index.ReadShader(map.BasePassPixelShaderId, map.CacheIndex);
+        var dxbc = index.ReadShader(pixelShaderId, map.CacheIndex);
         if (dxbc is null)
         {
-            failure = $"The compiled shader {map.BasePassPixelShaderId} is missing from the cache.";
+            failure = $"The compiled shader {pixelShaderId} is missing from the cache.";
             return null;
         }
 
-        var bindings = index.ReadBindings(map.BasePassPixelShaderId);
+        var bindings = index.ReadBindings(pixelShaderId);
         var exactBindings = bindings is not null;
 
         // Each 2D texture expression is bound to the t# slot the shader record names (or, when that is
@@ -238,7 +272,7 @@ public static class GameShaderMaterial
         return new GameShaderPlan(
             map.FriendlyName,
             map.MaterialId,
-            map.BasePassPixelShaderId,
+            pixelShaderId,
             exactVariant,
             exactBindings,
             translation.Declarations,

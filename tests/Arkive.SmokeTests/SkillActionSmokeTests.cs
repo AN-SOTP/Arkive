@@ -25,7 +25,7 @@ internal static class SkillActionSmokeTests
         Text("CEFActionNotify_Anim"); Zeros(16); writer.Write(0f); writer.Write(0f); writer.Write(1.1f); Zeros(12);
         Text("Anim"); Zeros(8); Text("SK_NotosCrash_01"); Zeros(24);
         Text("CEFActionNotify_PlayParticleEffect"); Zeros(16); writer.Write(0.22f); writer.Write(0.22f); writer.Write(0f); Zeros(12);
-        Text("Wing"); Text("FX"); Zeros(88); Text("CEFActionParticleData"); Zeros(36); Text("CEFParticleData"); Zeros(12);
+        Text("Wing"); Text("FX-01"); Zeros(85); Text("CEFActionParticleData"); Zeros(36); Text("CEFParticleData"); Zeros(12);
         Text("ParticleSystem'FX_PC_DDK_03.Group.Par_S_DDK_NotosCrash_Wing_01'"); Zeros(59); Text("B_Wing_Root"); Zeros(100);
         Text("Color"); writer.Write(3); writer.Write(0f); writer.Write(0); writer.Write(4f); writer.Write(6f); writer.Write(10f); Zeros(32);
         Text("None"); writer.Write(0);
@@ -44,8 +44,8 @@ internal static class SkillActionSmokeTests
             "the animation notify was not read: " + string.Join(", ", stage.Notifies.Select(notify => $"{notify.Kind}:{notify.Asset}")));
         var effect = stage.Notifies[1];
         Assert(effect.IsParticle && Math.Abs(effect.Start - 0.22f) < 1e-6 && effect.Name == "Wing" &&
-               effect.Asset == "FX_PC_DDK_03.Par_S_DDK_NotosCrash_Wing_01" && effect.Socket == "B_Wing_Root",
-            $"the effect notify was not read: start={effect.Start} name={effect.Name} asset={effect.Asset} socket={effect.Socket}");
+               effect.Asset == "FX_PC_DDK_03.Par_S_DDK_NotosCrash_Wing_01" && effect.Socket == "B_Wing_Root" && effect.Group == "FX-01",
+            $"the effect notify was not read: start={effect.Start} name={effect.Name} set={effect.Group} asset={effect.Asset} socket={effect.Socket}");
         Assert(effect.Parameters.Count == 2 && effect.Parameters[0] is { Name: "Color", IsVector: true, X: 4, Y: 6, Z: 10 } &&
                effect.Parameters[1] is { Name: "Lifetime", IsVector: false } && Math.Abs(effect.Parameters[1].Value - 0.4f) < 1e-6,
             "the effect's parameters were not read");

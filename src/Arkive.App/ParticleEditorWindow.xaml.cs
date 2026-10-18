@@ -13,8 +13,13 @@ public sealed record ParticleEditorRequest(string PackagePath, string PackageAli
 
 /// <summary>A texture the preview can draw for one of the effect's materials, and the material's blend mode.</summary>
 /// <param name="Tint">The material's colour, which multiplies the particles' own.</param>
+/// <param name="Shader">The material's own compiled effect shaders, when the game's shader cache has them.</param>
 public sealed record ParticleEditorTexture(string? RelativePath, string Blend, float[]? Tint = null,
-    IReadOnlyDictionary<string, float>? Scalars = null);
+    IReadOnlyDictionary<string, float>? Scalars = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Arkive.Core.Particles.ParticleShaderSet? Shader { get; init; }
+}
 
 /// <summary>What the preview draws the effect with: textures by material, and mesh files (glTF) by mesh name, all relative to the texture folder.</summary>
 public sealed record ParticleEditorAssets(
@@ -83,6 +88,9 @@ public partial class ParticleEditorWindow : Window
         if (Browser.CoreWebView2 is not null) Browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json));
     }
 
+    /// <summary>Each game package's file by its alias, for modules the effect shares with effects in other packages.</summary>
+    public IReadOnlyDictionary<string, string>? PackageFiles { get; init; }
+
     private async Task StartAsync()
     {
         if (!await InitializeBrowserAsync()) return;
@@ -90,7 +98,8 @@ public partial class ParticleEditorWindow : Window
         {
             var token = _closing.Token;
             var model = await Task.Run(() => ParticleEffectModels.Build(_request.PackagePath, _request.PackageAlias,
-                _request.SystemObjectName, _request.SystemObjectPath, _protectionProvider), token);
+                _request.SystemObjectName, _request.SystemObjectPath, _protectionProvider,
+                PackageFiles is null ? null : alias => PackageFiles.GetValueOrDefault(alias)), token);
             await _pageReady.Task.WaitAsync(token);
             Post(new { type = "load", theme = _theme, model, recipe = Recipe });
             Status(_save is null
@@ -124,7 +133,25 @@ public partial class ParticleEditorWindow : Window
             blend = pair.Value.Blend,
             tint = pair.Value.Tint,
             scalars = pair.Value.Scalars,
+            shader = pair.Value.Shader is not { } shader ? null : new
+            {
+                materialMap = shader.MaterialMap,
+                exactVariant = shader.ExactVariant,
+                blendMode = shader.BlendMode,
+                twoSided = shader.TwoSided,
+                factories = shader.Factories,
+                shaders = shader.Shaders.ToDictionary(item => item.Key, item => new
+                {
+                    declarations = item.Value.Declarations,
+                    function = item.Value.Function,
+                    constantBuffers = item.Value.ConstantBuffers,
+                    samplers = item.Value.Samplers.ToDictionary(sampler => sampler.Key, sampler => TextureUrl(sampler.Value)),
+                    inputs = item.Value.Inputs.Select(input => new { register = input.Register, semantic = input.Semantic, index = input.Index }),
+                }),
+            },
         }),
+        // The helpers the translated shaders call (sRGB decoding and the like).
+        prelude = Arkive.Core.Viewer.RecipeGlslCompiler.Prelude,
         meshes = assets.Meshes.ToDictionary(pair => pair.Key, pair => TextureUrl(pair.Value)),
     };
 

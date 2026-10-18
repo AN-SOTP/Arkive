@@ -32,7 +32,7 @@ const MULTIPLIERS = [
 const assets = new EffectAssets();
 // Exposed for Arkive's tests.
 const state = window.arkiveParticles = {
-  model: null, effect: null, playing: true, speed: 1, loop: true, last: 0, recipe: defaultRecipe(), assets,
+  model: null, effect: null, playing: true, speed: 1, loop: true, last: 0, frames: 0, recipe: defaultRecipe(), assets,
   get emitters() { return this.effect?.emitters ?? []; },
   get time() { return this.effect?.time ?? 0; },
 };
@@ -50,6 +50,7 @@ function tick(now) {
     if (state.loop && effect.time > effect.finishedAt && !effect.alive) restart();
   }
   effect?.write();
+  if (effect && ++state.frames % 30 === 1) assets.checkPrograms(renderer, [effect]);
   $('timeText').textContent = effect ? `${effect.time.toFixed(2)} s · ${effect.particleCount} particles` : '';
   resize();
   renderer.render(scene, camera);
@@ -191,7 +192,7 @@ function load(message) {
 host?.addEventListener('message', (event) => {
   const message = event.data;
   if (message?.type === 'load') load(message);
-  else if (message?.type === 'textures') assets.add({ textures: message.items, meshes: message.meshes });
+  else if (message?.type === 'textures') assets.add({ textures: message.items, meshes: message.meshes, prelude: message.prelude });
   else if (message?.type === 'status') $('status').textContent = message.text;
   else if (message?.type === 'error') { $('loading').style.display = ''; $('loading').textContent = message.text; }
 });

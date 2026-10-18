@@ -279,9 +279,29 @@ public sealed partial class UmodelBridge
             ["-export", .. CommonArguments(resolvePackageNames: false), $"-out={fullOutputDirectory}", "-png", fullPackagePath, objectName],
             DefaultTimeout, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0) throw CreateProcessException($"export {objectName}", result);
+        // UModel skips a material instance that sets no parameters; it draws as its parent, so the nearest parent
+        // UModel loaded that it does export is exported instead.
+        var skipped = objectName;
+        foreach (var loaded in LoadedMaterial().Matches(result.StandardOutput + "\n" + result.StandardError).ToArray())
+        {
+            if (!(result.StandardOutput + result.StandardError).Contains($"'{skipped}' due to empty parameters", StringComparison.OrdinalIgnoreCase)) break;
+            var parent = loaded.Groups["name"].Value;
+            var parentPackage = Path.Combine(Path.GetDirectoryName(fullPackagePath)!, loaded.Groups["file"].Value.Trim());
+            if (parent.Equals(skipped, StringComparison.OrdinalIgnoreCase) || !File.Exists(parentPackage)) continue;
+            result = await RunAsync(
+                ["-export", .. CommonArguments(resolvePackageNames: false), $"-out={fullOutputDirectory}", "-png", parentPackage, parent],
+                DefaultTimeout, cancellationToken).ConfigureAwait(false);
+            if (result.ExitCode != 0) throw CreateProcessException($"export {parent}", result);
+            skipped = parent;
+        }
         return Directory.EnumerateFiles(fullOutputDirectory, "*", SearchOption.AllDirectories)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
     }
+
+    // "Loading Material3 bfx_d_pa_circ_01_ad from package 6YGC3DB3SBJ3S11G16MH6QMH8.upk"
+    [System.Text.RegularExpressions.GeneratedRegex(@"^Loading (?<class>Material\w*) (?<name>\S+) from package (?<file>\S+)\s*$",
+        System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex LoadedMaterial();
 
     /// <summary>Exports every texture in a package as PNG files (in one UModel run).</summary>
     public async Task<IReadOnlyList<string>> ExportPackageTexturesAsync(

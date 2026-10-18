@@ -9,13 +9,22 @@ const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&
 // How long effects may play on after the last stage, so their particles can finish.
 const TAIL = 2.5;
 
+// A skill lists the same moment's effects once per effect set (FX-00, FX-01, FX-Exmove...): the game plays one set,
+// FX-00 unless the character's build calls for another, along with the effects every set shares (FX, or none).
+const isOptional = (group) => /^fx-./i.test(group ?? '');
+const DEFAULT_SET = 'fx-00';
+
 export function createSkillPreview(context) {
-  const { world, $, post, requestRender, model, scene, socketOffset, animation } = context;
+  const { world, $, post, requestRender, model, scene, socketOffset, animation, renderer, camera, ground } = context;
   const tab = document.querySelector('[data-tab="skills"]');
   const panel = $('tab-skills');
-  const ui = { offer: null, classFile: '', skill: 0, branch: 0 };
+  const ui = { offer: null, classFile: '', skill: 0, branch: 0, effectSet: DEFAULT_SET };
   const assets = new EffectAssets();
-  const player = { data: null, clips: new Map(), time: 0, playing: false, speed: 1, loop: true, effects: [], fired: new Set(), last: 0, stages: [], weapons: [] };
+  const player = { data: null, clips: new Map(), time: 0, playing: false, speed: 1, loop: true, effects: [], fired: new Set(), last: 0, stages: [], weapons: [],
+    warm: null, frames: 0, sets: [] };
+
+  // Whether the chosen effect set plays a notify.
+  function plays(notify) { return !isOptional(notify.group) || notify.group.toLowerCase() === ui.effectSet; }
   window.arkiveSkills = { ui, player };
 
   function render() {
@@ -29,7 +38,8 @@ export function createSkillPreview(context) {
     ui.branch = Math.min(ui.branch, Math.max(0, (skill?.branches.length ?? 1) - 1));
     panel.innerHTML = `
       <p class="muted">Plays a skill as the game's own skill data describes it: its animations, and each effect at its time and
-        socket with the colours and sizes the skill gives it. Effects are approximations of the game's renderer.</p>
+        socket with the colours and sizes the skill gives it. Effects are drawn with their materials' own game shaders where the
+        game's shader cache has them.</p>
       <label class="field">Class <select id="skillClass">${classes.map((item) =>
         `<option value="${escapeHtml(item.file)}"${item.file === ui.classFile ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>
       <label class="field">Skill <select id="skillSelect">${(current?.skills ?? []).map((item) =>
@@ -42,13 +52,16 @@ export function createSkillPreview(context) {
           `<option value="${v}"${v === player.speed ? ' selected' : ''}>${v}×</option>`).join('')}</select></label>
         <label class="field"><input type="checkbox" id="skillLoop"${player.loop ? ' checked' : ''}> Loop</label>
       </div>
+      ${player.sets.length > 1 ? `<label class="field">Effects <select id="skillSet">${player.sets.map((set) =>
+        `<option value="${escapeHtml(set)}"${set === ui.effectSet ? ' selected' : ''}>${set === DEFAULT_SET ? 'Standard (FX-00)' : escapeHtml(set.toUpperCase())}</option>`).join('')}</select></label>` : ''}
       <div id="skillStatus" class="muted"></div>
       <div id="skillTimeline" class="mono"></div>`;
     $('skillClass').addEventListener('change', (e) => { ui.classFile = e.target.value; ui.skill = 0; ui.branch = 0; render(); });
-    $('skillSelect').addEventListener('change', (e) => { ui.skill = Number(e.target.value); ui.branch = 0; render(); });
+    $('skillSelect').addEventListener('change', (e) => { ui.skill = Number(e.target.value); ui.branch = 0; ui.effectSet = DEFAULT_SET; render(); });
     $('skillBranch')?.addEventListener('change', (e) => { ui.branch = Number(e.target.value); });
     $('skillSpeed').addEventListener('change', (e) => { player.speed = Number(e.target.value); });
     $('skillLoop').addEventListener('change', (e) => { player.loop = e.target.checked; });
+    $('skillSet')?.addEventListener('change', (e) => { ui.effectSet = e.target.value; restart(); renderTimeline(); });
     $('skillPlay').addEventListener('click', () => {
       if (player.playing) { stop(); return; }
       status('Preparing the skill…');
@@ -63,7 +76,7 @@ export function createSkillPreview(context) {
     const element = $('skillTimeline');
     if (!element || !player.data) return;
     element.innerHTML = player.stages.map((stage, index) => `<div><b>${index + 1}. ${escapeHtml(stage.anim ?? 'no animation')}</b>
-      ${stage.duration.toFixed(2)} s</div>` + stage.notifies.map((notify) =>
+      ${stage.duration.toFixed(2)} s</div>` + stage.notifies.filter(plays).map((notify) =>
       `<div>&nbsp;&nbsp;${notify.start.toFixed(2)} s · ${escapeHtml(notify.system.split('.').pop())}${notify.socket ? ` @ ${escapeHtml(notify.socket)}` : ''}</div>`).join('')).join('');
   }
 
@@ -109,7 +122,10 @@ export function createSkillPreview(context) {
     for (const weapon of (weapons ?? []).filter((item) => item.part)) {
       const part = root.children.find((child) => child.userData.partName?.toLowerCase() === weapon.part.toLowerCase());
       const holder = findSocket(weapon.socket);
-      if (!part || !holder) continue;
+      if (!part) continue;
+      // A weapon whose socket the skeleton lacks would hang at the character's feet.
+      part.visible = !!holder;
+      if (!holder) continue;
       part.userData.attached = true;
       holder.bone.add(part);
       part.position.copy(holder.socket ? socketOffset(holder.socket) : new THREE.Vector3());
@@ -154,14 +170,22 @@ export function createSkillPreview(context) {
     stop();
     player.data = data;
     attachWeapons(data.weapons);
-    assets.add({ textures: data.assets?.items, meshes: data.assets?.meshes });
+    assets.add({ textures: data.assets?.items, meshes: data.assets?.meshes, prelude: data.assets?.prelude });
+    prewarm(data);
     let at = 0;
-    player.stages = data.stages.map((stage) => {
+    // Stages with neither an animation nor effects are the game waiting on the player (a held key, a follow-up press);
+    // the preview moves straight on.
+    player.stages = data.stages.filter((stage) => stage.anim || stage.notifies.length).map((stage) => {
       const begins = at;
       at += Math.max(0.05, stage.duration);
       return { ...stage, begins };
     });
     player.length = at;
+    const sets = new Set(data.stages.flatMap((stage) => stage.notifies.filter((notify) => isOptional(notify.group))
+      .map((notify) => notify.group.toLowerCase())));
+    if (sets.size) sets.add(DEFAULT_SET);
+    player.sets = [...sets].sort();
+    if (!player.sets.includes(ui.effectSet)) ui.effectSet = DEFAULT_SET;
     renderTimeline();
     status(`Loading ${data.name}'s animations…`);
     player.clips.clear();
@@ -180,6 +204,30 @@ export function createSkillPreview(context) {
     render();
   }
 
+  // Every effect the skill starts is made once up front, drawing nothing, and its shaders are compiled then, so the
+  // first time an effect appears it does not stall the frame. They stay until playback stops so the compiled
+  // programs are kept.
+  function prewarm(data) {
+    disposeWarm();
+    const group = new THREE.Group();
+    world.add(group);
+    const systems = new Set(data.stages.flatMap((stage) => stage.notifies.map((notify) => notify.system)));
+    const effects = [...systems].filter((system) => data.systems[system])
+      .map((system) => new ParticleEffect({ model: data.systems[system], root: group, assets }));
+    player.warm = { group, effects };
+    if (renderer && camera) {
+      const compiled = renderer.compileAsync ? renderer.compileAsync(world, camera) : Promise.resolve(renderer.compile(world, camera));
+      compiled.then(() => requestRender()).catch(() => {});
+    }
+  }
+
+  function disposeWarm() {
+    if (!player.warm) return;
+    player.warm.effects.forEach((effect) => effect.dispose());
+    player.warm.group.removeFromParent();
+    player.warm = null;
+  }
+
   function restart() {
     for (const { effect, anchor } of player.effects) { effect.dispose(); anchor.removeFromParent(); }
     player.effects = [];
@@ -192,6 +240,7 @@ export function createSkillPreview(context) {
     if (!player.playing) return;
     player.playing = false;
     restart();
+    disposeWarm();
     animation.end();
     requestRender();
     render();
@@ -221,10 +270,11 @@ export function createSkillPreview(context) {
           const key = `${s}:${n}`;
           if (player.fired.has(key) || t < player.stages[s].begins + notify.start) return;
           player.fired.add(key);
+          if (!plays(notify)) return;
           const model = player.data.systems[notify.system];
           const anchor = model ? attachment(notify) : null;
           if (!model || !anchor) return;
-          const effect = new ParticleEffect({ model, root: world, parent: anchor, assets, parameters: notify.parameters });
+          const effect = new ParticleEffect({ model, root: world, parent: anchor, assets, parameters: notify.parameters, ground: ground?.() ?? 0 });
           player.effects.push({ effect, anchor, stopAt: notify.duration > 0 ? t + notify.duration : Infinity, startedAt: t });
         });
       }
@@ -234,6 +284,8 @@ export function createSkillPreview(context) {
       item.effect.update(dt);
       item.effect.write();
     }
+    // A game shader the browser could not compile falls back to the approximation.
+    if (renderer && ++player.frames % 30 === 1) assets.checkPrograms(renderer, [...player.effects.map((item) => item.effect), ...(player.warm?.effects ?? [])]);
     // Effects that are done: stopped or past their emitters' end, with no particles left.
     player.effects = player.effects.filter((item) => {
       const done = (!item.effect.active || item.effect.time > item.effect.finishedAt) && !item.effect.alive && item.effect.time > 0.1;

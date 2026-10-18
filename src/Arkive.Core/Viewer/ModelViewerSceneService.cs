@@ -48,6 +48,9 @@ public sealed class ModelViewerSceneService
     private ShaderCacheIndex? _shaderIndex;
     private string? _shaderIndexFailure;
 
+    /// <summary>Why the last attempt to load the game shader index found none, if it did not.</summary>
+    public string? ShaderIndexFailure => _shaderIndexFailure;
+
     public ModelViewerSceneService(
         UmodelBridge bridge,
         ModelViewerCache cache,
@@ -546,13 +549,23 @@ public sealed class ModelViewerSceneService
         new(name.Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
 
     /// <summary>Loads the game shader index once; it is built on first use and reused while the game is unchanged.</summary>
-    private async Task<ShaderCacheIndex?> LoadShaderIndexAsync(
+    private Task<ShaderCacheIndex?> LoadShaderIndexAsync(
         ModelViewerRequest request,
         IProgress<ModelViewerProgress>? progress,
+        CancellationToken cancellationToken) =>
+        ShaderIndexAsync(request.PackageSearchRoot ?? Path.GetDirectoryName(request.PackagePath),
+            progress is null ? null : new Progress<string>(text => progress.Report(new(text, "first time only"))), cancellationToken);
+
+    /// <summary>
+    /// The game shader index for the game whose Packages folder is <paramref name="packages"/>, or null when it has no
+    /// shader cache (<see cref="ShaderIndexFailure"/> says why). Built on first use and shared by every viewer.
+    /// </summary>
+    public async Task<ShaderCacheIndex?> ShaderIndexAsync(
+        string? packages,
+        IProgress<string>? progress,
         CancellationToken cancellationToken)
     {
         if (_shaderIndex is not null) return _shaderIndex;
-        var packages = request.PackageSearchRoot ?? Path.GetDirectoryName(request.PackagePath);
         var releasePc = packages is null ? null : Directory.GetParent(Path.GetFullPath(packages))?.FullName;
         if (releasePc is null) return null;
         await _shaderIndexGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -561,9 +574,8 @@ public sealed class ModelViewerSceneService
             if (_shaderIndex is not null) return _shaderIndex;
             var indexPath = Path.Combine(Path.GetDirectoryName(_cache.RootDirectory) ?? _cache.RootDirectory,
                 "game-shader-index.json");
-            var indexProgress = new Progress<string>(text => progress?.Report(new(text, "first time only")));
             var index = await Task.Run(() => ShaderCacheIndex.LoadOrBuild(
-                releasePc, indexPath, _reader, _protectionProvider, indexProgress, cancellationToken), cancellationToken)
+                releasePc, indexPath, _reader, _protectionProvider, progress, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             if (index.Document.Maps.Count == 0)
             {

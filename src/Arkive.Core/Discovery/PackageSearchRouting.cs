@@ -156,7 +156,32 @@ public sealed partial class PackageIndexStore
 
     public string SearchRoutingPath => Path.Combine(_cacheDirectory, SearchRoutingFileName);
 
-    private void InvalidateSearchRouting() => _searchRouting = null;
+    private void InvalidateSearchRouting()
+    {
+        _searchRouting = null;
+        _packageFilesByAlias = null;
+    }
+
+    private IReadOnlyDictionary<string, string>? _packageFilesByAlias;
+
+    /// <summary>
+    /// Each package's file by its alias (fx_bs_03 -> YGI3....upk), from the search routing document, which is built with
+    /// the game metadata when <paramref name="metadata"/> is given and otherwise read as last built. Null when there is none.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, string>?> PackageFilesByAliasAsync(
+        string rootPath,
+        GameAssetMetadataIndex? metadata,
+        CancellationToken cancellationToken = default)
+    {
+        if (_packageFilesByAlias is not null) return _packageFilesByAlias;
+        if (metadata is not null) await PrepareSearchRoutingAsync(rootPath, metadata, null, cancellationToken).ConfigureAwait(false);
+        if (await TryLoadSearchRoutingAsync(cancellationToken).ConfigureAwait(false) is not { } document) return null;
+        var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var package in document.Packages.Where(package => !package.HasError))
+            files.TryAdd(package.PackageAlias, Path.Combine(Path.GetFullPath(rootPath),
+                Path.HasExtension(package.PhysicalPackageName) ? package.PhysicalPackageName : package.PhysicalPackageName + ".upk"));
+        return _packageFilesByAlias = files;
+    }
 
     private async Task<SearchRoutingPreparation> PrepareSearchRoutingAsync(
         string rootPath,

@@ -53,14 +53,53 @@ public sealed record ParticleEffectModel(string System, string PackageAlias, IRe
 public static class ParticleEffectModels
 {
     /// <summary>Reads the system's emitters (first detail level) and their modules for the live preview.</summary>
+    /// <param name="packageFile">
+    /// A package's file by its alias. Lost Ark's systems share modules with systems in other packages (a cast effect's
+    /// lifetime and size modules are often another effect's); without this those modules are left out.
+    /// </param>
     public static ParticleEffectModel Build(
         string packagePath, string packageAlias, string systemObjectName, string? systemObjectPath,
-        IChunkProtectionProvider protectionProvider)
+        IChunkProtectionProvider protectionProvider, Func<string, string?>? packageFile = null)
     {
-        var catalog = new AssetCatalogReader(protectionProvider: protectionProvider).Read(packagePath);
+        var catalogs = new AssetCatalogReader(protectionProvider: protectionProvider);
+        var catalog = catalogs.Read(packagePath);
         var system = ParticleEffects.FindSystem(catalog, packagePath, systemObjectName, systemObjectPath);
         using var logical = new LogicalPackageStream(catalog.Summary, protectionProvider);
-        var reader = new Reader(catalog, logical);
+        var others = new Dictionary<string, Reader?>(StringComparer.OrdinalIgnoreCase);
+        var streams = new List<LogicalPackageStream>();
+        try
+        {
+            return Build(new Reader(catalog, logical), system, packageAlias, Open);
+        }
+        finally
+        {
+            foreach (var stream in streams) stream.Dispose();
+        }
+
+        Reader? Open(string alias)
+        {
+            if (others.TryGetValue(alias, out var found)) return found;
+            Reader? opened = null;
+            if (packageFile?.Invoke(alias) is { } file && File.Exists(file))
+            {
+                try
+                {
+                    var other = catalogs.Read(file);
+                    var stream = new LogicalPackageStream(other.Summary, protectionProvider);
+                    streams.Add(stream);
+                    opened = new Reader(other, stream);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException)
+                {
+                }
+            }
+            return others[alias] = opened;
+        }
+    }
+
+    private static ParticleEffectModel Build(Reader reader, AssetCatalogEntry system, string packageAlias, Func<string, Reader?> open)
+    {
+        var systemObjectName = system.ObjectName;
         var systemData = reader.Load(system.ExportIndex) ?? throw new InvalidDataException($"{systemObjectName}'s properties could not be read.");
         var emitters = new List<ParticleEmitterModel>();
         var emitterRefs = Find(systemData.Properties, "emitters") is { } list
@@ -81,11 +120,13 @@ public static class ParticleEffectModels
             var enabled = Find(lod.Properties, "benabled") is not { } enabledProperty || lod.Bytes[enabledProperty.ValueOffset] != 0;
             var models = new List<ParticleModuleModel>();
             string? material = null, mesh = null;
-            foreach (var moduleRef in moduleRefs.Where(reference => reference > 0).Distinct())
+            foreach (var moduleRef in moduleRefs.Where(reference => reference != 0).Distinct())
             {
-                if (reader.Load(moduleRef) is not { } module) continue;
-                var asset = reader.Exports[moduleRef];
-                var values = reader.Values(module.Bytes, module.Properties);
+                // A module another system owns is read from its own package.
+                if ((moduleRef > 0 ? (reader, moduleRef) : reader.Import(moduleRef, open)) is not ({ } owner, var local) ||
+                    owner.Load(local) is not { } module) continue;
+                var asset = owner.Exports[local];
+                var values = owner.Values(module.Bytes, module.Properties);
                 if (asset.ClassName.Contains("required", StringComparison.OrdinalIgnoreCase) && values.TryGetValue("material", out var found))
                     material = found as string;
                 if (asset.ClassName.Contains("typedatamesh", StringComparison.OrdinalIgnoreCase) && values.TryGetValue("mesh", out var meshName))
@@ -106,6 +147,30 @@ public static class ParticleEffectModels
     private sealed class Reader(AssetCatalog catalog, LogicalPackageStream logical)
     {
         public IReadOnlyDictionary<int, AssetCatalogEntry> Exports { get; } = catalog.Assets.ToDictionary(asset => asset.ExportIndex);
+
+        /// <summary>
+        /// The export an import names, in the package it comes from: the import's outer chain ends in that package, and
+        /// the export there has the same name under the same outer (particlemodulesize_17 of par_y_dbl_3rd_cast01_3).
+        /// </summary>
+        public (Reader? Owner, int Reference) Import(int reference, Func<string, Reader?> open)
+        {
+            if (-reference > catalog.Imports.Count) return (null, 0);
+            var import = catalog.Imports[-reference - 1];
+            var name = import.ObjectName.Resolve(catalog.Names);
+            var path = new List<string>();
+            for (var outer = import.OuterIndex; outer < 0 && -outer <= catalog.Imports.Count && path.Count < 8;)
+            {
+                var item = catalog.Imports[-outer - 1];
+                path.Add(item.ObjectName.Resolve(catalog.Names));
+                outer = item.OuterIndex;
+            }
+            if (path.Count == 0 || open(path[^1]) is not { } owner) return (null, 0);
+            var parent = path[0];
+            var matches = owner.Exports.Values.Where(asset => asset.ObjectName.Equals(name, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var match = matches.FirstOrDefault(asset => asset.ObjectPath.Contains(parent + "." + name, StringComparison.OrdinalIgnoreCase))
+                        ?? (path.Count == 1 || matches.Length == 1 ? matches.FirstOrDefault() : null);
+            return match is null ? (null, 0) : (owner, match.ExportIndex);
+        }
 
         public (byte[] Bytes, IReadOnlyList<ParticleProperty> Properties)? Load(int reference)
         {
@@ -130,7 +195,8 @@ public static class ParticleEffectModels
                     "nameproperty" when property.Size == 8 => NameValue(bytes, property),
                     "objectproperty" when property.Size == 4 => ObjectName(BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(property.ValueOffset))),
                     "structproperty" => Struct(bytes, property),
-                    "arrayproperty" when property.Name.Equals("burstlist", StringComparison.OrdinalIgnoreCase) =>
+                    "arrayproperty" when property.Name.Equals("burstlist", StringComparison.OrdinalIgnoreCase) ||
+                                           property.Name.Equals("dynamicparams", StringComparison.OrdinalIgnoreCase) =>
                         ParticlePropertyStream.ReadStructArray(bytes, property, catalog.Names)?.Select(element => Values(bytes, element)).ToArray(),
                     _ => null,
                 };
