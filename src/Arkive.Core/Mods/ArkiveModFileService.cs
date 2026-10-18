@@ -421,6 +421,13 @@ public static class ArkiveModFileService
                     Refuse("ARK043", $"Material asset {asset.AssetId} must contain only material parameter data.");
                 ValidateMaterial(asset.AssetId, asset.Material);
                 break;
+            case UnifiedPackageAssetKind.InterfaceMovie:
+                if (files.Count != 1 || files[0].Role != ArkiveModFileFormat.MovieRole ||
+                    !files[0].Path.EndsWith(".gfx", StringComparison.OrdinalIgnoreCase))
+                    Refuse("ARK044", $"Interface movie asset {asset.AssetId} must contain exactly one GFX movie.");
+                if (asset.Texture is not null || asset.Mesh is not null || asset.Material is not null)
+                    Refuse("ARK044", $"Interface movie asset {asset.AssetId} contains unrelated data.");
+                break;
         }
     }
 

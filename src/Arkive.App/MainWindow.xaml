@@ -237,6 +237,7 @@
                                     <ComboBoxItem Content="Skeletal meshes" Tag="SkeletalMesh" />
                                     <ComboBoxItem Content="Materials" Tag="Material" />
                                     <ComboBoxItem Content="MaterialInstanceConstant" Tag="MaterialInstanceConstant" />
+                                    <ComboBoxItem Content="Interface movies" Tag="InterfaceMovie" />
                                     <ComboBoxItem Content="Metadata only" Tag="Object" />
                                 </ComboBox>
                                 <Button x:Name="TextureReconButton"
@@ -475,7 +476,7 @@
                                         Content="Preview"
                                         IsEnabled="False"
                                         Click="LibraryPreviewButton_Click"
-                                        ToolTip="Open the selected mesh in Arkive's model viewer: every LOD, game colours, materials, textures and UModel's object properties. You can also double-click a mesh result." />
+                                        ToolTip="Open the selected mesh in Arkive's model viewer (every LOD, game colours, materials, textures and UModel's object properties), or the selected texture in the asset viewer with the parts the game's interface names on it. You can also double-click a mesh result." />
                                 <Button x:Name="LibraryInspectButton"
                                         Content="Inspect selected in UModel"
                                         IsEnabled="False"
@@ -746,6 +747,8 @@
                                     <WrapPanel>
                                         <Button x:Name="AuthoringPrepareButton" Content="Prepare for editing" Click="AuthoringPrepareButton_Click" />
                                         <Button x:Name="AuthoringOpenButton" Content="Open edited file" Click="AuthoringOpenButton_Click" />
+                                        <Button x:Name="AuthoringColoursButton" Content="Edit colours" Click="AuthoringColoursButton_Click"
+                                                ToolTip="Open the selected texture in Arkive's asset viewer to recolour it, or one named part of an interface picture (such as the HP bar), and save it to the working file." />
                                         <Button x:Name="AuthoringProportionsButton" Content="Edit in proportion editor" Visibility="Collapsed"
                                                 Click="AuthoringProportionsButton_Click"
                                                 ToolTip="Reopen this Simple upscale mod's outfit from the clean game files with the mod's sliders; saving there updates this mod." />

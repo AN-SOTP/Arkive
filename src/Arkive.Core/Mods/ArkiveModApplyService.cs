@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.StaticMeshes;
@@ -896,6 +897,7 @@ public sealed class ArkiveModApplyService
                 {
                     MaterialEdits = materials,
                     StaticMeshEdits = included.Select(edit => edit.Entry).OfType<StaticMeshEditEntry>().ToArray(),
+                    InterfaceMovieEdits = included.Select(edit => edit.Entry).OfType<InterfaceMovieEditEntry>().ToArray(),
                 },
                 cancellationToken: cancellationToken).ConfigureAwait(false);
             var committed = await _context.Packages.CommitRevisionAsync(package.ManifestPath, result.Revision, cancellationToken)
@@ -1056,7 +1058,8 @@ public sealed class ArkiveModApplyService
     /// </summary>
     internal static bool ChangesNothing(ArkiveModLocalEdit edit) =>
         edit.Entry is SkeletalMeshEditWorkspaceEntry mesh &&
-        mesh.Manifest.Preflight?.Readiness == SkeletalMeshEditReadiness.ReadyNoChanges;
+        mesh.Manifest.Preflight?.Readiness == SkeletalMeshEditReadiness.ReadyNoChanges ||
+        edit.Entry is InterfaceMovieEditEntry movie && InterfaceMovieEditWorkspaceStore.IsUnchanged(movie);
 
     public static HashSet<string> RevisionContent(GuidedTexturePackageRevision revision)
     {
@@ -1065,6 +1068,7 @@ public sealed class ArkiveModApplyService
             .Concat(revision.MeshAssets.Select(asset => ContentKey(asset.EditId, asset.EditedGlbSha256)))
             .Concat(revision.StaticMeshAssets.Select(asset => ContentKey(asset.EditId, asset.EditedGlbSha256)))
             .Concat(revision.MaterialAssets.Select(asset => ContentKey(asset.EditId, asset.CandidateExportSha256)))
+            .Concat(revision.InterfaceMovieAssets.Select(asset => ContentKey(asset.EditId, asset.EditedMovieSha256)))
             .ToHashSet(StringComparer.Ordinal);
     }
 

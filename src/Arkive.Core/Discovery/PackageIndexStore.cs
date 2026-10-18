@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using Arkive.Core.Assets;
 using Arkive.Core.External;
 
 namespace Arkive.Core.Discovery;
@@ -405,7 +406,7 @@ public sealed partial class PackageIndexStore
                                 decodedFilename,
                                 asset.ObjectName,
                                 asset.ClassName,
-                                asset.Kind.ToString(),
+                                AssetTypes.IndexedKind(asset.Kind, asset.ClassName).ToString(),
                                 GameAssetMetadataIndex.BuildSearchText(metadata),
                                 asset.ExportIndex.ToString(
                                     System.Globalization.CultureInfo.InvariantCulture)),
@@ -426,7 +427,7 @@ public sealed partial class PackageIndexStore
                             document.PhysicalPackageName,
                             document.Assets.Count,
                             asset.ExportIndex,
-                            asset.Kind,
+                            AssetTypes.IndexedKind(asset.Kind, asset.ClassName),
                             asset.ClassName,
                             asset.ObjectName,
                             asset.SerialSize,
@@ -499,7 +500,7 @@ public sealed partial class PackageIndexStore
     private static bool MatchesCategory(IndexedAsset asset, string category) =>
         category.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase)
             ? asset.ClassName.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase)
-            : asset.Kind.ToString().Equals(category, StringComparison.OrdinalIgnoreCase);
+            : AssetTypes.IndexedKind(asset.Kind, asset.ClassName).ToString().Equals(category, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Finds evidence-labelled candidates related to one indexed asset. Database
@@ -671,7 +672,7 @@ public sealed partial class PackageIndexStore
                                 document.PhysicalPackageName,
                                 document.Assets.Count,
                                 asset.ExportIndex,
-                                asset.Kind,
+                                AssetTypes.IndexedKind(asset.Kind, asset.ClassName),
                                 asset.ClassName,
                                 asset.ObjectName,
                                 asset.SerialSize,

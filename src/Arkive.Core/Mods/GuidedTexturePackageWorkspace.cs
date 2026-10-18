@@ -51,6 +51,18 @@ public sealed record GuidedStaticMeshPackageAssetRevision(
     long SerialSize,
     bool VariableSizeReplacement);
 
+/// <param name="EditedMovieSha256">The edited movie file the package was built from.</param>
+public sealed record GuidedInterfaceMoviePackageAssetRevision(
+    string EditId,
+    string DisplayName,
+    string ObjectName,
+    int NativeExportIndex,
+    string EditedMovieSha256,
+    string CandidateExportSha256,
+    string StagedUpkManifestPath,
+    long SerialOffset,
+    long SerialSize);
+
 public sealed record GuidedMaterialPackageAssetRevision(
     string EditId,
     string DisplayName,
@@ -83,6 +95,8 @@ public sealed record GuidedTexturePackageRevision(
 
     public IReadOnlyList<GuidedStaticMeshPackageAssetRevision> StaticMeshAssets { get; init; } = [];
 
+    public IReadOnlyList<GuidedInterfaceMoviePackageAssetRevision> InterfaceMovieAssets { get; init; } = [];
+
     public string? CompositionManifestPath { get; init; }
 
     public bool PreviewOnly { get; init; }
@@ -93,7 +107,8 @@ public sealed record GuidedTexturePackageRevision(
 
     public string? VariableSizeDeploymentGateManifestPath { get; init; }
 
-    public int TotalAssetCount => Assets.Count + MeshAssets.Count + StaticMeshAssets.Count + MaterialAssets.Count;
+    public int TotalAssetCount => Assets.Count + MeshAssets.Count + StaticMeshAssets.Count + MaterialAssets.Count +
+                                  InterfaceMovieAssets.Count;
 }
 
 public sealed record GuidedTexturePackageManifest(

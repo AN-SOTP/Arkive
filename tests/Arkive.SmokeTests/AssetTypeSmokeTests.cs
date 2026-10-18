@@ -18,6 +18,10 @@ internal static class AssetTypeSmokeTests
         foreach (var kind in Enum.GetValues<AssetKind>().Where(kind => kind != AssetKind.Object))
             Assert(AssetTypes.Moddable.Count(type => type.CatalogKind == kind) == 1, $"indexed kind {kind} is not registered exactly once");
         Assert(AssetTypes.For(AssetKind.Object) is null, "plain objects were made moddable");
+        Assert(AssetTypes.IndexedKind(AssetKind.Object, "efswfmovie") == AssetKind.InterfaceMovie &&
+               AssetTypes.IndexedKind(AssetKind.Object, "SkeletalMesh3") == AssetKind.Object &&
+               AssetTypes.IndexedKind(AssetKind.Texture, "efswfmovie") == AssetKind.Texture,
+            "objects filed as plain objects by older package indexes are not given their newer kind");
         // Saved by number in the package index and by name in .arkive files: existing values never move.
         Assert((int)AssetKind.Texture == 1 && (int)AssetKind.StaticMesh == 2 && (int)AssetKind.SkeletalMesh == 3 && (int)AssetKind.Material == 4,
             "AssetKind values were reordered; existing package indexes would be read wrongly");
@@ -49,7 +53,8 @@ internal static class AssetTypeSmokeTests
             ("PhysicalMaterial", AssetKind.Material, AssetKind.Object, null, []),
             ("ParticleSystem", AssetKind.Object, AssetKind.Object, null, []),
             ("SoundCue", AssetKind.Object, AssetKind.Object, null, []),
-            ("efswfmovie", AssetKind.Object, AssetKind.Object, null, []),
+            ("efswfmovie", AssetKind.InterfaceMovie, AssetKind.Object, UnifiedPackageAssetKind.InterfaceMovie,
+                [UnifiedPackageAssetKind.InterfaceMovie]),
             ("particlesystem", AssetKind.Object, AssetKind.Object, null, []),
             ("AnimSet", AssetKind.Object, AssetKind.Object, null, []),
         ];

@@ -1,5 +1,6 @@
 using Arkive.Core.Archives;
 using Arkive.Core.Assets;
+using Arkive.Core.Interface;
 using Arkive.Core.Inspection;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
@@ -227,6 +228,16 @@ public sealed class ArkiveModMaterializationService
                 editId = material.Document.EditId;
                 manifestPath = material.DocumentPath;
                 break;
+            case "efswfmovie":
+                progress?.Report(new("Copying the interface movie", selection.ObjectName));
+                var movies = _edits.InterfaceMovies ?? throw new ArkiveModRefusalException("AMM051", "This asset type cannot be edited.");
+                var movie = await movies.CreateAsync(selection.PackagePath, selection.PackageAlias, hash, export,
+                    export.ObjectName, cancellationToken: cancellationToken).ConfigureAwait(false);
+                entry = movie;
+                kind = UnifiedPackageAssetKind.InterfaceMovie;
+                editId = movie.Manifest.EditId;
+                manifestPath = movie.ManifestPath;
+                break;
             default:
                 throw new ArkiveModRefusalException("AMM051", "This asset type cannot be edited.");
         }
@@ -274,6 +285,8 @@ public sealed class ArkiveModMaterializationService
                     asset, check, files, cancellationToken).ConfigureAwait(false),
                 UnifiedPackageAssetKind.MaterialInstanceConstant => await MaterializeMaterialAsync(
                     asset, check, cancellationToken).ConfigureAwait(false),
+                UnifiedPackageAssetKind.InterfaceMovie => await MaterializeInterfaceMovieAsync(
+                    asset, check, files, cancellationToken).ConfigureAwait(false),
                 _ => throw new ArkiveModRefusalException("AMM004", $"{asset.Kind} is not supported."),
             };
         }
@@ -289,6 +302,29 @@ public sealed class ArkiveModMaterializationService
         return (new ArkiveModAssetBinding(
             asset.AssetId, asset.Kind, editId, check.PackagePath, ArkiveModFileService.ComputeContentSha256(asset)),
             check.State);
+    }
+
+    private async Task<(string EditId, string ManifestPath)> MaterializeInterfaceMovieAsync(
+        ArkiveModFileAsset asset,
+        ArkiveModTargetCheck check,
+        IReadOnlyDictionary<string, string> files,
+        CancellationToken cancellationToken)
+    {
+        var movies = _edits.InterfaceMovies ??
+                     throw new ArkiveModRefusalException("AMM004", $"{asset.Kind} is not supported.");
+        var movie = await movies.CreateAsync(check.PackagePath, asset.Target.PackageAlias, check.PackageSha256!,
+            check.Export!, asset.DisplayName, files[ArkiveModFileFormat.MovieRole], cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await InterfaceMovieEditWorkspaceStore.ReadEditedMovieAsync(movie, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException exception)
+        {
+            await movies.DeleteAsync(movie, CancellationToken.None).ConfigureAwait(false);
+            Refuse("AMM060", exception.Message);
+        }
+        movie = await movies.SetIncludedAsync(movie, false, cancellationToken).ConfigureAwait(false);
+        return (movie.Manifest.EditId, movie.ManifestPath);
     }
 
     private async Task<(string EditId, string ManifestPath)> MaterializeTextureAsync(

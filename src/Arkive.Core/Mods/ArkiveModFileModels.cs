@@ -13,6 +13,7 @@ public static class ArkiveModFileFormat
     public const string AssetDirectory = "assets";
     public const string ImageRole = "image";
     public const string GlbRole = "glb";
+    public const string MovieRole = "movie";
 
     public const long MaximumArchiveBytes = 4L * 1024 * 1024 * 1024;
     public const long MaximumManifestBytes = 16L * 1024 * 1024;

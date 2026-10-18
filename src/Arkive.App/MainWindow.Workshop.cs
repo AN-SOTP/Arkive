@@ -198,7 +198,8 @@ public partial class MainWindow : Window
     private void WorkshopPreviewButton_Click(object sender, RoutedEventArgs e)
     {
         if (!WorkshopPreviewButton.IsEnabled || _umodelBridge is null || WorkshopSearchResultsGrid.SelectedItem is not LibraryAssetRow row) return;
-        if (!CanPreviewInArkive(row.Kind)) OpenWorkshopRowInUmodel(row);
+        if (CanViewTexture(row.Kind)) _ = OpenTextureViewerAsync(row);
+        else if (!CanPreviewInArkive(row.Kind)) OpenWorkshopRowInUmodel(row);
         else if (OpenModelViewer(row, WorkshopSearchResultsGrid))
             WorkshopStatusText.Text = $"Opened {row.PackageAlias}.{row.ObjectName} in Arkive's model viewer.";
     }
@@ -556,7 +557,8 @@ public partial class MainWindow : Window
                         row is not null &&
                         CreateExternalAsset(row).IsExportable;
         LibraryInspectButton.IsEnabled = backendAvailable && hasSelection && !_exportInProgress;
-        LibraryPreviewButton.IsEnabled = backendAvailable && row is not null && CanPreviewInArkive(row.Kind);
+        LibraryPreviewButton.IsEnabled = backendAvailable && row is not null && CanPreviewInArkive(row.Kind) ||
+                                         row is not null && CanViewTexture(row.Kind);
         LibraryBrowsePackageButton.IsEnabled = backendAvailable && hasSelection && !_exportInProgress;
         LibraryExportButton.IsEnabled = canExport;
         LibraryOpenPackageFolderButton.IsEnabled = hasSelection;

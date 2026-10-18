@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.Mods;
@@ -43,6 +44,7 @@ public partial class MainWindow : Window
         GuidedTextureModProjectEntry texture => texture.Manifest.EditableImagePath,
         SkeletalMeshEditWorkspaceEntry mesh => mesh.EditedGlbPath,
         StaticMeshEditEntry mesh => mesh.Manifest.EditedGlbPath,
+        InterfaceMovieEditEntry movie => movie.Manifest.EditedMoviePath,
         _ => null,
     };
 
@@ -321,6 +323,7 @@ public partial class MainWindow : Window
         AuthoringRemoveButton.IsEnabled = idle && hasMod && selectionCount > 0;
         AuthoringRemoveButton.Content = selectionCount > 0 ? $"Remove selected ({selectionCount:N0})" : "Remove selected assets";
         AuthoringOpenButton.IsEnabled = idle && selected?.Edit is not null;
+        AuthoringColoursButton.IsEnabled = idle && selected?.Edit?.Entry is GuidedTextureModProjectEntry;
         AuthoringReplaceButton.IsEnabled = idle && selected?.Edit is { } edit && EditablePath(edit) is not null;
         AuthoringFolderButton.IsEnabled = idle && selected?.Edit is not null;
         AuthoringCompareButton.IsEnabled = idle && selected?.Edit is not null;

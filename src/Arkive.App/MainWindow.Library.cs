@@ -10,6 +10,7 @@ using Arkive.Core.Archives;
 using Arkive.Core.Assets;
 using Arkive.Core.Baselines;
 using Arkive.Core.Discovery;
+using Arkive.Core.Interface;
 using Arkive.Core.External;
 using Arkive.Core.Exports;
 using Arkive.Core.Inspection;
@@ -565,6 +566,31 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Reads the interface movies' names for their textures ("health bar") when the game's interface packages changed
+    /// since they were last read. Takes a few seconds; failures only reach the log.
+    /// </summary>
+    private async Task RefreshInterfaceNamesAsync(string metadataPath)
+    {
+        var root = _libraryRootPath;
+        if (root is null || !Directory.Exists(root)) return;
+        try
+        {
+            if (await Task.Run(() => InterfaceNameSidecar.IsCurrent(metadataPath, root))) return;
+            GameMetadataText.Text = "Game DB mapping: reading the interface's names...";
+            var progress = new Progress<InterfaceNameProgress>(value =>
+                GameMetadataText.Text = $"Game DB mapping: reading the interface's names ({value.Completed:N0}/{value.Total:N0})...");
+            var watch = Stopwatch.StartNew();
+            var document = await Task.Run(() => InterfaceNameSidecar.BuildAsync(metadataPath, root, _protectionProvider, progress));
+            Log($"Interface names read: packages={document.Packages.Count}, names={document.Associations.Count}, " +
+                $"seconds={watch.Elapsed.TotalSeconds:N1}, path={InterfaceNameSidecar.GetDefaultPath(metadataPath)}.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log($"Interface names were not read: {exception.Message}");
+        }
+    }
+
     private async Task LoadGameMetadataAsync(
         string path,
         bool showErrors,
@@ -573,6 +599,7 @@ public partial class MainWindow : Window
         GameMetadataText.Text = "Game DB mapping: loading...";
         try
         {
+            await RefreshInterfaceNamesAsync(path);
             var index = await Task.Run(() => GameAssetMetadataIndex.Load(path));
             _gameMetadataIndex = index;
             _gameMetadataPath = index.SourcePath;

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.StaticMeshes;
@@ -12,7 +13,11 @@ public sealed record ArkiveModEditWorkspaces(
     GuidedTextureModWorkspace Textures,
     SkeletalMeshEditWorkspaceStore SkeletalMeshEdits,
     StaticMeshEditWorkspaceStore StaticMeshEdits,
-    MaterialInstanceEditWorkspaceStore MaterialEdits);
+    MaterialInstanceEditWorkspaceStore MaterialEdits)
+{
+    /// <summary>Interface movie working copies; null where a caller does not edit interface movies.</summary>
+    public InterfaceMovieEditWorkspaceStore? InterfaceMovies { get; init; }
+}
 
 public sealed record ArkiveModLocalEdit(
     UnifiedPackageAssetKind Kind,
@@ -110,6 +115,12 @@ public sealed class ArkiveModEditSnapshot
                 material.Document.DisplayName, Path.GetFullPath(material.Document.SourcePackagePath),
                 material.Document.ObjectName, material.Document.IncludedInPackageBuild, material));
         }
+        if (workspaces.InterfaceMovies is { } movies)
+            foreach (var movie in await movies.LoadAsync(cancellationToken).ConfigureAwait(false))
+                edits.Add(new ArkiveModLocalEdit(
+                    UnifiedPackageAssetKind.InterfaceMovie, movie.Manifest.EditId, movie.ManifestPath,
+                    movie.Manifest.DisplayName, Path.GetFullPath(movie.Manifest.SourcePackagePath),
+                    movie.Manifest.ObjectName, movie.Manifest.IncludedInPackageBuild, movie));
         return new ArkiveModEditSnapshot(edits);
     }
 
@@ -134,6 +145,9 @@ public sealed class ArkiveModEditSnapshot
                 File.Exists(material.Document.LatestCandidateManifestPath)
                     ? material.Document.LatestCandidateSha256?.ToUpperInvariant()
                     : null,
+            InterfaceMovieEditEntry movie => File.Exists(movie.Manifest.EditedMoviePath)
+                ? await HashFileCachedAsync(movie.Manifest.EditedMoviePath, cancellationToken).ConfigureAwait(false)
+                : null,
             _ => null,
         };
     }
@@ -156,6 +170,7 @@ public sealed class ArkiveModEditSnapshot
                     mesh.Manifest.SourceEditableManifestPath, cancellationToken).ConfigureAwait(false))
                     .SourcePackageSha256.ToUpperInvariant(),
                 MaterialInstanceEditEntry material => material.Document.SourcePackageSha256.ToUpperInvariant(),
+                InterfaceMovieEditEntry movie => movie.Manifest.SourcePackageSha256.ToUpperInvariant(),
                 _ => null,
             };
         }

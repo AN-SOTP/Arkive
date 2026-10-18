@@ -183,6 +183,7 @@ public sealed class GameAssetMetadataIndex
             .Concat(EquipmentItemAssociationResolver.Expand(annotatedAssociations))
             .Concat(ModelPackageAssociationResolver.Expand(annotatedAssociations))
             .Concat(GameAssetDependencySidecar.LoadAssociations(fullPath))
+            .Concat(Interface.InterfaceNameSidecar.LoadAssociations(fullPath))
             .DistinctBy(item => new
             {
                 Type = item.EntityType.ToUpperInvariant(),

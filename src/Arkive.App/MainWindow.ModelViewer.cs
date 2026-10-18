@@ -22,7 +22,9 @@ public partial class MainWindow
 
     private void LibraryPreviewButton_Click(object sender, RoutedEventArgs e)
     {
-        if (LibraryGrid.SelectedItem is LibraryAssetRow row) OpenLibraryModelViewer(row);
+        if (LibraryGrid.SelectedItem is not LibraryAssetRow row) return;
+        if (CanViewTexture(row.Kind)) _ = OpenTextureViewerAsync(row);
+        else OpenLibraryModelViewer(row);
     }
 
     private ModelViewerSceneService ModelViewerService() => _modelViewerService ??= new ModelViewerSceneService(

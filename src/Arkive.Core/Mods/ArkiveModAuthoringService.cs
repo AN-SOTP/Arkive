@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.StaticMeshes;
@@ -40,6 +41,8 @@ public sealed class ArkiveModAuthoringService
                 .ConfigureAwait(false),
             MaterialInstanceEditEntry material => await CaptureMaterialAsync(edit, material, id, cancellationToken)
                 .ConfigureAwait(false),
+            InterfaceMovieEditEntry movie => await CaptureInterfaceMovieAsync(edit, movie, id, cancellationToken)
+                .ConfigureAwait(false),
             _ => throw new ArkiveModRefusalException("AUT001", $"{edit.DisplayName} is not a supported edit."),
         };
         return edit.ObjectPath is null ? captured : captured with
@@ -79,6 +82,34 @@ public sealed class ArkiveModAuthoringService
         return new ArkiveModCapturedAsset(
             descriptor,
             [new ArkiveModPackFile(ArkiveModFileFormat.ImageRole, image, manifest.ObjectName + "-edit" + extension)],
+            edit);
+    }
+
+    private static async Task<ArkiveModCapturedAsset> CaptureInterfaceMovieAsync(
+        ArkiveModLocalEdit edit,
+        InterfaceMovieEditEntry movie,
+        string assetId,
+        CancellationToken cancellationToken)
+    {
+        var manifest = movie.Manifest;
+        try
+        {
+            await InterfaceMovieEditWorkspaceStore.ReadEditedMovieAsync(movie, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException exception)
+        {
+            Refuse("AUT035", exception.Message);
+        }
+        var descriptor = new ArkiveModFileAsset(
+            assetId, UnifiedPackageAssetKind.InterfaceMovie, manifest.DisplayName,
+            new ArkiveModAssetTarget(
+                manifest.PackageAlias, PhysicalName(manifest.SourcePackagePath), manifest.ClassName, manifest.ObjectName,
+                manifest.NativeExportIndex, manifest.SourcePackageSha256.ToUpperInvariant(),
+                manifest.SourceExportSha256.ToUpperInvariant()),
+            []);
+        return new ArkiveModCapturedAsset(
+            descriptor,
+            [new ArkiveModPackFile(ArkiveModFileFormat.MovieRole, manifest.EditedMoviePath, manifest.ObjectName + GfxMovieFile.Extension)],
             edit);
     }
 
@@ -494,6 +525,7 @@ public sealed class ArkiveModAuthoringService
                 GuidedTextureModProjectEntry texture => texture.Manifest.EditableImagePath,
                 SkeletalMeshEditWorkspaceEntry mesh => mesh.EditedGlbPath,
                 StaticMeshEditEntry mesh => mesh.Manifest.EditedGlbPath,
+                InterfaceMovieEditEntry movie => movie.Manifest.EditedMoviePath,
                 _ => null,
             };
             return path is not null && File.Exists(path)

@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Arkive.Core.Archives;
 using Arkive.Core.Assets;
 using Arkive.Core.Inspection;
+using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.Packages;
@@ -18,6 +19,7 @@ public enum UnifiedPackageAssetKind
     MaterialInstanceConstant,
     SkeletalMesh,
     StaticMesh,
+    InterfaceMovie,
 }
 
 public sealed record UnifiedPackageBuildProgress(
@@ -88,6 +90,8 @@ public sealed record UnifiedPackageCompositionManifest(
 
     public int StaticMeshCount { get; init; }
 
+    public int InterfaceMovieCount { get; init; }
+
     public bool MaterialsAppliedBeforeMeshes { get; init; }
 
     public int VariableSizeMeshCount { get; init; }
@@ -138,6 +142,8 @@ public sealed record UnifiedPackageCompositionRequest(
 
     public IReadOnlyList<StaticMeshEditEntry> StaticMeshEdits { get; init; } = [];
 
+    public IReadOnlyList<InterfaceMovieEditEntry> InterfaceMovieEdits { get; init; } = [];
+
     public bool ForcePreviewOnly { get; init; }
 }
 
@@ -178,6 +184,7 @@ public sealed class UnifiedPackageComposerService
         "arkive-variable-size-deployment-gate.json";
     private const int MeshSteps = 5;
     private const int MaterialSteps = 2;
+    private const int InterfaceMovieSteps = 2;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -281,7 +288,7 @@ public sealed class UnifiedPackageComposerService
             !manifest.EverySelectedAssetCatalogued || !manifest.OnePhysicalPayloadProduced ||
             manifest.Assets.Count == 0 ||
             manifest.Assets.Count != manifest.TextureCount + manifest.SkeletalMeshCount +
-                                     manifest.StaticMeshCount + manifest.MaterialCount)
+                                     manifest.StaticMeshCount + manifest.MaterialCount + manifest.InterfaceMovieCount)
             throw new InvalidDataException("The package composition does not retain every required proof gate.");
         if (manifest.VariableSizeMeshCount < 0 ||
             manifest.Assets.Count(asset => asset.VariableSizeReplacement) !=
@@ -401,9 +408,9 @@ public sealed class UnifiedPackageComposerService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Package);
         if (request.TextureProjects.Count == 0 && request.MaterialEdits.Count == 0 &&
-            request.MeshEdits.Count == 0 && request.StaticMeshEdits.Count == 0)
+            request.MeshEdits.Count == 0 && request.StaticMeshEdits.Count == 0 && request.InterfaceMovieEdits.Count == 0)
             throw new NotSupportedException(
-                "Select at least one texture, material, skeletal mesh, or static mesh before rebuilding the package.");
+                "Select at least one texture, material, skeletal mesh, static mesh, or interface movie before rebuilding the package.");
         if (string.IsNullOrWhiteSpace(request.DisplayName))
             throw new NotSupportedException("The package mod display name is empty.");
 
@@ -485,6 +492,12 @@ public sealed class UnifiedPackageComposerService
             staticMeshInputs.Add((edit, source));
         }
 
+        foreach (var edit in request.InterfaceMovieEdits)
+            if (!SamePath(edit.Manifest.SourcePackagePath, sourcePath) ||
+                !edit.Manifest.SourcePackageSha256.Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
+                throw new NotSupportedException(
+                    $"{edit.Manifest.ObjectName} was created from a different client package version. Run the game-update check before rebuilding.");
+
         var textureNativeIndices = new List<int>();
         foreach (var texture in request.TextureProjects)
         {
@@ -497,7 +510,8 @@ public sealed class UnifiedPackageComposerService
         var targetIndices = textureNativeIndices
             .Concat(materialInputs.Select(input => input.Report.NativeExportIndex!.Value))
             .Concat(meshInputs.Select(input => input.Source.NativeExportIndex))
-            .Concat(staticMeshInputs.Select(input => input.Source.NativeExportIndex)).ToArray();
+            .Concat(staticMeshInputs.Select(input => input.Source.NativeExportIndex))
+            .Concat(request.InterfaceMovieEdits.Select(edit => edit.Manifest.NativeExportIndex)).ToArray();
         var duplicate = targetIndices.GroupBy(value => value).FirstOrDefault(group => group.Count() > 1);
         if (duplicate is not null)
             throw new NotSupportedException(
@@ -506,7 +520,8 @@ public sealed class UnifiedPackageComposerService
         var totalSteps = checked(request.TextureProjects.Count * 9 +
                                  request.MaterialEdits.Count * MaterialSteps +
                                  request.MeshEdits.Count * MeshSteps +
-                                 request.StaticMeshEdits.Count * MeshSteps + 2);
+                                 request.StaticMeshEdits.Count * MeshSteps +
+                                 request.InterfaceMovieEdits.Count * InterfaceMovieSteps + 2);
         var step = 0;
         void Report(string objectName, string stage, string message) => progress?.Report(
             new UnifiedPackageBuildProgress(++step, totalSteps, objectName, stage, message));
@@ -895,6 +910,54 @@ public sealed class UnifiedPackageComposerService
                 stagedManifestPath, finalOffset, finalSize, variableSize));
         }
 
+        var movieAssets = new List<GuidedInterfaceMoviePackageAssetRevision>(request.InterfaceMovieEdits.Count);
+        foreach (var edit in request.InterfaceMovieEdits.OrderBy(item => item.Manifest.NativeExportIndex))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var movie = edit.Manifest;
+            var movieRoot = Path.Combine(root, $"u{movieAssets.Count + 1:00}-{movie.EditId[..8]}");
+            Directory.CreateDirectory(movieRoot);
+            var inputPackageHash = await HashFileAsync(currentPackagePath, cancellationToken).ConfigureAwait(false);
+            var catalogue = _catalogReader.Read(currentPackagePath);
+            var asset = catalogue.Assets.SingleOrDefault(candidate => candidate.ExportIndex == movie.NativeExportIndex) ??
+                        throw new NotSupportedException(
+                            $"Native export {movie.NativeExportIndex} for {movie.ObjectName} is missing from the cumulative UPK.");
+            if (!asset.ObjectName.Equals(movie.ObjectName, StringComparison.OrdinalIgnoreCase) ||
+                !AssetTypes.InterfaceMovie.CanEditClass(asset.ClassName))
+                throw new NotSupportedException(
+                    $"Native export {asset.ExportIndex} no longer identifies interface movie {movie.ObjectName}.");
+            var exportBytes = await ReadLogicalExportAsync(catalogue.Summary, asset, cancellationToken).ConfigureAwait(false);
+            var currentExportHash = Convert.ToHexString(SHA256.HashData(exportBytes));
+            if (!currentExportHash.Equals(movie.SourceExportSha256, StringComparison.OrdinalIgnoreCase))
+                throw new NotSupportedException($"{movie.ObjectName}'s source bytes changed before its interface movie stage.");
+
+            Report(movie.ObjectName, "Interface movie", "Putting the edited movie into the game's export...");
+            var edited = await InterfaceMovieEditWorkspaceStore.ReadEditedMovieAsync(edit, cancellationToken).ConfigureAwait(false);
+            var candidate = await InterfaceMovieCandidateService.BuildAsync(
+                exportBytes, inputPackageHash, asset.ExportIndex, asset.ClassName, asset.ObjectName, asset.SerialOffset,
+                edited, Path.Combine(movieRoot, "01-candidate"), cancellationToken).ConfigureAwait(false);
+
+            Report(movie.ObjectName, "Interface movie package", "Appending the edited interface movie to the cumulative UPK...");
+            var staged = await _meshStaging.BuildInterfaceMovieAsync(
+                new VariableSerializedExportStagedUpkRequest(
+                    currentPackagePath, inputPackageHash, Path.GetFileName(sourcePath),
+                    request.Package.Manifest.PackageAlias, asset.ExportIndex, asset.ClassName, asset.ObjectName,
+                    asset.SerialOffset, asset.SerialSize, currentExportHash, candidate.CandidatePath,
+                    candidate.Manifest.CandidateExportSha256, candidate.ManifestPath, 0,
+                    Path.Combine(movieRoot, "02-staged-upk")), cancellationToken).ConfigureAwait(false);
+            currentPackagePath = staged.OutputUpkPath;
+            stages.Add(new UnifiedPackageCompositionStage(
+                stages.Count + 1, UnifiedPackageAssetKind.InterfaceMovie, movie.ObjectName, asset.ExportIndex,
+                inputPackageHash, staged.Manifest.OutputPackageSha256, staged.OutputUpkPath, staged.ManifestPath)
+            {
+                VariableSizeReplacement = true,
+            });
+            movieAssets.Add(new GuidedInterfaceMoviePackageAssetRevision(
+                movie.EditId, movie.DisplayName, movie.ObjectName, asset.ExportIndex, candidate.Manifest.EditedMovieSha256,
+                candidate.Manifest.CandidateExportSha256, staged.ManifestPath, staged.Manifest.AppendedSerialOffset,
+                staged.Manifest.AppendedSerialSize));
+        }
+
         Report("Package", "Final validation", "Verifying the final catalogue and clean-source identity...");
         var finalHash = await HashFileAsync(currentPackagePath, cancellationToken).ConfigureAwait(false);
         var finalInfo = new FileInfo(currentPackagePath);
@@ -1002,13 +1065,37 @@ public sealed class UnifiedPackageComposerService
                 finalExportHash, catalogueAsset.SerialOffset, catalogueAsset.SerialSize,
                 asset.StagedUpkManifestPath));
         }
+        foreach (var asset in movieAssets)
+        {
+            var catalogueAsset = finalCatalogue.Assets.SingleOrDefault(candidate =>
+                candidate.ExportIndex == asset.NativeExportIndex &&
+                candidate.ObjectName.Equals(asset.ObjectName, StringComparison.OrdinalIgnoreCase)) ??
+                                 throw new InvalidDataException($"The final package lost interface movie {asset.ObjectName}.");
+            var finalExportHash = await HashLogicalExportAsync(
+                finalCatalogue.Summary, catalogueAsset, cancellationToken).ConfigureAwait(false);
+            if (!finalExportHash.Equals(asset.CandidateExportSha256, StringComparison.OrdinalIgnoreCase) ||
+                catalogueAsset.SerialOffset != asset.SerialOffset || catalogueAsset.SerialSize != asset.SerialSize)
+                throw new InvalidDataException(
+                    $"The final package no longer contains the edited interface movie for {asset.ObjectName}.");
+            compositionAssets.Add(new UnifiedPackageCompositionAsset(
+                UnifiedPackageAssetKind.InterfaceMovie, asset.EditId, asset.DisplayName,
+                request.Package.Manifest.PackageAlias, asset.NativeExportIndex,
+                catalogueAsset.ClassName, asset.ObjectName, asset.EditedMovieSha256,
+                finalExportHash, catalogueAsset.SerialOffset, catalogueAsset.SerialSize,
+                asset.StagedUpkManifestPath)
+            {
+                VariableSizeReplacement = true,
+            });
+        }
         var sourceHashAfter = await HashFileAsync(sourcePath, cancellationToken).ConfigureAwait(false);
         if (!sourceHashAfter.Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The clean source package changed during composition.");
 
         var compositionId = Guid.NewGuid().ToString("N");
+        // Interface movies change length too, so they take the same append-and-retarget route and deployment gate.
         var variableSizeMeshCount = meshAssets.Count(asset => asset.VariableSizeReplacement) +
-                                    staticMeshAssets.Count(asset => asset.VariableSizeReplacement);
+                                    staticMeshAssets.Count(asset => asset.VariableSizeReplacement) +
+                                    movieAssets.Count;
         var previewOnly = variableSizeMeshCount > 0 && request.ForcePreviewOnly;
         var variableSizeDeploymentGateRequested = variableSizeMeshCount > 0 && !previewOnly;
         var bundleAssets = compositionAssets.Select(asset => new ArkiveModAsset(
@@ -1020,6 +1107,7 @@ public sealed class UnifiedPackageComposerService
                     .Manifest.PixelFormat,
                 UnifiedPackageAssetKind.MaterialInstanceConstant => "MaterialInstanceParameters",
                 UnifiedPackageAssetKind.StaticMesh => "NativeStaticMesh",
+                UnifiedPackageAssetKind.InterfaceMovie => "ScaleformMovie",
                 _ => "NativeSkeletalMesh",
             },
             asset.FinalSerialOffset, asset.FinalSerialSize)).ToArray();
@@ -1061,6 +1149,10 @@ public sealed class UnifiedPackageComposerService
                         asset.StagedUpkManifestPath, cancellationToken)
                     .ConfigureAwait(false));
             }
+            foreach (var asset in movieAssets)
+                topologyVerifications.Add(await SkeletalMeshStagedUpkService.VerifyTopologyOutputAsync(
+                        asset.StagedUpkManifestPath, cancellationToken)
+                    .ConfigureAwait(false));
             var everyTopologyStageVerified = topologyVerifications.Count == variableSizeMeshCount &&
                 topologyVerifications.All(item =>
                     item.Manifest.AppendAndRetargetReplacement &&
@@ -1197,6 +1289,7 @@ public sealed class UnifiedPackageComposerService
         {
             MaterialCount = materialAssets.Count,
             StaticMeshCount = staticMeshAssets.Count,
+            InterfaceMovieCount = movieAssets.Count,
             MaterialsAppliedBeforeMeshes = true,
             VariableSizeMeshCount = variableSizeMeshCount,
             PreviewOnly = previewOnly,
@@ -1215,6 +1308,7 @@ public sealed class UnifiedPackageComposerService
             MeshAssets = meshAssets,
             StaticMeshAssets = staticMeshAssets,
             MaterialAssets = materialAssets,
+            InterfaceMovieAssets = movieAssets,
             CompositionManifestPath = manifestPath,
             PreviewOnly = previewOnly,
             ContainsVariableSizeMeshReplacements = variableSizeMeshCount > 0,
@@ -1254,15 +1348,21 @@ public sealed class UnifiedPackageComposerService
     private async Task<string> HashLogicalExportAsync(
         PackageSummary summary,
         AssetCatalogEntry asset,
+        CancellationToken cancellationToken) =>
+        Convert.ToHexString(SHA256.HashData(await ReadLogicalExportAsync(summary, asset, cancellationToken).ConfigureAwait(false)));
+
+    private async Task<byte[]> ReadLogicalExportAsync(
+        PackageSummary summary,
+        AssetCatalogEntry asset,
         CancellationToken cancellationToken)
     {
         if (asset.SerialSize > int.MaxValue)
-            throw new NotSupportedException($"{asset.ObjectName}'s export is too large to hash safely.");
+            throw new NotSupportedException($"{asset.ObjectName}'s export is too large to read safely.");
         using var logical = new LogicalPackageStream(summary, _protectionProvider);
         logical.Position = asset.SerialOffset;
         var buffer = new byte[checked((int)asset.SerialSize)];
         await logical.ReadExactlyAsync(buffer, cancellationToken).ConfigureAwait(false);
-        return Convert.ToHexString(SHA256.HashData(buffer));
+        return buffer;
     }
 
     private static async Task<T> ReadJsonAsync<T>(

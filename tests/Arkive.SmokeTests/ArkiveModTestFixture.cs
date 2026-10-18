@@ -24,7 +24,11 @@ internal static class ArkiveModTestFixture
                 new GuidedTextureModWorkspace(Path.Combine(root, "staging", "texture-mods")),
                 new SkeletalMeshEditWorkspaceStore(Path.Combine(root, "staging", "skeletal-mesh-edits")),
                 new StaticMeshEditWorkspaceStore(Path.Combine(root, "staging", "static-mesh-edits")),
-                new MaterialInstanceEditWorkspaceStore(Path.Combine(root, "staging", "material-edits"))),
+                new MaterialInstanceEditWorkspaceStore(Path.Combine(root, "staging", "material-edits")))
+            {
+                InterfaceMovies = new Arkive.Core.Interface.InterfaceMovieEditWorkspaceStore(
+                    Path.Combine(root, "staging", "interface-movie-edits")),
+            },
             new GuidedTexturePackageWorkspace(Path.Combine(root, "staging", "texture-mods", "_packages")),
             new ArkiveModSetWorkspace(Path.Combine(root, "staging", "mod-sets")),
             new ArkiveModDeploymentService(processGuard: new SyntheticModDeploymentProcessGuard()),
