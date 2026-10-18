@@ -321,6 +321,8 @@ static int Run(string[] arguments)
             "umodel-list" => UmodelList(target, ReadTextOption(arguments, "--filter"), json),
             "interface-names" => InterfaceNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
+            "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
+                ReadTextOption(arguments, "--filter"), json),
             "metadata-resolve" => MetadataResolve(
                 target,
                 ReadTextOption(arguments, "--package"),
@@ -2813,6 +2815,32 @@ static int InterfaceNames(string packagesRoot, string? metadataPath, string? fil
     return 0;
 }
 
+static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, bool json)
+{
+    if (string.IsNullOrWhiteSpace(metadataPath))
+        throw new ArgumentException("zone-names requires --metadata FILE (the names are saved beside it).");
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    var document = ZoneMapSidecar.BuildAsync(metadataPath, packagesRoot, ChunkProtectionProviderFactory.CreateWesternGlobal())
+        .GetAwaiter().GetResult() ?? throw new FileNotFoundException("The game's leveldata1.lpk was not found beside its Packages folder.");
+    var zones = document.Zones
+        .Where(zone => string.IsNullOrWhiteSpace(filter) || AssetSearch.MatchesDisplayNames(filter, [zone.Name]))
+        .ToArray();
+    var ids = zones.Select(zone => zone.Id).ToHashSet();
+    var matches = document.Associations.Where(item => ids.Contains(item.EntityId)).ToArray();
+    if (json) WriteJson(new { Zones = document.Zones.Count, Names = document.Associations.Count, Matched = zones, Assets = matches });
+    else
+    {
+        Console.WriteLine($"Zones:              {document.Zones.Count:N0}");
+        Console.WriteLine($"Map assets:         {document.Associations.Count:N0} in {watch.Elapsed.TotalSeconds:N1}s");
+        Console.WriteLine($"Saved:              {ZoneMapSidecar.GetDefaultPath(metadataPath)}");
+        if (!string.IsNullOrWhiteSpace(filter))
+            foreach (var zone in zones.Take(50))
+                Console.WriteLine($"  {zone.Id} {zone.Name}: {string.Join(", ", zone.Levels)} " +
+                                  $"({matches.Count(item => item.EntityId == zone.Id):N0} assets)");
+    }
+    return 0;
+}
+
 static int MetadataResolve(
     string metadataPath,
     string? packageName,
@@ -3498,6 +3526,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive client-update-check-all <Arkive-project-root> [--out DIR] [--state-root DIR] [--json]");
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
+    Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive umodel-list <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine(
         "  arkive metadata-resolve <metadata.json> --package NAME --object NAME [--json]");
