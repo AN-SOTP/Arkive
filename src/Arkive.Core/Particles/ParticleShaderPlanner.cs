@@ -16,6 +16,9 @@ public sealed record ParticleShader(
 {
     /// <summary>How fast each ark_cb0 value changes per second (see <see cref="GameShaderPlan.TimeRates"/>), or null.</summary>
     public float[]? TimeRates { get; init; }
+
+    /// <summary>The first ark_cb0 register of the material's own parameters; mesh particles get their colour before it.</summary>
+    public int FirstParameterRegister { get; init; }
 }
 
 /// <summary>
@@ -35,6 +38,9 @@ public sealed record ParticleShaderSet(
 /// <summary>Builds an effect material's <see cref="ParticleShaderSet"/> from the game's shader cache.</summary>
 public static class ParticleShaderPlanner
 {
+    /// <summary>The sampler reference of the engine texture particle shaders read: the scene's depth (soft particles).</summary>
+    public const string SceneDepth = "scene:depth";
+
     /// <summary>The vertex factory meshes are drawn with; its shader is the map's base pass when not listed.</summary>
     public const string MeshFactory = "flocalvertexfactory";
 
@@ -66,14 +72,15 @@ public static class ParticleShaderPlanner
         var shaders = new Dictionary<string, ParticleShader>(StringComparer.OrdinalIgnoreCase);
         foreach (var id in factories.Values.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var plan = GameShaderMaterial.Build(index, map, id, exact, [], description, textureReference, textureSrgb, out var shaderFailure);
+            var plan = GameShaderMaterial.Build(index, map, id, exact, [], description, textureReference, textureSrgb, out var shaderFailure,
+                _ => SceneDepth);
             if (plan is null)
             {
                 notes.Add(shaderFailure ?? $"Shader {id} could not be used.");
                 continue;
             }
             shaders[id] = new ParticleShader(id, plan.Declarations, plan.Function, NeutralSceneDepth(plan), plan.Samplers, plan.Inputs,
-                plan.InstructionCount) { TimeRates = plan.TimeRates };
+                plan.InstructionCount) { TimeRates = plan.TimeRates, FirstParameterRegister = plan.FirstParameterRegister };
         }
         if (shaders.Count == 0)
         {

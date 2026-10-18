@@ -7,7 +7,7 @@
 // has no shader for are approximated by their first texture and blend mode.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { EFFECTS_LAYER } from './effects-pass.js';
+import { EFFECTS_LAYER, SCENE_DEPTH } from './effects-pass.js';
 
 export const MAX_PARTICLES = 4000;
 // Instance buffers start small and double as an emitter needs more, so spawning an effect allocates little.
@@ -296,7 +296,7 @@ const SPRITE_VERTEX = `
     // A camera offset draws the particle nearer the camera (or further) by that many units.
     if (iSize.w != 0.0) center.xyz += normalize(-center.xyz) * iSize.w * length(modelMatrix[0].xyz);
     gl_Position = projectionMatrix * center;
-    vClip = gl_Position;
+    vClip = gl_Position * 100.0;
     vCam = vec3(0.0, 0.0, 1.0);
     vColor = iColor;
     vDyn = iDyn;
@@ -319,7 +319,7 @@ const MESH_VERTEX = `
     vec3 local = rotate(iQuat, position * iScale);
     vec4 view = modelViewMatrix * vec4(iPos.xyz + local, 1.0);
     gl_Position = projectionMatrix * view;
-    vClip = gl_Position;
+    vClip = gl_Position * 100.0;
     vec3 n = normalize(normalMatrix * rotate(iQuat, normal / max(iScale, vec3(1e-4))));
     float facing = dot(n, normalize(-view.xyz));
     vFacing = abs(facing);
@@ -372,7 +372,17 @@ function gameInput(input, colorLayout) {
 
 // The emitted light of a game shader is linear and HDR; the preview clamps it as the game's LDR output does and
 // encodes it for the screen. Translucent shaders write their opacity to o0.w.
-function gameFragment(shader, prelude, blend) {
+// Mesh particles: the game hands the mesh's shader each particle's colour in the engine's constant ahead of the
+// material's own (ark_cb0[1]) instead of a vertex input; one draw holds every particle, so it reads the per-particle
+// colour instead.
+function meshColour(shader) {
+  const color0 = shader.inputs.find((input) => input.semantic === 'COLOR' && input.index === 0);
+  const usesColor0 = color0 && shader.function.includes(`ark_in${color0.register}`);
+  if (usesColor0 || !(shader.firstParameter >= 2)) return shader.function;
+  return shader.function.replaceAll('floatBitsToUint(ark_cb0[1])', 'floatBitsToUint(vColor)');
+}
+
+function gameFragment(shader, prelude, blend, mesh = false) {
   const uniforms = Object.entries(shader.constantBuffers).map(([name, values]) => `uniform vec4 ${name}[${Math.max(1, values.length / 4)}];`)
     .concat(Object.keys(shader.samplers).map((name) => `uniform sampler2D ${name};`));
   // Linear, unclamped light (the effects pass brings it into range); modulate darkens what is behind by its brightness.
@@ -382,10 +392,10 @@ function gameFragment(shader, prelude, blend) {
     opaque: 'gl_FragColor = vec4(max(o.rgb, vec3(0.0)), 1.0);',
   }[blend] ?? 'float a = clamp(o.a, 0.0, 1.0); if (a < 0.002) discard; gl_FragColor = vec4(max(o.rgb, vec3(0.0)) * a, a);';
   return `${uniforms.join('\n')}
+  ${COMMON_VARYINGS}
   ${shader.declarations}
   ${prelude}
-  ${shader.function}
-  ${COMMON_VARYINGS}
+  ${mesh ? meshColour(shader) : shader.function}
   void main() {
     ${shader.inputs.map((input) => gameInput(input, shader.inputs.some((item) => item.semantic === 'COLOR'))).join('\n    ')}
     ark_game_shader();
@@ -451,7 +461,7 @@ class Emitter {
     this.isLight = model.modules.some((module) => module.class.includes('typedatalight'));
     this.isDistortion = /(^|_)(dist|distort|circledisort|worldoffset)(_|\d)|defaultparticle/.test(model.material ?? '') ||
       /distort|(^|[_-])dist([_-]|$)/i.test(model.name ?? '');
-    if (this.isLight || this.isDistortion) this.visible = false;
+    if (this.isLight || this.isDistortion || !model.material || /^(null|none)$/i.test(model.material)) this.visible = false;
     this.alignMode = this.isDecal ? 2 : alignment === 'psa_velocity' ? 1 : 0;
     // Axis locks: a locked plane (epal_x/y/z, its two in-plane axes as lockU and lockV in the viewer's axes) or an axis
     // the sprite turns about (epal_rotate_*).
@@ -861,13 +871,18 @@ class Emitter {
         // Time-driven values (panning, scrolling) move on at their own rate as the game's clock runs.
         if (name === 'ark_cb0' && picked.shader.timeRates?.length) this.timeRates = { base: values.slice(), rates: picked.shader.timeRates, vectors };
       }
-      for (const [name, url] of Object.entries(picked.shader.samplers)) uniforms[name] = { value: assets.gameTexture(url) };
+      let sceneDepth = false;
+      for (const [name, url] of Object.entries(picked.shader.samplers)) {
+        if (url === 'scene:depth') { uniforms[name] = SCENE_DEPTH; sceneDepth = true; }
+        else uniforms[name] = { value: assets.gameTexture(url) };
+      }
       const material = new THREE.ShaderMaterial({
-        uniforms, vertexShader, fragmentShader: gameFragment(picked.shader, assets.prelude, blend),
+        uniforms, vertexShader, fragmentShader: gameFragment(picked.shader, assets.prelude, blend, this.drawMesh),
         transparent: true, depthWrite: false, side: THREE.DoubleSide,
       });
       premultiplied(material);
       material.name = this.materialName ?? '';
+      material.userData.sceneDepth = sceneDepth;
       return material;
     }
     return premultiplied(new THREE.ShaderMaterial({

@@ -16,7 +16,7 @@ public sealed record LocatedObject(string PackagePath, AssetCatalog Catalog, Ass
 
 /// <summary>
 /// Effect materials' own compiled shaders (see <see cref="ParticleShaderPlanner"/>), built once from the game's shader
-/// cache and kept next to the material's exported textures (shader4.json), for the particle window and skill preview.
+/// cache and kept next to the material's exported textures (shader6.json), for the particle window and skill preview.
 /// Thread-safe: materials can be prepared side by side.
 /// </summary>
 public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkProtectionProvider provider)
@@ -37,7 +37,7 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
     public async Task<ParticleShaderSet?> GetAsync(ShaderCacheIndex index, string material, string? materialPackage, string folder,
         string root, Locate locate, Action<string> log, CancellationToken cancellationToken)
     {
-        var record = Path.Combine(folder, "shader4.json");
+        var record = Path.Combine(folder, "shader6.json");
         try
         {
             if (File.Exists(record))

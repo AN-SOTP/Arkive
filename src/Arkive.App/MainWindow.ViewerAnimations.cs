@@ -70,13 +70,56 @@ public partial class MainWindow
             var match = found.Matches.FirstOrDefault(item => item.PackageAlias.Equals("lv_dynamicsky", StringComparison.OrdinalIgnoreCase) &&
                                                              item.ObjectName.Equals(probe, StringComparison.OrdinalIgnoreCase));
             if (match is null || !File.Exists(match.SourcePath)) return null;
-            return await _viewerEnvironments!.PrepareSkiesAsync(match.SourcePath);
+            var set = await _viewerEnvironments!.PrepareSkiesAsync(match.SourcePath);
+            return set with { Skies = await Task.Run(() => SkyColours(set)) };
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             Log($"Viewer skies unavailable: {exception.Message}");
             return null;
         }
+    }
+
+    // Each sky's average colour in its lower third (where it meets the horizon), measured once and kept in colours.json.
+    private static IReadOnlyList<ModelViewerSky> SkyColours(ModelViewerSkySet set)
+    {
+        var record = Path.Combine(set.Directory, "colours.json");
+        Dictionary<string, float[]>? known = null;
+        try { if (File.Exists(record)) known = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, float[]>>(File.ReadAllText(record)); }
+        catch (System.Text.Json.JsonException) { }
+        known ??= [];
+        var changed = false;
+        foreach (var sky in set.Skies.Where(sky => !known.ContainsKey(sky.Name)))
+        {
+            try
+            {
+                var image = new System.Windows.Media.Imaging.BitmapImage();
+                image.BeginInit();
+                image.UriSource = new Uri(Path.Combine(set.Directory, sky.File));
+                image.DecodePixelWidth = 16;
+                image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                image.EndInit();
+                var pixels = new System.Windows.Media.Imaging.FormatConvertedBitmap(image, System.Windows.Media.PixelFormats.Bgra32, null, 0);
+                int width = pixels.PixelWidth, height = pixels.PixelHeight;
+                var data = new byte[width * height * 4];
+                pixels.CopyPixels(data, width * 4, 0);
+                double r = 0, g = 0, b = 0;
+                var count = 0;
+                for (var y = height * 2 / 3; y < height; y++)
+                for (var x = 0; x < width; x++, count++)
+                {
+                    var at = (y * width + x) * 4;
+                    b += data[at]; g += data[at + 1]; r += data[at + 2];
+                }
+                known[sky.Name] = [(float)(r / count / 255), (float)(g / count / 255), (float)(b / count / 255)];
+                changed = true;
+            }
+            catch (Exception exception) when (exception is IOException or NotSupportedException or InvalidOperationException or UriFormatException)
+            {
+            }
+        }
+        if (changed) File.WriteAllText(record, System.Text.Json.JsonSerializer.Serialize(known));
+        return set.Skies.Select(sky => known.TryGetValue(sky.Name, out var colour) ? sky with { Colour = colour } : sky).ToArray();
     }
 
     /// <summary>Null when the mesh has no animations Arkive can find.</summary>

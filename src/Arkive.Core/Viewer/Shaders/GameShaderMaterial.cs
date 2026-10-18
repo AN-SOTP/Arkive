@@ -26,6 +26,9 @@ public sealed record GameShaderPlan(
     /// scrolling, pulsing) that change at a steady rate; null when none does. Others stay at time zero.
     /// </summary>
     public float[]? TimeRates { get; init; }
+
+    /// <summary>The first ark_cb0 register the material's own parameters use; those before it are the engine's.</summary>
+    public int FirstParameterRegister { get; init; }
 }
 
 /// <summary>Finds, translates and binds the game's base-pass pixel shader for one material instance.</summary>
@@ -142,7 +145,8 @@ public static class GameShaderMaterial
         MaterialInstanceDescription material,
         Func<string, string?> textureUrl,
         Func<string, bool> textureSrgb,
-        out string? failure)
+        out string? failure,
+        Func<int, string?>? engineTexture = null)
     {
         failure = null;
         var notes = mapNotes.ToList();
@@ -207,11 +211,16 @@ public static class GameShaderMaterial
         DxbcTranslation translation;
         try
         {
+            // A slot the material does not bind is the engine's (the scene's depth for soft particles); the caller
+            // can supply it.
+            bool Engine(int slot) => engineTexture?.Invoke(slot) is not null && !slotTextures.ContainsKey(slot) && !neutralSlots.ContainsKey(slot);
             translation = DxbcGlslTranslator.Translate(
                 DxbcDisassembler.Disassemble(dxbc),
-                slot => samplers.ContainsKey($"ark_gt{slot}"),
+                slot => samplers.ContainsKey($"ark_gt{slot}") || Engine(slot),
                 slot => slotTextures.TryGetValue(slot, out var name) && textureSrgb(name),
                 neutralSlots.GetValueOrDefault);
+            foreach (var slot in translation.Textures2D.Where(Engine))
+                samplers[$"ark_gt{slot}"] = engineTexture!(slot)!;
         }
         catch (Exception exception) when (exception is DxbcTranslationException or InvalidDataException or DllNotFoundException)
         {
@@ -310,6 +319,7 @@ public static class GameShaderMaterial
             albedo == 3 && translation.Outputs.Contains(2))
         {
             TimeRates = rates,
+            FirstParameterRegister = firstParameter,
         };
     }
 }

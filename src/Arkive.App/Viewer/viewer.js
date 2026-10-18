@@ -55,7 +55,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 const world = new THREE.Scene();
 // Skill effects are drawn in their own high-dynamic-range pass over the scene.
-const effectsPass = createEffectsPass(renderer);
+const effectsPass = createEffectsPass(renderer, { ground: () => (state.model ? grid.position.y : null) });
 // A photo-studio environment for reflections: dark floor, grey walls, a few softboxes. Metals reflect it,
 // so it needs contrast; an evenly bright room makes every metal read as white.
 function studioEnvironment() {
@@ -1443,10 +1443,12 @@ const lighting = {
   environments: [], base: '', name: '', background: false, blur: 0.35, rotation: 0, brightness: 1,
   sunAzimuth: 45, sunElevation: 40, sunIntensity: 1.7, sunColour: '#fff4e6', texture: null, cubes: new Map(), pending: 0,
   skies: [], skyBase: '', sky: '', skyLight: false, skyHorizon: -8, skyTextures: new Map(), skyReady: false,
+  // skyAuto: the sky was picked to suit the environment (it follows the environment until one is chosen by hand).
+  skyAuto: false, cubeColours: new Map(),
 };
 // The lighting settings remembered between sessions.
 const rememberedLighting = ['name', 'background', 'blur', 'rotation', 'brightness', 'sunAzimuth', 'sunElevation', 'sunIntensity',
-  'sunColour', 'sky', 'skyLight', 'skyHorizon'];
+  'sunColour', 'sky', 'skyLight', 'skyHorizon', 'skyAuto'];
 const pmrem = new THREE.PMREMGenerator(renderer);
 const environmentScene = new THREE.Scene();
 const environmentMaterial = new THREE.ShaderMaterial({
@@ -1468,9 +1470,9 @@ const skyScene = new THREE.Scene();
 const skyMaterial = new THREE.ShaderMaterial({
   side: THREE.BackSide,
   depthWrite: false,
-  uniforms: { map: { value: null }, rotation: { value: 0 }, brightness: { value: 1 }, horizon: { value: 0 } },
+  uniforms: { map: { value: null }, rotation: { value: 0 }, brightness: { value: 1 }, horizon: { value: 0 }, ground: { value: new THREE.Color(0.3, 0.3, 0.3) } },
   vertexShader: 'varying vec3 vDirection; void main() { vDirection = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `uniform sampler2D map; uniform float rotation; uniform float brightness; uniform float horizon; varying vec3 vDirection;
+  fragmentShader: `uniform sampler2D map; uniform float rotation; uniform float brightness; uniform float horizon; uniform vec3 ground; varying vec3 vDirection;
     void main() {
       vec3 d = normalize(vDirection);
       float c = cos(rotation), s = sin(rotation);
@@ -1478,8 +1480,10 @@ const skyMaterial = new THREE.ShaderMaterial({
       float elevation = asin(clamp(d.y, -1.0, 1.0));
       float v = clamp((elevation - horizon) / (1.5707963 - horizon), 0.0, 1.0);
       vec3 colour = texture2D(map, vec2(atan(d.z, d.x) / 6.2831853 + 0.5, v)).rgb;
-      // Below the sky's horizon: its lowest row, darkening towards the ground.
-      colour *= mix(0.35, 1.0, clamp(1.0 + (elevation - horizon) * 3.0, 0.0, 1.0));
+      // Below the sky's horizon (the sky textures stop there): the sky's horizon colour, darkening towards the ground,
+      // blended in over a narrow band so the texture's edge does not show.
+      vec3 below = ground * mix(0.35, 1.0, clamp(1.0 + (elevation - horizon) * 3.0, 0.0, 1.0));
+      colour = mix(below, colour, smoothstep(horizon - 0.01, horizon + 0.08, elevation));
       gl_FragColor = vec4(colour * brightness, 1.0);
     }`,
 });
@@ -1499,12 +1503,41 @@ function cubeFor(name) {
   const entry = lighting.environments.find((item) => item.name === name);
   if (!entry) return Promise.resolve(null);
   return new Promise((resolve, reject) => {
-    const texture = new THREE.CubeTextureLoader().load(entry.faces.map((face) => lighting.base + face), () => {
+    const texture = new THREE.CubeTextureLoader().setCrossOrigin('anonymous').load(entry.faces.map((face) => lighting.base + face), () => {
       lighting.cubes.set(name, texture);
+      const colour = cubeColour(texture);
+      if (colour) lighting.cubeColours.set(name, colour);
       resolve(texture);
     }, undefined, reject);
     texture.colorSpace = THREE.SRGBColorSpace;
   });
+}
+
+// The average colour of a cube map (its faces' pixels), for picking a sky that suits it.
+function cubeColour(texture) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 8;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  const sum = [0, 0, 0];
+  let count = 0;
+  for (const image of texture.image ?? []) {
+    try {
+      context.drawImage(image, 0, 0, 8, 8);
+      const data = context.getImageData(0, 0, 8, 8).data;
+      for (let i = 0; i < data.length; i += 4) { sum[0] += data[i]; sum[1] += data[i + 1]; sum[2] += data[i + 2]; count++; }
+    } catch { /* unreadable face */ }
+  }
+  return count ? sum.map((value) => value / count / 255) : null;
+}
+
+// The game's environment maps and skies are not linked in its files, so a sky is matched to an environment by colour:
+// the sky whose horizon is closest in colour to the environment's average.
+function skySuiting(name) {
+  const colour = lighting.cubeColours.get(name);
+  const candidates = lighting.skies.filter((item) => item.colour);
+  if (!colour || !candidates.length) return null;
+  const distance = (a) => (a[0] - colour[0]) ** 2 + (a[1] - colour[1]) ** 2 + (a[2] - colour[2]) ** 2;
+  return candidates.reduce((best, item) => (distance(item.colour) < distance(best.colour) ? item : best)).name;
 }
 
 function skyFor(name) {
@@ -1527,6 +1560,14 @@ function skyFor(name) {
 async function rebuildEnvironment() {
   const ticket = ++lighting.pending;
   const cube = lighting.name ? await cubeFor(lighting.name) : null;
+  // A sky picked to suit the environment follows it.
+  if (cube && lighting.background && lighting.skyAuto) {
+    const suited = skySuiting(lighting.name);
+    if (suited && suited !== lighting.sky) {
+      lighting.sky = suited;
+      renderLighting('input');
+    }
+  }
   const sky = lighting.sky ? await skyFor(lighting.sky) : null;
   if (ticket !== lighting.pending) return;
   lighting.texture?.dispose();
@@ -1534,6 +1575,8 @@ async function rebuildEnvironment() {
   lighting.skyReady = false;
   const rotation = THREE.MathUtils.degToRad(lighting.rotation);
   if (sky) {
+    const measured = lighting.skies.find((item) => item.name === lighting.sky)?.colour;
+    if (measured) skyMaterial.uniforms.ground.value.setRGB(...measured, THREE.SRGBColorSpace);
     skyMaterial.uniforms.map.value = sky;
     skyMaterial.uniforms.rotation.value = rotation;
     skyMaterial.uniforms.brightness.value = lighting.brightness;
@@ -1637,6 +1680,8 @@ function renderLighting(source) {
         changes.blur = 0;
       }
       if (key === 'background' && !changes.background) changes.sky = '';
+      if (key === 'background') changes.skyAuto = !!changes.background;
+      if (key === 'sky') changes.skyAuto = false;
       setLighting(changes, 'input');
     });
   });

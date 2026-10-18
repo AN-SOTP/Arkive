@@ -146,6 +146,7 @@ public partial class ParticleEditorWindow : Window
                     samplers = item.Value.Samplers.ToDictionary(sampler => sampler.Key, sampler => TextureUrl(sampler.Value)),
                     inputs = item.Value.Inputs.Select(input => new { register = input.Register, semantic = input.Semantic, index = input.Index }),
                     timeRates = item.Value.TimeRates,
+                    firstParameter = item.Value.FirstParameterRegister,
                 }),
             },
         }),

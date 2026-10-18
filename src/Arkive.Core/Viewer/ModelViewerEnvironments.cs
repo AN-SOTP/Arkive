@@ -16,7 +16,11 @@ public sealed record ModelViewerEnvironmentSet(string Directory, IReadOnlyList<M
 /// One of the game's sky backgrounds: a single texture wrapping once around the horizon, zenith at the top and the
 /// horizon near the bottom (the upper half of a panorama).
 /// </summary>
-public sealed record ModelViewerSky(string Name, string Label, string File);
+public sealed record ModelViewerSky(string Name, string Label, string File)
+{
+    /// <summary>The sky's average colour near the horizon (linear 0-1 RGB), for matching it to an environment map.</summary>
+    public float[]? Colour { get; init; }
+}
 
 public sealed record ModelViewerSkySet(string Directory, IReadOnlyList<ModelViewerSky> Skies);
 

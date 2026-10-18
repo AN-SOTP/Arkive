@@ -7,6 +7,10 @@ import * as THREE from 'three';
 // Particles live on this layer; the scene's own camera does not draw it.
 export const EFFECTS_LAYER = 1;
 
+// The scene's depth (the character and the ground), which the game's soft-particle shaders read to fade effects where
+// they meet the scene. Shared by every effect material that samples it.
+export const SCENE_DEPTH = { value: null };
+
 const FULLSCREEN_VERTEX = `
   varying vec2 vUv;
   void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
@@ -43,13 +47,20 @@ const COMPOSITE = `
     vec3 c = max(fx.rgb, vec3(0.0)) + glow;
     float m = max(c.r, max(c.g, c.b));
     // Brighter than white keeps its hue, washing towards white only as it gets far brighter.
-    vec3 ranged = m > 1.0 ? mix(c / m, vec3(1.0), clamp((m - 1.0) / 8.0, 0.0, 0.35)) : c;
+    vec3 ranged = m > 1.0 ? mix(c / m, vec3(1.0), clamp((m - 1.0) / 16.0, 0.0, 0.2)) : c;
     float coverage = clamp(fx.a, 0.0, 1.0);
     gl_FragColor = vec4(encode(ranged), coverage);
   }`;
 
-export function createEffectsPass(renderer) {
+// ground: the world height of the ground effects sit on (null for none). The game always draws effects over its
+// terrain: what goes below it is hidden and what meets it fades.
+export function createEffectsPass(renderer, { ground = () => null } = {}) {
   const size = new THREE.Vector2();
+  const depth = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: true, stencilBuffer: false });
+  depth.depthTexture = new THREE.DepthTexture(1, 1, THREE.UnsignedIntType);
+  SCENE_DEPTH.value = depth.depthTexture;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ colorWrite: false }));
+  floor.frustumCulled = false;
   const options = { type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false };
   const effects = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: true, stencilBuffer: false });
   const bloom = [0, 1, 2, 3].map(() => new THREE.WebGLRenderTarget(1, 1, options));
@@ -82,7 +93,10 @@ export function createEffectsPass(renderer) {
   function resize() {
     renderer.getDrawingBufferSize(size);
     const width = Math.max(1, size.x), height = Math.max(1, size.y);
-    if (effects.width !== width || effects.height !== height) effects.setSize(width, height);
+    if (effects.width !== width || effects.height !== height) {
+      effects.setSize(width, height);
+      depth.setSize(width, height);
+    }
     const near = [Math.max(1, width >> 2), Math.max(1, height >> 2)], far = [Math.max(1, width >> 3), Math.max(1, height >> 3)];
     bloom[0].setSize(...near); bloom[1].setSize(...near); bloom[2].setSize(...far); bloom[3].setSize(...far);
   }
@@ -103,10 +117,9 @@ export function createEffectsPass(renderer) {
         mask: camera.layers.mask, clearAlpha: renderer.getClearAlpha(), clearColor: renderer.getClearColor(new THREE.Color()),
         target: renderer.getRenderTarget(),
       };
-      // The scene's depth, so effects pass behind the character.
-      renderer.setRenderTarget(effects);
+      // The scene's depth (and the ground's), so effects pass behind the character and under the floor: once into a
+      // texture the soft-particle shaders read, once into the effects buffer for depth testing.
       renderer.setClearColor(0x000000, 0);
-      renderer.clear(true, true, false);
       renderer.autoClear = false;
       world.background = null;
       world.overrideMaterial = depthOnly;
@@ -115,8 +128,28 @@ export function createEffectsPass(renderer) {
       const lines = [];
       world.traverseVisible((object) => { if (object.isLine || object.isPoints) lines.push(object); });
       lines.forEach((object) => { object.visible = false; });
-      renderer.render(world, camera);
+      const height = ground();
+      if (height !== null && height !== undefined) {
+        floor.position.y = height;
+        world.add(floor);
+      }
+      for (const target of [depth, effects]) {
+        renderer.setRenderTarget(target);
+        renderer.clear(true, true, false);
+        renderer.render(world, camera);
+      }
+      floor.removeFromParent();
       lines.forEach((object) => { object.visible = true; });
+      // Device depth to distance in centimetres, as the game's shaders convert it: 1 / (depth * z - w).
+      const near = camera.near, far = camera.far;
+      const z = -(far - near) / (100 * near * far), w = -1 / (100 * near);
+      world.traverseVisible((object) => {
+        const uniforms = object.layers.isEnabled(EFFECTS_LAYER) ? object.material?.uniforms : null;
+        if (!uniforms?.ark_cb2 || !object.material.userData.sceneDepth) return;
+        const cb2 = uniforms.ark_cb2.value;
+        cb2[0]?.set(0.5, 0.5, 0.5, 0.5);
+        cb2[1]?.set(0, 0, z, w);
+      });
       // The effects, adding up in high dynamic range.
       world.overrideMaterial = null;
       camera.layers.set(EFFECTS_LAYER);

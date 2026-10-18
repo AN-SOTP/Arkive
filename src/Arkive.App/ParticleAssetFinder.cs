@@ -85,7 +85,7 @@ public sealed partial class ParticleAssetFinder(
         return new ParticleEditorAssets(textures, meshFiles);
     }
 
-    // The material's first texture, blend mode and settings (texture4.json) and its game shaders (shader4.json).
+    // The material's first texture, blend mode and settings (texture4.json) and its game shaders (shader6.json).
     private async Task<ParticleEditorTexture?> TextureAsync(string material, string? package, ShaderCacheIndex? shaders,
         CancellationToken cancellationToken)
     {
@@ -97,7 +97,7 @@ public sealed partial class ParticleAssetFinder(
         {
             ParticleEditorTexture? texture = null;
             if (File.Exists(record)) texture = JsonSerializer.Deserialize<ParticleEditorTexture>(await File.ReadAllTextAsync(record, cancellationToken));
-            var found = texture is null || shaders is not null && !File.Exists(Path.Combine(folder, "shader4.json"))
+            var found = texture is null || shaders is not null && !File.Exists(Path.Combine(folder, "shader6.json"))
                 ? await FindObjectAsync(material, "material", package, cancellationToken)
                 : null;
             if (texture is null)

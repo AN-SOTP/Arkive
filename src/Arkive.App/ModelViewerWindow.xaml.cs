@@ -164,7 +164,7 @@ public partial class ModelViewerWindow : Window
                 environments = set.Environments.Select(item => new { name = item.Name, label = item.Label, faces = item.Faces }),
                 skyBaseUrl = set.Skies is null ? null
                     : $"https://{SceneHost}/{Path.GetRelativePath(SceneCacheRoot, set.Skies.Directory).Replace('\\', '/')}/",
-                skies = (set.Skies?.Skies ?? []).Select(item => new { name = item.Name, label = item.Label, file = item.File }),
+                skies = (set.Skies?.Skies ?? []).Select(item => new { name = item.Name, label = item.Label, file = item.File, colour = item.Colour }),
             });
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)

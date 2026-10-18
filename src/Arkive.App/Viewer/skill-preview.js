@@ -322,7 +322,8 @@ export function createSkillPreview(context) {
       if (done) { item.effect.dispose(); item.anchor.removeFromParent(); }
       return !done;
     });
-    if (t > player.length + TAIL) {
+    // The skill starts again once its effects have played out (at most TAIL seconds after its last stage).
+    if (t > player.length + 0.25 && (t > player.length + TAIL || !player.effects.some((item) => item.effect.alive && item.effect.active === false || item.effect.particleCount > 0))) {
       if (player.loop) restart();
       else stop();
     }
