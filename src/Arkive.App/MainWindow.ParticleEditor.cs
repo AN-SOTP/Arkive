@@ -59,9 +59,9 @@ public partial class MainWindow
     private async void OpenParticleEditor(ParticleEditorRequest request, ParticleEffectRecipe recipe, Func<ParticleEffectRecipe, Task<string>>? save)
     {
         IReadOnlyDictionary<string, string>? packageFiles = null;
-        if (!string.IsNullOrWhiteSpace(_libraryRootPath))
+        if (!string.IsNullOrWhiteSpace(_libraryRootPath) && _umodelBridge is not null)
         {
-            try { packageFiles = await _packageIndexStore.PackageFilesByAliasAsync(_libraryRootPath, _gameMetadataIndex); }
+            try { packageFiles = await ParticleAssets().PackageFilesAsync(CancellationToken.None); }
             catch (Exception exception) when (exception is IOException or InvalidDataException) { Log($"Particle editor: package aliases unavailable: {exception.Message}"); }
         }
         var window = new ParticleEditorWindow(request, recipe, Path.Combine(_projectRoot, "cache", "webview2"), ParticleTextureRoot,
@@ -74,127 +74,15 @@ public partial class MainWindow
         window.Show();
     }
 
+    private ParticleAssetFinder? _particleAssets;
+
+    /// <summary>Finds and caches (under cache\particle-textures) what effects draw with; shared by every viewer.</summary>
+    private ParticleAssetFinder ParticleAssets() => _particleAssets ??= new ParticleAssetFinder(
+        _packageIndexStore, () => _libraryRootPath, () => _gameMetadataIndex, _umodelBridge!, _reader, _protectionProvider,
+        token => ModelViewerService().ShaderIndexAsync(_libraryRootPath, null, token), ParticleTextureRoot, Log);
+
     /// <summary>The textures and meshes an effect's emitters draw with, exported once and kept under cache\particle-textures.</summary>
-    private async Task<ParticleEditorAssets> FindParticleAssetsAsync(
-        IReadOnlyList<string> materials, IReadOnlyList<string> meshes, CancellationToken cancellationToken) =>
-        new(await FindParticleTexturesAsync(materials, cancellationToken),
-            await FindParticleMeshesAsync(meshes, cancellationToken));
+    private Task<ParticleEditorAssets> FindParticleAssetsAsync(ParticleEffectModel model, CancellationToken cancellationToken) =>
+        ParticleAssets().FindAsync(model.Emitters, null, cancellationToken);
 
-    /// <summary>
-    /// Each mesh particle's static mesh as glTF, exported once with UModel from the package the asset index finds it in.
-    /// </summary>
-    private async Task<IReadOnlyDictionary<string, string>> FindParticleMeshesAsync(
-        IReadOnlyList<string> meshes, CancellationToken cancellationToken)
-    {
-        var found = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var mesh in meshes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var folder = Path.Combine(ParticleTextureRoot, "meshes", SafeFolderName(mesh));
-            var record = Path.Combine(folder, "mesh.txt");
-            try
-            {
-                if (File.Exists(record))
-                {
-                    var cached = (await File.ReadAllTextAsync(record, cancellationToken)).Trim();
-                    if (cached.Length > 0 && File.Exists(Path.Combine(ParticleTextureRoot, cached))) found[mesh] = cached;
-                    continue;
-                }
-                var search = await _packageIndexStore.SearchAsync(_libraryRootPath!, mesh, null, _gameMetadataIndex,
-                    PackageIndexSearchScope.ObjectName, null, resultLimit: 20);
-                var match = search.Matches.FirstOrDefault(item => item.ObjectName.Equals(mesh, StringComparison.OrdinalIgnoreCase) &&
-                                                                  item.ClassName.Contains("staticmesh", StringComparison.OrdinalIgnoreCase) &&
-                                                                  File.Exists(item.SourcePath));
-                if (match is null) continue;
-                if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
-                var export = await _umodelBridge!.ExportForViewerAsync(match.SourcePath,
-                    new Core.External.UmodelAssetEntry(match.ExportIndex, match.SerialOffset, match.SerialSize, match.ClassName, match.ObjectName),
-                    Path.Combine(folder, "export"), _libraryRootPath, cancellationToken);
-                var model = export.OutputFiles.FirstOrDefault(path => path.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase) ||
-                                                                path.EndsWith(".glb", StringComparison.OrdinalIgnoreCase));
-                var relative = model is null ? string.Empty : Path.GetRelativePath(ParticleTextureRoot, model);
-                Directory.CreateDirectory(folder);
-                await File.WriteAllTextAsync(record, relative, cancellationToken);
-                if (relative.Length > 0) found[mesh] = relative;
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                  Core.External.UmodelBridgeException)
-            {
-                Log($"Particle mesh not exported: mesh={mesh}, error={exception.Message}");
-            }
-        }
-        return found;
-    }
-
-    /// <summary>
-    /// The first texture and blend mode of each effect material, exported once with UModel from the package the asset
-    /// index finds the material in, and kept under cache\particle-textures.
-    /// </summary>
-    private async Task<IReadOnlyDictionary<string, ParticleEditorTexture>> FindParticleTexturesAsync(
-        IReadOnlyList<string> materials, CancellationToken cancellationToken)
-    {
-        var found = new Dictionary<string, ParticleEditorTexture>(StringComparer.OrdinalIgnoreCase);
-        using var shaders = new ParticleShaderCache(_reader, _protectionProvider);
-        foreach (var material in materials)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var folder = Path.Combine(ParticleTextureRoot, SafeFolderName(material));
-            // Version 3 records also hold the material's colour and scalar settings; version 4 follows instances that set
-            // no parameters to their parent.
-            var record = Path.Combine(folder, "texture4.json");
-            try
-            {
-                if (File.Exists(record) && JsonSerializer.Deserialize<ParticleEditorTexture>(await File.ReadAllTextAsync(record, cancellationToken)) is { } cached)
-                {
-                    found[material] = await WithParticleShaderAsync(material, folder, cached, shaders, cancellationToken);
-                    continue;
-                }
-                var search = await _packageIndexStore.SearchAsync(_libraryRootPath!, material, null, _gameMetadataIndex,
-                    PackageIndexSearchScope.ObjectName, null, resultLimit: 20);
-                var match = search.Matches.FirstOrDefault(item => item.ObjectName.Equals(material, StringComparison.OrdinalIgnoreCase) &&
-                                                                  item.ClassName.Contains("material", StringComparison.OrdinalIgnoreCase) &&
-                                                                  File.Exists(item.SourcePath));
-                if (match is null) continue;
-                if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
-                var files = await _umodelBridge!.ExportNamedObjectAsync(match.SourcePath, material, Path.Combine(folder, "export"), cancellationToken);
-                var info = ParticleMaterialInfo.Read(files, material);
-                var result = new ParticleEditorTexture(info.TexturePath is null ? null : Path.GetRelativePath(ParticleTextureRoot, info.TexturePath),
-                    info.Additive ? "additive" : "translucent", info.Tint, info.Scalars);
-                Directory.CreateDirectory(folder);
-                await File.WriteAllTextAsync(record, JsonSerializer.Serialize(result), cancellationToken);
-                found[material] = await WithParticleShaderAsync(material, folder, result, shaders, cancellationToken);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or
-                                                  Core.External.UmodelBridgeException)
-            {
-                Log($"Particle material texture not found: material={material}, error={exception.Message}");
-            }
-        }
-        return found;
-    }
-
-    /// <summary>The material's own compiled effect shaders, when the game's shader cache has them (see <see cref="ParticleShaderCache"/>).</summary>
-    private async Task<ParticleEditorTexture> WithParticleShaderAsync(string material, string folder, ParticleEditorTexture texture,
-        ParticleShaderCache shaders, CancellationToken cancellationToken)
-    {
-        if (_umodelBridge is null) return texture;
-        var index = await ModelViewerService().ShaderIndexAsync(_libraryRootPath, null, cancellationToken);
-        if (index is null) return texture;
-        return texture with
-        {
-            Shader = await shaders.GetAsync(index, material, folder, ParticleTextureRoot, FindGameObjectAsync, Log, cancellationToken),
-        };
-    }
-
-    private async Task<PackageIndexMatch?> FindGameObjectAsync(string name, string classFragment, CancellationToken cancellationToken)
-    {
-        var search = await _packageIndexStore.SearchAsync(_libraryRootPath!, name, null, _gameMetadataIndex,
-            PackageIndexSearchScope.ObjectName, null, resultLimit: 20);
-        cancellationToken.ThrowIfCancellationRequested();
-        return search.Matches.FirstOrDefault(item => item.ObjectName.Equals(name, StringComparison.OrdinalIgnoreCase) &&
-                                                     item.ClassName.Contains(classFragment, StringComparison.OrdinalIgnoreCase) &&
-                                                     File.Exists(item.SourcePath));
-    }
-
-    private static string SafeFolderName(string value) => Regex.Replace(value, @"[^A-Za-z0-9_.-]", "_");
 }

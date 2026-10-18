@@ -14,7 +14,7 @@ public partial class ModelViewerWindow
     public Func<ModelViewerRequest, CancellationToken, Task<SkillPreviewOffer?>>? SkillOffer { get; init; }
 
     /// <summary>Prepares one skill branch for the page (shown mesh, class file, skill id, branch, progress); set by Arkive's main window.</summary>
-    public Func<ModelViewerRequest, string, int, int, Action<string>, CancellationToken, Task<SkillPlayback>>? SkillPlayback { get; init; }
+    public Func<ModelViewerRequest, string, int, int, Action<string, double?>, CancellationToken, Task<SkillPlayback>>? SkillPlayback { get; init; }
 
     private string? _skillScene;
 
@@ -32,9 +32,20 @@ public partial class ModelViewerWindow
         try
         {
             _skillScene = null;
+            // A player body shows the Skills tab at once; the class list fills it in once the game's skill data is read.
+            if (SkillPreviewService.CanOffer(request))
+            {
+                await _pageReadyTask.Task.WaitAsync(cancellationToken);
+                PostSkill(new { type = "skillsLoading" });
+            }
             var offer = await SkillOffer(request, cancellationToken);
             await _pageReadyTask.Task.WaitAsync(cancellationToken);
-            if (offer is null || cancellationToken.IsCancellationRequested) return;
+            if (cancellationToken.IsCancellationRequested) return;
+            if (offer is null)
+            {
+                PostSkill(new { type = "skillsUnavailable" });
+                return;
+            }
             PostSkill(new { type = "skills", defaultClass = offer.DefaultClass, classes = offer.Classes });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -57,7 +68,7 @@ public partial class ModelViewerWindow
         try
         {
             var playback = await SkillPlayback(request, classFile, skill, branch,
-                text => Dispatcher.Invoke(() => PostSkill(new { type = "skillStatus", text })), loading.Token);
+                (text, progress) => Dispatcher.InvokeAsync(() => PostSkill(new { type = "skillStatus", text, progress })), loading.Token);
             if (loading.IsCancellationRequested) return;
             // The character with its weapon (and any missing outfit half) replaces the shown mesh while skills play.
             if (playback.SceneJson is { } sceneJson && sceneJson != _skillScene)
@@ -78,7 +89,7 @@ public partial class ModelViewerWindow
         catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or
                                               UnauthorizedAccessException or Arkive.Core.External.UmodelBridgeException)
         {
-            PostSkill(new { type = "skillStatus", text = $"The skill could not be prepared: {exception.Message}" });
+            PostSkill(new { type = "skillStatus", text = $"The skill could not be prepared: {exception.Message}", progress = (double?)null });
             _log($"Skill preview failed: class={classFile}, skill={skill}, error={exception}");
         }
     }

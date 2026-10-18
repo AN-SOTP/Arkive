@@ -18,7 +18,7 @@ export function createSkillPreview(context) {
   const { world, $, post, requestRender, model, scene, socketOffset, animation, renderer, camera, ground } = context;
   const tab = document.querySelector('[data-tab="skills"]');
   const panel = $('tab-skills');
-  const ui = { offer: null, classFile: '', skill: 0, branch: 0, effectSet: DEFAULT_SET };
+  const ui = { offer: null, loadingOffer: false, classFile: '', skill: 0, branch: 0, effectSet: DEFAULT_SET, progress: null };
   const assets = new EffectAssets();
   const player = { data: null, clips: new Map(), time: 0, playing: false, speed: 1, loop: true, effects: [], fired: new Set(), last: 0, stages: [], weapons: [],
     warm: null, frames: 0, sets: [] };
@@ -29,7 +29,11 @@ export function createSkillPreview(context) {
 
   function render() {
     const offer = ui.offer;
-    if (!offer) { panel.innerHTML = ''; return; }
+    if (!offer) {
+      panel.innerHTML = ui.loadingOffer
+        ? `<p class="muted">Reading the game's skill list…</p><progress class="skill-progress"></progress>` : '';
+      return;
+    }
     const classes = offer.classes;
     const current = classes.find((item) => item.file === ui.classFile) ?? classes[0];
     const skill = current?.skills.find((item) => item.id === ui.skill) ?? current?.skills[0];
@@ -54,6 +58,7 @@ export function createSkillPreview(context) {
       </div>
       ${player.sets.length > 1 ? `<label class="field">Effects <select id="skillSet">${player.sets.map((set) =>
         `<option value="${escapeHtml(set)}"${set === ui.effectSet ? ' selected' : ''}>${set === DEFAULT_SET ? 'Standard (FX-00)' : escapeHtml(set.toUpperCase())}</option>`).join('')}</select></label>` : ''}
+      <progress id="skillBar" class="skill-progress" max="1"${ui.progress == null ? ' hidden' : ''}></progress>
       <div id="skillStatus" class="muted"></div>
       <div id="skillTimeline" class="mono"></div>`;
     $('skillClass').addEventListener('change', (e) => { ui.classFile = e.target.value; ui.skill = 0; ui.branch = 0; render(); });
@@ -64,13 +69,29 @@ export function createSkillPreview(context) {
     $('skillSet')?.addEventListener('change', (e) => { ui.effectSet = e.target.value; restart(); renderTimeline(); });
     $('skillPlay').addEventListener('click', () => {
       if (player.playing) { stop(); return; }
-      status('Preparing the skill…');
+      // The skill already loaded plays again straight away.
+      const key = `${ui.classFile}|${ui.skill}|${ui.branch}`;
+      if (player.data && player.loadedKey === key) { replay(); return; }
+      player.pendingKey = key;
+      progress('Preparing the skill…', 0);
       post({ type: 'playSkill', classFile: ui.classFile, skill: ui.skill, branch: ui.branch });
     });
     renderTimeline();
   }
 
-  function status(text) { const element = $('skillStatus'); if (element) element.textContent = text; }
+  function status(text) { progress(text, null); }
+
+  // The status line and, while something loads, a bar (fraction 0-1; undefined for one of unknown length).
+  function progress(text, fraction) {
+    ui.progress = fraction;
+    const element = $('skillStatus');
+    if (element) element.textContent = text;
+    const bar = $('skillBar');
+    if (!bar) return;
+    bar.hidden = fraction === null;
+    if (fraction === undefined) bar.removeAttribute('value');
+    else if (fraction !== null) bar.value = Math.max(0, Math.min(1, fraction));
+  }
 
   function renderTimeline() {
     const element = $('skillTimeline');
@@ -169,6 +190,7 @@ export function createSkillPreview(context) {
   async function start(data) {
     stop();
     player.data = data;
+    player.loadedKey = player.pendingKey;
     attachWeapons(data.weapons);
     assets.add({ textures: data.assets?.items, meshes: data.assets?.meshes, prelude: data.assets?.prelude });
     prewarm(data);
@@ -187,17 +209,21 @@ export function createSkillPreview(context) {
     player.sets = [...sets].sort();
     if (!player.sets.includes(ui.effectSet)) ui.effectSet = DEFAULT_SET;
     renderTimeline();
-    status(`Loading ${data.name}'s animations…`);
     player.clips.clear();
     const list = data.animations.list;
-    for (const stage of player.stages) {
-      if (!stage.anim || player.clips.has(stage.anim)) continue;
-      const info = list.find((item) => item.name.toLowerCase() === stage.anim.toLowerCase());
-      if (info) player.clips.set(stage.anim, await animation.load(data.animations.baseUrl, data.animations.bones, info));
+    const wanted = [...new Set(player.stages.map((stage) => stage.anim).filter(Boolean))];
+    for (const [index, anim] of wanted.entries()) {
+      progress(`Loading ${data.name}'s animations (${index + 1} of ${wanted.length})…`, 0.95 + 0.05 * index / wanted.length);
+      const info = list.find((item) => item.name.toLowerCase() === anim.toLowerCase());
+      if (info) player.clips.set(anim, await animation.load(data.animations.baseUrl, data.animations.bones, info));
     }
     const missing = player.stages.filter((stage) => stage.anim && !player.clips.has(stage.anim)).length;
     status(`${data.name}${data.branch && data.branch !== 'Default' ? ` (${data.branch})` : ''}: ${player.stages.length} stage(s), ` +
       `${player.stages.reduce((n, s) => n + s.notifies.length, 0)} effect(s)${missing ? `, ${missing} animation(s) not found` : ''}.`);
+    replay();
+  }
+
+  function replay() {
     restart();
     player.playing = true;
     animation.begin();
@@ -240,7 +266,6 @@ export function createSkillPreview(context) {
     if (!player.playing) return;
     player.playing = false;
     restart();
-    disposeWarm();
     animation.end();
     requestRender();
     render();
@@ -258,7 +283,12 @@ export function createSkillPreview(context) {
     player.last = now;
     player.time += dt;
     const t = player.time;
-    if (t <= player.length) {
+    if (t > player.length) {
+      // After the last stage the character holds its final pose while the effects play out.
+      const last = [...player.stages].reverse().find((stage) => stage.anim && player.clips.has(stage.anim));
+      const clip = last ? player.clips.get(last.anim) : null;
+      if (clip) animation.pose(clip, Math.max(0, (clip.frames - 1.01) / clip.rate));
+    } else {
       const index = stageAt(t);
       const stage = player.stages[index];
       const local = t - stage.begins;
@@ -304,14 +334,27 @@ export function createSkillPreview(context) {
     handle(message) {
       if (message?.type === 'skills') {
         ui.offer = message;
+        ui.loadingOffer = false;
         ui.classFile = message.defaultClass;
         tab.hidden = false;
         render();
-      } else if (message?.type === 'skillStatus') status(message.text);
+      } else if (message?.type === 'skillsLoading') {
+        // A player body: the tab shows at once and fills in when the game's skill list has been read.
+        ui.loadingOffer = true;
+        tab.hidden = false;
+        render();
+      } else if (message?.type === 'skillsUnavailable') {
+        ui.loadingOffer = false;
+        tab.hidden = true;
+        render();
+      } else if (message?.type === 'skillStatus') progress(message.text, message.progress ?? null);
       else if (message?.type === 'skill') start(message).catch((error) => status(`Could not play it: ${error.message}`));
       else if (message?.type === 'load' && !message.keepView) {
         stop();
+        disposeWarm();
+        player.data = null;
         ui.offer = null;
+        ui.loadingOffer = false;
         tab.hidden = true;
         render();
       }

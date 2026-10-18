@@ -15,7 +15,11 @@ public sealed record LookWeapon(string Item, LookMesh Mesh, string Slot, string?
 
 /// <summary>A class's default look: the outfit parts a new character wears and its first weapon in each hand.</summary>
 /// <param name="DefaultMesh">The class's skeleton mesh (PC_DK_Shadow_SK), which holds the sockets its skills use.</param>
-public sealed record ClassLook(string Name, LookMesh? DefaultMesh, IReadOnlyDictionary<string, LookMesh> Parts, IReadOnlyList<LookWeapon> Weapons);
+public sealed record ClassLook(string Name, LookMesh? DefaultMesh, IReadOnlyDictionary<string, LookMesh> Parts, IReadOnlyList<LookWeapon> Weapons)
+{
+    /// <summary>The look's AnimSets (the body's, then the class's own, which holds its skill animations).</summary>
+    public IReadOnlyList<LookMesh> AnimSets { get; init; } = [];
+}
 
 /// <summary>
 /// The game's look files (data4.lpk, XmlData\LookInfo): a class's default parts (EFDLChar_PC_*) and each item's mesh
@@ -58,7 +62,10 @@ public static partial class CharacterLooks
                 if (part is null || !items.TryGetValue(item, out var itemEntry)) continue;
                 if (Mesh(Strings(itemEntry)) is { } mesh) parts.TryAdd(part, mesh);
             }
-            return new ClassLook(lookName, Mesh(strings), parts, Weapons(strings, code.Groups["code"].Value, items, Strings));
+            var animSets = strings.Select(value => ObjectPath().Match(value))
+                .Where(match => match.Success && match.Groups["class"].Value.Equals("AnimSet", StringComparison.OrdinalIgnoreCase))
+                .Select(match => new LookMesh(match.Groups["package"].Value, match.Groups["object"].Value)).ToArray();
+            return new ClassLook(lookName, Mesh(strings), parts, Weapons(strings, code.Groups["code"].Value, items, Strings)) { AnimSets = animSets };
         }
         return null;
     }

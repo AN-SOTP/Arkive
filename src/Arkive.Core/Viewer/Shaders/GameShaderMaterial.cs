@@ -19,7 +19,14 @@ public sealed record GameShaderPlan(
     IReadOnlyList<string> Notes,
     bool EmitsSceneColour = false,
     bool Unlit = false,
-    bool WritesSurface = false);
+    bool WritesSurface = false)
+{
+    /// <summary>
+    /// How fast each ark_cb0 value changes per second of game time, for the material's time-driven values (panning,
+    /// scrolling, pulsing) that change at a steady rate; null when none does. Others stay at time zero.
+    /// </summary>
+    public float[]? TimeRates { get; init; }
+}
 
 /// <summary>Finds, translates and binds the game's base-pass pixel shader for one material instance.</summary>
 public static class GameShaderMaterial
@@ -222,23 +229,37 @@ public static class GameShaderMaterial
                 []);
         }
 
-        var cb0 = new float[Math.Max(1, translation.ConstantBufferSizes.GetValueOrDefault(0)) * 4];
         float[]? Vector(string name) => material.Vectors.TryGetValue(name, out var value) ? value : null;
         float? Scalar(string name) => material.Scalars.TryGetValue(name, out var value) ? value : null;
-        for (var k = 0; k < expressions.Vectors.Count && k < bindings.VectorRegisters.Count; k++)
+        float[] Constants(float time)
         {
-            var register = bindings.VectorRegisters[k];
-            if (register < 0 || register * 4 + 3 >= cb0.Length) continue;
-            var value = UniformExpressionEvaluator.Evaluate(expressions.Vectors[k], Vector, Scalar);
-            Array.Copy(value, 0, cb0, register * 4, 4);
+            var values = new float[Math.Max(1, translation.ConstantBufferSizes.GetValueOrDefault(0)) * 4];
+            for (var k = 0; k < expressions.Vectors.Count && k < bindings.VectorRegisters.Count; k++)
+            {
+                var register = bindings.VectorRegisters[k];
+                if (register < 0 || register * 4 + 3 >= values.Length) continue;
+                var value = UniformExpressionEvaluator.Evaluate(expressions.Vectors[k], Vector, Scalar, time);
+                Array.Copy(value, 0, values, register * 4, 4);
+            }
+            for (var k = 0; k < expressions.Scalars.Count; k++)
+            {
+                if (k / 4 >= bindings.ScalarRegisters.Count) break;
+                if (bindings.ScalarRegisters[k / 4] < 0) continue;
+                var slot = bindings.ScalarRegisters[k / 4] * 4 + k % 4;
+                if (slot >= values.Length) continue;
+                values[slot] = UniformExpressionEvaluator.Evaluate(expressions.Scalars[k], Vector, Scalar, time)[0];
+            }
+            return values;
         }
-        for (var k = 0; k < expressions.Scalars.Count; k++)
+        var cb0 = Constants(0);
+        // Values that grow steadily with time (the same step from 0 to 1 s as from 1 to 2 s) are animated by the page.
+        var (one, two) = (Constants(1), Constants(2));
+        float[]? rates = null;
+        for (var slot = 0; slot < cb0.Length; slot++)
         {
-            if (k / 4 >= bindings.ScalarRegisters.Count) break;
-            if (bindings.ScalarRegisters[k / 4] < 0) continue;
-            var slot = bindings.ScalarRegisters[k / 4] * 4 + k % 4;
-            if (slot >= cb0.Length) continue;
-            cb0[slot] = UniformExpressionEvaluator.Evaluate(expressions.Scalars[k], Vector, Scalar)[0];
+            var step = one[slot] - cb0[slot];
+            if (step == 0 || !float.IsFinite(step) || Math.Abs(two[slot] - one[slot] - step) > 1e-4f * Math.Max(1, Math.Abs(step))) continue;
+            (rates ??= new float[cb0.Length])[slot] = step;
         }
 
         if (Environment.GetEnvironmentVariable("ARKIVE_VIEWER_TRACE") == "1")
@@ -286,6 +307,9 @@ public static class GameShaderMaterial
             albedo != 0 && translation.Outputs.Contains(0) && HasEmissiveParameter(material),
             unlit,
             // The deferred surface target: o2.z roughness, o2.w metalness (checked against RealPBR, PBR and hair).
-            albedo == 3 && translation.Outputs.Contains(2));
+            albedo == 3 && translation.Outputs.Contains(2))
+        {
+            TimeRates = rates,
+        };
     }
 }

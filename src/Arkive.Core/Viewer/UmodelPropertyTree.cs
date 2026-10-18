@@ -81,6 +81,7 @@ public static partial class UmodelPropertyTree
     {
         var depth = 0;
         var start = 0;
+        var entry = 0;
         for (var index = 0; index <= body.Length; index++)
         {
             var character = index < body.Length ? body[index] : ',';
@@ -92,6 +93,9 @@ public static partial class UmodelPropertyTree
                 start = index + 1;
                 var equals = field.IndexOf('=');
                 if (equals > 0) yield return (field[..equals].Trim(), field[(equals + 1)..].Trim());
+                // A short array is written inline as its bare entries: { Texture2D'a', Texture2D'b' }.
+                else if (field.Length > 0) yield return ($"[{entry}]", field);
+                entry++;
             }
         }
     }

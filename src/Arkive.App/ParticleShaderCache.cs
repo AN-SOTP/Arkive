@@ -3,7 +3,6 @@ using System.IO;
 using System.Text.Json;
 using Arkive.Core.Archives;
 using Arkive.Core.Assets;
-using Arkive.Core.Discovery;
 using Arkive.Core.Materials;
 using Arkive.Core.Packages;
 using Arkive.Core.Particles;
@@ -12,28 +11,33 @@ using Arkive.Core.Viewer.Shaders;
 
 namespace Arkive.App;
 
+/// <summary>An object found in a game package: the package file, its catalogue and the object's export.</summary>
+public sealed record LocatedObject(string PackagePath, AssetCatalog Catalog, AssetCatalogEntry Entry);
+
 /// <summary>
 /// Effect materials' own compiled shaders (see <see cref="ParticleShaderPlanner"/>), built once from the game's shader
-/// cache and kept next to the material's exported textures (shader2.json), for the particle window and skill preview.
-/// One instance serves one batch of materials, opening each package it reads once.
+/// cache and kept next to the material's exported textures (shader4.json), for the particle window and skill preview.
+/// Thread-safe: materials can be prepared side by side.
 /// </summary>
-public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkProtectionProvider provider) : IDisposable
+public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkProtectionProvider provider)
 {
     private const int MaximumParents = 8;
 
-    /// <summary>Finds a material or texture object by name and class ("material", "texture") in the game packages.</summary>
-    public delegate Task<PackageIndexMatch?> FindObject(string name, string classFragment, CancellationToken cancellationToken);
+    /// <summary>
+    /// Finds a material or texture ("material", "texture") by name, starting from the package of the object that refers
+    /// to it (whose imports say which package it is in), when known.
+    /// </summary>
+    public delegate Task<LocatedObject?> Locate(string name, string classFragment, string? nearPackage, CancellationToken cancellationToken);
 
-    private readonly AssetCatalogReader _catalogs = new(packageReader, provider);
     private readonly MaterialInstanceReconnaissanceService _materials = new(packageReader, provider);
-    private readonly Dictionary<string, (AssetCatalog Catalog, LogicalPackageStream Stream)?> _packages = new(StringComparer.OrdinalIgnoreCase);
 
     /// <param name="folder">The material's folder: UModel's export of it under "export".</param>
     /// <param name="root">The folder the page's texture references are relative to.</param>
-    public async Task<ParticleShaderSet?> GetAsync(ShaderCacheIndex index, string material, string folder, string root,
-        FindObject findObject, Action<string> log, CancellationToken cancellationToken)
+    /// <param name="materialPackage">The package the material is in, when known.</param>
+    public async Task<ParticleShaderSet?> GetAsync(ShaderCacheIndex index, string material, string? materialPackage, string folder,
+        string root, Locate locate, Action<string> log, CancellationToken cancellationToken)
     {
-        var record = Path.Combine(folder, "shader2.json");
+        var record = Path.Combine(folder, "shader4.json");
         try
         {
             if (File.Exists(record))
@@ -47,7 +51,7 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
             var description = exported.FirstOrDefault(item => item.Name.Equals(material, StringComparison.OrdinalIgnoreCase))
                               ?? exported.FirstOrDefault(item => !exported.Any(other =>
                                   other.ParentChain.Contains(item.Name, StringComparer.OrdinalIgnoreCase)))
-                              ?? await DescribeFromPackageAsync(material, findObject, cancellationToken);
+                              ?? await DescribeFromPackageAsync(material, materialPackage, locate, cancellationToken);
             Directory.CreateDirectory(folder);
             if (description is null)
             {
@@ -60,15 +64,29 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
                     .GroupBy(path => Path.GetFileNameWithoutExtension(path), StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase)
                 : [];
-            // The planner reads material and texture exports synchronously; they are found in the game packages first.
+            // The planner reads material and texture exports synchronously; they are found in the game packages first,
+            // each parent from the package of the material that names it.
             var bytes = new Dictionary<string, byte[]?>(StringComparer.OrdinalIgnoreCase);
+            var packages = new List<string>();
+            var near = materialPackage;
             foreach (var name in description.ParentChain.Prepend(description.Name).Distinct(StringComparer.OrdinalIgnoreCase))
-                bytes[name] = await findObject(name, "material", cancellationToken) is { } match ? Read(match)?.Bytes : null;
+            {
+                var found = await locate(name, "material", near, cancellationToken);
+                bytes[name] = found is null ? null : Read(found);
+                if (found is null) continue;
+                near = found.PackagePath;
+                packages.Add(found.PackagePath);
+            }
             var srgb = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             foreach (var name in pngs.Keys)
-                srgb[name] = await findObject(name, "texture", cancellationToken) is { } match && Read(match) is { } found
-                    ? TexturePropertyProbe.SamplesSrgb(TexturePropertyProbe.Read(found.Bytes, found.Catalog.Names))
+            {
+                LocatedObject? texture = null;
+                foreach (var package in packages.Append(null))
+                    if ((texture = await locate(name, "texture", package, cancellationToken)) is not null) break;
+                srgb[name] = texture is not null && Read(texture) is { } textureBytes
+                    ? TexturePropertyProbe.SamplesSrgb(TexturePropertyProbe.Read(textureBytes, texture.Catalog.Names))
                     : !name.EndsWith("_n", StringComparison.OrdinalIgnoreCase);
+            }
             string? failure = null;
             var shader = await Task.Run(() => ParticleShaderPlanner.Build(index, description,
                 name => bytes.GetValueOrDefault(name),
@@ -88,7 +106,7 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
 
     // A material instance and its parents as the package holds them: their scalar and colour parameters (the instance's
     // own win), and the base material's blend mode and sidedness.
-    private async Task<MaterialInstanceDescription?> DescribeFromPackageAsync(string material, FindObject findObject,
+    private async Task<MaterialInstanceDescription?> DescribeFromPackageAsync(string material, string? materialPackage, Locate locate,
         CancellationToken cancellationToken)
     {
         var chain = new List<string>();
@@ -96,16 +114,19 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
         var vectors = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
         var blendMode = "BLEND_Opaque";
         var twoSided = false;
+        var near = materialPackage;
         for (string? name = material; name is not null && chain.Count < MaximumParents && !chain.Contains(name, StringComparer.OrdinalIgnoreCase);)
         {
-            if (await findObject(name, "material", cancellationToken) is not { } match) break;
+            if (await locate(name, "material", near, cancellationToken) is not { } found) break;
             chain.Add(name);
-            var report = await _materials.InspectAsync(new MaterialInstanceReconnaissanceRequest(match.SourcePath, match.PackageAlias,
-                match.ExportIndex, match.Kind, match.ClassName, match.ObjectName, match.SerialOffset, match.SerialSize,
+            near = found.PackagePath;
+            var entry = found.Entry;
+            var report = await _materials.InspectAsync(new MaterialInstanceReconnaissanceRequest(found.PackagePath, string.Empty,
+                entry.ExportIndex, entry.Kind, entry.ClassName, entry.ObjectName, entry.SerialOffset, entry.SerialSize,
                 KnownPackageSha256: new string('0', 64)), cancellationToken);
             foreach (var scalar in report.ScalarParameters) scalars.TryAdd(scalar.Name, scalar.Value);
             foreach (var vector in report.VectorParameters) vectors.TryAdd(vector.Name, [vector.Red, vector.Green, vector.Blue, vector.Alpha]);
-            if (Read(match) is { } export && BlendModeOf(export.Bytes, export.Catalog) is { } blend) blendMode = blend;
+            if (Read(found) is { } bytes && BlendModeOf(bytes, found.Catalog) is { } blend) blendMode = blend;
             if (report.Properties.Any(property => property.Name.Equals("TwoSided", StringComparison.OrdinalIgnoreCase) &&
                                                   property.ValuePreview.Equals("True", StringComparison.OrdinalIgnoreCase)))
                 twoSided = true;
@@ -149,33 +170,22 @@ public sealed class ParticleShaderCache(UpkPackageReader packageReader, IChunkPr
         return path[(path.LastIndexOf('.') + 1)..];
     }
 
-    /// <summary>A texture's export and its package's catalog, for reading its sampling settings.</summary>
-    public (byte[] Bytes, AssetCatalog Catalog)? Read(PackageIndexMatch match)
+    /// <summary>An object's export bytes.</summary>
+    public byte[]? Read(LocatedObject found)
     {
-        if (match.SerialSize is <= 0 or > 64 << 20) return null;
-        if (!_packages.TryGetValue(match.SourcePath, out var package))
+        if (found.Entry.SerialSize is <= 0 or > 64 << 20) return null;
+        try
         {
-            try
-            {
-                var catalog = _catalogs.Read(match.SourcePath);
-                package = (catalog, new LogicalPackageStream(catalog.Summary, provider));
-            }
-            catch (Exception exception) when (exception is IOException or InvalidDataException)
-            {
-                package = null;
-            }
-            _packages[match.SourcePath] = package;
+            using var stream = new LogicalPackageStream(found.Catalog.Summary, provider);
+            var bytes = new byte[found.Entry.SerialSize];
+            stream.Position = found.Entry.SerialOffset;
+            stream.ReadExactly(bytes);
+            return bytes;
         }
-        if (package is not { } opened) return null;
-        var bytes = new byte[match.SerialSize];
-        opened.Stream.Position = match.SerialOffset;
-        opened.Stream.ReadExactly(bytes);
-        return (bytes, opened.Catalog);
-    }
-
-    public void Dispose()
-    {
-        foreach (var package in _packages.Values) package?.Stream.Dispose();
+        catch (Exception exception) when (exception is IOException or InvalidDataException)
+        {
+            return null;
+        }
     }
 
     private sealed record Record(ParticleShaderSet? Shader, string? Failure);

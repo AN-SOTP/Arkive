@@ -45,7 +45,14 @@ public sealed record ParticleEmitterModel(
     bool Enabled,
     string? Material,
     string? Mesh,
-    IReadOnlyList<ParticleModuleModel> Modules);
+    IReadOnlyList<ParticleModuleModel> Modules)
+{
+    /// <summary>The alias of the package the material is in (an effect's materials mostly live in shared packages).</summary>
+    public string? MaterialPackage { get; init; }
+
+    /// <summary>The alias of the package the mesh is in.</summary>
+    public string? MeshPackage { get; init; }
+}
 
 /// <summary>What the particle preview plays: a system's emitters and their settings, as the game stores them.</summary>
 public sealed record ParticleEffectModel(string System, string PackageAlias, IReadOnlyList<ParticleEmitterModel> Emitters);
@@ -59,17 +66,18 @@ public static class ParticleEffectModels
     /// </param>
     public static ParticleEffectModel Build(
         string packagePath, string packageAlias, string systemObjectName, string? systemObjectPath,
-        IChunkProtectionProvider protectionProvider, Func<string, string?>? packageFile = null)
+        IChunkProtectionProvider protectionProvider, Func<string, string?>? packageFile = null,
+        Func<string, AssetCatalog>? readCatalog = null)
     {
-        var catalogs = new AssetCatalogReader(protectionProvider: protectionProvider);
-        var catalog = catalogs.Read(packagePath);
+        readCatalog ??= new AssetCatalogReader(protectionProvider: protectionProvider).Read;
+        var catalog = readCatalog(packagePath);
         var system = ParticleEffects.FindSystem(catalog, packagePath, systemObjectName, systemObjectPath);
         using var logical = new LogicalPackageStream(catalog.Summary, protectionProvider);
         var others = new Dictionary<string, Reader?>(StringComparer.OrdinalIgnoreCase);
         var streams = new List<LogicalPackageStream>();
         try
         {
-            return Build(new Reader(catalog, logical), system, packageAlias, Open);
+            return Build(new Reader(catalog, logical, packageAlias), system, packageAlias, Open);
         }
         finally
         {
@@ -84,10 +92,10 @@ public static class ParticleEffectModels
             {
                 try
                 {
-                    var other = catalogs.Read(file);
+                    var other = readCatalog(file);
                     var stream = new LogicalPackageStream(other.Summary, protectionProvider);
                     streams.Add(stream);
-                    opened = new Reader(other, stream);
+                    opened = new Reader(other, stream, alias);
                 }
                 catch (Exception exception) when (exception is IOException or InvalidDataException)
                 {
@@ -119,7 +127,7 @@ public static class ParticleEffectModels
                 moduleRefs.AddRange(ParticlePropertyStream.ReadObjectArray(lod.Bytes, modules) ?? []);
             var enabled = Find(lod.Properties, "benabled") is not { } enabledProperty || lod.Bytes[enabledProperty.ValueOffset] != 0;
             var models = new List<ParticleModuleModel>();
-            string? material = null, mesh = null;
+            string? material = null, mesh = null, materialPackage = null, meshPackage = null;
             foreach (var moduleRef in moduleRefs.Where(reference => reference != 0).Distinct())
             {
                 // A module another system owns is read from its own package.
@@ -128,12 +136,21 @@ public static class ParticleEffectModels
                 var asset = owner.Exports[local];
                 var values = owner.Values(module.Bytes, module.Properties);
                 if (asset.ClassName.Contains("required", StringComparison.OrdinalIgnoreCase) && values.TryGetValue("material", out var found))
+                {
                     material = found as string;
+                    materialPackage = owner.PackageOf(module.Bytes, Find(module.Properties, "material"));
+                }
                 if (asset.ClassName.Contains("typedatamesh", StringComparison.OrdinalIgnoreCase) && values.TryGetValue("mesh", out var meshName))
+                {
                     mesh = meshName as string;
+                    meshPackage = owner.PackageOf(module.Bytes, Find(module.Properties, "mesh"));
+                }
                 models.Add(new ParticleModuleModel(asset.ClassName.ToLowerInvariant(), asset.ObjectName, values));
             }
-            emitters.Add(new ParticleEmitterModel(emitters.Count, name, enabled, material, mesh, models));
+            emitters.Add(new ParticleEmitterModel(emitters.Count, name, enabled, material, mesh, models)
+            {
+                MaterialPackage = materialPackage, MeshPackage = meshPackage,
+            });
         }
         return new ParticleEffectModel(system.ObjectName, packageAlias, emitters);
     }
@@ -144,8 +161,24 @@ public static class ParticleEffectModels
     private static float Float(byte[] bytes, ParticleProperty? property, int offset = 0) =>
         property is { Size: >= 4 } ? BinaryPrimitives.ReadSingleLittleEndian(bytes.AsSpan(property.ValueOffset + offset)) : 0;
 
-    private sealed class Reader(AssetCatalog catalog, LogicalPackageStream logical)
+    private sealed class Reader(AssetCatalog catalog, LogicalPackageStream logical, string alias)
     {
+        /// <summary>The package an object property's object is in: this one for an export, else the import's outermost package.</summary>
+        public string? PackageOf(byte[] bytes, ParticleProperty? property)
+        {
+            if (property is not { Size: 4 }) return null;
+            var reference = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(property.ValueOffset));
+            if (reference > 0) return alias;
+            string? package = null;
+            for (var outer = reference; outer < 0 && -outer <= catalog.Imports.Count;)
+            {
+                var item = catalog.Imports[-outer - 1];
+                if (item.OuterIndex == 0) package = item.ObjectName.Resolve(catalog.Names);
+                outer = item.OuterIndex;
+            }
+            return package;
+        }
+
         public IReadOnlyDictionary<int, AssetCatalogEntry> Exports { get; } = catalog.Assets.ToDictionary(asset => asset.ExportIndex);
 
         /// <summary>

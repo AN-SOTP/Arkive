@@ -7,6 +7,7 @@
 // has no shader for are approximated by their first texture and blend mode.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { EFFECTS_LAYER } from './effects-pass.js';
 
 export const MAX_PARTICLES = 4000;
 // Instance buffers start small and double as an emitter needs more, so spawning an effect allocates little.
@@ -241,11 +242,13 @@ export class EffectAssets {
 // Every particle passes what the game's vertex factories pass its pixel shader: its colour, dynamic parameters, both
 // flipbook frames' texture coordinates, its clip-space position and the camera direction in its tangent space.
 const COMMON_VARYINGS = `
-  varying vec4 vColor; varying vec4 vDyn; varying vec4 vUv; varying vec4 vClip; varying vec3 vCam; varying vec2 vLocal; varying float vFacing;`;
+  varying vec4 vColor; varying vec4 vDyn; varying vec4 vUv; varying vec4 vClip; varying vec3 vCam; varying vec2 vLocal; varying float vFacing;
+  varying float vSub;`;
 
 const SPRITE_VERTEX = `
   attribute vec4 iPos; attribute vec4 iSize; attribute vec3 iVel; attribute vec4 iColor; attribute vec4 iDyn;
   uniform float alignMode; uniform vec2 subImages; uniform float flipUv; uniform vec3 lockU; uniform vec3 lockV; uniform float lift;
+  uniform float blendFrames;
   ${COMMON_VARYINGS}
   vec2 frameUv(float frame, vec2 uv, float columns, float rows) {
     frame = mod(floor(frame), columns * rows);
@@ -300,7 +303,11 @@ const SPRITE_VERTEX = `
     // Texture coordinates run right and down from the texture's top left, as the game lays out flipbook frames.
     float columns = max(1.0, subImages.x), rows = max(1.0, subImages.y);
     vec2 uv = vec2(corner.x + 0.5, 0.5 - corner.y);
-    vUv = vec4(frameUv(iSize.z, uv, columns, rows), frameUv(iSize.z + 1.0, uv, columns, rows));
+    // Both flipbook frames, the second packed (v, u) as the game's vertex factory packs it, and how far between them.
+    float frame = floor(iSize.z);
+    vec2 next = frameUv(frame + 1.0, uv, columns, rows);
+    vUv = vec4(frameUv(frame, uv, columns, rows), next.y, next.x);
+    vSub = blendFrames > 0.5 ? fract(iSize.z) : 0.0;
   }`;
 
 const MESH_VERTEX = `
@@ -317,14 +324,14 @@ const MESH_VERTEX = `
     float facing = dot(n, normalize(-view.xyz));
     vFacing = abs(facing);
     vCam = vec3(sqrt(max(0.0, 1.0 - facing * facing)), 0.0, facing);
-    vColor = iColor; vDyn = iDyn; vLocal = vec2(0.0);
+    vColor = iColor; vDyn = iDyn; vLocal = vec2(0.0); vSub = 0.0;
     vec2 at = flipUv > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv;
-    vUv = vec4(at, at);
+    vUv = vec4(at, at.y, at.x);
   }`;
 
 // The approximation: the material's first texture as a mask, its colour and blend mode.
 const FRAGMENT = `
-  uniform sampler2D map; uniform float hasMap; uniform float roundEdge;
+  uniform sampler2D map; uniform float hasMap; uniform float roundEdge; uniform float coverage;
   uniform float texturePower; uniform float strength; uniform float fresnelPower; uniform float fresnelStrength;
   ${COMMON_VARYINGS}
   void main() {
@@ -338,17 +345,19 @@ const FRAGMENT = `
     if (fresnelStrength > 0.0) mask *= clamp(pow(1.0 - vFacing, max(0.25, fresnelPower)) * fresnelStrength, 0.0, 1.0);
     float a = min(1.0, vColor.a * mask);
     if (a <= 0.002) discard;
-    // The game's colours are HDR (often far above 1); roll them off so bright effects keep their hue.
+    // The game's colours are HDR (often far above 1); the effects pass brings them into range.
     vec3 hdr = vColor.rgb * (hasMap > 0.5 ? tex.rgb / max(0.001, strongest) : vec3(1.0));
-    gl_FragColor = vec4(vec3(1.0) - exp(-hdr * 0.8), a);
+    gl_FragColor = vec4(hdr * a, a * coverage);
   }`;
 
 // What each input of a game particle shader reads, by semantic. The sprite factories pass the particle colour in
-// TEXCOORD1 and dynamic parameters in TEXCOORD2; the beam, trail and mesh factories pass colour in COLOR0.
-function gameInput(input) {
+// TEXCOORD1 and dynamic parameters in TEXCOORD2; the flipbook, beam, trail and mesh factories pass colour in COLOR0,
+// dynamic parameters in COLOR1 and how far between flipbook frames in TEXCOORD1.
+function gameInput(input, colorLayout) {
   const register = `ark_in${input.register}`;
   const value = {
-    TEXCOORD0: 'vUv', TEXCOORD1: 'vColor', TEXCOORD2: 'vDyn', COLOR0: 'vColor', COLOR1: 'vDyn',
+    TEXCOORD0: 'vUv', TEXCOORD1: colorLayout ? 'vec4(vSub, 0.0, 0.0, 0.0)' : 'vColor', TEXCOORD2: 'vDyn',
+    COLOR0: 'vColor', COLOR1: 'vDyn',
     // Height fog: colour added in xyz, the share that survives in w. The preview has no fog.
     TEXCOORD4: 'vec4(0.0, 0.0, 0.0, 1.0)',
     // Clip-space position (soft particles read the scene depth there; see ParticleShaderPlanner).
@@ -366,18 +375,19 @@ function gameInput(input) {
 function gameFragment(shader, prelude, blend) {
   const uniforms = Object.entries(shader.constantBuffers).map(([name, values]) => `uniform vec4 ${name}[${Math.max(1, values.length / 4)}];`)
     .concat(Object.keys(shader.samplers).map((name) => `uniform sampler2D ${name};`));
-  const output = blend === 'additive' || blend === 'modulate'
-    ? 'vec3 c = clamp(o.rgb, 0.0, 1.0); if (max(c.r, max(c.g, c.b)) < 0.002) discard; gl_FragColor = vec4(ark_encode_srgb(c), 1.0);'
-    : blend === 'opaque'
-      ? 'gl_FragColor = vec4(ark_encode_srgb(clamp(o.rgb, 0.0, 1.0)), 1.0);'
-      : 'float a = clamp(o.a, 0.0, 1.0); if (a < 0.002) discard; gl_FragColor = vec4(ark_encode_srgb(clamp(o.rgb, 0.0, 1.0)), a);';
+  // Linear, unclamped light (the effects pass brings it into range); modulate darkens what is behind by its brightness.
+  const output = {
+    additive: 'vec3 c = max(o.rgb, vec3(0.0)); if (max(c.r, max(c.g, c.b)) < 0.0005) discard; gl_FragColor = vec4(c, 0.0);',
+    modulate: 'float k = dot(clamp(o.rgb, 0.0, 1.0), vec3(0.2126, 0.7152, 0.0722)); gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0 - k);',
+    opaque: 'gl_FragColor = vec4(max(o.rgb, vec3(0.0)), 1.0);',
+  }[blend] ?? 'float a = clamp(o.a, 0.0, 1.0); if (a < 0.002) discard; gl_FragColor = vec4(max(o.rgb, vec3(0.0)) * a, a);';
   return `${uniforms.join('\n')}
   ${shader.declarations}
   ${prelude}
   ${shader.function}
   ${COMMON_VARYINGS}
   void main() {
-    ${shader.inputs.map(gameInput).join('\n    ')}
+    ${shader.inputs.map((input) => gameInput(input, shader.inputs.some((item) => item.semantic === 'COLOR'))).join('\n    ')}
     ark_game_shader();
     vec4 o = uintBitsToFloat(ark_o0);
     ${output}
@@ -392,15 +402,15 @@ const QUAD = (() => {
 })();
 
 // Blend modes by their (lower-case) engine names.
-// Additive light adds colour and leaves the canvas's coverage alone: the viewer's canvas is transparent over the
-// page, so writing alpha would turn faint glows into black squares.
-function additive(material) {
+// Effects are drawn into the effects pass's high-dynamic-range buffer premultiplied: translucent colour scaled by its
+// coverage, which goes in alpha; additive light with no coverage, so it only adds (see effects-pass.js).
+function premultiplied(material) {
   material.blending = THREE.CustomBlending;
   material.blendEquation = THREE.AddEquation;
-  material.blendSrc = THREE.SrcAlphaFactor;
-  material.blendDst = THREE.OneFactor;
-  material.blendSrcAlpha = THREE.ZeroFactor;
-  material.blendDstAlpha = THREE.OneFactor;
+  material.blendSrc = THREE.OneFactor;
+  material.blendDst = THREE.OneMinusSrcAlphaFactor;
+  material.blendSrcAlpha = THREE.OneFactor;
+  material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
   return material;
 }
 
@@ -718,14 +728,24 @@ class Emitter {
       } else {
         positions[i4 + 3] = p.rot;
         let frame = p.frame;
-        if (linearFrames) frame = Math.floor(life * frames);
-        if (t.subimageindex) frame = Math.floor(this.value(t.subimageindex, life, p.seeds));
+        // Fractional frames: the part past a frame blends towards the next where the emitter blends frames.
+        if (linearFrames) frame = Math.min(life * frames, frames - 1);
+        if (t.subimageindex) frame = this.value(t.subimageindex, life, p.seeds);
         this.sizes[i4] = size[0]; this.sizes[i4 + 1] = this.squareSprites ? size[0] : size[1]; this.sizes[i4 + 2] = frame;
         this.sizes[i4 + 3] = p.cameraOffset;
         this.velocities[i3] = p.vel.x; this.velocities[i3 + 1] = p.vel.y; this.velocities[i3 + 2] = p.vel.z;
       }
     }
     this.geometry.instanceCount = count;
+    if (this.timeRates && count > 0) {
+      const { base, rates, vectors } = this.timeRates;
+      const now = (performance.now() / 1000) % 3600;
+      for (let i = 0; i < vectors.length; i++) {
+        const at = i * 4;
+        vectors[i].set(base[at] + rates[at] * now, (base[at + 1] ?? 0) + (rates[at + 1] ?? 0) * now,
+          (base[at + 2] ?? 0) + (rates[at + 2] ?? 0) * now, (base[at + 3] ?? 0) + (rates[at + 3] ?? 0) * now);
+      }
+    }
     // Only the particles drawn are sent to the graphics card.
     if (count > 0 || this.lastCount > 0) {
       for (const attribute of this.instanced) {
@@ -788,6 +808,7 @@ class Emitter {
     this.material = this.createMaterial();
     this.object = new THREE.Mesh(geometry, this.material);
     this.object.frustumCulled = false;
+    this.object.layers.set(EFFECTS_LAYER);
     (this.localSpace || !this.effect.parent ? this.effect.group : this.effect.worldGroup).add(this.object);
     this.applyAssets();
   }
@@ -801,6 +822,7 @@ class Emitter {
     const factories = set.factories;
     let names;
     if (this.drawMesh) names = ['fparticleinstancedmeshvertexfactory', 'flocalvertexfactory'];
+    else if (this.isDecal) names = ['flocaldecalvertexfactory', 'flandscapedecalvertexfactory', 'fparticlevertexfactory'];
     else if (this.isMesh) return null;
     else {
       const dynamic = this.hasDynamic ? 'dynamicparameter' : '';
@@ -819,11 +841,13 @@ class Emitter {
   }
 
   createMaterial() {
+    this.timeRates = null;
     const picked = this.pickShader();
     this.shaderId = picked?.id ?? null;
     const shared = {
       alignMode: { value: this.alignMode }, subImages: { value: new THREE.Vector2(this.subImages[0], this.subImages[1]) },
       lockU: { value: new THREE.Vector3(...this.lockU) }, lockV: { value: new THREE.Vector3(...this.lockV) }, lift: { value: this.lift },
+      blendFrames: { value: /_blend$/.test(this.interpolation) ? 1 : 0 },
     };
     const vertexShader = this.drawMesh ? MESH_VERTEX : SPRITE_VERTEX;
     if (picked) {
@@ -834,25 +858,22 @@ class Emitter {
         const vectors = [];
         for (let i = 0; i < values.length; i += 4) vectors.push(new THREE.Vector4(values[i], values[i + 1] ?? 0, values[i + 2] ?? 0, values[i + 3] ?? 0));
         uniforms[name] = { value: vectors.length ? vectors : [new THREE.Vector4()] };
+        // Time-driven values (panning, scrolling) move on at their own rate as the game's clock runs.
+        if (name === 'ark_cb0' && picked.shader.timeRates?.length) this.timeRates = { base: values.slice(), rates: picked.shader.timeRates, vectors };
       }
       for (const [name, url] of Object.entries(picked.shader.samplers)) uniforms[name] = { value: assets.gameTexture(url) };
       const material = new THREE.ShaderMaterial({
         uniforms, vertexShader, fragmentShader: gameFragment(picked.shader, assets.prelude, blend),
-        transparent: blend !== 'opaque', depthWrite: blend === 'opaque', side: THREE.DoubleSide,
+        transparent: true, depthWrite: false, side: THREE.DoubleSide,
       });
-      if (blend === 'additive') additive(material);
-      else if (blend === 'modulate') {
-        material.blending = THREE.CustomBlending;
-        material.blendSrc = THREE.DstColorFactor;
-        material.blendDst = THREE.ZeroFactor;
-      } else if (blend === 'translucent') material.blending = THREE.NormalBlending;
+      premultiplied(material);
       material.name = this.materialName ?? '';
       return material;
     }
-    return additive(new THREE.ShaderMaterial({
+    return premultiplied(new THREE.ShaderMaterial({
       uniforms: {
         ...shared, flipUv: { value: 1 },
-        map: { value: null }, hasMap: { value: 0 },
+        map: { value: null }, hasMap: { value: 0 }, coverage: { value: 0 },
         roundEdge: { value: this.drawMesh ? 0 : 1 },
         texturePower: { value: 1 }, strength: { value: 1 }, fresnelPower: { value: 1 }, fresnelStrength: { value: 0 },
       },
@@ -865,9 +886,11 @@ class Emitter {
   applyAssets() {
     const assets = this.effect.assets;
     if (!assets) return;
-    if (this.isMesh && !this.meshRequested && assets.mesh(this.meshName, (geometry) => {
-      if (geometry) { this.buildRenderer(geometry); }
-    })) this.meshRequested = true;
+    // Requested once: a mesh already loaded calls back at once, and its renderer applies the assets again.
+    if (this.isMesh && !this.meshRequested && assets.meshes[this.meshName ?? '']) {
+      this.meshRequested = true;
+      assets.mesh(this.meshName, (geometry) => { if (geometry && !this.drawMesh) this.buildRenderer(geometry); });
+    }
     const found = assets.textures[this.materialName ?? ''];
     if (!found) return;
     // A shader that arrived (or broke) since the material was made replaces it.
@@ -887,9 +910,7 @@ class Emitter {
     uniforms.strength.value = scalars.strength > 0 ? Math.min(scalars.strength, 4) : 1;
     uniforms.fresnelStrength.value = this.isMesh && scalars.fresnelStrength > 0 ? scalars.fresnelStrength : 0;
     uniforms.fresnelPower.value = scalars.fresnelPower > 0 ? scalars.fresnelPower : 1;
-    if (found.blend === 'additive') additive(this.material);
-    else this.material.blending = THREE.NormalBlending;
-    this.material.needsUpdate = true;
+    uniforms.coverage.value = found.blend === 'additive' ? 0 : 1;
     // Mesh particles draw a texture only once their mesh (and so its UVs) is loaded.
     if (this.isMesh && !this.drawMesh) return;
     assets.texture(this.materialName, (texture) => {

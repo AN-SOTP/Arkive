@@ -3,12 +3,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ParticleEffect, EffectAssets, defaultRecipe } from './particle-sim.js';
+import { createEffectsPass } from './effects-pass.js';
 
 const host = window.chrome?.webview;
 const post = (message) => host?.postMessage(message);
 const $ = (id) => document.getElementById(id);
 
 const renderer = new THREE.WebGLRenderer({ canvas: $('canvas'), antialias: true });
+const effectsPass = createEffectsPass(renderer);
 renderer.setPixelRatio(window.devicePixelRatio);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, 1, 1, 200000);
@@ -54,6 +56,7 @@ function tick(now) {
   $('timeText').textContent = effect ? `${effect.time.toFixed(2)} s · ${effect.particleCount} particles` : '';
   resize();
   renderer.render(scene, camera);
+  effectsPass.render(scene, camera);
   requestAnimationFrame(tick);
 }
 

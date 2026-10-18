@@ -119,3 +119,5 @@ details > div { padding: 2px 8px 8px; }
 #tab-skills label.field select { flex: 1; min-width: 0; }
 #tab-skills .skill-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
 #tab-skills #skillTimeline { margin-top: 8px; font-size: 11px; }
+#tab-skills .skill-progress { display: block; width: 100%; height: 8px; margin: 6px 0; accent-color: var(--accent, #4a8cff); }
+#tab-skills .skill-progress[hidden] { display: none; }

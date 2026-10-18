@@ -43,7 +43,7 @@ public partial class ParticleEditorWindow : Window
     private readonly string _theme;
     private readonly IChunkProtectionProvider _protectionProvider;
     private readonly Func<ParticleEffectRecipe, Task<string>>? _save;
-    private readonly Func<IReadOnlyList<string>, IReadOnlyList<string>, CancellationToken, Task<ParticleEditorAssets>>? _assets;
+    private readonly Func<ParticleEffectModel, CancellationToken, Task<ParticleEditorAssets>>? _assets;
     private readonly Action<string> _log;
     private readonly CancellationTokenSource _closing = new();
     private readonly TaskCompletionSource _pageReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -57,7 +57,7 @@ public partial class ParticleEditorWindow : Window
         string effectiveTheme,
         IChunkProtectionProvider protectionProvider,
         Func<ParticleEffectRecipe, Task<string>>? save,
-        Func<IReadOnlyList<string>, IReadOnlyList<string>, CancellationToken, Task<ParticleEditorAssets>>? assets,
+        Func<ParticleEffectModel, CancellationToken, Task<ParticleEditorAssets>>? assets,
         Action<string> log)
     {
         _request = request;
@@ -106,10 +106,8 @@ public partial class ParticleEditorWindow : Window
                 ? "Preview only. To keep changes, add the effect to a mod in Edit mods and open it with Edit effect."
                 : "Change the settings on the left; Save changes writes them into this mod's working copy.");
             _log($"Particle editor opened: system={_request.SystemObjectName}, package={_request.PackageAlias}, emitters={model.Emitters.Count}.");
-            var materials = model.Emitters.Select(emitter => emitter.Material).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            var meshes = model.Emitters.Select(emitter => emitter.Mesh).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (_assets is not null && materials.Length + meshes.Length > 0)
-                Post(AssetsMessage(await _assets(materials, meshes, token)));
+            if (_assets is not null && model.Emitters.Any(emitter => emitter.Material is not null || emitter.Mesh is not null))
+                Post(AssetsMessage(await _assets(model, token)));
         }
         catch (OperationCanceledException) when (_closing.IsCancellationRequested)
         {
@@ -147,6 +145,7 @@ public partial class ParticleEditorWindow : Window
                     constantBuffers = item.Value.ConstantBuffers,
                     samplers = item.Value.Samplers.ToDictionary(sampler => sampler.Key, sampler => TextureUrl(sampler.Value)),
                     inputs = item.Value.Inputs.Select(input => new { register = input.Register, semantic = input.Semantic, index = input.Index }),
+                    timeRates = item.Value.TimeRates,
                 }),
             },
         }),

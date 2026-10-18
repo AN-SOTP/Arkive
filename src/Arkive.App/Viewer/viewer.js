@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
 import { VertexTangentsHelper } from 'three/addons/helpers/VertexTangentsHelper.js';
 import { createSkillPreview } from './skill-preview.js';
+import { createEffectsPass } from './effects-pass.js';
 
 const $ = (id) => document.getElementById(id);
 const host = window.chrome?.webview;
@@ -53,6 +54,8 @@ renderer.setPixelRatio(window.devicePixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 const world = new THREE.Scene();
+// Skill effects are drawn in their own high-dynamic-range pass over the scene.
+const effectsPass = createEffectsPass(renderer);
 // A photo-studio environment for reflections: dark floor, grey walls, a few softboxes. Metals reflect it,
 // so it needs contrast; an evenly bright room makes every metal read as white.
 function studioEnvironment() {
@@ -594,6 +597,7 @@ function render() {
   resize();
   grid.visible = state.toggles.grid;
   renderer.render(world, camera);
+  effectsPass.render(world, camera);
   if (state.shading === 'game') replaceBrokenGameShaders();
   if (state.scene) {
     drawOverlay();
@@ -868,6 +872,7 @@ function screenshot(transparent) {
   const previous = grid.visible;
   if (transparent) { grid.visible = false; renderer.setClearColor(0x000000, 0); }
   renderer.render(world, camera);
+  effectsPass.render(world, camera);
   const data = canvas.toDataURL('image/png');
   grid.visible = previous;
   requestRender();
@@ -1602,7 +1607,8 @@ function renderLighting(source) {
     <div class="proportionActions">${Object.entries(lightingPresets).map(([id, preset]) => `<button data-preset="${id}">${preset.label}</button>`).join('')}
       <button data-preset="studio">Studio</button></div>
     <label class="row">Environment <select data-light="name">${options}</select></label>
-    <label class="row"><input type="checkbox" data-light="background" ${lighting.background ? 'checked' : ''}> Show it as the background</label>
+    <label class="row"><input type="checkbox" data-light="background" ${lighting.background ? 'checked' : ''}> Show a background</label>
+    <div class="muted">The environment maps are small reflection captures; the background is one of the game's skies below.</div>
     <h3>Sky</h3>
     <div class="muted">${lighting.skies.length ? 'The game’s own skies, shown behind the model.' : 'The game’s skies were not found.'}</div>
     <label class="row">Sky <select data-light="sky"><option value="">None</option>${lighting.skies.map((item) =>
@@ -1625,6 +1631,12 @@ function renderLighting(source) {
       const changes = { [key]: read() };
       // A sky reads best sharp; the blur suits the soft environment maps.
       if (key === 'sky' && changes.sky && !lighting.sky) changes.blur = 0;
+      // The environment maps are 128-pixel reflection captures: a background shows one of the game's skies instead.
+      if (key === 'background' && changes.background && !lighting.sky && lighting.skies.length) {
+        changes.sky = (lighting.skies.find((item) => /dynamicskypack01_0[1-3]/.test(item.name)) ?? lighting.skies[0]).name;
+        changes.blur = 0;
+      }
+      if (key === 'background' && !changes.background) changes.sky = '';
       setLighting(changes, 'input');
     });
   });

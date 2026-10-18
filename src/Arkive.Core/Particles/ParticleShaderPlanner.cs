@@ -12,7 +12,11 @@ public sealed record ParticleShader(
     IReadOnlyDictionary<string, float[]> ConstantBuffers,
     IReadOnlyDictionary<string, string> Samplers,
     IReadOnlyList<GameShaderInput> Inputs,
-    int InstructionCount);
+    int InstructionCount)
+{
+    /// <summary>How fast each ark_cb0 value changes per second (see <see cref="GameShaderPlan.TimeRates"/>), or null.</summary>
+    public float[]? TimeRates { get; init; }
+}
 
 /// <summary>
 /// An effect material's own pixel shaders as the game draws particles with them: one per vertex factory (sprites,
@@ -47,6 +51,15 @@ public static class ParticleShaderPlanner
     {
         var notes = new List<string>();
         if (GameShaderMaterial.SelectMap(index, description, materialBytes, notes, out var exact, out failure) is not { } map) return null;
+        // Effects are never opaque; an export that lacks its base material's settings reads as opaque. Lost Ark names
+        // effect materials by blend mode (_Ad additive, _Tr translucent), which stands in then.
+        if (description.BlendMode.Contains("Opaque", StringComparison.OrdinalIgnoreCase) || description.BlendMode.Length == 0)
+        {
+            var names = description.ParentChain.Prepend(description.Name).Append(description.RootMaterial).Append(map.FriendlyName).ToArray();
+            var inferred = names.Any(name => name.EndsWith("_ad", StringComparison.OrdinalIgnoreCase)) ? "BLEND_Additive"
+                : names.Any(name => name.EndsWith("_tr", StringComparison.OrdinalIgnoreCase)) ? "BLEND_Translucent" : null;
+            if (inferred is not null) description = description with { BlendMode = inferred };
+        }
         var factories = new Dictionary<string, string>(map.VertexFactoryPixelShaders ?? new Dictionary<string, string>(),
             StringComparer.OrdinalIgnoreCase);
         if (map.BasePassPixelShaderId is { } basePass) factories.TryAdd(MeshFactory, basePass);
@@ -60,7 +73,7 @@ public static class ParticleShaderPlanner
                 continue;
             }
             shaders[id] = new ParticleShader(id, plan.Declarations, plan.Function, NeutralSceneDepth(plan), plan.Samplers, plan.Inputs,
-                plan.InstructionCount);
+                plan.InstructionCount) { TimeRates = plan.TimeRates };
         }
         if (shaders.Count == 0)
         {
