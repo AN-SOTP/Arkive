@@ -117,6 +117,9 @@ internal static class Program
         Check(Control<ProgressBar>(window, "ModLibraryProgressBar").Visibility == Visibility.Collapsed,
             "An idle progress bar is still shown in the main mod workflow.");
         Console.WriteLine("PASS: advanced package navigation remains reachable and idle progress is hidden");
+        // Opening an advanced view can reload the package workspace behind the busy card, which refuses clicks until done.
+        await UntilAsync(() => Control<Panel>(window, "BusyOverlay").Visibility != Visibility.Visible,
+            () => "The package workspace did not finish loading after an advanced view opened.");
         Control<Button>(window, "ModLibraryNewButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Check(tabs.SelectedItem == Control<TabItem>(window, "CreateModTab"), "New mod did not open the creation tab.");
         Check(Control<ComboBox>(window, "AuthoringModComboBox").Items.Count == 0, "Opening Create mod created an unwanted draft.");
