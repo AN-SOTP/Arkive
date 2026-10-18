@@ -163,6 +163,12 @@ The model changes as you move them. **Save as mod** creates a new mod with a wor
 - The editor and viewer can play the character's animations and use game lighting (see Asset library above), to check an outfit in motion and in game-like light before saving.
 - A mod replaces the outfit (or NPC) for every character you see wearing it. Very large or combined values can still make pieces overlap.
 
+### Sounds
+
+**Sounds** plays the game's sound effects, voices and music and replaces single clips with your own audio. Search by a sound's name: the names are the developers' own (bgm for music, vox for voices, Korean boss names such as kazeroth for Kazeros; Kazeros, Thaemine, Akkan, Brelshaza and Vykas are translated for you). The list shows each sound's length, how many clips it has (the game picks between variations), whether it is music, a voice or an effect, and whether you replaced it. The first search reads the game's sound banks, which takes a few seconds.
+
+**Listen and replace** (or a double-click) opens the sound's clips with play, pause, stop, a position bar and volume. **Replace with audio file** takes a .wav, .mp3, .ogg, .flac, .m4a or .wma file, converts it to the clip's channels and sample rate, and writes it into the game's audio files (close Lost Ark first). Music keeps its original length so it still loops and changes on cue: a longer file is cut with a short fade, a shorter one ends in silence. **Restore original** puts the game's audio back, and **Restore all sounds** does it for every clip you replaced. **Save as WAV** saves a clip as the game plays it now. A game update or a Steam file check puts the originals back; the clip then says so and can be replaced again.
+
 ### Import, priorities and deployment
 
 Use **Mods → Import**, or open a `.arkive` file with Arkive. Import never installs automatically. Review, enable, set priority, preview the plan, then confirm **Apply changes**.
@@ -181,7 +187,8 @@ There is no separate restore button for a mod: the **On** ticks say which mods s
 - **Restore everything:** **More actions → Restore all game files** puts back every package Arkive installed and keeps your ticks, so a later **Apply changes** reinstalls the ticked mods. To turn everything off for good, untick every mod and apply instead.
 - **Changes pending** and "0 fully in game" in the status line mean ticked mods are not in the game yet; nothing changes until you apply.
 - Removing a mod from the library or deleting its `.arkive` file does not restore the game. Restore first.
-- **Game file changed outside Arkive** in the Status column means a file your mods target is not the version they were made for, and this Arkive has no record of changing it: another Arkive data folder (for example an older install), another tool or a game patch changed it. Apply is held back so the changed bytes are never built on or backed up as the original. If an older Arkive installed mods, choose **More actions → Restore from another Arkive folder…** and pick that Arkive's data folder (the one holding its `backups` folder): each original is found and checked by its SHA-256, the file it replaces is kept under `backupseplaced-outside-arkive`, and Lost Ark must be closed. Otherwise use Steam's Verify integrity of game files; after a game patch, use **Update for this game version**.
+- **Game file changed outside Arkive** in the Status column means a file your mods target is not the version they were made for, and this Arkive has no record of changing it: another Arkive data folder (for example an older install), another tool or a game patch changed it. Apply is held back so the changed bytes are never built on or backed up as the original. If an older Arkive installed mods, choose **More actions → Restore from another Arkive folder…** and pick that Arkive's data folder (the one holding its `backups` folder): each original is found and checked by its SHA-256, the file it replaces is kept under `backups
+eplaced-outside-arkive`, and Lost Ark must be closed. Otherwise use Steam's Verify integrity of game files; after a game patch, use **Update for this game version**.
 
 Assets, Conflicts, Details and Apply plan panes explain the effective result. **Advanced → Package projects** retains per-package rebuild, inspection, bulk install/restore, source evidence and cleanup. Prefer the named-mod workflow for normal use.
 
@@ -320,6 +327,12 @@ Supported StaticMesh render buffers can be replaced while retaining original Bod
 The viewer is a three.js page hosted in WebView2; Arkive prepares each scene natively. Geometry comes from Arkive's skeletal and static mesh decoders (UModel's glTF only when the native layout is unproven); materials, textures and properties come from UModel's export and dump of the same object, and every package they were read from is recorded so a later change rebuilds the scene.
 
 Lost Ark's shader caches (the `ShaderCache` exports in `ReleasePC`) hold LZ4-compressed DXBC shaders and, for every compiled material permutation, its static parameter set, uniform expressions and base-pass pixel shader. Arkive indexes them once, matches each material instance (or its nearest parent with a static permutation) to the permutation compiled for exactly its switch and mask values, evaluates the uniform expressions with the instance's parameters into the registers the shader record names, and translates the disassembled shader to GLSL with D3D bit-exact register semantics. Engine inputs the viewer does not have (sky and ambient light, fog, exact world vectors) are neutral or approximated, so lighting is the viewer's own; the material's colour, masks and glow are the game's.
+
+### Sounds
+
+The game's audio is Wwise (2019.1, bank version 134) in `ReleasePC\WwiseAudioPackage`: `.pck` packages holding the sound banks and most clips, and loose `.wem` files holding most music, with per-language packages for voices. Every file there is scrambled with a 4-byte marker and a repeating key, and loose files are named by a scramble of their Wwise source id; Arkive reads both. A sound's name (the `AkEvent` objects in the game's packages) hashes to the Wwise event id; the event's play actions lead through the bank's object tree to its clips, and each clip's length comes from its own header.
+
+A replacement is written as uncompressed PCM, which Wwise always decodes. A clip in a package is replaced by appending the new audio to the end of the package and pointing its one table entry at it, and every bank entry that describes the clip gets the PCM codec and the new size; nothing else moves. A loose music file is replaced whole, with a copy of the original kept under `backups\sounds`. `soundseplacements.json` records every original value before anything is written, so restoring writes them back (only where the game still holds Arkive's values) and, once no replacement uses a package, cuts it back to its original length; the result is byte-identical to the original. Previews are decoded by vgmstream (`tools\externalgmstream`) and kept in `cache\sounds\preview`.
 
 ### .arkive files, composition and deployment
 

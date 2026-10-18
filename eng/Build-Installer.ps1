@@ -50,6 +50,12 @@ try {
     New-Item -ItemType Directory -Force -Path $external | Out-Null
     $manifest = Get-Content (Join-Path $PSScriptRoot 'ExternalTools.json') -Raw | ConvertFrom-Json
     foreach ($file in $manifest.files) { Copy-Item -LiteralPath (Join-Path $ToolsDirectory $file.name) -Destination $external }
+    foreach ($package in @($manifest.packages)) {
+        if (-not $package) { continue }
+        $packageFolder = Join-Path $external $package.name
+        New-Item -ItemType Directory -Force -Path $packageFolder | Out-Null
+        foreach ($file in $package.files) { Copy-Item -LiteralPath (Join-Path (Join-Path $ToolsDirectory $package.name) $file.name) -Destination $packageFolder }
+    }
     Copy-Item -LiteralPath (Join-Path $root 'THIRD-PARTY-NOTICES.txt') -Destination $payload
     Copy-Item -LiteralPath (Join-Path $root 'LICENSE.txt') -Destination $payload
     Copy-Item -LiteralPath (Join-Path $root 'COPYRIGHT.txt') -Destination $payload

@@ -857,6 +857,47 @@
                         </DataGrid>
                     </DockPanel>
                 </TabItem>
+                <TabItem x:Name="SoundsTab" Header="Sounds">
+                    <DockPanel Margin="8">
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <TextBlock Text="Sounds" FontSize="20" Margin="0,0,0,6" />
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                       Text="Listen to the game's sound effects, voices and music, and replace single clips with your own audio. Sounds go by the developers' names, so Kazeros is kazeroth and Thaemine is kamen; Western boss names are translated for you. Replacing changes the game's audio files directly (close Lost Ark first), and Restore puts the original back." />
+                            <WrapPanel>
+                                <TextBox x:Name="SoundSearchTextBox" Width="280" KeyDown="SoundSearchTextBox_KeyDown"
+                                         ToolTip="Part of a sound's name, for example kazeros battle, bgm login, or tyranno walk. Every word must appear." />
+                                <Button Content="Search" Click="SoundSearchButton_Click" />
+                                <ComboBox x:Name="SoundKindComboBox" Width="170" SelectedIndex="0"
+                                          SelectionChanged="SoundKindComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="All sounds" Tag="all" />
+                                    <ComboBoxItem Content="Music only" Tag="music" />
+                                    <ComboBoxItem Content="Sound effects and voices" Tag="effects" />
+                                    <ComboBoxItem Content="Replaced by you" Tag="replaced" />
+                                </ComboBox>
+                                <Button x:Name="SoundOpenButton" Content="Listen and replace…" IsEnabled="False"
+                                        Style="{StaticResource PrimaryButtonStyle}" Click="SoundOpenButton_Click"
+                                        ToolTip="Open the selected sound to play its clips and replace or restore them." />
+                                <Button x:Name="SoundRestoreAllButton" Content="Restore all sounds" Click="SoundRestoreAllButton_Click"
+                                        ToolTip="Put the game's original audio back for every clip you replaced." />
+                            </WrapPanel>
+                            <TextBlock x:Name="SoundStatusText" Margin="0,6,0,0" TextWrapping="Wrap"
+                                       Text="Search for a sound to begin. The first search reads the game's sound banks, which takes a few seconds." />
+                        </StackPanel>
+                        <DataGrid x:Name="SoundResultsGrid" IsReadOnly="True" AutoGenerateColumns="False"
+                                  CanUserAddRows="False" CanUserResizeColumns="True" SelectionMode="Single" SelectionUnit="FullRow"
+                                  SelectionChanged="SoundResultsGrid_SelectionChanged"
+                                  MouseDoubleClick="SoundResultsGrid_MouseDoubleClick">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Sound" Binding="{Binding Name}" Width="3*" MinWidth="220" />
+                                <DataGridTextColumn Header="Length" Binding="{Binding Length}" Width="130" />
+                                <DataGridTextColumn Header="Clips" Binding="{Binding ClipCount}" Width="55" />
+                                <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="80" />
+                                <DataGridTextColumn Header="Set" Binding="{Binding Set}" Width="*" MinWidth="150" />
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*" MinWidth="110" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
                 <TabItem x:Name="EntityBrowserTab" Header="Characters &amp; NPCs" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,7">
