@@ -71,6 +71,7 @@ public partial class MainWindow : Window
             // A friendly-name search is routed and fast. If it has no database
             // match, fall back once to technical object names so users do not
             // need to understand search scopes.
+            result = await AddZoneMatchesAsync(result, query, category, scope, 750, CancellationToken.None);
             if (result.TotalMatches == 0 && scope == PackageIndexSearchScope.InGameName)
             {
                 scope = PackageIndexSearchScope.ObjectName;
@@ -455,6 +456,11 @@ public partial class MainWindow : Window
                 resultLimit: resultLimit,
                 routingProgress: routingProgress,
                 cancellationToken: searchCancellation.Token);
+            if (!string.IsNullOrEmpty(query) && !searchCancellation.IsCancellationRequested)
+            {
+                LibraryCountText.Text = "Reading the maps of matching zones...";
+                result = await AddZoneMatchesAsync(result, query, category, searchScope, resultLimit, searchCancellation.Token);
+            }
         }
         catch (OperationCanceledException) when (searchCancellation.IsCancellationRequested)
         {

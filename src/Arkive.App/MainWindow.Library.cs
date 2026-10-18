@@ -634,6 +634,8 @@ public partial class MainWindow : Window
                 $"verified {index.VerifiedDependencyCount:N0} | " +
                 $"{index.Archetypes.Count:N0} class types | {index.EntityCount:N0} entities | " +
                 $"{index.CustomizationOptionCount:N0} customization options";
+            // Zone names only serve map searches, so reading them never holds up loading.
+            _ = RefreshZoneNamesAsync(path);
             RefreshEntityBrowserEntities(loadTrigger);
             RefreshOpenPackageMetadata();
             await LoadLibraryDocumentsAsync(loadTrigger);

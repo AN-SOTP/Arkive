@@ -18,7 +18,32 @@ internal static class DiscoverySmokeTests
         new("explores evidence-labelled asset relationships", TestAssetRelationships),
         new("creates and compares compact client snapshots", TestClientSnapshots),
         new("creates lazy package and asset baselines", TestAssetBaselines),
+        new("finds a zone by its in-game name and the level packages its map loads", TestZoneMaps),
     ];
+
+    private static void TestZoneMaps()
+    {
+        var zones = new ZoneMapDocument(1, DateTimeOffset.UnixEpoch, "leveldata1.lpk", 0, 0,
+        [
+            new GameZone(37545, "Land of Death and Order", ["lv_kur_death_ed_05_ps"]),
+            new GameZone(37546, "Collapsed Diaspero", ["lv_kur_death_ed_06_ps"]),
+        ]);
+        Assert(ZoneMapSidecar.Match(zones, "death order").Select(zone => zone.Id).SequenceEqual([37545L]),
+            "a zone was not found by the words of its name");
+        Assert(ZoneMapSidecar.Match(zones, "").Count == 0, "an empty query matched every zone");
+        var packages = ZoneMapSidecar.PackagesOf("lv_kur_death_ed_05_ps",
+            ["lv_kur_death_ed_05_ps", "lv_kur_death_ed_05_sl01", "LV_KUR_DEATH_ED_05_SCENE03A", "lv_kur_death_ed_06_sl01",
+             "lv_kur_death_ed_051_sl01", "lv_kur_death_05"]).ToArray();
+        Assert(packages.SequenceEqual(["lv_kur_death_ed_05_ps", "lv_kur_death_ed_05_sl01", "LV_KUR_DEATH_ED_05_SCENE03A"]),
+            "a map's level packages were not the ones sharing its persistent level's stem: " + string.Join(", ", packages));
+        var association = ZoneMapSidecar.Association(zones.Zones[0],
+            new ZoneMapAsset("bg_rad_kazeroth_m", "bg_rad_kazeroth_statue05_d", "Used in map (lv_kur_death_ed_05_sl01)",
+                GameAssetAssociationConfidence.Verified));
+        Assert(association.DisplayName == "Land of Death and Order (map)" && association.EntityId == 37545 &&
+               association.AssetReference == "bg_rad_kazeroth_m.bg_rad_kazeroth_statue05_d" &&
+               association.Relation == ZoneMapSidecar.Relation,
+            "a map asset was not shown with its zone's name");
+    }
 
     private static void TestAssetSearch()
     {
