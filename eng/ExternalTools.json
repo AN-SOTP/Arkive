@@ -4,5 +4,28 @@
     { "name": "crunch_x64.exe", "sha256": "8AE949BFC3E3E4A1717DCA8845CE8ED480638DE68CBF1D7CBE912E99E35CE06F", "source": "https://github.com/Unity-Technologies/crunch/tree/8708900eca8ec609d279270e72936258f81ddfb7" },
     { "name": "SDL2_64.dll", "sha256": "5D66BD7C48A61FF952475EC3492FCAD67A81E626D849F00824D2B6442ADF8D2F", "source": "https://www.gildor.org/en/projects/umodel" },
     { "name": "SDL2.dll", "sha256": "5D66BD7C48A61FF952475EC3492FCAD67A81E626D849F00824D2B6442ADF8D2F", "source": "https://www.gildor.org/en/projects/umodel" }
+  ],
+  "packages": [
+    {
+      "name": "vgmstream",
+      "url": "https://github.com/vgmstream/vgmstream/releases/download/r2117/vgmstream-win64.zip",
+      "sha256": "6C4A8A3813864FEFED081BBD337DBC0AD93BF88E0B92F5DB98D7AB258B22DC6C",
+      "source": "https://github.com/vgmstream/vgmstream/releases/tag/r2117",
+      "files": [
+        { "name": "COPYING", "sha256": "FCC26D35C4C4365E31F21734F846E4EE362FF0B57BA696085605A7B4768D8763" },
+        { "name": "avcodec-vgmstream-59.dll", "sha256": "4D6CF54E7B3C26EF06E95BDB515A10D1E1BED3EC1FFD87EC3E5C4FBCD2A883F6" },
+        { "name": "avformat-vgmstream-59.dll", "sha256": "0DDE66EA268CCCB67B1AA219C1CE879602B839E561A79A00C8215E2688F1A4B2" },
+        { "name": "avutil-vgmstream-57.dll", "sha256": "A999856C17CFDCE3C22B92B6640A7ADA6C4AB4C3C6841A863770B72FA0BC19B4" },
+        { "name": "libatrac9.dll", "sha256": "FE82F1AE13A798337E03942C35351997C23CAADB5EB0C6B7A2DC2A521ED8B02E" },
+        { "name": "libcelt-0061.dll", "sha256": "542254723D9100F91CBF18E41C4AFF80287C22A9859E9E545C413D984DF440AD" },
+        { "name": "libcelt-0110.dll", "sha256": "BFCC51D865BB3B6A2793381BF535F23EC423FEB722B46333FA8556CCDCAFA61A" },
+        { "name": "libg719_decode.dll", "sha256": "AAD61F205CE1F1B61285F6B37B90A331EC8C6AE2F94F361714DC21A12C236960" },
+        { "name": "libmpg123-0.dll", "sha256": "DB9EB1D91B8EB9F47B0968201DBF6C51A9627E539A78AFD9AD5F59C5D18FE4DF" },
+        { "name": "libspeex-1.dll", "sha256": "04DBC85FCEC6C54671535BF39937A70F2DD040A81AD670A0B84DE6CA17B39BFF" },
+        { "name": "libvorbis.dll", "sha256": "5F330A20B19B3C70DC43EEDCC95891E65940FCA04A77155C573EFCDD4C2CA665" },
+        { "name": "swresample-vgmstream-4.dll", "sha256": "688A81D31EF98A9A6143E1075B2F4C5B79BDFA51E7A14D50D662A0E916DAC739" },
+        { "name": "vgmstream-cli.exe", "sha256": "29DF08C557ADA8269C92A6ABFE3886AD2F65849B0B26BA78A0819B363BBC5B85" }
+      ]
+    }
   ]
 }

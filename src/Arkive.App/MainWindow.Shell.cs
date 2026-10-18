@@ -57,7 +57,8 @@ public partial class MainWindow : Window
         UpdateBannerContext();
         // The advanced views list the package workspace, which enabling mods leaves to be reloaded when needed.
         if (_packageWorkspaceStale && MainTabControl.SelectedItem is TabItem tab &&
-            tab != LibraryTab && tab != CreateModTab && tab != WorkshopTab && tab != ModifiedUpksTab && tab != BodyProportionsTab)
+            tab != LibraryTab && tab != CreateModTab && tab != WorkshopTab && tab != ModifiedUpksTab && tab != BodyProportionsTab &&
+            tab != SoundsTab)
             _ = RefreshStalePackageWorkspaceWithNoticeAsync();
     }
 
@@ -88,6 +89,11 @@ public partial class MainWindow : Window
         {
             PackageAliasText.Text = "Mod Library";
             PathText.Text = "Enable mods and set priorities; Apply changes updates the game.";
+        }
+        else if (MainTabControl.SelectedItem == SoundsTab)
+        {
+            PackageAliasText.Text = "Sounds";
+            PathText.Text = "Listen to the game's sounds and replace single clips with your own audio.";
         }
         else if (_currentPackagePath is { } packagePath)
         { DisplayPackageAlias(packagePath); PathText.Text = packagePath; }
