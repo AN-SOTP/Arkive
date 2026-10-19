@@ -93,8 +93,6 @@ public partial class RecolourWindow : Window
     private async void Option_Changed(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded) return;
-        PicturePreviews.Children.Clear();
-        _pictures.Clear();
         await LoadPicturePreviewsAsync();
         UpdatePreviews();
     }
@@ -121,8 +119,14 @@ public partial class RecolourWindow : Window
         FromOriginalHint.Text = $"{Count(edited, "picture")} already {(edited == 1 ? "has" : "have")} your own changes (made outside Recolour), so the tint goes on top of them. Tick to start from the game's colours instead, which replaces those changes.";
     }
 
+    private int _pictureLoad;
+
     private async Task LoadPicturePreviewsAsync()
     {
+        // A newer load (the starting point changed while this one ran) replaces this one's previews.
+        var load = ++_pictureLoad;
+        PicturePreviews.Children.Clear();
+        _pictures.Clear();
         var textures = _edits.Select(edit => edit.Entry).OfType<GuidedTextureModProjectEntry>().ToArray();
         PicturesHint.Text = textures.Length > PreviewPictures
             ? $"The first {PreviewPictures} of {textures.Length:N0} pictures, small. Game's colours left, new right."
@@ -135,6 +139,7 @@ public partial class RecolourWindow : Window
                     ? await ArkiveModTintService.OriginalImagePathAsync(texture)
                     : texture.Manifest.EditableImagePath;
                 var image = await Task.Run(async () => Shrink((await TextureEditableImageService.LoadAsync(path)).Image));
+                if (load != _pictureLoad) return;
                 var before = new Image { Source = ToBitmap(image), Width = image.Width, Height = image.Height, Margin = new Thickness(0, 0, 4, 0) };
                 var after = new Image { Width = image.Width, Height = image.Height };
                 var pair = new StackPanel { Margin = new Thickness(0, 0, 12, 10) };

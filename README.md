@@ -15,7 +15,7 @@ Arkive operates on files **while the game, launcher and anti-cheat are closed**.
 
 ## Screenshots
 
-The actual desktop GUI. The library and mod screenshots use fictional demonstration data; the Asset Viewer screenshots show game models rendered from a locally installed client. None of them are installable mods, and the repository contains no game files or personal library data.
+The actual desktop GUI. The library and mod screenshots use fictional demonstration data; the Asset Viewer, Zone Viewer and Recolour screenshots show game models and maps read from a locally installed client. None of them are installable mods, and the repository contains no game files or personal library data.
 
 ### Asset Library
 
@@ -46,6 +46,25 @@ Every LOD from Arkive's own decoder, coloured by the game's own compiled shaders
 ![Arkive Asset Viewer showing Death Incarnate Kazeros with glowing effect wings](docs/screenshots/model-viewer-kazeros.png)
 
 ![Arkive Asset Viewer showing a mesh with a mod's edited material values and texture](docs/screenshots/model-viewer-edits.png)
+
+### Zone Viewer
+
+Search a zone's name to open its map. Every part is grouped (terrain, sky, fog, lighting and colour grading, effects, characters, meshes, materials, textures) and marked as this map's own or shared with other maps, so a recolour changes only what you mean it to.
+
+![Arkive Zone Viewer listing Final Day's terrain parts, which maps share each one, and a terrain material's colour settings](docs/screenshots/zone-viewer-parts.png)
+
+The **3D Map** tab draws the whole map from the game's own placement data: every mesh and foliage piece and the terrain from its height maps. Click a piece to select it in the list; the recolour preview shows on the map as you choose colours.
+
+| | |
+|---|---|
+| ![Arkive Zone Viewer 3D map of Final Day, the Archdemon Kazeros arena](docs/screenshots/zone-viewer-3d-map.png) | ![Arkive Zone Viewer 3D map of Final Day from above with a recolour preview on its terrain](docs/screenshots/zone-viewer-3d-recolour.png) |
+| **Final Day (Kazeros 2-1)** | **The same map from above, recolour previewing** |
+
+### Recolour
+
+Recolour every selected picture, material and effect of a mod at once with one colour choice and a live before-and-after preview. Two-tone repaints in a main colour and puts a highlight colour on the lightest details and glows (here: Archdemon Kazeros in white with gold).
+
+![Arkive Recolour window previewing Archdemon Kazeros's pictures and material colours in white with gold highlights](docs/screenshots/recolour.png)
 
 ### Skill preview
 
@@ -126,7 +145,7 @@ Use a trusted local folder, not the game's Packages directory. Avoid simultaneou
 
 ## GUI workflow
 
-The four primary tabs separate discovery, creation, editing and deployment. **Advanced** retains native diagnostics and specialist/legacy workflows.
+The primary tabs separate discovery (**Asset Library**), creation (**Create Mod**), editing (**Edit Mods**, **Simple Upscale**), sounds (**Sounds**), the login background (**Login Screen**) and deployment (**Mods**). **Advanced** retains native diagnostics and specialist/legacy workflows.
 
 ### Asset Library
 
@@ -135,6 +154,8 @@ Search **All names and filenames** by physical/decoded package filename, object,
 **Preview** (or double-clicking a mesh) opens the Arkive Asset Viewer. It shows every LOD of skeletal and static meshes decoded by Arkive's own parser, with UModel's materials, textures and object properties alongside: LOD and UV-set switching, wireframe, normals, tangents, skeleton, bone names, sockets, UV layout, material IDs, vertex colours, section isolation, texture channels, screenshots and PgUp/PgDn browsing. Objects UModel cannot read still show their geometry. By default each material runs **the game's own compiled shader**: the exact permutation the material uses, translated from the client's shader cache, so packed textures (for example two-tone hair masks) appear in their game colours, glow shows, and effect materials are drawn as the light they emit. Per-family colour recipes and the stored textures, as UModel shows them, remain available for comparison. **Export colours** saves each material's colours, as shown, as textures laid out on UV set 0. The first preview indexes the game's shaders once (about 30 seconds, about 8 MB in the data folder); prepared scenes are cached up to 1 GB. The viewer follows the files it reads: when the object's package or any package its materials and textures come from changes (for example when a mod is applied or restored), the open view refreshes and keeps the camera. In mod authoring, **Preview with edits** shows a mesh from its clean package with the mod's edited GLB, texture images and material values on top, and refreshes whenever one of those working files is saved; **Your edits** (E) switches back to the original. **Animation** plays the character's own game animations (idles, character select, walking and running, emotes, dances and poses; NPCs and monsters their own set) with pause and speed, so clipping shows in motion; the first time for a class Arkive has UModel export its animations once (about 10 seconds, about 40 MB cached). The **Lighting** panel and the **Game environment** light mode light the model with the game's own environment maps (the reflections and sky light it uses for characters), optionally shown as a blurred background, rotated or brightened, plus a sun that can be aimed, dimmed and recoloured (Shift-drag in the view moves it); Daylight, Overcast, Evening and Interior presets set them all, and Studio goes back. **Sky** puts one of the game's own skies (about 75, from its dynamic sky package, exported once and cached, about 125 MB) behind the model, turning with the environment; it can also light the model, and **Sky horizon** moves where its horizon sits, since the viewer wraps it on a dome rather than the game's own sky mesh. The viewer needs the Microsoft Edge WebView2 Runtime, which ships with Windows 10 and 11.
 
 **Skills** (a tab of the Asset Viewer) plays skills on a player body or on a boss or NPC model. For a player body, choose a class and one of its skills; for a monster or NPC model, the tab lists the skills of every NPC that uses that model (open Kazeros's `MN_CNCS_00_SK`, Thaemine's `MN_CDKCN_00_SK` or Serca's `MN_CNPE_00_SK`). Skills come from the game's own action files: each stage's animation and each effect it starts, at its time, socket, offset and size, with the class weapon (or the boss's weapon and armour) attached. A skill with several versions (tripods, an overcharge) lists each, and skills with alternative effect sets (FX-01, Exmove...) can switch between them. **Play skill** loads the animations and effects with a progress bar (the first time for a class or boss takes longer), then plays, loops or replays without loading again, at 0.1× to 1× speed; choosing another skill switches straight to it. Effects are simulated from each effect's own settings (spawn rates and bursts, lifetimes, sizes, colours and velocities over life, orbits, flipbooks, mesh particles and ground decals) and each material runs its own game shader, soft-faded where it meets the ground and blended with bloom. NPC skills have no names in the game's text, so they are listed by the developers' (Korean) names and their first animation.
+
+**Zone names** work as searches too: type a zone such as Land of Death and Order or Final Day and a map card appears above the results; once the map sharing index is built (about 25 seconds the first time, then cached), ordinary results also name the maps an asset is used in. **Open in Zone Viewer** lists the map's parts by kind (terrain layers, sky, fog volumes, lighting and colour grading, effects, characters, meshes, materials, textures, lightmaps), each with a preview and marked **Only this map** or **Shared with N other maps**. Its **3D Map** tab draws the whole map with simplified meshes and small textures (a map takes about 6 seconds the first time; the last three are cached at 5 to 30 MB each); sky and clouds, and glows, water and effects, have their own switches, and clicking a piece selects it. Choose colours under **Recolour selected parts** to preview them on the parts and the map, then **Recolour and add to mod** adds the parts to the mod open in Edit Mods as normal working copies and recolours them; **Add selected to mod** adds them unchanged and **Export selected…** saves them as files. Lights and height fog colours are level settings mods cannot change yet, so they are counted but not listed.
 
 The local index is resumable. Worker count and optional fast scratch storage help indexing. The setup panel collapses after configuration; refresh the index when the client changes.
 
@@ -151,6 +172,10 @@ The local index is resumable. Worker count and optional fast scratch storage hel
 ### Edit
 
 Choose **Mods → Edit mod**, or use the **Edit Mods** selector. Missing working copies are prepared against a verified clean client, using verified backups if Arkive has an active package replacement. Existing working edits are retained. Edit, save, then preview/apply the new composition with the game closed.
+
+**Recolour…** recolours every selected picture, material and effect at once (all of them when nothing is selected) with the same choices as the Texture Viewer: every colour, one colour range or the light areas; a new colour, strength and brightness; and the style. **Tint** keeps each colour's shading and takes the new hue. **Two-tone** repaints pictures in a main colour with their own shading and gives their lightest, raised details a highlight colour; materials' surface colours take the main colour and their glows the highlight, and effects and glow pictures (emissive and panning maps) take the highlight. A before-and-after preview shows the first pictures and each material colour. **Lighten** lifts surfaces a material dims on purpose (the stone of a dark arena), and **Also tint the effects' materials** adds and tints the materials of effects whose colour comes only from them (effect materials can be shared by other effects). Pictures start from the game's colours, so trying again replaces the last recolour; pictures you changed elsewhere (in an image editor, say) keep your changes and are tinted on top unless you tick **Start from the game's colours**. Everything Recolour touches stays an ordinary working copy: open, replace, compare or edit it further as before. The Texture Viewer's **Edit colours** has the same two-tone style for one picture or part.
+
+In the Asset Viewer's **Skills** panel, **Recolour this model and its effects…** adds a model's colour pictures (not normal maps or masks) and materials, with its parts and weapons from its look file, and every effect of all its forms' skills and its look, to the mod open in Edit Mods (or a new mod named after it), then opens Recolour on them, starting from white with gold highlights. Effects from packages many skills share are left out so other bosses keep theirs.
 
 Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every row in the focused table. **Remove selected** affects all selected assets; single-file edit/compare/preview needs one row. Clearing a draft preserves working files and the previous saved archive. An empty draft cannot become a valid shared mod.
 
@@ -187,6 +212,10 @@ The model changes as you move them. **Save as mod** creates a new mod with a wor
 **Sounds** plays the game's sound effects, voices and music and replaces single clips with your own audio. Search by a sound's name: the names are the developers' own (bgm for music, vox for voices, Korean boss names such as kazeroth for Kazeros; Kazeros, Thaemine, Akkan, Brelshaza and Vykas are translated for you). The list shows each sound's length, how many clips it has (the game picks between variations), whether it is music, a voice or an effect, and whether you replaced it. The first search reads the game's sound banks, which takes a few seconds.
 
 **Listen and replace** (or a double-click) opens the sound's clips with play, pause, stop, a position bar and volume. **Replace with audio file** takes a .wav, .mp3, .ogg, .flac, .m4a or .wma file, converts it to the clip's channels and sample rate, and writes it into the game's audio files (close Lost Ark first). Music keeps its original length so it still loops and changes on cue: a longer file is cut with a short fade, a shorter one ends in silence. **Restore original** puts the game's audio back, and **Restore all sounds** does it for every clip you replaced. **Save as WAV** saves a clip as the game plays it now. A game update or a Steam file check puts the originals back; the clip then says so and can be replaced again.
+
+### Login Screen
+
+**Login Screen** brings back the background of an earlier update behind the game's login and server select screens. The game keeps the earlier backgrounds in its Movies folder (Kazeros, Kurzan, Vern, Papunika and more); pick one and **Use this background**. The game plays the video its movie table in `data1.lpk` names, so Arkive changes only that table entry, after keeping a clean copy of `data1.lpk`; **Back to the game's own** puts that copy back byte for byte. It shows the next time Lost Ark starts, and the game must be closed. A game update replaces `data1.lpk`; the tab then says so and you choose again. The backgrounds' names come from the developers' file names, and they cannot be previewed in Arkive yet.
 
 ### Import, priorities and deployment
 
@@ -355,7 +384,8 @@ Lost Ark's shader caches (the `ShaderCache` exports in `ReleasePC`) hold LZ4-com
 
 The game's audio is Wwise (2019.1, bank version 134) in `ReleasePC\WwiseAudioPackage`: `.pck` packages holding the sound banks and most clips, and loose `.wem` files holding most music, with per-language packages for voices. Every file there is scrambled with a 4-byte marker and a repeating key, and loose files are named by a scramble of their Wwise source id; Arkive reads both. A sound's name (the `AkEvent` objects in the game's packages) hashes to the Wwise event id; the event's play actions lead through the bank's object tree to its clips, and each clip's length comes from its own header.
 
-A replacement is written as uncompressed PCM, which Wwise always decodes. A clip in a package is replaced by appending the new audio to the end of the package and pointing its one table entry at it, and every bank entry that describes the clip gets the PCM codec and the new size; nothing else moves. A loose music file is replaced whole, with a copy of the original kept under `backups\sounds`. `soundseplacements.json` records every original value before anything is written, so restoring writes them back (only where the game still holds Arkive's values) and, once no replacement uses a package, cuts it back to its original length; the result is byte-identical to the original. Previews are decoded by vgmstream (`tools\externalgmstream`) and kept in `cache\sounds\preview`.
+A replacement is written as uncompressed PCM, which Wwise always decodes. A clip in a package is replaced by appending the new audio to the end of the package and pointing its one table entry at it, and every bank entry that describes the clip gets the PCM codec and the new size; nothing else moves. A loose music file is replaced whole, with a copy of the original kept under `backups\sounds`. `sounds
+eplacements.json` records every original value before anything is written, so restoring writes them back (only where the game still holds Arkive's values) and, once no replacement uses a package, cuts it back to its original length; the result is byte-identical to the original. Previews are decoded by vgmstream (`tools\externalgmstream`) and kept in `cache\sounds\preview`.
 
 ### .arkive files, composition and deployment
 
@@ -454,6 +484,9 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 - Shader compilation, particle edits beyond colours and value multipliers, interface movie edits beyond their textures, animation events and runtime injection/hot-reload are outside the verified workflow. Particle and interface edits are newer than mesh and texture edits and less tested in game.
 - Old projects can lack current oracle/approval evidence, or retain stale installed state after reinstall. Rebuild/reconcile against verified clean bytes; unknown identity can intentionally block deletion/restore.
 - Priority resolves target ownership, not semantic compatibility of all dependencies.
+- The Zone Viewer's 3D map is an overview: simplified meshes, small textures, no real lighting or fog. Pieces whose material lives in a package the map does not reference are drawn plain grey. Map lights and height fog colours are level settings Arkive cannot change yet.
+- Recolour changes colours the game exposes (pixels, material colour settings, effect colour tables). Colour that comes from shared textures or base materials changes everything that uses them, and material edits are newer and less tested in game than texture edits.
+- Login Screen is the first Arkive feature that edits a data archive (`data1.lpk`) rather than a package; it has not yet been confirmed in game. Login backgrounds cannot be previewed: the game's videos are scrambled per file.
 - CLI authoring requires explicit manifest chaining; the GUI is the recommended named-mod editor.
 - The installer/updater is an unsigned preview; uninstall preserves data and does not restore the game.
 - Not every bug is known. Report it on [GitHub Issues](https://github.com/AN-SOTP/Arkive/issues) with version, operation, asset identity, failure code and a sanitized diagnostic excerpt. Review paths/names before sharing logs; never submit credentials or whole game packages casually.

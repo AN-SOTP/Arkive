@@ -13,6 +13,21 @@ using static Program;
 /// <summary>A mod pack shows as a heading with one switch, and enabled mods changing the same asset raise a warning.</summary>
 internal static class ModPackChecks
 {
+    // A refresh asked for while the library is still busy (loading after another tab, say) is skipped, so ask again
+    // until the list shows what the files on disk say.
+    private static async Task RefreshUntilAsync(MainWindow window, Func<bool> condition, Func<string> failureMessage)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(45);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException(failureMessage());
+            await UntilAsync(() => Control<Panel>(window, "BusyOverlay").Visibility != Visibility.Visible, timeout: TimeSpan.FromSeconds(30));
+            Invoke(window, "ModLibraryRefreshButton_Click", null, new RoutedEventArgs());
+            var settle = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+            while (!condition() && DateTime.UtcNow < settle) await Task.Delay(50);
+        }
+    }
+
     public static async Task VerifyAsync(MainWindow window, string root, string? screenshotDirectory)
     {
         var picker = new ModPackWindow(false, ModPackWindow.SuggestedName("UI pack - effects"),
@@ -39,16 +54,14 @@ internal static class ModPackChecks
         var grid = Control<DataGrid>(window, "ModLibraryGrid");
         var status = Control<TextBlock>(window, "ModLibraryStatusText");
         var banner = Control<Border>(window, "ModOverlapBanner");
-        Invoke(window, "ModLibraryRefreshButton_Click", null, new RoutedEventArgs());
-        await UntilAsync(() => Rows(grid).Count(row => Name(row).StartsWith("UI pack", StringComparison.Ordinal)) == 2,
+        await RefreshUntilAsync(window, () => Rows(grid).Count(row => Name(row).StartsWith("UI pack", StringComparison.Ordinal)) == 2,
             () => "The pack's mods did not appear in the Mods list.");
         Check(Control<Button>(window, "ModLibraryNewPackButton").IsEnabled, "New pack… is greyed out with three mods in the list.");
 
         var store = (ArkiveModPackStore)typeof(MainWindow).GetProperty("ModPacks", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
         var packIds = Rows(grid).Where(row => Name(row).StartsWith("UI pack", StringComparison.Ordinal)).Select(Id).ToArray();
         store.Save(null, "UI pack", packIds);
-        Invoke(window, "ModLibraryRefreshButton_Click", null, new RoutedEventArgs());
-        await UntilAsync(() => Header(grid) is { IsVisible: true }, () => "The pack heading did not appear in the Mods list.");
+        await RefreshUntilAsync(window, () => Header(grid) is { IsVisible: true }, () => "The pack heading did not appear in the Mods list.");
         var header = Header(grid)!;
         var view = (ListCollectionView)grid.ItemsSource;
         Check(Rows(grid).Select(Name).Take(2).Order().SequenceEqual(["UI pack - effects", "UI pack - sky"]) ||
