@@ -53,13 +53,6 @@ Search a zone's name to open its map. Every part is grouped (terrain, sky, fog, 
 
 ![Arkive Zone Viewer listing Final Day's terrain parts, which maps share each one, and a terrain material's colour settings](docs/screenshots/zone-viewer-parts.png)
 
-The **3D Map** tab draws the whole map from the game's own placement data: every mesh and foliage piece and the terrain from its height maps. Click a piece to select it in the list; the recolour preview shows on the map as you choose colours.
-
-| | |
-|---|---|
-| ![Arkive Zone Viewer 3D map of Final Day, the Archdemon Kazeros arena](docs/screenshots/zone-viewer-3d-map.png) | ![Arkive Zone Viewer 3D map of Final Day from above with a recolour preview on its terrain](docs/screenshots/zone-viewer-3d-recolour.png) |
-| **Final Day (Kazeros 2-1)** | **The same map from above, recolour previewing** |
-
 ### Recolour
 
 Recolour every selected picture, material and effect of a mod at once with one colour choice and a live before-and-after preview. Two-tone repaints in a main colour and puts a highlight colour on the lightest details and glows (here: Archdemon Kazeros in white with gold).
