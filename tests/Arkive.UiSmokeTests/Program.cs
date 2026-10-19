@@ -51,18 +51,20 @@ internal static class Program
         finally { DeleteFixture(root); }
     }
 
-    // A 3D map's browser processes can hold their data folder for a moment after the window closes.
+    // A 3D map's browser processes can hold their data folder (or deny access to it) for a while after the window
+    // closes. The folder is temporary, so a file still held after a few seconds must not fail the run.
     private static void DeleteFixture(string root)
     {
-        for (var attempt = 0; Directory.Exists(root); attempt++)
+        for (var attempt = 0; Directory.Exists(root) && attempt < 40; attempt++)
             try
             {
                 Directory.Delete(root, recursive: true);
             }
-            catch (IOException) when (attempt < 20)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 Thread.Sleep(250);
             }
+        if (Directory.Exists(root)) Console.WriteLine($"Note: a browser process still held part of {root}; it was left for Windows to clean up.");
     }
 
     private static async Task RunAsync(string root, string? screenshotDirectory)
