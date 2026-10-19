@@ -1,0 +1,8 @@
+Colour tools for recolour mods, faster applying, and a fixed status for mods with effects.
+
+- Texture Viewer: Edit colours can change only one colour range (gold, say; pick it from the picture) or only light, nearly white areas, keeping other colours as they are.
+- Effect editor: a new option tints only an effect's gold, yellow and white colours and keeps blue and purple ones.
+- Asset Viewer Skills tab: add one skill's effects, or all of a model's skill and aura effects, to the mod open in Edit mods. Effects many skills share are left out.
+- Applying mods rebuilds up to four packages at once (about three times faster with large mods); the packages are byte-identical to one-at-a-time builds.
+- The first start after applying a large mod no longer re-reads every installed package.
+- Fixed: a mod with particle effects stayed "Ready to apply" after it was installed.
