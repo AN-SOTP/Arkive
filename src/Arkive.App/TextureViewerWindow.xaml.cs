@@ -49,7 +49,7 @@ public partial class TextureViewerWindow : Window
         HeaderText.Text = $"{title} · {picture.Width:N0}×{picture.Height:N0}";
         HintText.Text = workingPath is null
             ? "This is the game's picture. Add it to a mod, then use Edit colours there to change it."
-            : "Pick a part (or the whole picture), choose a colour and strength, then Apply. Save writes the mod's working file; Save mod and Apply mods put it in the game.";
+            : "Pick a part (or the whole picture), choose what to change, a colour and strength, then Apply. Save writes the mod's working file; Save mod and Apply mods put it in the game.";
         EditPanel.Visibility = SaveButton.Visibility = workingPath is null ? Visibility.Collapsed : Visibility.Visible;
         // The shared colour picker's colours, so effects and interface pictures offer the same choices.
         foreach (var swatch in ColourPickerWindow.Swatches)
@@ -96,7 +96,16 @@ public partial class TextureViewerWindow : Window
     public event Action? Saved;
 
     private TextureRecolour Recolour => new((float)RedSlider.Value, (float)GreenSlider.Value, (float)BlueSlider.Value,
-        (float)StrengthSlider.Value, (float)BrightnessSlider.Value);
+        (float)StrengthSlider.Value, (float)BrightnessSlider.Value)
+    {
+        Selection = Selection,
+        RangeHue = (float)RangeHueSlider.Value,
+        RangeWidth = (float)RangeWidthSlider.Value,
+    };
+
+    private TextureColourSelection Selection =>
+        Enum.TryParse<TextureColourSelection>((SelectionComboBox.SelectedItem as ComboBoxItem)?.Tag as string, out var selection)
+            ? selection : TextureColourSelection.All;
 
     private bool HasPendingChange => StrengthSlider.Value > 0 || BrightnessSlider.Value != 0;
 
@@ -196,6 +205,9 @@ public partial class TextureViewerWindow : Window
         GreenText.Text = $"{GreenSlider.Value:0.00}";
         BlueText.Text = $"{BlueSlider.Value:0.00}";
         StrengthText.Text = $"{StrengthSlider.Value:P0}";
+        RangeHueText.Text = $"{RangeHueSlider.Value:0}°";
+        RangeWidthText.Text = $"±{RangeWidthSlider.Value:0}°";
+        RangePreview.Background = HueBand(RangeHueSlider.Value, RangeWidthSlider.Value);
         BrightnessText.Text = $"{BrightnessSlider.Value:+0%;-0%;0%}";
         ColourPreview.Background = new SolidColorBrush(Color.FromScRgb(1, (float)RedSlider.Value, (float)GreenSlider.Value,
             (float)BlueSlider.Value));
@@ -207,6 +219,60 @@ public partial class TextureViewerWindow : Window
         UpdateAdjustmentText();
         _previewTimer.Stop();
         _previewTimer.Start();
+    }
+
+    private void SelectionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (RangePanel is null) return;
+        RangePanel.Visibility = Selection == TextureColourSelection.ColourRange ? Visibility.Visible : Visibility.Collapsed;
+        if (!IsLoaded) return;
+        _previewTimer.Stop();
+        _previewTimer.Start();
+    }
+
+    /// <summary>While "Pick the colour" is on, a click on the picture takes the hue under the pointer.</summary>
+    private void PictureImage_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (PickHueButton.IsChecked != true) return;
+        var point = e.GetPosition(PictureImage);
+        var (x, y) = ((int)point.X, (int)point.Y);
+        if (x < 0 || y < 0 || x >= _picture.Width || y >= _picture.Height) return;
+        var offset = (y * _picture.Width + x) * 4;
+        var (red, green, blue) = (_picture.Pixels[offset], _picture.Pixels[offset + 1], _picture.Pixels[offset + 2]);
+        PickHueButton.IsChecked = false;
+        e.Handled = true;
+        if (Math.Max(red, Math.Max(green, blue)) - Math.Min(red, Math.Min(green, blue)) < 12)
+        {
+            StatusText.Text = "That spot is grey, so it has no hue to pick. Use Light and white areas for greys and whites.";
+            return;
+        }
+        RangeHueSlider.Value = Math.Round(TextureRecolour.Hue(red, green, blue));
+        StatusText.Text = $"Picked hue {RangeHueSlider.Value:0}° from pixel {x:N0}, {y:N0}.";
+    }
+
+    // The hues a colour range changes, drawn as a strip from one end of the range to the other.
+    private static LinearGradientBrush HueBand(double hue, double width)
+    {
+        var brush = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
+        for (var step = 0; step <= 6; step++)
+            brush.GradientStops.Add(new GradientStop(FromHue((hue - width + width * step / 3 + 360) % 360), step / 6.0));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static Color FromHue(double hue)
+    {
+        var sector = hue / 60;
+        var x = (byte)Math.Round(255 * (1 - Math.Abs(sector % 2 - 1)));
+        return (int)sector switch
+        {
+            0 => Color.FromRgb(255, x, 0),
+            1 => Color.FromRgb(x, 255, 0),
+            2 => Color.FromRgb(0, 255, x),
+            3 => Color.FromRgb(0, x, 255),
+            4 => Color.FromRgb(x, 0, 255),
+            _ => Color.FromRgb(255, 0, x),
+        };
     }
 
     private void PartsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -228,7 +294,13 @@ public partial class TextureViewerWindow : Window
     {
         _undo.Push(_picture.DeepCopy());
         Recolour.Apply(_picture, SelectedRegion);
-        StatusText.Text = $"Recoloured {(PartsList.SelectedItem as PartRow)?.Label ?? "the picture"}.";
+        var part = (PartsList.SelectedItem as PartRow)?.Label ?? "the picture";
+        StatusText.Text = Selection switch
+        {
+            TextureColourSelection.ColourRange => $"Recoloured the {RangeHueSlider.Value:0}° hues of {part}.",
+            TextureColourSelection.LightAreas => $"Recoloured the light areas of {part}.",
+            _ => $"Recoloured {part}.",
+        };
         _savedChanges = false;
         StrengthSlider.Value = 0;
         BrightnessSlider.Value = 0;

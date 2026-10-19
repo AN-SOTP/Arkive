@@ -12,6 +12,7 @@ internal static class InterfaceSmokeTests
         new("finds, replaces and inflates the movie inside an interface movie export", TestMovieExportLayout),
         new("edits an interface movie into an .arkive mod, installs it and restores the clean package", TestMovieModEndToEnd),
         new("recolours one named part of a picture and keeps the rest, its transparency and its shading", TestRecolourPart),
+        new("recolours only a picture's gold, or only its light areas, and keeps every other colour", TestRecolourSelection),
     ];
 
     private static void TestMovieNames()
@@ -137,6 +138,40 @@ internal static class InterfaceSmokeTests
         Assert(unchanged.Pixels.SequenceEqual(before.Pixels), "a colour at zero strength changed the picture");
         Assert(!new TextureRecolour(0, 0, 0).IsValid && !new TextureRecolour(1, 1, 1, Strength: 2).IsValid,
             "a colour with no hue or an out-of-range strength was accepted");
+    }
+
+    private static void TestRecolourSelection()
+    {
+        // Gold, grey stone, white, blue and a dark gold shadow.
+        byte[][] colours = [[200, 160, 60], [120, 120, 120], [240, 238, 232], [40, 80, 200], [60, 48, 18]];
+        RgbaImage Picture()
+        {
+            var image = new RgbaImage(colours.Length, 1, new byte[colours.Length * 4]);
+            for (var index = 0; index < colours.Length; index++)
+            {
+                colours[index].CopyTo(image.Pixels, index * 4);
+                image.Pixels[index * 4 + 3] = 255;
+            }
+            return image;
+        }
+        byte[] Pixel(RgbaImage image, int index) => image.Pixels.AsSpan(index * 4, 3).ToArray();
+
+        var gold = Picture();
+        new TextureRecolour(1, 0, 0) { Selection = TextureColourSelection.ColourRange, RangeHue = 43, RangeWidth = 20 }.Apply(gold);
+        Assert(Pixel(gold, 0).SequenceEqual(new byte[] { 200, 0, 0 }) && Pixel(gold, 4).SequenceEqual(new byte[] { 60, 0, 0 }),
+            "gold pixels, lit and shaded, did not turn red while keeping their brightness: " +
+            string.Join(" ", Pixel(gold, 0)) + " / " + string.Join(" ", Pixel(gold, 4)));
+        Assert(Enumerable.Range(1, 3).All(index => Pixel(gold, index).SequenceEqual(colours[index])),
+            "a gold colour range also changed the grey, the white or the blue");
+
+        var light = Picture();
+        new TextureRecolour(1, 0, 0, Brightness: -0.75f) { Selection = TextureColourSelection.LightAreas }.Apply(light);
+        Assert(Pixel(light, 2).SequenceEqual(new byte[] { 60, 0, 0 }),
+            "the white pixel was not darkened to a deep red: " + string.Join(" ", Pixel(light, 2)));
+        Assert(new[] { 0, 1, 3, 4 }.All(index => Pixel(light, index).SequenceEqual(colours[index])),
+            "light areas also changed the gold, the mid grey, the blue or the shadow");
+        Assert(TextureRecolour.Hue(0, 0, 255) == 240 && TextureRecolour.Hue(255, 0, 128) is > 329 and < 331,
+            "hues were not read in degrees around the colour wheel");
     }
 
     private static byte[] ReadInstalledMovie(string packagePath)

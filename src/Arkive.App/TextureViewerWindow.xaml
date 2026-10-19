@@ -25,9 +25,41 @@
                            Text="Reading what the game's interface calls each part…" />
                 <ListBox x:Name="PartsList" Height="210" DisplayMemberPath="Label" SelectionChanged="PartsList_SelectionChanged" />
                 <StackPanel x:Name="EditPanel" Margin="0,12,0,0">
-                    <TextBlock Text="Colour" FontWeight="SemiBold" />
+                    <TextBlock Text="Change" FontWeight="SemiBold" />
+                    <ComboBox x:Name="SelectionComboBox" Margin="0,4,0,0" SelectionChanged="SelectionComboBox_SelectionChanged">
+                        <ComboBoxItem Content="Every colour" Tag="All" IsSelected="True"
+                                      ToolTip="Every pixel of the part takes the new colour." />
+                        <ComboBoxItem Content="One colour range (gold, say)" Tag="ColourRange"
+                                      ToolTip="Only pixels near the chosen hue change; greys and other colours stay as they are." />
+                        <ComboBoxItem Content="Light and white areas" Tag="LightAreas"
+                                      ToolTip="Only light, nearly white pixels change (white stone, pale highlights). Lower Brightness to darken them." />
+                    </ComboBox>
+                    <StackPanel x:Name="RangePanel" Margin="0,6,0,0" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="74" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="44" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Hue" VerticalAlignment="Center" />
+                            <Slider x:Name="RangeHueSlider" Grid.Column="1" Minimum="0" Maximum="359" Value="45" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                            <TextBlock x:Name="RangeHueText" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="1" Text="Width" VerticalAlignment="Center" />
+                            <Slider x:Name="RangeWidthSlider" Grid.Row="1" Grid.Column="1" Minimum="5" Maximum="90" Value="25" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                            <TextBlock x:Name="RangeWidthText" Grid.Row="1" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+                        <Border x:Name="RangePreview" Height="14" CornerRadius="3" Margin="0,4,0,0" BorderThickness="1"
+                                BorderBrush="{DynamicResource BorderBrush}" />
+                        <ToggleButton x:Name="PickHueButton" Content="Pick the colour from the picture" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                      ToolTip="Then click the picture: the hue under the pointer becomes the middle of the range." />
+                    </StackPanel>
+                    <TextBlock Text="New colour" FontWeight="SemiBold" Margin="0,10,0,0" />
                     <TextBlock Margin="0,2,0,6" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
-                               Text="Each pixel of the selected part takes this colour's hue and keeps its own brightness, as particle colours do." />
+                               Text="Each changed pixel takes this colour's hue and keeps its own brightness, as particle colours do." />
                     <WrapPanel x:Name="SwatchPanel" Margin="0,0,0,6" />
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -91,7 +123,8 @@
                             <ScaleTransform x:Name="ImageScale" ScaleX="1" ScaleY="1" />
                         </Grid.LayoutTransform>
                         <Rectangle x:Name="Checkerboard" />
-                        <Image x:Name="PictureImage" Stretch="None" RenderOptions.BitmapScalingMode="NearestNeighbor" />
+                        <Image x:Name="PictureImage" Stretch="None" RenderOptions.BitmapScalingMode="NearestNeighbor"
+                               MouseLeftButtonDown="PictureImage_MouseLeftButtonDown" />
                         <Canvas x:Name="Overlay" IsHitTestVisible="False">
                             <Rectangle x:Name="PartHighlight" Stroke="#FFFF3B3B" StrokeThickness="1" StrokeDashArray="3 2"
                                        Fill="#22FF3B3B" Visibility="Collapsed" />
