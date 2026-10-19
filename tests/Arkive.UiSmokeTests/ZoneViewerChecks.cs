@@ -137,7 +137,9 @@ internal static class ZoneViewerChecks
             },
             (_, _, _, _) => Task.FromResult("Exported."),
             _ => { },
-            _ => { });
+            _ => { },
+            (_, _) => Task.FromResult(WriteScene(Path.Combine(directory, "scene"), map.Key)),
+            Path.Combine(directory, "webview2"));
         var viewer = new ZoneViewerWindow(map, host, "Light")
         {
             Left = -5000, Top = -5000, ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual,
@@ -231,11 +233,54 @@ internal static class ZoneViewerChecks
             Check(grid.SelectedItems.Count == 4 && !grid.SelectedItems.Contains(shared),
                 "Select only this map's parts did not pick just the parts no other map uses.");
             Console.WriteLine("PASS: the Zone Viewer previews parts, recolours live, and adds the chosen parts to the mod with the colour");
+
+            var tabs = Find<TabControl>("ViewTabs");
+            Check(tabs.Items.OfType<TabItem>().Select(tab => tab.Header.ToString()).SequenceEqual(["Parts List", "3D Map"]),
+                "The Zone Viewer's tabs are not Parts List and 3D Map.");
+            tabs.SelectedItem = Find<TabItem>("MapTab");
+            await UntilAsync(() => viewer.MapLoaded, () => "The 3D map did not draw: " + Find<TextBlock>("MapMessage").Text + " " + Find<TextBlock>("StatusText").Text,
+                TimeSpan.FromSeconds(60));
+            Check(Find<TextBlock>("StatusText").Text.StartsWith("The 3D map shows 2 placed meshes", StringComparison.Ordinal),
+                "The 3D map does not say what it shows: " + Find<TextBlock>("StatusText").Text);
+            typeof(ZoneViewerWindow).GetMethod("OnMapMessage", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(viewer, ["{\"type\":\"pick\",\"mesh\":\"bg_fixture_stone.fixture_rock_sm\",\"material\":\"lv_fixture_ed_01_ps.fogvolumemi_0\"}"]);
+            Check(grid.SelectedItems.Count == 2 && grid.SelectedItems.Contains(mesh) && grid.SelectedItems.Contains(own),
+                "Clicking a piece of the 3D map did not select its mesh and material in the list.");
+            var browser = Find<Microsoft.Web.WebView2.Wpf.WebView2>("MapBrowser");
+            var highlighted = "";
+            for (var attempt = 0; attempt < 100 && highlighted != "1"; attempt++)
+            {
+                highlighted = await browser.CoreWebView2.ExecuteScriptAsync("arkiveMap.highlighted()");
+                if (highlighted != "1") await Task.Delay(50);
+            }
+            Check(highlighted == "1", $"The selected parts were not highlighted on the 3D map ({highlighted}).");
+            Console.WriteLine("PASS: the 3D Map tab draws the map, and clicking a piece selects its mesh and material, which the map highlights");
         }
         finally
         {
             viewer.Close();
         }
+    }
+
+    /// <summary>A tiny map scene: one triangle mesh placed twice, in the format the scene builder writes.</summary>
+    private static string WriteScene(string directory, string mapKey)
+    {
+        Directory.CreateDirectory(directory);
+        using (var data = new BinaryWriter(File.Create(Path.Combine(directory, ZoneMapScene.DataFileName))))
+        {
+            foreach (var value in new float[] { 0, 0, 0, 1, 0, 0, 0, 1, 0 }) data.Write(value);
+            foreach (var value in new[] { 0f, 0f, 1f, 0f, 0f, 1f }) data.Write((Half)value);
+            foreach (var value in new ushort[] { 0, 1, 2, 0 }) data.Write(value);
+            for (var instance = 0; instance < 2; instance++)
+                foreach (var value in new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, instance * 3, 0, 0, 1 }) data.Write(value);
+        }
+        var scene = new ZoneMapScene(ZoneMapScene.CurrentVersion, mapKey, [0, 0, 0], [4, 1, 0],
+            [new ZoneSceneMesh("bg_fixture_stone.fixture_rock_sm", new ZoneSceneRange(0, 3), new ZoneSceneRange(36, 3),
+                new ZoneSceneRange(48, 3), [new ZoneSceneSection(0, 3, 0)], ["lv_fixture_ed_01_ps.fogvolumemi_0"])],
+            [new ZoneSceneMaterial("lv_fixture_ed_01_ps.fogvolumemi_0", [0.8f, 0.5f, 0.3f], null, null)],
+            [new ZoneSceneBatch(0, [0], new ZoneSceneRange(56, 2))], [], 2, 0);
+        File.WriteAllText(Path.Combine(directory, ZoneMapScene.FileName), JsonSerializer.Serialize(scene, ZoneMapScene.Json));
+        return directory;
     }
 
     private static ZoneMapPart Part(string package, string name, string className, AssetKind kind, ZonePartGroup group, bool inLevel) =>

@@ -1,0 +1,10 @@
+:root { --bg: #15171b; --text: #e6e8eb; --muted: #9aa1ab; font: 13px/1.4 "Segoe UI", system-ui, sans-serif; color-scheme: dark; }
+:root[data-theme="light"] { --bg: #dfe3ea; --text: #1d2228; --muted: #4a525d; color-scheme: light; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
+#view { display: block; width: 100%; height: 100%; outline: none; }
+#hint, #status { position: absolute; left: 10px; padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, .45); color: #e6e8eb; pointer-events: none; }
+#hint { bottom: 10px; color: #c9ced6; }
+#status { top: 10px; }
+#status:empty { display: none; }
+#options { position: absolute; right: 10px; top: 10px; padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, .45); color: #e6e8eb; display: flex; flex-direction: column; gap: 3px; user-select: none; }
+#options label { display: flex; gap: 6px; align-items: center; }

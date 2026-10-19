@@ -193,6 +193,22 @@ internal static class ZoneViewerText
         return names.Length > limit ? $"{shown} and {names.Length - limit:N0} more" : shown;
     }
 
+    // ---- 3D map ----
+
+    public const string BuildingMap = "Reading the whole map to draw it in 3D. The first time takes a few seconds; Arkive keeps the result.";
+    public const string NoWebView = "The 3D map needs the Microsoft Edge WebView2 Runtime, which is part of Windows 10 and 11 but appears to be missing here.";
+    public const string PickedNothing = "That piece is not in this map's parts list.";
+
+    public static string MapStep(ZoneSceneProgress progress) => progress.Total > 0
+        ? $"{progress.Stage} ({progress.Completed:N0} of {progress.Total:N0})…"
+        : $"{progress.Stage}…";
+
+    public static string MapFailed3D(string reason) => $"The 3D map could not be drawn: {reason}";
+
+    public static string MapLoaded(int placements, int meshes, int terrain) => terrain > 0
+        ? $"The 3D map shows {Of(placements, "placed mesh", "placed meshes")} ({Of(meshes, "mesh", "different meshes")}) and {Of(terrain, "terrain tile", "terrain tiles")}. Click a piece to select it in the list; the recolour previews on it."
+        : $"The 3D map shows {Of(placements, "placed mesh", "placed meshes")} ({Of(meshes, "mesh", "different meshes")}). Click a piece to select it in the list; the recolour previews on it.";
+
     // ---- Asset Library map cards ----
 
     public static string CardTitle(ZoneMap map, IReadOnlyList<GameZone> matched) =>

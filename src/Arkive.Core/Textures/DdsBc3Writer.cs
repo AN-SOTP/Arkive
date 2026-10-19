@@ -27,6 +27,38 @@ public static class DdsBlockCompressedWriter
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var header = Header(width, height, format, mipPayloads);
+        await using var stream = new FileStream(
+            path,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            128 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await stream.WriteAsync(header, cancellationToken).ConfigureAwait(false);
+        foreach (var mip in mipPayloads)
+        {
+            await stream.WriteAsync(mip, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>A whole DDS in memory (for reading one level back without a file).</summary>
+    public static byte[] Build(int width, int height, DdsBlockFormat format, IReadOnlyList<ReadOnlyMemory<byte>> mipPayloads)
+    {
+        var header = Header(width, height, format, mipPayloads);
+        var bytes = new byte[header.Length + mipPayloads.Sum(mip => mip.Length)];
+        header.CopyTo(bytes, 0);
+        var offset = header.Length;
+        foreach (var mip in mipPayloads)
+        {
+            mip.Span.CopyTo(bytes.AsSpan(offset));
+            offset += mip.Length;
+        }
+        return bytes;
+    }
+
+    private static byte[] Header(int width, int height, DdsBlockFormat format, IReadOnlyList<ReadOnlyMemory<byte>> mipPayloads)
+    {
         ArgumentNullException.ThrowIfNull(format);
         ArgumentNullException.ThrowIfNull(mipPayloads);
         if (width <= 0 || height <= 0 || mipPayloads.Count == 0)
@@ -98,19 +130,7 @@ public static class DdsBlockCompressedWriter
         }
 
         WriteUInt32(header, 108, caps);
-
-        await using var stream = new FileStream(
-            path,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            128 * 1024,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await stream.WriteAsync(header, cancellationToken).ConfigureAwait(false);
-        foreach (var mip in mipPayloads)
-        {
-            await stream.WriteAsync(mip, cancellationToken).ConfigureAwait(false);
-        }
+        return header;
     }
 
     private static void WriteUInt32(Span<byte> output, int offset, uint value) =>

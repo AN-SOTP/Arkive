@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Arkive 3D map</title>
+  <link rel="stylesheet" href="map.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.min.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="hint">Drag to turn · right-drag or Shift-drag to move · wheel to zoom · click a piece to select it · F frames the selection</div>
+  <div id="status">Loading the map…</div>
+  <div id="options">
+    <label><input type="checkbox" id="skyCheck" /> Show sky and clouds</label>
+    <label><input type="checkbox" id="effectCheck" /> Show glows, water and effects</label>
+  </div>
+  <script type="module" src="map.js"></script>
+</body>
+</html>

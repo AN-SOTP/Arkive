@@ -178,6 +178,54 @@ public sealed partial class PackageIndexStore
     }
 
     /// <summary>
+    /// Builds the 3D overview of a map into <paramref name="directory"/> (see <see cref="ZoneMapScene"/>): every
+    /// level package is read for where it places meshes and terrain, and each mesh, material and texture it needs
+    /// is found through the Asset Library's index. Takes from a few seconds to a minute or two for a big map.
+    /// </summary>
+    /// <param name="textureExport">Arkive's texture decoder; without it the scene has colours but no textures.</param>
+    public async Task<ZoneMapScene> BuildZoneMapSceneAsync(
+        string rootPath,
+        ZoneMap map,
+        GameAssetMetadataIndex metadata,
+        IChunkProtectionProvider protectionProvider,
+        string directory,
+        Textures.NativeTextureExportService? textureExport,
+        IProgress<ZoneSceneProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var files = await PackageFilesByAliasAsync(rootPath, metadata, cancellationToken).ConfigureAwait(false) ??
+                    throw new InvalidOperationException("The Asset Library's index is not ready yet.");
+        progress?.Report(new ZoneSceneProgress("Reading the map's level packages", 0, 0));
+        var packages = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        await Parallel.ForEachAsync(map.LevelPackages.Where(files.ContainsKey),
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 1, 8), CancellationToken = cancellationToken },
+            (alias, _) =>
+            {
+                packages.TryAdd(alias, 0);
+                try
+                {
+                    foreach (var reference in ZoneMapSidecar.ReadLevel(files[alias], alias, protectionProvider).References)
+                        packages.TryAdd(reference.PackageName, 0);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or
+                                                      UnauthorizedAccessException)
+                {
+                }
+                return ValueTask.CompletedTask;
+            }).ConfigureAwait(false);
+        var documents = await LoadPackagesByAliasAsync(rootPath, packages.Keys, metadata, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        var indexed = new Dictionary<string, (PackageIndexDocument Document, IndexedAsset Asset)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var document in documents)
+            foreach (var asset in document.Assets)
+                indexed.TryAdd(document.PackageAlias + "." + asset.ObjectName, (document, asset));
+        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        Directory.CreateDirectory(directory);
+        return await new ZoneMapSceneBuilder(files, indexed, protectionProvider, textureExport).BuildAsync(map, directory, progress, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// The landscape's layer materials and their textures (Terrain), and its blend masks (generated): read from each
     /// landscape material's parent and texture parameters, and each layer material's textures.
     /// </summary>
