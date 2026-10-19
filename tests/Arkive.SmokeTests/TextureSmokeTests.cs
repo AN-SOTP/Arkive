@@ -21,6 +21,7 @@ internal static class TextureSmokeTests
         new("creates deterministic alpha-safe numbered face overlays", TestFaceTextureNumberOverlay),
         new("creates a fully visible editable PNG for native texture exports", TestNativeEditablePngExport),
         new("rebuilds BC mip chains while preserving unchanged blocks", TestTextureBlockRebuild),
+        new("writes, reads and rebuilds uncompressed 32-bit textures (LUTs, sky layers) pixel by pixel", TestUncompressedTextureRebuild),
         new("normalizes a GIMP-style DDS through a legacy texture manifest", TestTextureImportCandidate),
         new("builds a BC1 texture import candidate without inventing an alpha channel", TestBc1TextureImportCandidate),
         new("encodes pinned Unity CRN payloads for BC1, BC3, and BC5", TestPinnedUnityCrunchEncoder,
@@ -581,6 +582,38 @@ internal static class TextureSmokeTests
             "native editable PNG semantic was not recorded");
         Assert(result.Manifest.RgbViewDdsRelativePath is null,
             "new native export still emitted the obsolete opaque-alpha DDS copy");
+    }
+
+    private static void TestUncompressedTextureRebuild()
+    {
+        var directory = Path.Combine(fixtureDirectory, "bgra8");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "lut.dds");
+        if (File.Exists(path)) File.Delete(path);
+        // A 4x2 BGRA texture and its 2x1 mip: blue, green, red and alpha bytes per pixel.
+        var top = Enumerable.Range(0, 8).SelectMany(pixel => new byte[] { (byte)(pixel * 10), 100, 200, (byte)(255 - pixel) }).ToArray();
+        var mip = new byte[] { 1, 2, 3, 255, 4, 5, 6, 255 };
+        DdsBlockCompressedWriter.WriteAsync(path, 4, 2, NativeTextureFormats.Bgra8.DdsFormat, [top, mip]).GetAwaiter().GetResult();
+        var texture = DdsBlockTexture.ReadAsync(path).GetAwaiter().GetResult();
+        Assert(texture.Format == BlockTextureFormat.Bgra8 && texture.MipCount == 2 && texture.Mips[1].Length == 8 &&
+               NativeTextureFormats.Bgra8.CalculateMipBytes(4, 2) == 32,
+            "an uncompressed DDS was not read as 32-bit BGRA with its mips");
+        var image = texture.DecodeMip(0, editableView: false);
+        Assert(image.Pixels.AsSpan(0, 8).SequenceEqual(new byte[] { 200, 100, 0, 255, 200, 100, 10, 254 }),
+            "BGRA pixels were not decoded to RGBA: " + string.Join(",", image.Pixels.Take(8)));
+
+        // Change only the first two pixels of the top mip to pure red.
+        var edited = texture.DecodeMip(0, editableView: true);
+        for (var pixel = 0; pixel < 2; pixel++) new byte[] { 255, 0, 0, 255 }.CopyTo(edited.Pixels, pixel * 4);
+        var rebuilt = TextureBlockRebuilder.Rebuild(texture, edited, "lv_test_lut", TextureImportAlphaPolicy.PreserveOriginal);
+        var after = DdsBlockTexture.Parse(path, rebuilt.DdsBytes);
+        var bytes = after.Bytes.AsSpan(after.Mips[0].Offset, 32).ToArray();
+        Assert(bytes.AsSpan(0, 8).SequenceEqual(new byte[] { 0, 0, 255, 255, 0, 0, 255, 254 }) &&
+               bytes.AsSpan(8).SequenceEqual(top.AsSpan(8)),
+            "the rebuild did not write only the edited pixels, in BGRA, keeping their alpha: " + string.Join(",", bytes));
+        var lower = after.Bytes.AsSpan(after.Mips[1].Offset, 8).ToArray();
+        Assert(!lower.AsSpan(0, 4).SequenceEqual(mip.AsSpan(0, 4)) && lower.AsSpan(4).SequenceEqual(mip.AsSpan(4)),
+            "the lower mip was not redrawn where the edit reached it and kept elsewhere: " + string.Join(",", lower));
     }
 
     private static void TestTextureBlockRebuild()

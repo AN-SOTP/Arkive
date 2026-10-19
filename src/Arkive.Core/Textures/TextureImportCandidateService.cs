@@ -331,7 +331,7 @@ public sealed class TextureImportCandidateService
 
         var expectedProfile = NativeTextureFormats.Supported.FirstOrDefault(profile =>
             profile.ManifestPixelFormat.Equals(nativeManifest.PixelFormat, StringComparison.OrdinalIgnoreCase));
-        var expectedFormat = expectedProfile?.DdsFourCc.ToUpperInvariant() switch
+        var expectedFormat = expectedProfile?.IsUncompressed == true ? BlockTextureFormat.Bgra8 : expectedProfile?.DdsFourCc.ToUpperInvariant() switch
         {
             "DXT1" => BlockTextureFormat.Bc1,
             "DXT5" => BlockTextureFormat.Bc3,

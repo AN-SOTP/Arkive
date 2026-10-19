@@ -547,6 +547,11 @@ public sealed class TextureReplacementPayloadService
         ReadOnlySpan<byte> blocks)
     {
         var output = new byte[checked(width * height * 4)];
+        if (profile.IsUncompressed)
+        {
+            BgraPixels.ToRgba(blocks[..output.Length], output);
+            return output;
+        }
         var blocksWide = Math.Max(1, (width + 3) / 4);
         var blocksHigh = Math.Max(1, (height + 3) / 4);
         Span<byte> pixels = stackalloc byte[64];

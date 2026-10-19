@@ -10,6 +10,8 @@ public enum BlockTextureFormat
     Bc1,
     Bc3,
     Bc5,
+    /// <summary>Uncompressed 32-bit BGRA pixels in rows; its "block" is one pixel of 4 bytes.</summary>
+    Bgra8,
 }
 
 public enum TextureEditSemantic
@@ -123,14 +125,17 @@ public sealed class DdsBlockTexture
                 "Only ordinary two-dimensional, non-array, non-cubemap DDS files are supported.");
         }
 
-        var (format, bytesPerBlock) = fourCc.ToUpperInvariant() switch
-        {
-            "DXT1" => (BlockTextureFormat.Bc1, 8),
-            "DXT5" => (BlockTextureFormat.Bc3, 16),
-            "ATI2" or "BC5U" => (BlockTextureFormat.Bc5, 16),
-            _ => throw new NotSupportedException(
-                $"DDS FourCC '{fourCc}' is not a supported BC1, BC3, or BC5 format."),
-        };
+        var (format, bytesPerBlock) = IsBgra8(bytes)
+            ? (BlockTextureFormat.Bgra8, 4)
+            : fourCc.ToUpperInvariant() switch
+            {
+                "DXT1" => (BlockTextureFormat.Bc1, 8),
+                "DXT5" => (BlockTextureFormat.Bc3, 16),
+                "ATI2" or "BC5U" => (BlockTextureFormat.Bc5, 16),
+                _ => throw new NotSupportedException(
+                    $"DDS FourCC '{fourCc}' is not a supported BC1, BC3, BC5 or 32-bit BGRA format."),
+            };
+        if (format == BlockTextureFormat.Bgra8) fourCc = "BGRA";
         var maximumMipCount = 1 + (int)Math.Floor(Math.Log2(Math.Max(width, height)));
         if (mipCount > maximumMipCount)
         {
@@ -144,10 +149,9 @@ public sealed class DdsBlockTexture
         {
             var mipWidth = Math.Max(1, width >> index);
             var mipHeight = Math.Max(1, height >> index);
-            var length = NativeCrunchDecoder.CalculateBlockCompressedBytes(
-                mipWidth,
-                mipHeight,
-                bytesPerBlock);
+            var length = format == BlockTextureFormat.Bgra8
+                ? checked(mipWidth * mipHeight * 4)
+                : NativeCrunchDecoder.CalculateBlockCompressedBytes(mipWidth, mipHeight, bytesPerBlock);
             if (offset > bytes.Length - length)
             {
                 throw new InvalidDataException(
@@ -176,10 +180,26 @@ public sealed class DdsBlockTexture
             mips);
     }
 
+    // A 32-bit RGB DDS with alpha whose channels are B, G, R, A in memory (DDPF_RGB | DDPF_ALPHAPIXELS).
+    private static bool IsBgra8(byte[] bytes) =>
+        (BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(80)) & 0x44) == 0x40 &&
+        BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(88)) == 32 &&
+        BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(92)) == 0x00FF0000 &&
+        BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(96)) == 0x0000FF00 &&
+        BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(100)) == 0x000000FF &&
+        BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(104)) == 0xFF000000;
+
     public RgbaImage DecodeMip(int mipIndex, bool editableView)
     {
         var mip = Mips[mipIndex];
         var pixels = new byte[checked(mip.Width * mip.Height * 4)];
+        if (Format == BlockTextureFormat.Bgra8)
+        {
+            BgraPixels.ToRgba(Bytes.AsSpan(mip.Offset, mip.Length), pixels);
+            if (editableView)
+                for (var index = 3; index < pixels.Length; index += 4) pixels[index] = 255;
+            return new RgbaImage(mip.Width, mip.Height, pixels);
+        }
         var blocksWide = Math.Max(1, (mip.Width + 3) / 4);
         var blocksHigh = Math.Max(1, (mip.Height + 3) / 4);
         Span<byte> blockPixels = stackalloc byte[64];
@@ -443,6 +463,12 @@ public static class TextureBlockRebuilder
 
     private static byte[] EncodeBlocks(RgbaImage image, BlockTextureFormat format, int bytesPerBlock)
     {
+        if (format == BlockTextureFormat.Bgra8)
+        {
+            var bgra = new byte[image.Pixels.Length];
+            BgraPixels.FromRgba(image.Pixels, bgra);
+            return bgra;
+        }
         var blocksWide = Math.Max(1, (image.Width + 3) / 4);
         var blocksHigh = Math.Max(1, (image.Height + 3) / 4);
         var output = new byte[blocksWide * blocksHigh * bytesPerBlock];
@@ -549,6 +575,8 @@ public static class TextureBlockRebuilder
                 $"the texture requires {original.Width}x{original.Height}.");
         }
 
+        if (original.Format == BlockTextureFormat.Bgra8)
+            return RebuildUncompressed(original, editedTopMip, objectName, alphaPolicy, cancellationToken);
         var semantic = TextureEditableImageService.InferSemantic(original.Format, objectName);
         var originalEditTop = original.DecodeMip(0, editableView: true);
         var colourDirty = ComparePixels(originalEditTop, editedTopMip, original.Format, compareAlpha: false);
@@ -700,6 +728,70 @@ public static class TextureBlockRebuilder
             editedAlphaBlocks,
             alphaAction,
             semantic);
+    }
+
+    /// <summary>
+    /// Rebuilds an uncompressed texture: each pixel the edit changed takes the edited colour (and alpha, by the alpha
+    /// policy); every other pixel keeps its original bytes. Lower mips are averaged down from the edited top mip only
+    /// where the edit reached them.
+    /// </summary>
+    private static TextureBlockRebuildResult RebuildUncompressed(
+        DdsBlockTexture original,
+        RgbaImage editedTopMip,
+        string objectName,
+        TextureImportAlphaPolicy alphaPolicy,
+        CancellationToken cancellationToken)
+    {
+        var semantic = TextureEditableImageService.InferSemantic(original.Format, objectName);
+        var colourDirty = ComparePixels(original.DecodeMip(0, editableView: true), editedTopMip, original.Format, compareAlpha: false);
+        var alphaDirty = CompareAlpha(original.DecodeMip(0, editableView: false), editedTopMip);
+        var editedMips = new List<RgbaImage>(original.MipCount) { editedTopMip.DeepCopy() };
+        var colourDirtyMips = new List<bool[]> { colourDirty };
+        var alphaDirtyMips = new List<bool[]> { alphaDirty };
+        for (var mip = 1; mip < original.MipCount; mip++)
+        {
+            editedMips.Add(Downsample(editedMips[^1], semantic));
+            colourDirtyMips.Add(DownsampleDirty(colourDirtyMips[^1], editedMips[mip - 1].Width, editedMips[mip - 1].Height,
+                editedMips[mip].Width, editedMips[mip].Height));
+            alphaDirtyMips.Add(DownsampleDirty(alphaDirtyMips[^1], editedMips[mip - 1].Width, editedMips[mip - 1].Height,
+                editedMips[mip].Width, editedMips[mip].Height));
+        }
+        var candidate = original.Bytes.ToArray();
+        long total = 0, dirty = 0, touched = 0, changed = 0, alphaEdited = 0;
+        for (var mipIndex = 0; mipIndex < original.MipCount; mipIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var mip = original.Mips[mipIndex];
+            var edited = editedMips[mipIndex].Pixels;
+            for (var pixel = 0; pixel < mip.Width * mip.Height; pixel++)
+            {
+                total++;
+                var colourChanged = colourDirtyMips[mipIndex][pixel];
+                var alphaChanged = alphaDirtyMips[mipIndex][pixel];
+                if (colourChanged) dirty++;
+                if (alphaChanged) alphaEdited++;
+                var offset = mip.Offset + pixel * 4;
+                var before = candidate.AsSpan(offset, 4).ToArray();
+                if (colourChanged)
+                {
+                    candidate[offset] = edited[pixel * 4 + 2];
+                    candidate[offset + 1] = edited[pixel * 4 + 1];
+                    candidate[offset + 2] = edited[pixel * 4];
+                }
+                if (alphaPolicy == TextureImportAlphaPolicy.UseEdited && alphaChanged) candidate[offset + 3] = edited[pixel * 4 + 3];
+                else if (alphaPolicy == TextureImportAlphaPolicy.ForceOpaque) candidate[offset + 3] = 255;
+                if (colourChanged || alphaChanged || alphaPolicy == TextureImportAlphaPolicy.ForceOpaque) touched++;
+                if (!before.AsSpan().SequenceEqual(candidate.AsSpan(offset, 4))) changed++;
+            }
+        }
+        var alphaAction = alphaPolicy switch
+        {
+            TextureImportAlphaPolicy.PreserveOriginal => "Original alpha bytes were kept; edited colour was written to the changed pixels.",
+            TextureImportAlphaPolicy.UseEdited => "Edited alpha was written with the edited colour.",
+            _ => "Alpha was forced fully opaque.",
+        };
+        return new TextureBlockRebuildResult(candidate, total, dirty, touched, total - touched, changed, dirty, alphaEdited,
+            alphaAction, semantic);
     }
 
     private static bool[] ComparePixels(
@@ -1170,4 +1262,21 @@ internal static class BlockCompression
         rgba[2] = (byte)((blue << 3) | (blue >> 2));
         rgba[3] = 255;
     }
+}
+
+/// <summary>Swaps between Arkive's RGBA pixels and the B, G, R, A byte order of uncompressed UE3/DDS textures.</summary>
+public static class BgraPixels
+{
+    public static void ToRgba(ReadOnlySpan<byte> bgra, Span<byte> rgba)
+    {
+        for (var index = 0; index + 3 < bgra.Length; index += 4)
+        {
+            rgba[index] = bgra[index + 2];
+            rgba[index + 1] = bgra[index + 1];
+            rgba[index + 2] = bgra[index];
+            rgba[index + 3] = bgra[index + 3];
+        }
+    }
+
+    public static void FromRgba(ReadOnlySpan<byte> rgba, Span<byte> bgra) => ToRgba(rgba, bgra);
 }

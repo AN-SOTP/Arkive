@@ -12,6 +12,8 @@ public static class DdsBlockCompressedWriter
     private const uint DdsMagic = 0x20534444;
     private const uint HeaderFlags = 0x000A1007;
     private const uint PixelFormatFourCc = 0x4;
+    private const uint PixelFormatRgb = 0x40;
+    private const uint PixelFormatAlpha = 0x1;
     private const uint CapsTexture = 0x1000;
     private const uint CapsComplex = 0x8;
     private const uint CapsMipmap = 0x400000;
@@ -32,7 +34,9 @@ public static class DdsBlockCompressedWriter
             throw new ArgumentException("DDS output requires positive dimensions and at least one mip.");
         }
 
-        if (format.FourCc.Length != 4 || format.BytesPerBlock is not (8 or 16))
+        // Uncompressed BGRA is written with "BGRA" as its label and 4 bytes per pixel instead of a FourCC block format.
+        var uncompressed = format.BytesPerBlock == 4;
+        if (!uncompressed && (format.FourCc.Length != 4 || format.BytesPerBlock is not (8 or 16)))
         {
             throw new ArgumentException(
                 "A block-compressed DDS format requires a four-character code and 8- or 16-byte blocks.",
@@ -50,10 +54,9 @@ public static class DdsBlockCompressedWriter
         {
             var mipWidth = Math.Max(1, width >> index);
             var mipHeight = Math.Max(1, height >> index);
-            var expected = NativeCrunchDecoder.CalculateBlockCompressedBytes(
-                mipWidth,
-                mipHeight,
-                format.BytesPerBlock);
+            var expected = uncompressed
+                ? checked(mipWidth * mipHeight * 4)
+                : NativeCrunchDecoder.CalculateBlockCompressedBytes(mipWidth, mipHeight, format.BytesPerBlock);
             if (mipPayloads[index].Length != expected)
             {
                 throw new InvalidDataException(
@@ -71,8 +74,23 @@ public static class DdsBlockCompressedWriter
         WriteUInt32(header, 20, checked((uint)mipPayloads[0].Length));
         WriteUInt32(header, 28, checked((uint)mipPayloads.Count));
         WriteUInt32(header, 76, 32);
-        WriteUInt32(header, 80, PixelFormatFourCc);
-        Encoding.ASCII.GetBytes(format.FourCc, header.AsSpan(84, 4));
+        if (uncompressed)
+        {
+            // An ordinary 32-bit BGRA DDS: pitch instead of linear size, RGB with alpha and its channel masks.
+            WriteUInt32(header, 8, 0x0002100F);
+            WriteUInt32(header, 20, checked((uint)(width * 4)));
+            WriteUInt32(header, 80, PixelFormatRgb | PixelFormatAlpha);
+            WriteUInt32(header, 88, 32);
+            WriteUInt32(header, 92, 0x00FF0000);
+            WriteUInt32(header, 96, 0x0000FF00);
+            WriteUInt32(header, 100, 0x000000FF);
+            WriteUInt32(header, 104, 0xFF000000);
+        }
+        else
+        {
+            WriteUInt32(header, 80, PixelFormatFourCc);
+            Encoding.ASCII.GetBytes(format.FourCc, header.AsSpan(84, 4));
+        }
         var caps = CapsTexture;
         if (mipPayloads.Count > 1)
         {

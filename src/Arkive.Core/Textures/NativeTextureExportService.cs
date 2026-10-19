@@ -152,7 +152,7 @@ public sealed class NativeTextureExportService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var mip = candidate.Mips[index];
-            ValidateMipGate(mip, index, width, height, exportBytes.Length);
+            ValidateMipGate(mip, index, width, height, exportBytes.Length, formatProfile.IsUncompressed ? 1 : 4);
             var payloadOffset = checked((int)mip.PayloadRelativeOffset!.Value);
             var storedData = exportBytes.AsSpan(payloadOffset, mip.StoredSize).ToArray();
             var storedHash = Convert.ToHexString(SHA256.HashData(storedData));
@@ -456,10 +456,12 @@ public sealed class NativeTextureExportService
         int index,
         int width,
         int height,
-        int exportSize)
+        int exportSize,
+        int smallest)
     {
-        var expectedWidth = Math.Max(4, width >> index);
-        var expectedHeight = Math.Max(4, height >> index);
+        // Block-compressed mips stop at one 4x4 block; uncompressed ones go down to single pixels.
+        var expectedWidth = Math.Max(smallest, width >> index);
+        var expectedHeight = Math.Max(smallest, height >> index);
         if (mip.MipIndex != index || mip.Width != expectedWidth || mip.Height != expectedHeight)
         {
             Refuse(
