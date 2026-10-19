@@ -354,7 +354,7 @@ public sealed class MaterialInstanceEditService
         var option = FindReference(options, objectReference) ??
                      throw new MaterialInstanceEditRefusalException(
                          $"{field} target {objectReference} is not a compatible object already referenced by this UPK.");
-        if (!string.IsNullOrWhiteSpace(targetIdentity) &&
+        if (!string.IsNullOrWhiteSpace(targetIdentity) && !IsLegacyFor(targetIdentity, objectReference) &&
             !targetIdentity.Equals(option.StableIdentity, StringComparison.OrdinalIgnoreCase))
             throw new MaterialInstanceEditRefusalException(
                 $"{field} target identity does not match object reference {objectReference}.");
@@ -376,6 +376,7 @@ public sealed class MaterialInstanceEditService
     {
         if (string.IsNullOrWhiteSpace(sourceIdentity)) return;
         var option = FindReference(options, sourceReference);
+        if (IsLegacyFor(sourceIdentity, sourceReference)) return;
         if (option is null || !sourceIdentity.Equals(option.StableIdentity, StringComparison.OrdinalIgnoreCase))
             throw new MaterialInstanceEditRefusalException(
                 $"{field} source object identity no longer matches this package catalogue.");
@@ -408,6 +409,7 @@ public sealed class MaterialInstanceEditService
 
     private static bool IsParentClass(string className) =>
         className.Equals("Material", StringComparison.OrdinalIgnoreCase) ||
+        className.Equals("DecalMaterial", StringComparison.OrdinalIgnoreCase) ||
         className.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase) ||
         className.Equals("MaterialInstanceTimeVarying", StringComparison.OrdinalIgnoreCase);
 
@@ -423,6 +425,13 @@ public sealed class MaterialInstanceEditService
         MaterialObjectReferenceScope scope,
         string className,
         string objectPath) => $"{scope}:{className}:{objectPath}".ToLowerInvariant();
+
+    /// <summary>
+    /// An identity recorded when Arkive did not list this kind of target (a decal material parent, say) only ever named
+    /// the reference number, so it still matches that same reference.
+    /// </summary>
+    private static bool IsLegacyFor(string identity, int objectReference) =>
+        identity.StartsWith($"legacy:{objectReference}:", StringComparison.OrdinalIgnoreCase);
 
     private static string LegacyIdentity(int objectReference, string resolvedObject) =>
         $"legacy:{objectReference}:{resolvedObject}".ToLowerInvariant();

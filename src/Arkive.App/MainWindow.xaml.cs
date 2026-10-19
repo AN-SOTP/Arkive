@@ -397,7 +397,10 @@ public partial class MainWindow : Window
             _arkiveModLibrary, _arkiveModEdits, _guidedTexturePackageWorkspace, _modSetWorkspace,
             _modDeploymentService, Path.Combine(_projectRoot, "backups", "packages"),
             Path.Combine(_projectRoot, "backups", "installations"));
-        _arkiveModAuthoring = new ArkiveModAuthoringService(_arkiveModLibrary, _arkiveModEdits);
+        _arkiveModAuthoring = new ArkiveModAuthoringService(_arkiveModLibrary, _arkiveModEdits)
+        {
+            CleanPackageResolver = (path, token) => _arkiveModApply!.ResolveCleanPackageAsync(path, token),
+        };
         _modAuthoringWorkspace = new ArkiveModAuthoringWorkspace(
             Path.Combine(_arkiveModLibrary.StateDirectory, "authoring"));
         _authoringMetadataTimer.Tick += AuthoringMetadataTimer_Tick;

@@ -43,6 +43,31 @@ public partial class ModelViewerWindow
         PostSkill(new { type = "skillStatus", text, progress = (double?)null });
     }
 
+    /// <summary>
+    /// Adds the shown model's pictures, materials and effects to a mod and opens Recolour on them (shown mesh, action
+    /// file); says what it did. Set by Arkive's main window.
+    /// </summary>
+    public Func<ModelViewerRequest, string, Task<string>>? RecolourModel { get; init; }
+
+    private async Task RecolourModelAsync(JsonElement root)
+    {
+        if (RecolourModel is null || _request is not { } request) return;
+        var classFile = root.GetProperty("classFile").GetString() ?? string.Empty;
+        PostSkill(new { type = "skillStatus", text = "Adding the model's pictures, materials and effects to the mod…", progress = (double?)null });
+        string text;
+        try
+        {
+            text = await RecolourModel(request, classFile);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or
+                                              UnauthorizedAccessException)
+        {
+            text = "The model could not be prepared for recolouring: " + exception.Message;
+            _log($"Recolour model failed: class={classFile}, error={exception}");
+        }
+        PostSkill(new { type = "skillStatus", text, progress = (double?)null });
+    }
+
     private string? _skillScene;
 
     /// <summary>The folder the effects' textures and meshes are kept in, served to the page as particles.arkive.local.</summary>

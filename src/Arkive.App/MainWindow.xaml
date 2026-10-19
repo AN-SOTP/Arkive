@@ -752,6 +752,8 @@
                                         <Button x:Name="AuthoringOpenButton" Content="Open edited file" Click="AuthoringOpenButton_Click" />
                                         <Button x:Name="AuthoringColoursButton" Content="Edit colours" Click="AuthoringColoursButton_Click"
                                                 ToolTip="Open the selected texture in Arkive's Texture Viewer to recolour it, or one named part of an interface picture (such as the HP bar), and save it to the working file." />
+                                        <Button x:Name="AuthoringRecolourButton" Content="Recolour…" Click="AuthoringRecolourButton_Click"
+                                                ToolTip="Recolour every selected picture, material and effect at once with one colour choice, with a before-and-after preview. With nothing selected, it recolours the whole mod." />
                                         <Button x:Name="AuthoringProportionsButton" Content="Edit in proportion editor" Visibility="Collapsed"
                                                 Click="AuthoringProportionsButton_Click"
                                                 ToolTip="Reopen this Simple upscale mod's outfit from the clean game files with the mod's sliders; saving there updates this mod." />

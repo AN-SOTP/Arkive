@@ -342,6 +342,24 @@ public sealed class SkillPreviewService(
         return _looks[classFile] = look;
     }
 
+    /// <summary>
+    /// The packages a model's body, parts and weapons live in (by alias), from its look file; the model's own package
+    /// first. An NPC without a look file is just its own package.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ModelPackagesAsync(ModelViewerRequest request, string? classFile,
+        CancellationToken cancellationToken)
+    {
+        var packages = new List<string> { request.PackageAlias };
+        if (libraryRoot() is not { Length: > 0 } root) return packages;
+        var look = IsPlayer(request) && classFile is not null
+            ? await LookAsync(root, classFile, cancellationToken)
+            : await NpcLookAsync(root, request, cancellationToken);
+        if (look is not null)
+            packages.AddRange(new[] { look.DefaultMesh }.Concat(look.Parts.Values).Concat(look.Weapons.Select(weapon => weapon.Mesh))
+                .OfType<LookMesh>().Select(mesh => mesh.Package));
+        return packages.Where(package => package.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     private async Task<ClassLook?> NpcLookAsync(string root, ModelViewerRequest request, CancellationToken cancellationToken)
     {
         var key = "npc|" + request.PackageAlias + "|" + request.ObjectName;

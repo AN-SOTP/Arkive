@@ -419,6 +419,9 @@ public partial class ModelViewerWindow : Window
             case "addSkillEffects":
                 _ = AddSkillEffectsAsync(root.Clone());
                 break;
+            case "recolourModel":
+                _ = RecolourModelAsync(root.Clone());
+                break;
             case "showEdits":
                 _showEdits = root.GetProperty("value").GetBoolean();
                 if (_request is not null) _ = ShowObjectAsync(_request, _edits, keepView: true);

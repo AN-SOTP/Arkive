@@ -16,12 +16,14 @@ public static class ArkiveModFileFormat
     public const string GlbRole = "glb";
     public const string MovieRole = "movie";
 
-    public const long MaximumArchiveBytes = 4L * 1024 * 1024 * 1024;
-    public const long MaximumManifestBytes = 16L * 1024 * 1024;
+    // Size limits only guard against damaged or hostile archives; real mods (a whole zone, every effect of a boss) stay far
+    // below them. The manifest is read into memory in one piece, so its limit is what a PC can parse comfortably.
+    public const long MaximumArchiveBytes = 64L * 1024 * 1024 * 1024;
+    public const long MaximumManifestBytes = 1024L * 1024 * 1024;
     public const long MaximumEntryBytes = 2L * 1024 * 1024 * 1024;
-    public const long MaximumTotalUncompressedBytes = 8L * 1024 * 1024 * 1024;
-    public const int MaximumEntries = 4096;
-    public const int MaximumAssets = 2048;
+    public const long MaximumTotalUncompressedBytes = 256L * 1024 * 1024 * 1024;
+    public const int MaximumEntries = 1_000_000;
+    public const int MaximumAssets = 500_000;
     public const int MaximumEntryNameLength = 240;
     public const double MaximumCompressionRatio = 1000d;
 

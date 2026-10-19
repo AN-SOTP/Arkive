@@ -62,6 +62,9 @@ export function createSkillPreview(context) {
         <button id="skillAddOne" title="Adds every effect this skill starts to the mod open in Edit mods, to tint there.">Add this skill's effects to my mod</button>
         <button id="skillAddAll" title="Adds the effects of all its skills, and the ones it always shows (an aura, glowing wings), to the mod open in Edit mods.">Add all its effects</button>
       </div>
+      <div class="skill-row">
+        <button id="skillRecolour" title="Adds this model's pictures and materials (body, parts and weapons) and every effect of all its forms to the mod open in Edit mods (or a new mod named after it), then opens Recolour on all of them.">Recolour this model and its effects…</button>
+      </div>
       <progress id="skillBar" class="skill-progress" max="1"${ui.progress == null ? ' hidden' : ''}></progress>
       <div id="skillStatus" class="muted"></div>
       <div id="skillTimeline" class="mono"></div>`;
@@ -76,6 +79,7 @@ export function createSkillPreview(context) {
     $('skillPlay').addEventListener('click', () => { if (player.playing) stop(); else play(); });
     $('skillAddOne').addEventListener('click', () => post({ type: 'addSkillEffects', classFile: ui.classFile, skill: ui.skill }));
     $('skillAddAll').addEventListener('click', () => post({ type: 'addSkillEffects', classFile: ui.classFile, skill: null }));
+    $('skillRecolour').addEventListener('click', () => post({ type: 'recolourModel', classFile: ui.classFile }));
     renderTimeline();
   }
 

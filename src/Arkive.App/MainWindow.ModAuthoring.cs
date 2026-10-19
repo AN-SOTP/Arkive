@@ -324,6 +324,11 @@ public partial class MainWindow : Window
         AuthoringRemoveButton.Content = selectionCount > 0 ? $"Remove selected ({selectionCount:N0})" : "Remove selected assets";
         AuthoringOpenButton.IsEnabled = idle && selected?.Edit is not null;
         AuthoringColoursButton.IsEnabled = idle && selected?.Edit?.Entry is GuidedTextureModProjectEntry;
+        var tintable = (selectionCount > 0 ? AuthoringAssetsGrid.SelectedItems.OfType<AuthoringAssetRow>()
+                : AuthoringAssetsGrid.Items.OfType<AuthoringAssetRow>())
+            .Count(row => row.Edit?.Entry is GuidedTextureModProjectEntry or MaterialInstanceEditEntry or Arkive.Core.Particles.ParticleEffectEditEntry);
+        AuthoringRecolourButton.IsEnabled = idle && hasMod && tintable > 0;
+        AuthoringRecolourButton.Content = selectionCount > 0 && tintable > 0 ? $"Recolour selected ({tintable:N0})…" : "Recolour all…";
         AuthoringReplaceButton.IsEnabled = idle && selected?.Edit is { } edit && EditablePath(edit) is not null;
         AuthoringFolderButton.IsEnabled = idle && selected?.Edit is not null;
         AuthoringCompareButton.IsEnabled = idle && selected?.Edit is not null;
@@ -381,7 +386,8 @@ public partial class MainWindow : Window
                 ReportAuthoringExtraction($"{item.Stage}: {item.ObjectName}");
         });
         var created = await Task.Run(() => _modMaterializer.CreateEditableAsync(
-            new ArkiveModAssetSelection(clean, row.PackageAlias, row.ClassName, row.ObjectName, objectPath, row.SerialOffset),
+            new ArkiveModAssetSelection(clean, row.PackageAlias, row.ClassName, row.ObjectName, objectPath, row.SerialOffset,
+                row.ExportIndex),
             session.CancellationToken, progress), session.CancellationToken);
         _authoringDraft = await _modAuthoringWorkspace.SaveAsync(reference
             ? _authoringDraft with { ReferenceEditIds = _authoringDraft.ReferenceEditIds.Append(created.EditId).ToArray() }

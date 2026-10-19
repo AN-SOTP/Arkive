@@ -68,6 +68,16 @@ public partial class TextureViewerWindow : Window
             };
             SwatchPanel.Children.Add(button);
         }
+        foreach (var swatch in ColourPickerWindow.Swatches)
+        {
+            var button = new Button
+            {
+                ToolTip = swatch.Name, Width = 24, Height = 20, Margin = new Thickness(0, 0, 4, 4), MinWidth = 0, Padding = new Thickness(0),
+                Background = new SolidColorBrush(Color.FromScRgb(1, swatch.Red, swatch.Green, swatch.Blue)),
+            };
+            button.Click += (_, _) => SetHighlight(swatch.Red, swatch.Green, swatch.Blue);
+            HighlightSwatchPanel.Children.Add(button);
+        }
         PartsList.ItemsSource = new[] { new PartRow("Whole picture", null) };
         PartsList.SelectedIndex = 0;
         Checkerboard.Fill = CheckerBrush();
@@ -95,13 +105,54 @@ public partial class TextureViewerWindow : Window
     /// <summary>Raised after the working file is saved, so the mod editor can refresh.</summary>
     public event Action? Saved;
 
+    private (float Red, float Green, float Blue) _highlight = (1, 0.78f, 0.36f);
+
     private TextureRecolour Recolour => new((float)RedSlider.Value, (float)GreenSlider.Value, (float)BlueSlider.Value,
         (float)StrengthSlider.Value, (float)BrightnessSlider.Value)
     {
         Selection = Selection,
         RangeHue = (float)RangeHueSlider.Value,
         RangeWidth = (float)RangeWidthSlider.Value,
+        Style = RecolourStyle,
+        HighlightRed = _highlight.Red,
+        HighlightGreen = _highlight.Green,
+        HighlightBlue = _highlight.Blue,
+        HighlightAmount = (float)HighlightAmountSlider.Value,
+        Lift = (float)LiftSlider.Value,
     };
+
+    private TextureRecolourStyle RecolourStyle =>
+        (StyleComboBox.SelectedItem as ComboBoxItem)?.Tag as string == "TwoTone" ? TextureRecolourStyle.TwoTone : TextureRecolourStyle.Tint;
+
+    private void SetHighlight(float red, float green, float blue)
+    {
+        _highlight = (red, green, blue);
+        if (StrengthSlider.Value == 0) StrengthSlider.Value = 1;
+        UpdateAdjustmentText();
+        _previewTimer.Stop();
+        _previewTimer.Start();
+    }
+
+    private void HighlightButton_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new ColourPickerWindow("Highlight colour", "The part's lightest, raised details take this colour.",
+            _highlight.Red, _highlight.Green, _highlight.Blue) { Owner = this };
+        if (picker.ShowDialog() == true) SetHighlight(picker.Red, picker.Green, picker.Blue);
+    }
+
+    private void StyleComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (TwoTonePanel is null) return;
+        var twoTone = RecolourStyle == TextureRecolourStyle.TwoTone;
+        TwoTonePanel.Visibility = twoTone ? Visibility.Visible : Visibility.Collapsed;
+        ColourHeading.Text = twoTone ? "Main colour" : "New colour";
+        ColourHint.Text = twoTone
+            ? "The part is repainted in this colour, keeping its shading; its lightest details take the highlight colour below."
+            : "Each changed pixel takes this colour's hue and keeps its own brightness, as particle colours do.";
+        if (!IsLoaded) return;
+        _previewTimer.Stop();
+        _previewTimer.Start();
+    }
 
     private ColourSelection Selection =>
         Enum.TryParse<ColourSelection>((SelectionComboBox.SelectedItem as ComboBoxItem)?.Tag as string, out var selection)
@@ -209,6 +260,12 @@ public partial class TextureViewerWindow : Window
         RangeWidthText.Text = $"±{RangeWidthSlider.Value:0}°";
         RangePreview.Background = HueBand(RangeHueSlider.Value, RangeWidthSlider.Value);
         BrightnessText.Text = $"{BrightnessSlider.Value:+0%;-0%;0%}";
+        if (HighlightAmountText is not null)
+        {
+            HighlightAmountText.Text = $"{HighlightAmountSlider.Value:P0}";
+            LiftText.Text = $"{LiftSlider.Value:P0}";
+            HighlightButton.Background = new SolidColorBrush(Color.FromScRgb(1, _highlight.Red, _highlight.Green, _highlight.Blue));
+        }
         ColourPreview.Background = new SolidColorBrush(Color.FromScRgb(1, (float)RedSlider.Value, (float)GreenSlider.Value,
             (float)BlueSlider.Value));
     }
@@ -251,7 +308,7 @@ public partial class TextureViewerWindow : Window
     }
 
     // The hues a colour range changes, drawn as a strip from one end of the range to the other.
-    private static LinearGradientBrush HueBand(double hue, double width)
+    internal static LinearGradientBrush HueBand(double hue, double width)
     {
         var brush = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
         for (var step = 0; step <= 6; step++)

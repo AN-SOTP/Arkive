@@ -19,10 +19,35 @@ public sealed record TextureRecolour(float Red, float Green, float Blue, float S
     /// <summary>For <see cref="ColourSelection.ColourRange"/>: how far either side of <see cref="RangeHue"/> still changes fully, in degrees.</summary>
     public float RangeWidth { get; init; } = 25;
 
+    /// <summary>
+    /// How changed pixels are coloured: <see cref="TextureRecolourStyle.Tint"/> keeps each pixel's brightness and takes
+    /// the colour's hue; <see cref="TextureRecolourStyle.TwoTone"/> repaints the part in the colour (dark details stay
+    /// darker, as shading) and puts the highlight colour on its lightest, raised details.
+    /// </summary>
+    public TextureRecolourStyle Style { get; init; } = TextureRecolourStyle.Tint;
+
+    /// <summary>For two-tone: the colour of the lightest details (gold trim on white armour, say), 0 to 1 per channel.</summary>
+    public float HighlightRed { get; init; } = 1;
+
+    public float HighlightGreen { get; init; } = 0.78f;
+
+    public float HighlightBlue { get; init; } = 0.36f;
+
+    /// <summary>For two-tone: how much of the part, from its lightest details down, takes the highlight colour (0 none).</summary>
+    public float HighlightAmount { get; init; } = 0.25f;
+
+    /// <summary>For two-tone: how light the darkest parts become, 0 (as dark as the original shading) to 1 (flat colour).</summary>
+    public float Lift { get; init; } = 0.5f;
+
     public bool IsValid => float.IsFinite(Red) && float.IsFinite(Green) && float.IsFinite(Blue) &&
                            Red >= 0 && Green >= 0 && Blue >= 0 && Math.Max(Red, Math.Max(Green, Blue)) > 0 &&
                            Strength is >= 0 and <= 1 && Brightness is >= -1 and <= 1 &&
-                           float.IsFinite(RangeHue) && RangeWidth is >= 0 and <= 180;
+                           float.IsFinite(RangeHue) && RangeWidth is >= 0 and <= 180 &&
+                           (Style == TextureRecolourStyle.Tint ||
+                            (float.IsFinite(HighlightRed) && float.IsFinite(HighlightGreen) && float.IsFinite(HighlightBlue) &&
+                             HighlightRed >= 0 && HighlightGreen >= 0 && HighlightBlue >= 0 &&
+                             Math.Max(HighlightRed, Math.Max(HighlightGreen, HighlightBlue)) > 0 &&
+                             HighlightAmount is >= 0 and <= 1 && Lift is >= 0 and <= 1));
 
     /// <summary>
     /// Recolours <paramref name="image"/> in place, inside <paramref name="region"/> only (the whole picture when
@@ -40,6 +65,11 @@ public sealed record TextureRecolour(float Red, float Green, float Blue, float S
         var peak = Math.Max(Red, Math.Max(Green, Blue));
         var (red, green, blue) = (Red / peak, Green / peak, Blue / peak);
         var scale = 1 + Brightness;
+        if (Style == TextureRecolourStyle.TwoTone)
+        {
+            ApplyTwoTone(image, left, top, right, bottom, scale);
+            return;
+        }
         for (var y = top; y < bottom; y++)
         {
             var offset = (y * image.Width + left) * 4;
@@ -62,6 +92,65 @@ public sealed record TextureRecolour(float Red, float Green, float Blue, float S
         }
     }
 
+    private void ApplyTwoTone(RgbaImage image, int left, int top, int right, int bottom, float scale)
+    {
+        var pixels = image.Pixels;
+        // The part's own light range (ignoring the darkest and lightest 2%), so a dull grey picture still spans dark to light.
+        var histogram = new int[256];
+        var counted = 0;
+        for (var y = top; y < bottom; y++)
+            for (int x = left, offset = (y * image.Width + left) * 4; x < right; x++, offset += 4)
+            {
+                if (Weight(pixels[offset], pixels[offset + 1], pixels[offset + 2]) <= 0) continue;
+                histogram[Luminance(pixels, offset)]++;
+                counted++;
+            }
+        if (counted == 0) return;
+        var (low, high) = (Percentile(histogram, counted, 0.02), Percentile(histogram, counted, 0.98));
+        var span = Math.Max(high - low, 1);
+        var basePeak = Math.Max(Red, Math.Max(Green, Blue));
+        var highPeak = Math.Max(HighlightRed, Math.Max(HighlightGreen, HighlightBlue));
+        float[] baseColour = [Red / basePeak, Green / basePeak, Blue / basePeak];
+        float[] highColour = [HighlightRed / highPeak, HighlightGreen / highPeak, HighlightBlue / highPeak];
+        var bandStart = 1 - HighlightAmount;
+        for (var y = top; y < bottom; y++)
+            for (int x = left, offset = (y * image.Width + left) * 4; x < right; x++, offset += 4)
+            {
+                var weight = Weight(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
+                if (weight <= 0) continue;
+                var t = Math.Clamp((Luminance(pixels, offset) - low) / (float)span, 0, 1);
+                var shade = (Lift + (1 - Lift) * MathF.Pow(t, 0.8f)) * 255;
+                var highlight = HighlightAmount <= 0 ? 0 : SmoothStep(bandStart, Math.Min(1, bandStart + 0.15f), t);
+                var highlightShade = (0.7f + 0.3f * t) * 255;
+                for (var channel = 0; channel < 3; channel++)
+                {
+                    var repainted = baseColour[channel] * shade * (1 - highlight) + highColour[channel] * highlightShade * highlight;
+                    var original = pixels[offset + channel];
+                    var changed = (original + (repainted - original) * Strength) * scale;
+                    pixels[offset + channel] = (byte)Math.Clamp(MathF.Round(original + (changed - original) * weight), 0, 255);
+                }
+            }
+    }
+
+    private static int Luminance(byte[] pixels, int offset) =>
+        (pixels[offset] * 77 + pixels[offset + 1] * 151 + pixels[offset + 2] * 28) >> 8;
+
+    private static int Percentile(int[] histogram, int count, double fraction)
+    {
+        var target = (long)Math.Ceiling(count * fraction);
+        long seen = 0;
+        for (var value = 0; value < histogram.Length; value++)
+            if ((seen += histogram[value]) >= Math.Max(target, 1)) return value;
+        return histogram.Length - 1;
+    }
+
+    private static float SmoothStep(float from, float to, float value)
+    {
+        if (to <= from) return value >= from ? 1 : 0;
+        var t = Math.Clamp((value - from) / (to - from), 0, 1);
+        return t * t * (3 - 2 * t);
+    }
+
     /// <summary>How much a pixel belongs to the selection, from 0 (unchanged) to 1 (fully changed).</summary>
     public float Weight(byte red, byte green, byte blue) =>
         ColourSelections.Weight(Selection, red, green, blue, RangeHue, RangeWidth, Math.Max(red, Math.Max(green, blue)) / 255f);
@@ -79,4 +168,14 @@ public sealed record TextureRecolour(float Red, float Green, float Blue, float S
         var bottom = Math.Clamp((int)Math.Ceiling((region.Top + region.Height) * image.Height), top, image.Height);
         return (left, top, right, bottom);
     }
+}
+
+/// <summary>How a recolour paints the pixels it changes.</summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<TextureRecolourStyle>))]
+public enum TextureRecolourStyle
+{
+    /// <summary>Keep each pixel's brightness and take the new colour's hue.</summary>
+    Tint,
+    /// <summary>Repaint in one colour with the original shading, and a second colour on the lightest details.</summary>
+    TwoTone,
 }

@@ -1,0 +1,99 @@
+<UserControl x:Class="Arkive.App.RecolourPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- The colour choice shared by Recolour selected and the boss and zone helpers: the same controls, in the same
+         order and words, as the Texture Viewer's recolour. -->
+    <StackPanel>
+        <TextBlock Text="Change" FontWeight="SemiBold" />
+        <ComboBox x:Name="SelectionComboBox" Margin="0,4,0,0" SelectionChanged="Choice_Changed">
+            <ComboBoxItem Content="Every colour" Tag="All" IsSelected="True"
+                          ToolTip="Every colour takes the new colour." />
+            <ComboBoxItem Content="One colour range (gold, say)" Tag="ColourRange"
+                          ToolTip="Only colours near the chosen hue change; greys and other colours stay as they are." />
+            <ComboBoxItem Content="Light and white areas" Tag="LightAreas"
+                          ToolTip="Only light, nearly white colours change (white stone, pale highlights)." />
+        </ComboBox>
+        <StackPanel x:Name="RangePanel" Margin="0,6,0,0" Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="94" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="48" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="Hue" VerticalAlignment="Center" />
+                <Slider x:Name="RangeHueSlider" Grid.Column="1" Minimum="0" Maximum="359" Value="45" ValueChanged="Value_Changed" Margin="0,3" />
+                <TextBlock x:Name="RangeHueText" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="1" Text="Width" VerticalAlignment="Center" />
+                <Slider x:Name="RangeWidthSlider" Grid.Row="1" Grid.Column="1" Minimum="5" Maximum="90" Value="25" ValueChanged="Value_Changed" Margin="0,3" />
+                <TextBlock x:Name="RangeWidthText" Grid.Row="1" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+            </Grid>
+            <Border x:Name="RangePreview" Height="14" CornerRadius="3" Margin="0,4,0,0" BorderThickness="1"
+                    BorderBrush="{DynamicResource BorderBrush}" />
+        </StackPanel>
+
+        <TextBlock Text="Style" FontWeight="SemiBold" Margin="0,10,0,0" />
+        <ComboBox x:Name="StyleComboBox" Margin="0,4,0,0" SelectionChanged="Choice_Changed">
+            <ComboBoxItem Content="Tint: new colour, same shading" Tag="Tint" IsSelected="True"
+                          ToolTip="Each changed colour keeps its own brightness and takes the new colour's hue, as particle colours do." />
+            <ComboBoxItem Content="Two-tone: main colour with highlights" Tag="TwoTone"
+                          ToolTip="Pictures are repainted in the main colour with their shading, and their lightest details take the highlight colour. Materials: surfaces take the main colour, glows the highlight. Effects take the highlight colour." />
+        </ComboBox>
+
+        <TextBlock x:Name="ColourHeading" Text="New colour" FontWeight="SemiBold" Margin="0,10,0,0" />
+        <DockPanel Margin="0,4,0,0">
+            <Button x:Name="ColourButton" DockPanel.Dock="Left" Width="64" Height="28" Margin="0,0,8,0"
+                    ToolTip="Choose the colour" Click="ColourButton_Click" />
+            <WrapPanel x:Name="SwatchPanel" VerticalAlignment="Center" />
+        </DockPanel>
+
+        <StackPanel x:Name="TwoTonePanel" Visibility="Collapsed" Margin="0,8,0,0">
+            <TextBlock Text="Highlight colour" FontWeight="SemiBold" />
+            <DockPanel Margin="0,4,0,0">
+                <Button x:Name="HighlightButton" DockPanel.Dock="Left" Width="64" Height="28" Margin="0,0,8,0"
+                        ToolTip="Choose the highlight colour" Click="HighlightButton_Click" />
+                <WrapPanel x:Name="HighlightSwatchPanel" VerticalAlignment="Center" />
+            </DockPanel>
+            <Grid Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="94" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="48" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="Highlights" VerticalAlignment="Center"
+                           ToolTip="How much of each picture, from its lightest details down, takes the highlight colour." />
+                <Slider x:Name="HighlightAmountSlider" Grid.Column="1" Minimum="0" Maximum="0.6" Value="0.2" ValueChanged="Value_Changed" Margin="0,3" />
+                <TextBlock x:Name="HighlightAmountText" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="1" Text="Lift dark parts" VerticalAlignment="Center"
+                           ToolTip="How light the darkest parts become: 0% keeps the original shading, 100% is flat colour." />
+                <Slider x:Name="LiftSlider" Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="1" Value="0.5" ValueChanged="Value_Changed" Margin="0,3" />
+                <TextBlock x:Name="LiftText" Grid.Row="1" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+            </Grid>
+        </StackPanel>
+
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="94" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="48" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Text="Strength" VerticalAlignment="Center" ToolTip="0% keeps the original colours, 100% uses the new ones fully." />
+            <Slider x:Name="StrengthSlider" Grid.Column="1" Minimum="0" Maximum="1" Value="1" ValueChanged="Value_Changed" Margin="0,3" />
+            <TextBlock x:Name="StrengthText" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+            <TextBlock Grid.Row="1" Text="Brightness" VerticalAlignment="Center" ToolTip="Darker or brighter than the original, after recolouring." />
+            <Slider x:Name="BrightnessSlider" Grid.Row="1" Grid.Column="1" Minimum="-1" Maximum="1" Value="0" ValueChanged="Value_Changed" Margin="0,3" />
+            <TextBlock x:Name="BrightnessText" Grid.Row="1" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+        </Grid>
+    </StackPanel>
+</UserControl>

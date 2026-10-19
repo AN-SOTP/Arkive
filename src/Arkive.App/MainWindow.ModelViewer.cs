@@ -47,6 +47,7 @@ public partial class MainWindow
         SkillOffer = FindSkillPreviewAsync,
         SkillPlayback = PrepareSkillPreviewAsync,
         AddSkillEffects = AddSkillEffectsToModAsync,
+        RecolourModel = RecolourModelAsync,
         ParticleAssetRoot = ParticleTextureRoot,
     };
 

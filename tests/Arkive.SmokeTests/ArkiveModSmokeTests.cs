@@ -12,6 +12,7 @@ internal static class ArkiveModSmokeTests
         new("resolves .arkive conflicts by priority, merges disjoint assets, and blocks ties", TestArkiveConflictResolution),
         new("applies the higher-priority .arkive mod and rebuilds when priorities change", TestArkiveApplyPriorityEndToEnd),
         new("rebuilds and installs several packages in one apply", TestArkiveApplySeveralPackages),
+        new("saves an applied mod again by reading its originals from the clean backup", TestArkiveSaveAfterApply),
         new("migrates package projects to .arkive mods without changing installed game files", TestArkivePackageProjectMigration),
         new("saves package-project drafts into its own .arkive mod without overriding priorities", TestArkivePackageProjectAuthoring),
         new("rebuilds .arkive mods after unchanged and breaking client updates", TestArkiveClientUpdate),
@@ -288,6 +289,50 @@ internal static class ArkiveModSmokeTests
             Assert(ReadMaterial(packages[index]).ScalarParameters.Single().Value == 0.6f + 0.05f * index,
                 $"{Path.GetFileName(packages[index])} did not get its own mod's value");
         Assert(!service.PlanAsync().GetAwaiter().GetResult().HasChanges, "the applied packages still reported pending changes");
+    }
+
+    private static void TestArkiveSaveAfterApply()
+    {
+        // Applying sets the mod's working copy up against the game package and then rebuilds that package. Saving the
+        // same mod again must read the original from the clean backup instead of refusing the changed game file.
+        var root = Path.Combine(fixtureDirectory, "arkive-save-after-apply");
+        var packagePath = CreateMaterialClient(root, out var cleanHash);
+        var player = CreateEnvironment(Path.Combine(root, "player"));
+        var edit = CreateMaterialEdit(player, packagePath, "Glossy face", 0.75f, null, candidate: false);
+        var workspace = new ArkiveModAuthoringWorkspace(Path.Combine(player.Library.StateDirectory, "authoring"));
+        var service = CreateApplyService(player, Path.GetDirectoryName(packagePath)!);
+        var author = new ArkiveModAuthoringService(player.Library, player.Edits)
+        {
+            CleanPackageResolver = (path, token) => service.ResolveCleanPackageAsync(path, token),
+        };
+        var draft = workspace.CreateAsync(new ArkiveModMetadata("Glossy face", "1.0.0")).GetAwaiter().GetResult() with
+        { EditIds = [edit.Document.EditId] };
+        var mod = author.SaveDraftAsync(draft).GetAwaiter().GetResult();
+        player.Library.SetEnabledAsync(mod.ModId, true).GetAwaiter().GetResult();
+        var applied = service.ApplyAsync(service.PlanAsync().GetAwaiter().GetResult().Fingerprint).GetAwaiter().GetResult();
+        Assert(applied.Succeeded && Sha(packagePath) != cleanHash, "the mod was not installed into the game package");
+
+        mod = player.Library.LoadAsync().GetAwaiter().GetResult().Find(mod.ModId)!;
+        var bound = mod.Bindings.Single().EditId;
+        var local = player.Edits.MaterialEdits.LoadAsync().GetAwaiter().GetResult().Single(item => item.Document.EditId == bound);
+        player.Edits.MaterialEdits.SaveAsync(local with
+        {
+            Document = local.Document with { Scalars = local.Document.Scalars.Select(item => item with { Value = 0.6f }).ToArray() },
+        }).GetAwaiter().GetResult();
+        var again = draft with
+        {
+            ModId = mod.ModId, EditIds = [bound],
+            SavedBindings = mod.Bindings.ToDictionary(binding => binding.AssetId, binding => binding.EditId),
+        };
+        var saved = author.SaveDraftAsync(again).GetAwaiter().GetResult();
+        var moved = player.Edits.MaterialEdits.LoadAsync().GetAwaiter().GetResult().Single(item => item.Document.EditId == bound);
+        Assert(saved.Manifest.Assets.Count == 1 && !string.Equals(Path.GetFullPath(moved.Document.SourcePackagePath), Path.GetFullPath(packagePath), StringComparison.OrdinalIgnoreCase) &&
+               Sha(moved.Document.SourcePackagePath) == cleanHash,
+            "the applied mod's working copy was not moved to the clean backup when saving again");
+        var plan = service.PlanAsync().GetAwaiter().GetResult();
+        var reapplied = service.ApplyAsync(plan.Fingerprint).GetAwaiter().GetResult();
+        Assert(reapplied.Succeeded && ReadMaterial(packagePath).ScalarParameters.Single().Value == 0.6f,
+            "the re-saved mod did not apply its new value: " + string.Join(" | ", reapplied.Packages.Select(item => item.Message)));
     }
 
     private static void TestArkiveApplyPriorityEndToEnd()

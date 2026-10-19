@@ -1,0 +1,87 @@
+<Window x:Class="Arkive.App.RecolourWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Arkive.App"
+        Title="Recolour selected assets"
+        Width="980"
+        Height="720"
+        MinWidth="760"
+        MinHeight="520"
+        ShowInTaskbar="False"
+        Background="{DynamicResource AppBackgroundBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="10">
+        <Border DockPanel.Dock="Top" Padding="9" Margin="0,0,0,8"
+                Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+            <StackPanel>
+                <TextBlock x:Name="HeaderText" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock x:Name="HintText" Margin="0,3,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                           Text="Pick a style and colours. The preview shows the game's colours on the left and the new ones on the right. Recolour writes the working files; save the mod and apply mods to see it in game." />
+            </StackPanel>
+        </Border>
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="RecolourButton" MinWidth="150" Style="{StaticResource PrimaryButtonStyle}" Click="RecolourButton_Click" />
+                <Button x:Name="CloseButton" Content="Cancel" MinWidth="80" Margin="8,0,0,0" IsCancel="True" />
+            </StackPanel>
+            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                <TextBlock x:Name="StatusText" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+                <ProgressBar x:Name="Progress" Height="6" Minimum="0" Maximum="1" Margin="0,4,0,0" Visibility="Collapsed" />
+            </StackPanel>
+        </DockPanel>
+        <ScrollViewer DockPanel.Dock="Left" Width="350" Margin="0,0,10,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <local:RecolourPanel x:Name="Choice" />
+                <StackPanel x:Name="MaterialOptions" Margin="0,12,0,0">
+                    <TextBlock Text="Materials" FontWeight="SemiBold" />
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="94" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="48" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Lighten" VerticalAlignment="Center"
+                                   ToolTip="Lifts surfaces a material deliberately darkens (dimmed stone in a dark arena) towards full brightness." />
+                        <Slider x:Name="LightenSlider" Grid.Column="1" Minimum="0" Maximum="1" Value="0" ValueChanged="Lighten_ValueChanged" Margin="0,3" />
+                        <TextBlock x:Name="LightenText" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Lifts surfaces the material dims on purpose (dark arena stone). Glows and shadows stay as they are." />
+                </StackPanel>
+                <StackPanel x:Name="EffectOptions" Margin="0,12,0,0">
+                    <TextBlock Text="Effects" FontWeight="SemiBold" />
+                    <CheckBox x:Name="EffectMaterialsCheckBox" Margin="0,4,0,0"
+                              Content="Also tint the effects' materials">
+                        <CheckBox.ToolTip>
+                            <TextBlock MaxWidth="320" TextWrapping="Wrap"
+                                       Text="Some effects take their colour only from their materials. This adds those materials to the mod and tints them too. Effect materials are often shared, so other effects that use them change as well." />
+                        </CheckBox.ToolTip>
+                    </CheckBox>
+                    <TextBlock Margin="20,2,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="For effects whose colour comes from their materials. Those materials can be shared with other effects." />
+                </StackPanel>
+                <StackPanel x:Name="PictureOptions" Margin="0,12,0,0">
+                    <TextBlock Text="Pictures" FontWeight="SemiBold" />
+                    <CheckBox x:Name="FromOriginalCheckBox" Margin="0,4,0,0" IsChecked="True" Checked="Option_Changed" Unchecked="Option_Changed"
+                              Content="Start from the game's colours" />
+                    <TextBlock Margin="20,2,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Replaces earlier recolours of these pictures. Untick to recolour on top of them." />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+        <Border BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" Background="{DynamicResource SurfaceBrush}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="8">
+                <StackPanel>
+                    <TextBlock x:Name="PicturesHeading" Text="Pictures" FontWeight="SemiBold" />
+                    <TextBlock x:Name="PicturesHint" Margin="0,2,0,6" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                    <WrapPanel x:Name="PicturePreviews" />
+                    <TextBlock x:Name="MaterialsHeading" Text="Material colours" FontWeight="SemiBold" Margin="0,10,0,0" />
+                    <TextBlock x:Name="MaterialsHint" Margin="0,2,0,6" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                    <WrapPanel x:Name="MaterialPreviews" />
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+    </DockPanel>
+</Window>

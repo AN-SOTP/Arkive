@@ -24,6 +24,12 @@ public sealed class ArkiveModAuthoringService
         _edits = edits ?? throw new ArgumentNullException(nameof(edits));
     }
 
+    /// <summary>
+    /// Finds the clean backup of a game package a mod is installed in. When set, saving first moves working copies whose
+    /// game package has since been rebuilt back onto that backup, so a mod can be saved again after it was applied.
+    /// </summary>
+    public ArkiveModCleanSources.Resolver? CleanPackageResolver { get; init; }
+
     public static async Task<ArkiveModCapturedAsset> CaptureAsync(
         ArkiveModLocalEdit edit,
         string? assetId = null,
@@ -388,6 +394,9 @@ public sealed class ArkiveModAuthoringService
     {
         ArgumentNullException.ThrowIfNull(draft);
         if (string.IsNullOrWhiteSpace(draft.Metadata.Name)) Refuse("AUT090", "Give the mod a name before saving.");
+        if (CleanPackageResolver is not null)
+            await ArkiveModCleanSources.RepointAsync(_edits, draft.EditIds, CleanPackageResolver, cancellationToken)
+                .ConfigureAwait(false);
         var snapshot = await ArkiveModEditSnapshot.LoadAsync(_edits, cancellationToken).ConfigureAwait(false);
         var locals = draft.EditIds.Select(editId => snapshot.Find(editId) ??
             throw new ArkiveModRefusalException("AUT091", "A working asset is missing. Prepare the mod for editing again.")).ToArray();

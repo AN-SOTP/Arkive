@@ -22,6 +22,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     ExternalArtifactSmokeTests.Cases,
     UpdateSmokeTests.Cases,
     SoundSmokeTests.Cases,
+    RecolourSmokeTests.Cases,
 ];
 
 var filter = args.Length > 0 ? args[0] : null;

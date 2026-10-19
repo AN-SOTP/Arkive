@@ -57,8 +57,15 @@
                         <ToggleButton x:Name="PickHueButton" Content="Pick the colour from the picture" Margin="0,6,0,0" HorizontalAlignment="Left"
                                       ToolTip="Then click the picture: the hue under the pointer becomes the middle of the range." />
                     </StackPanel>
-                    <TextBlock Text="New colour" FontWeight="SemiBold" Margin="0,10,0,0" />
-                    <TextBlock Margin="0,2,0,6" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                    <TextBlock Text="Style" FontWeight="SemiBold" Margin="0,10,0,0" />
+                    <ComboBox x:Name="StyleComboBox" Margin="0,4,0,0" SelectionChanged="StyleComboBox_SelectionChanged">
+                        <ComboBoxItem Content="Tint: new colour, same shading" Tag="Tint" IsSelected="True"
+                                      ToolTip="Each changed pixel keeps its own brightness and takes the new colour's hue." />
+                        <ComboBoxItem Content="Two-tone: main colour with highlights" Tag="TwoTone"
+                                      ToolTip="Repaints the part in the main colour with its shading, and gives its lightest, raised details the highlight colour (white armour with gold trim, say)." />
+                    </ComboBox>
+                    <TextBlock x:Name="ColourHeading" Text="New colour" FontWeight="SemiBold" Margin="0,10,0,0" />
+                    <TextBlock x:Name="ColourHint" Margin="0,2,0,6" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Each changed pixel takes this colour's hue and keeps its own brightness, as particle colours do." />
                     <WrapPanel x:Name="SwatchPanel" Margin="0,0,0,6" />
                     <Grid>
@@ -92,6 +99,33 @@
                     </Grid>
                     <Border x:Name="ColourPreview" Height="22" CornerRadius="4" Margin="0,8,0,0" BorderThickness="1"
                             BorderBrush="{DynamicResource BorderBrush}" />
+                    <StackPanel x:Name="TwoTonePanel" Visibility="Collapsed" Margin="0,10,0,0">
+                        <TextBlock Text="Highlight colour" FontWeight="SemiBold" />
+                        <DockPanel Margin="0,4,0,0">
+                            <Button x:Name="HighlightButton" DockPanel.Dock="Left" Width="56" Height="24" Margin="0,0,8,0"
+                                    ToolTip="Choose the highlight colour" Click="HighlightButton_Click" />
+                            <WrapPanel x:Name="HighlightSwatchPanel" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="74" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="44" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Highlights" VerticalAlignment="Center"
+                                       ToolTip="How much of the part, from its lightest details down, takes the highlight colour." />
+                            <Slider x:Name="HighlightAmountSlider" Grid.Column="1" Minimum="0" Maximum="0.6" Value="0.2" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                            <TextBlock x:Name="HighlightAmountText" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="1" Text="Lift darks" VerticalAlignment="Center"
+                                       ToolTip="How light the darkest parts become: 0% keeps the original shading, 100% is flat colour." />
+                            <Slider x:Name="LiftSlider" Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="1" Value="0.5" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                            <TextBlock x:Name="LiftText" Grid.Row="1" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
                     <WrapPanel Margin="0,10,0,0">
                         <Button x:Name="ApplyButton" Content="Apply to part" MinWidth="100" Click="ApplyButton_Click" Margin="0,0,6,6"
                                 ToolTip="Keep this change on the selected part. You can then pick another part and colour it too." />

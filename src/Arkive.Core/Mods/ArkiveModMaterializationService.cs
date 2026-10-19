@@ -33,7 +33,7 @@ public sealed record ArkiveModTargetCheck(
 /// </summary>
 public sealed record ArkiveModAssetSelection(
     string PackagePath, string PackageAlias, string ClassName, string ObjectName,
-    string? ObjectPath = null, long? SerialOffset = null);
+    string? ObjectPath = null, long? SerialOffset = null, int? ExportIndex = null);
 
 public sealed record ArkiveModAssetProgress(string Stage, string ObjectName);
 
@@ -128,8 +128,12 @@ public sealed class ArkiveModMaterializationService
             asset.ClassName.Equals(selection.ClassName, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (matches.Length > 1 && selection.ObjectPath is { } objectPath)
             matches = ArkiveModObjectPath.Select(matches, objectPath);
-        if (matches.Length > 1 && selection.SerialOffset is { } offset)
-            matches = matches.Where(asset => asset.SerialOffset == offset).ToArray();
+        if (matches.Length > 1 && selection.SerialOffset is { } offset &&
+            matches.Where(asset => asset.SerialOffset == offset).ToArray() is { Length: 1 } atOffset)
+            matches = atOffset;
+        // Same-named objects in a package the library indexed after a mod was installed: offsets moved, export numbers did not.
+        if (matches.Length > 1 && selection.ExportIndex is { } exportIndex)
+            matches = matches.Where(asset => asset.ExportIndex == exportIndex).ToArray();
         if (matches.Length != 1) Refuse("AMM050", "The selected asset is missing or ambiguous in the clean package.");
         var export = matches[0];
         var hash = await ArkiveModEditSnapshot.HashFileCachedAsync(selection.PackagePath, cancellationToken)

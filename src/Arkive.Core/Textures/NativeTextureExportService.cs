@@ -515,6 +515,11 @@ public sealed class NativeTextureExportService
         return Convert.ToHexString(hash);
     }
 
+    /// <summary>Writes a native texture manifest to a new file (it never replaces an existing one).</summary>
+    public static Task SaveManifestAsync(string path, NativeTextureExportManifest manifest,
+        CancellationToken cancellationToken = default) =>
+        SaveJsonAtomicAsync(Path.GetFullPath(path), manifest, cancellationToken);
+
     private static async Task SaveJsonAtomicAsync<T>(
         string path,
         T value,
