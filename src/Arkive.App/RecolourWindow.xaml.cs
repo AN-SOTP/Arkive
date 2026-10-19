@@ -62,6 +62,7 @@ public partial class RecolourWindow : Window
         LightenText.Text = $"{LightenSlider.Value:P0}";
         Loaded += async (_, _) =>
         {
+            await KeepOutsideEditsAsync();
             BuildMaterialPreviews();
             await LoadPicturePreviewsAsync();
             UpdatePreviews();
@@ -88,7 +89,37 @@ public partial class RecolourWindow : Window
         SchedulePreview();
     }
 
-    private void Option_Changed(object sender, RoutedEventArgs e) => SchedulePreview();
+    // The pictures' preview starts from what the recolour will start from: the game's colours or the working file.
+    private async void Option_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        PicturePreviews.Children.Clear();
+        _pictures.Clear();
+        await LoadPicturePreviewsAsync();
+        UpdatePreviews();
+    }
+
+    /// <summary>
+    /// Pictures someone changed outside Recolour (in an image editor, say) keep those changes by default: the tint goes on
+    /// top of them instead of starting again from the game's colours.
+    /// </summary>
+    private async Task KeepOutsideEditsAsync()
+    {
+        var edited = 0;
+        foreach (var texture in _edits.Select(edit => edit.Entry).OfType<GuidedTextureModProjectEntry>())
+            try
+            {
+                if (await ArkiveModTintService.HasOutsideEditsAsync(texture)) edited++;
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or
+                                                  UnauthorizedAccessException)
+            {
+                edited++;
+            }
+        if (edited == 0) return;
+        FromOriginalCheckBox.IsChecked = false;
+        FromOriginalHint.Text = $"{Count(edited, "picture")} already {(edited == 1 ? "has" : "have")} your own changes (made outside Recolour), so the tint goes on top of them. Tick to start from the game's colours instead, which replaces those changes.";
+    }
 
     private async Task LoadPicturePreviewsAsync()
     {

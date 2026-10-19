@@ -100,7 +100,36 @@ public sealed class ArkiveModTintService : IMaterialTint
         var temporary = target + $".{Guid.NewGuid():N}.saving.png";
         await PngRgbaCodec.WriteAsync(temporary, image, cancellationToken).ConfigureAwait(false);
         File.Move(temporary, target, overwrite: true);
+        await File.WriteAllTextAsync(RecolourMarkPath(texture), await HashAsync(target, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
         return !image.Pixels.AsSpan().SequenceEqual(original);
+    }
+
+    /// <summary>
+    /// True when a picture's working file holds changes made outside Recolour (in an image editor, the Texture Viewer, a
+    /// replaced file), which recolouring from the game's colours would throw away. A picture still as the game has it,
+    /// or exactly as Recolour last wrote it, has none.
+    /// </summary>
+    public static async Task<bool> HasOutsideEditsAsync(GuidedTextureModProjectEntry texture, CancellationToken cancellationToken = default)
+    {
+        var working = texture.Manifest.EditableImagePath;
+        if (!File.Exists(working)) return false;
+        var hash = await HashAsync(working, cancellationToken).ConfigureAwait(false);
+        var mark = RecolourMarkPath(texture);
+        if (File.Exists(mark) && (await File.ReadAllTextAsync(mark, cancellationToken).ConfigureAwait(false)).Trim()
+                .Equals(hash, StringComparison.OrdinalIgnoreCase)) return false;
+        var original = await OriginalImagePathAsync(texture, cancellationToken).ConfigureAwait(false);
+        return !File.Exists(original) || !(await HashAsync(original, cancellationToken).ConfigureAwait(false))
+            .Equals(hash, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Beside the working copy's record, not in its working folder, so it never travels with the picture.
+    private static string RecolourMarkPath(GuidedTextureModProjectEntry texture) => Path.Combine(texture.DirectoryPath, "recolour.sha256");
+
+    private static async Task<string> HashAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(path);
+        return Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
     }
 
     /// <summary>The game's own picture for a texture working copy, as its native export decoded it.</summary>
