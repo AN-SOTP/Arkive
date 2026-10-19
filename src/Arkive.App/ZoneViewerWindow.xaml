@@ -227,7 +227,7 @@
                     </DataGrid>
                 </DockPanel>
             </TabItem>
-            <TabItem x:Name="MapTab" Header="3D Map">
+            <TabItem x:Name="MapTab" Header="3D Map (Early Preview)">
                 <Grid>
                     <wv2:WebView2 x:Name="MapBrowser" Visibility="Collapsed" />
                     <TextBlock x:Name="MapMessage" Margin="24" MaxWidth="560" TextWrapping="Wrap" TextAlignment="Center"

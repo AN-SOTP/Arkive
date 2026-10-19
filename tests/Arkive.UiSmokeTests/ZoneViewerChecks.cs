@@ -235,8 +235,8 @@ internal static class ZoneViewerChecks
             Console.WriteLine("PASS: the Zone Viewer previews parts, recolours live, and adds the chosen parts to the mod with the colour");
 
             var tabs = Find<TabControl>("ViewTabs");
-            Check(tabs.Items.OfType<TabItem>().Select(tab => tab.Header.ToString()).SequenceEqual(["Parts List", "3D Map"]),
-                "The Zone Viewer's tabs are not Parts List and 3D Map.");
+            Check(tabs.Items.OfType<TabItem>().Select(tab => tab.Header.ToString()).SequenceEqual(["Parts List", "3D Map (Early Preview)"]),
+                "The Zone Viewer's tabs are not Parts List and 3D Map (Early Preview).");
             tabs.SelectedItem = Find<TabItem>("MapTab");
             await UntilAsync(() => viewer.MapLoaded, () => "The 3D map did not draw: " + Find<TextBlock>("MapMessage").Text + " " + Find<TextBlock>("StatusText").Text,
                 TimeSpan.FromSeconds(60));
