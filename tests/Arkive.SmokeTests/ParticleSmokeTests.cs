@@ -10,7 +10,30 @@ internal static class ParticleSmokeTests
         new("tints particle colour tables by hue, keeping brightness, the header and darkening colours", TestTint),
         new("writes particle patches only over the values they were made for", TestPatches),
         new("applies particle edit settings once per value, scaling base colours but not their over-life scales", TestRecipe),
+        new("tints only gold and white particle colours and keeps blue, purple and neutral multipliers", TestTintGoldAndWhite),
     ];
+
+    private static void TestTintGoldAndWhite()
+    {
+        // Header, then gold, white, blue, purple and a darkening (negative) colour.
+        float[] table = [0, 2, 2, 1.6f, 0.4f, 1, 1, 1, 0.1f, 0.2f, 2, 0.6f, 0.1f, 1, -1, -1, -1];
+        var red = new ParticleEffectTint(1, 0, 0);
+        var based = ParticleEffects.TintGoldAndWhite(table, red);
+        Assert(based[..2].SequenceEqual(table[..2]) && based[2..5].SequenceEqual(new[] { 2f, 0, 0 }) &&
+               based[5..8].SequenceEqual(new[] { 1f, 0, 0 }),
+            "gold and white were not tinted red at their own brightness: " + string.Join(",", based));
+        Assert(based[8..].SequenceEqual(table[8..]), "blue, purple or a darkening colour was tinted");
+        var scale = ParticleEffects.TintGoldAndWhite(table, red, baseColour: false);
+        Assert(scale[2..5].SequenceEqual(new[] { 2f, 0, 0 }) && scale[5..8].SequenceEqual(table[5..8]),
+            "a scale-over-life table did not keep its neutral (unchanging) multiplier while tinting its gold");
+
+        var everything = new ParticleEffectRecipe(red);
+        var selective = everything with { OnlyGoldAndWhite = true };
+        var blueTable = new ParticleValueTable(null!, "", "startcolor", ParticleTableKind.Color, 0, [0, 1, 0.1f, 0.2f, 1]);
+        Assert(ParticleEffects.Apply(blueTable, everything)[2..].SequenceEqual(new[] { 1f, 0, 0 }) &&
+               ParticleEffects.Apply(blueTable, selective)[2..].SequenceEqual(new[] { 0.1f, 0.2f, 1 }),
+            "the recipe's gold-and-white option did not decide whether a blue colour is tinted");
+    }
 
     private static readonly UnrealNameEntry[] Names = new[] { "none", "lifetime", "structproperty", "rawdistributionfloat",
         "distribution", "objectproperty", "lookuptable", "arrayproperty", "bkillondeactivate", "boolproperty",

@@ -18,6 +18,8 @@ public sealed record ParticleEffectTint(float Red, float Green, float Blue)
 /// <summary>
 /// What a particle edit does to an effect: an optional tint (blended in by <paramref name="TintStrength"/>), then
 /// multipliers on its colour brightness, opacity, particle size, particle lifetime, spawn rate and starting speed.
+/// With <paramref name="OnlyGoldAndWhite"/> the tint changes only gold, yellow, orange and white colours and keeps the
+/// others (blue, purple, green) as they are.
 /// </summary>
 public sealed record ParticleEffectRecipe(
     ParticleEffectTint? Tint = null,
@@ -27,7 +29,8 @@ public sealed record ParticleEffectRecipe(
     float Size = 1,
     float Lifetime = 1,
     float SpawnRate = 1,
-    float Speed = 1)
+    float Speed = 1,
+    bool OnlyGoldAndWhite = false)
 {
     public const float MaximumMultiplier = 20;
 
@@ -196,15 +199,58 @@ public static class ParticleEffects
         return result;
     }
 
+    /// <summary>
+    /// The table with only its gold, yellow, orange and white colours recoloured to <paramref name="tint"/>; other colours
+    /// keep their hue. In a scale-over-life table, which multiplies the emitter's base colour, a white entry means
+    /// "unchanged" rather than white, so only its warm colours are tinted: tinting a neutral multiplier would turn a blue
+    /// base black.
+    /// </summary>
+    public static float[] TintGoldAndWhite(float[] table, ParticleEffectTint tint, float strength = 1, bool baseColour = true)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        if (!tint.IsValid) throw new ArgumentException("A tint needs finite, non-negative channels and some colour.", nameof(tint));
+        var peak = Math.Max(tint.Red, Math.Max(tint.Green, tint.Blue));
+        var (red, green, blue) = (tint.Red / peak, tint.Green / peak, tint.Blue / peak);
+        var result = (float[])table.Clone();
+        for (var index = 2; index + 2 < result.Length; index += 3)
+        {
+            float r = result[index], g = result[index + 1], b = result[index + 2];
+            var strongest = Math.Max(r, Math.Max(g, b));
+            var weakest = Math.Min(r, Math.Min(g, b));
+            if (strongest <= 0 || weakest < 0) continue;
+            var saturation = (strongest - weakest) / strongest;
+            var neutral = saturation <= 0.12f;
+            if (neutral ? !baseColour : !IsWarm(r, g, b, strongest, weakest)) continue;
+            result[index] += (strongest * red - r) * strength;
+            result[index + 1] += (strongest * green - g) * strength;
+            result[index + 2] += (strongest * blue - b) * strength;
+        }
+        return result;
+    }
+
+    // Gold, yellow and orange: hues from 15 to 75 degrees.
+    private static bool IsWarm(float r, float g, float b, float strongest, float weakest)
+    {
+        var delta = strongest - weakest;
+        float hue;
+        if (strongest == r) hue = 60 * ((g - b) / delta % 6);
+        else if (strongest == g) hue = 60 * ((b - r) / delta + 2);
+        else hue = 60 * ((r - g) / delta + 4);
+        hue = (hue + 360) % 360;
+        return hue is >= 15 and <= 75;
+    }
+
     /// <summary>The table with the recipe applied: colours tinted, then every table scaled by its kind's multiplier.</summary>
     public static float[] Apply(ParticleValueTable table, ParticleEffectRecipe recipe)
     {
-        var values = table.Kind == ParticleTableKind.Color && recipe.Tint is { } tint && recipe.TintStrength > 0
-            ? Tint(table.Values, tint, recipe.TintStrength)
-            : (float[])table.Values.Clone();
         // Brightness and opacity scale an emitter's base colour (StartColor, ColorOverLife…) once; its scale-over-life
         // tables multiply that base, so scaling them too would apply the change twice.
         var multiplierOfBase = !table.Property.Contains("scale", StringComparison.OrdinalIgnoreCase);
+        var values = table.Kind == ParticleTableKind.Color && recipe.Tint is { } tint && recipe.TintStrength > 0
+            ? recipe.OnlyGoldAndWhite
+                ? TintGoldAndWhite(table.Values, tint, recipe.TintStrength, multiplierOfBase)
+                : Tint(table.Values, tint, recipe.TintStrength)
+            : (float[])table.Values.Clone();
         var scale = table.Kind switch
         {
             ParticleTableKind.Color => multiplierOfBase ? recipe.Brightness : 1,

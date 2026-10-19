@@ -14,7 +14,8 @@ export const MAX_PARTICLES = 4000;
 const FIRST_CAPACITY = 16;
 
 export function defaultRecipe() {
-  return { tint: null, tintStrength: 1, brightness: 1, opacity: 1, size: 1, lifetime: 1, spawnRate: 1, speed: 1 };
+  return { tint: null, tintStrength: 1, brightness: 1, opacity: 1, size: 1, lifetime: 1, spawnRate: 1, speed: 1,
+    onlyGoldAndWhite: false };
 }
 
 // ---- Edit recipe, the same rules as Arkive's ParticleEffects.Apply ----
@@ -23,22 +24,35 @@ export function applyRecipe(table, property, recipe) {
   if (!table.kind) return table;
   const values = table.values.slice();
   const tint = recipe.tint;
+  const base = !property.includes('scale');
   if (table.kind === 'Color' && tint && recipe.tintStrength > 0) {
     const peak = Math.max(tint.red, tint.green, tint.blue);
     const [r, g, b] = [tint.red / peak, tint.green / peak, tint.blue / peak];
     for (let i = 2; i + 2 < values.length; i += 3) {
       const strongest = Math.max(values[i], values[i + 1], values[i + 2]);
       if (strongest <= 0) continue;
+      if (recipe.onlyGoldAndWhite && !goldOrWhite(values[i], values[i + 1], values[i + 2], base)) continue;
       values[i] += (strongest * r - values[i]) * recipe.tintStrength;
       values[i + 1] += (strongest * g - values[i + 1]) * recipe.tintStrength;
       values[i + 2] += (strongest * b - values[i + 2]) * recipe.tintStrength;
     }
   }
-  const base = !property.includes('scale');
   const scale = { Color: base ? recipe.brightness : 1, Alpha: base ? recipe.opacity : 1, Size: recipe.size,
     Lifetime: recipe.lifetime, SpawnRate: recipe.spawnRate, Speed: recipe.speed }[table.kind] ?? 1;
   if (scale !== 1) for (let i = 0; i < values.length; i++) values[i] *= scale;
   return { ...table, values };
+}
+
+// The colours "only gold and white" tints, as ParticleEffects.TintGoldAndWhite: hues from 15 to 75 degrees, and greys and
+// whites in base colour tables (in a scale-over-life table a white entry means "unchanged").
+function goldOrWhite(r, g, b, base) {
+  const strongest = Math.max(r, g, b), weakest = Math.min(r, g, b);
+  if (weakest < 0) return false;
+  const delta = strongest - weakest;
+  if (delta / strongest <= 0.12) return base;
+  let hue = strongest === r ? ((g - b) / delta) % 6 : strongest === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+  hue = (hue * 60 + 360) % 360;
+  return hue >= 15 && hue <= 75;
 }
 
 // ---- Baked value tables: two header floats, then samples of ChunkSize floats ----
