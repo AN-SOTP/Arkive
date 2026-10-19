@@ -9,7 +9,82 @@ internal static class ZoneSmokeTests
         new("saves and reloads which maps use which assets, and rejects a stale index", TestZoneUsageIndex),
         new("recolours material colour parameters the way the Texture Viewer picks colours", TestWorkingCopyTintColours),
         new("recolours material and texture working copies and leaves masks alone", TestWorkingCopyTintMaterial),
+        new("reads where a level places a mesh from its lower-case, Lost Ark-style property tags", TestLevelProperties),
+        new("places map meshes in the 3D view's space and reads foliage instances", TestZoneScenePlacement),
+        new("keeps sky domes and glow planes out of the 3D map's solid layer", TestZoneSceneLayers),
     ];
+
+    private static void TestLevelProperties()
+    {
+        UnrealNameEntry[] names = new[] { "none", "location", "structproperty", "vector", "staticmesh", "objectproperty", "visibilityid",
+            "intproperty", "materials", "arrayproperty", "hiddengame", "boolproperty", "layername", "nameproperty", "layer01" }
+            .Select((name, index) => new UnrealNameEntry(index, name, 0)).ToArray();
+        var bytes = new List<byte> { 0xEC, 0xFF, 0xFF, 0xFF, 0x09 };  // an odd-length header before the tags
+        void Name(int index) { bytes.AddRange(BitConverter.GetBytes(index)); bytes.AddRange(BitConverter.GetBytes(0)); }
+        void Int(int value) => bytes.AddRange(BitConverter.GetBytes(value));
+        void Tag(int name, int type, int size) { Name(name); Name(type); Int(size); Int(0); }
+        Tag(1, 2, 12); Name(3); bytes.AddRange(BitConverter.GetBytes(150f)); bytes.AddRange(BitConverter.GetBytes(-20f)); bytes.AddRange(BitConverter.GetBytes(4.5f));
+        Tag(4, 5, 4); Int(-7);
+        Tag(6, 7, 4); Name(0); Int(183);  // Lost Ark's IntProperty tag carries one extra name
+        Tag(8, 9, 12); Int(2); Int(-3); Int(0);
+        Tag(10, 11, 0); bytes.Add(1);
+        Name(0);
+        var properties = LevelProperties.Read(bytes.ToArray(), names, out var end);
+        Assert(properties is not null && end == bytes.Count, $"the property tags were not read to their end ({end} of {bytes.Count})");
+        properties ??= [];
+        Assert(properties.Vector("location") == new System.Numerics.Vector3(150, -20, 4.5f) && properties.Object("staticmesh") == -7 &&
+               properties.Int("visibilityid") == 183 && properties.Objects("materials").SequenceEqual([-3, 0]) && properties.Bool("hiddengame"),
+            "a level object's location, mesh, ids, materials or flags were misread");
+        var element = new List<byte>();
+        bytes = element;
+        Tag(12, 13, 8); Name(14); Name(0);
+        var array = new List<byte>(BitConverter.GetBytes(1));
+        array.AddRange(element);
+        var holder = new List<LevelProperty> { new("weightmaplayerallocations", "arrayproperty", null, 0, array.ToArray(), 0) };
+        Assert(holder.Structs("weightmaplayerallocations", names).Single().Text("layername") == "layer01",
+            "an array of structs (a landscape's layer allocations) was misread");
+    }
+
+    private static void TestZoneScenePlacement()
+    {
+        var yaw = ZoneMapSceneBuilder.Rotation((0, 16384, 0));
+        Assert(Math.Abs(yaw.M11) < 1e-5 && Math.Abs(yaw.M12 - 1) < 1e-5, "a quarter turn of yaw did not turn X into Y");
+        var world = System.Numerics.Matrix4x4.CreateScale(2) * System.Numerics.Matrix4x4.CreateTranslation(100, 200, 300);
+        var viewer = ZoneMapSceneBuilder.ToViewer(world);
+        Assert(Math.Abs(viewer.M41 - 1) < 1e-5 && Math.Abs(viewer.M42 - 3) < 1e-5 && Math.Abs(viewer.M43 - 2) < 1e-5 && Math.Abs(viewer.M22 - 2) < 1e-5,
+            $"Unreal centimetres with Z up did not become metres with Y up: {viewer}");
+        var tail = new List<byte>(new byte[12]);
+        tail.AddRange(BitConverter.GetBytes(80));
+        tail.AddRange(BitConverter.GetBytes(2));
+        for (var instance = 0; instance < 2; instance++)
+        {
+            var matrix = System.Numerics.Matrix4x4.CreateTranslation(instance * 500, 10, 0);
+            foreach (var value in new[] { matrix.M11, matrix.M12, matrix.M13, matrix.M14, matrix.M21, matrix.M22, matrix.M23, matrix.M24,
+                         matrix.M31, matrix.M32, matrix.M33, matrix.M34, matrix.M41, matrix.M42, matrix.M43, matrix.M44 })
+                tail.AddRange(BitConverter.GetBytes(value));
+            tail.AddRange(new byte[16]);
+        }
+        var instances = ZoneMapSceneBuilder.Instances(tail.ToArray()).ToArray();
+        Assert(instances.Length == 2 && instances[1].M41 == 500 && instances[1].M42 == 10, "foliage instances were not read from a component's data");
+        Assert(!ZoneMapSceneBuilder.Instances(new byte[64]).Any(), "foliage instances were found in data with none");
+        var picture = new RgbaImage(4, 4, Enumerable.Repeat((byte)200, 64).ToArray());
+        Assert(ZoneMapSceneBuilder.Shrink(picture, 2) is { Width: 2, Height: 2 } small && small.Pixels.All(value => value == 200),
+            "a texture was not shrunk to the 3D map's size");
+    }
+
+    private static void TestZoneSceneLayers()
+    {
+        Assert(ZoneMapSceneBuilder.Layer("lv_kur_death_06.sky_01", []) == "sky" &&
+               ZoneMapSceneBuilder.Layer("bfx_sm_00.bfm_planbottom_01", ["lv_kur_death_05.preset_cloud_trn_new_06_10"]) == "sky",
+            "a sky dome or cloud plane was not on the sky layer");
+        Assert(ZoneMapSceneBuilder.Layer("fx_sm_00.fm_a_hemisphere_008", []) == "effect" &&
+               ZoneMapSceneBuilder.Layer("lv_module.lv_module_water01_1024", []) == "effect" &&
+               ZoneMapSceneBuilder.Layer("bg_x.plane_sm", ["lv_kur_death_05_b.bfx_d_me_ringmaster_01_03_tr_02"]) == "effect",
+            "a glow, water plane or translucent effect mesh was not on the effect layer");
+        Assert(ZoneMapSceneBuilder.Layer("bg_rad_kazeroth_o.bg_rad_kazeroth_stone_wave01_sm", ["bg_rad_kazeroth_o.bg_rad_kazeroth_stone_wave01_mi_hhk"]) == "solid" &&
+               ZoneMapSceneBuilder.Layer("bg_rad_kazeroth_m.bg_rad_kazeroth_statue04_sm", ["lv_kur_death_04.bg_rad_kazeroth_statue_mi_trim"]) == "solid",
+            "a rock or statue was taken off the map's solid layer");
+    }
 
     private static void TestZoneMapGrouping()
     {

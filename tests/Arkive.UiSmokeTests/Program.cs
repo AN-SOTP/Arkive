@@ -48,7 +48,21 @@ internal static class Program
             }
         };
         try { return app.Run(); }
-        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+        finally { DeleteFixture(root); }
+    }
+
+    // A 3D map's browser processes can hold their data folder for a moment after the window closes.
+    private static void DeleteFixture(string root)
+    {
+        for (var attempt = 0; Directory.Exists(root); attempt++)
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) when (attempt < 20)
+            {
+                Thread.Sleep(250);
+            }
     }
 
     private static async Task RunAsync(string root, string? screenshotDirectory)
@@ -380,9 +394,9 @@ internal static class Program
     internal static T Control<T>(MainWindow window, string name) where T : class =>
         window.FindName(name) as T ?? throw new InvalidOperationException($"Missing UI control: {name}");
 
-    internal static async Task UntilAsync(Func<bool> condition, Func<string>? failureMessage = null)
+    internal static async Task UntilAsync(Func<bool> condition, Func<string>? failureMessage = null, TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(15);
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(15));
         while (!condition())
         {
             if (DateTime.UtcNow > deadline) throw new TimeoutException(failureMessage?.Invoke() ?? "The UI operation did not complete.");

@@ -12,6 +12,7 @@ using Arkive.Core.Discovery;
 using Arkive.Core.Materials;
 using Arkive.Core.Mods;
 using Arkive.Core.Textures;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 
 namespace Arkive.App;
@@ -23,6 +24,7 @@ public sealed record ZoneViewerProgress(string Stage, int Completed, int Total);
 /// <param name="TargetMod">The name of the mod open in Edit Mods, which parts are added to; null when none is.</param>
 /// <param name="AddToMod">Adds parts to that mod as working copies, recoloured when a tint is given; returns what happened.</param>
 /// <param name="Export">Exports parts into a folder; returns what happened.</param>
+/// <param name="BuildScene">Builds (or finds) the map's 3D scene and returns its folder; null hides the 3D Map tab.</param>
 public sealed record ZoneViewerHost(
     Func<IProgress<string>, CancellationToken, Task<ZoneMapReport>> ReadMap,
     Func<IProgress<ZoneUsageProgress>, CancellationToken, Task<ZoneUsageIndex?>> ReadUsage,
@@ -34,7 +36,9 @@ public sealed record ZoneViewerHost(
     Func<IReadOnlyList<PackageIndexMatch>, TextureRecolour?, IProgress<ZoneViewerProgress>, CancellationToken, Task<string>> AddToMod,
     Func<IReadOnlyList<PackageIndexMatch>, string, IProgress<ZoneViewerProgress>, CancellationToken, Task<string>> Export,
     Action<string> FindInLibrary,
-    Action<string> Log);
+    Action<string> Log,
+    Func<IProgress<ZoneSceneProgress>, CancellationToken, Task<string>>? BuildScene = null,
+    string? WebViewDataFolder = null);
 
 /// <summary>
 /// A whole map in one window: every part its levels use, grouped (terrain, sky, fog, lighting, effects, characters,
@@ -66,6 +70,7 @@ public partial class ZoneViewerWindow : Window
     {
         InitializeComponent();
         SourceInitialized += (_, _) => AppearanceManager.ApplyWindowChrome(this, effectiveTheme);
+        _theme = effectiveTheme;
         _map = map;
         _host = host;
         Title = ZoneViewerText.WindowTitle(map.Name);
@@ -107,10 +112,13 @@ public partial class ZoneViewerWindow : Window
             _closing.Cancel();
             _previewCancellation?.Cancel();
             _operation?.Cancel();
+            // Ends the 3D map's browser processes, which otherwise hold its data folder.
+            MapBrowser.Dispose();
         };
         UpdateAdjustmentText();
         UpdateActions();
         ShowNoSelection();
+        if (host.BuildScene is null) MapTab.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>The map's parts as listed, for tests and the main window.</summary>
@@ -248,6 +256,7 @@ public partial class ZoneViewerWindow : Window
 
     private void PartsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        PostMapSelection();
         UpdateCount();
         UpdateActions();
         _selectionTimer.Stop();
@@ -394,6 +403,7 @@ public partial class ZoneViewerWindow : Window
             Checkerboard.Visibility = Visibility.Visible;
         }
         foreach (var vector in _vectors) vector.Tint(tint);
+        PostMapTint(tint);
         UpdateActions();
     }
 
@@ -599,6 +609,164 @@ public partial class ZoneViewerWindow : Window
     }
 
     private void HideProgress() => ProgressPanel.Visibility = Visibility.Collapsed;
+
+    // ---- 3D map ----
+
+    private const string ViewerHost = "viewer.arkive.local";
+    private const string MapHost = "zonemap.arkive.local";
+    private readonly string _theme;
+    private bool _mapStarted;
+    private bool _mapReady;
+
+    /// <summary>True once the 3D map has drawn its scene.</summary>
+    public bool MapLoaded { get; private set; }
+
+    private async void ViewTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Selection changes of the lists inside the tabs bubble up here too.
+        if (!ReferenceEquals(e.OriginalSource, ViewTabs) || !ReferenceEquals(ViewTabs.SelectedItem, MapTab) || _mapStarted ||
+            _host.BuildScene is null) return;
+        _mapStarted = true;
+        await StartMapAsync(_host.BuildScene);
+    }
+
+    private async Task StartMapAsync(Func<IProgress<ZoneSceneProgress>, CancellationToken, Task<string>> buildScene)
+    {
+        var token = _closing.Token;
+        MapMessage.Text = ZoneViewerText.BuildingMap;
+        ShowProgress(ZoneViewerText.BuildingMap, null, null);
+        string directory;
+        try
+        {
+            directory = await buildScene(new Progress<ZoneSceneProgress>(progress =>
+                ShowProgress(ZoneViewerText.MapStep(progress), progress.Completed, progress.Total)), token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or
+                                              UnauthorizedAccessException or NotSupportedException)
+        {
+            HideProgress();
+            MapMessage.Text = ZoneViewerText.MapFailed3D(exception.Message);
+            _host.Log($"Zone viewer 3D map failed: {exception}");
+            return;
+        }
+        HideProgress();
+        try
+        {
+            var folder = _host.WebViewDataFolder ?? Path.Combine(Path.GetTempPath(), "Arkive", "webview2");
+            Directory.CreateDirectory(folder);
+            var environment = await CoreWebView2Environment.CreateAsync(null, folder);
+            await MapBrowser.EnsureCoreWebView2Async(environment);
+            var core = MapBrowser.CoreWebView2;
+            core.Settings.AreDevToolsEnabled = false;
+            core.Settings.AreDefaultContextMenusEnabled = false;
+            core.Settings.IsStatusBarEnabled = false;
+            core.Settings.IsZoomControlEnabled = false;
+            core.SetVirtualHostNameToFolderMapping(ViewerHost, Path.Combine(AppContext.BaseDirectory, "Viewer"),
+                CoreWebView2HostResourceAccessKind.DenyCors);
+            core.SetVirtualHostNameToFolderMapping(MapHost, directory, CoreWebView2HostResourceAccessKind.Allow);
+            core.WebMessageReceived += (_, args) => OnMapMessage(args.WebMessageAsJson);
+            core.NewWindowRequested += (_, args) => args.Handled = true;
+            MapBrowser.Visibility = Visibility.Visible;
+            MapMessage.Text = string.Empty;
+            core.Navigate($"https://{ViewerHost}/map.html");
+        }
+        catch (Exception exception) when (exception is WebView2RuntimeNotFoundException or System.Runtime.InteropServices.COMException or
+                                              IOException or UnauthorizedAccessException)
+        {
+            MapBrowser.Visibility = Visibility.Collapsed;
+            MapMessage.Text = exception is WebView2RuntimeNotFoundException ? ZoneViewerText.NoWebView : ZoneViewerText.MapFailed3D(exception.Message);
+            _host.Log($"Zone viewer could not start WebView2: {exception}");
+        }
+    }
+
+    private void OnMapMessage(string json)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var root = document.RootElement;
+        string? Text(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String
+            ? value.GetString() : null;
+        switch (Text("type"))
+        {
+            case "ready":
+                _mapReady = true;
+                PostMap(new Dictionary<string, string>
+                {
+                    ["type"] = "load",
+                    ["scene"] = $"https://{MapHost}/{ZoneMapScene.FileName}",
+                    ["base"] = $"https://{MapHost}/",
+                    ["theme"] = _theme,
+                });
+                break;
+            case "loaded":
+                MapLoaded = true;
+                StatusText.Text = ZoneViewerText.MapLoaded(root.GetProperty("placements").GetInt32(), root.GetProperty("meshes").GetInt32(),
+                    root.GetProperty("terrain").GetInt32());
+                PostMapSelection();
+                PostMapTint(HasPendingChange && Recolour.IsValid ? Recolour : null);
+                break;
+            case "pick":
+                SelectPicked(Text("material"), Text("mesh"));
+                break;
+            case "error":
+                StatusText.Text = ZoneViewerText.MapFailed3D(Text("message") ?? string.Empty);
+                _host.Log($"Zone viewer 3D map page error: {Text("message")}");
+                break;
+        }
+    }
+
+    /// <summary>Selects what was clicked on the map: its material (which takes a recolour) and its mesh.</summary>
+    private void SelectPicked(string? material, string? mesh)
+    {
+        var rows = new[] { material, mesh }.OfType<string>()
+            .Select(key => _rows.FirstOrDefault(row => Key(row).Equals(key, StringComparison.OrdinalIgnoreCase)))
+            .OfType<ZonePartRow>().ToArray();
+        if (rows.Length == 0)
+        {
+            StatusText.Text = ZoneViewerText.PickedNothing;
+            return;
+        }
+        if (rows.Any(row => !Shows(row)))
+        {
+            FilterTextBox.Text = string.Empty;
+            ShowComboBox.SelectedIndex = 0;
+            if (GroupsList.ItemsSource is IEnumerable<GroupRow> groups) GroupsList.SelectedItem = groups.First();
+            _view.Refresh();
+        }
+        PartsGrid.SelectedItems.Clear();
+        foreach (var row in rows.Where(Shows)) PartsGrid.SelectedItems.Add(row);
+        if (PartsGrid.SelectedItem is ZonePartRow first) PartsGrid.ScrollIntoView(first);
+    }
+
+    private static string Key(ZonePartRow row) => (row.Package + "." + row.Name).ToLowerInvariant();
+
+    private void PostMapSelection()
+    {
+        if (MapLoaded) PostMap(new { type = "select", keys = SelectedRows.Select(Key).ToArray() });
+    }
+
+    private void PostMapTint(TextureRecolour? tint)
+    {
+        if (!MapLoaded) return;
+        PostMap(new
+        {
+            type = "tint",
+            keys = SelectedRows.Where(row => row.CanRecolour).Select(Key).ToArray(),
+            tint = tint is null ? null : new
+            {
+                selection = tint.Selection.ToString(), rangeHue = tint.RangeHue, rangeWidth = tint.RangeWidth,
+                red = tint.Red, green = tint.Green, blue = tint.Blue, strength = tint.Strength, brightness = tint.Brightness,
+            },
+        });
+    }
+
+    private void PostMap(object message)
+    {
+        if (_mapReady && MapBrowser.CoreWebView2 is { } core) core.PostWebMessageAsJson(System.Text.Json.JsonSerializer.Serialize(message));
+    }
 
     // ---- Drawing ----
 

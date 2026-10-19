@@ -86,6 +86,38 @@ public sealed class NativeTextureExportService
         return ExportCoreAsync(request, cancellationToken);
     }
 
+    /// <summary>
+    /// One level of a texture as a picture, for a preview: the largest stored level no wider or taller than
+    /// <paramref name="maximumSize"/> (the smallest stored one when all are larger), decoded in memory with no files
+    /// written. The checks of a full export are skipped; nothing decoded here goes into a mod.
+    /// </summary>
+    /// <param name="opaque">Shows alpha as opaque (pictures); false keeps it (masks that store data in alpha).</param>
+    public Task<RgbaImage> DecodePreviewAsync(TextureReconnaissanceReport report, int maximumSize,
+        CancellationToken cancellationToken = default, bool opaque = true) => Task.Run(() =>
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        var formatProfile = ValidateReportGate(report);
+        var summary = _summaryReader.Read(report.PackagePath);
+        using var logical = new LogicalPackageStream(summary, _protectionProvider);
+        var exportBytes = new byte[checked((int)report.SerialSize)];
+        logical.Position = report.SerialOffset;
+        logical.ReadExactly(exportBytes);
+        var width = RequiredIntProperty(report, "SizeX");
+        var height = RequiredIntProperty(report, "SizeY");
+        var mips = report.MipCandidates[0].Mips;
+        var index = 0;
+        while (index < mips.Count - 1 && Math.Max(mips[index].Width, mips[index].Height) > maximumSize) index++;
+        var mip = mips[index];
+        cancellationToken.ThrowIfCancellationRequested();
+        var stored = exportBytes.AsSpan(checked((int)mip.PayloadRelativeOffset!.Value), mip.StoredSize).ToArray();
+        var mipWidth = Math.Max(1, width >> index);
+        var mipHeight = Math.Max(1, height >> index);
+        var (decoded, _, _, _) = DecodeStoredMip(stored, Convert.ToHexString(SHA256.HashData(stored)), mip, index,
+            formatProfile.CalculateMipBytes(mipWidth, mipHeight), formatProfile);
+        var dds = DdsBlockCompressedWriter.Build(mipWidth, mipHeight, formatProfile.DdsFormat, [decoded]);
+        return DdsBlockTexture.Parse(report.ObjectName + ".dds", dds).DecodeMip(0, editableView: opaque);
+    }, cancellationToken);
+
     private async Task<NativeTextureExportResult> ExportCoreAsync(
         NativeTextureExportRequest request,
         CancellationToken cancellationToken)
@@ -164,99 +196,8 @@ public sealed class NativeTextureExportService
             var expectedDecodedSize = formatProfile.CalculateMipBytes(
                 Math.Max(1, width >> index),
                 Math.Max(1, height >> index));
-            byte[] decoded;
-            string storageCodec;
-            string rawExtension;
-            int storageHeaderBytes;
-            if (storedData.Length >= 2 && storedData[0] == (byte)'H' && storedData[1] == (byte)'x')
-            {
-                CrunchTextureInfo crnInfo;
-                try
-                {
-                    crnInfo = _crunchDecoder.Inspect(storedData);
-                }
-                catch (Exception exception) when (
-                    exception is IOException or InvalidDataException or NotSupportedException)
-                {
-                    throw new InvalidDataException(
-                        $"Mip {index} Crunch inspection failed: dimensions={mip.Width}x{mip.Height}, " +
-                        $"flags=0x{mip.BulkDataFlags:X8}, storedBytes={storedData.Length:N0}, " +
-                        $"storedSha256={storedHash}, prefix=" +
-                        Convert.ToHexString(storedData.AsSpan(0, Math.Min(16, storedData.Length))) + ".",
-                        exception);
-                }
-                if (crnInfo.Width != mip.Width || crnInfo.Height != mip.Height ||
-                    crnInfo.Levels != 1 || crnInfo.Faces != 1 ||
-                    crnInfo.Format != formatProfile.CrunchFormat ||
-                    crnInfo.FourCc != formatProfile.CrunchFourCc ||
-                    crnInfo.BytesPerBlock != formatProfile.BytesPerBlock ||
-                    crnInfo.ActualDataSize != storedData.Length ||
-                    crnInfo.HeaderSize <= 0 || crnInfo.HeaderSize > storedData.Length)
-                {
-                    Refuse(
-                        "NTX008",
-                        $"Mip {index} CRN metadata disagrees with the verified {formatProfile.CrunchFourCc} layout: " +
-                        $"{crnInfo.Width}x{crnInfo.Height}, levels={crnInfo.Levels}, faces={crnInfo.Faces}, " +
-                        $"format={crnInfo.Format}/{crnInfo.FourCc}, data={crnInfo.ActualDataSize}.");
-                }
-
-                try
-                {
-                    decoded = formatProfile.DecodeCrunch(_crunchDecoder, storedData);
-                }
-                catch (Exception exception) when (
-                    exception is IOException or InvalidDataException or NotSupportedException)
-                {
-                    throw new InvalidDataException(
-                        $"Mip {index} Crunch {formatProfile.CrunchFourCc} transcoding failed after metadata validation: " +
-                        $"dimensions={mip.Width}x{mip.Height}, storedSha256={storedHash}.",
-                        exception);
-                }
-                storageCodec = $"Crunch CRN / {formatProfile.CrunchFourCc}";
-                rawExtension = ".crn";
-                storageHeaderBytes = crnInfo.HeaderSize;
-            }
-            else if (mip.BulkDataFlags == Ue3BulkMipDecoder.LostArkCompressedBulkFlag)
-            {
-                if (mip.ElementCount != expectedDecodedSize)
-                {
-                    Refuse(
-                        "NTX020",
-                        $"Mip {index} compressed-bulk element count is {mip.ElementCount:N0}; " +
-                        $"{formatProfile.GpuFormatName} requires {expectedDecodedSize:N0} bytes.");
-                }
-
-                Ue3BulkDecodeInfo bulkInfo;
-                try
-                {
-                    decoded = Ue3BulkMipDecoder.DecodeLostArkLz4(
-                        storedData,
-                        expectedDecodedSize,
-                        out bulkInfo);
-                }
-                catch (InvalidDataException exception)
-                {
-                    throw new InvalidDataException(
-                        $"Mip {index} Lost Ark UE3/LZ4 bulk decoding failed: " +
-                        $"dimensions={mip.Width}x{mip.Height}, flags=0x{mip.BulkDataFlags:X8}, " +
-                        $"storedBytes={storedData.Length:N0}, expectedGpuBytes={expectedDecodedSize:N0}, " +
-                        $"storedSha256={storedHash}, prefix=" +
-                        Convert.ToHexString(storedData.AsSpan(0, Math.Min(24, storedData.Length))) + ".",
-                        exception);
-                }
-                storageCodec = bulkInfo.Codec;
-                rawExtension = ".ue3bulk";
-                storageHeaderBytes = bulkInfo.HeaderBytes;
-            }
-            else
-            {
-                Refuse(
-                    "NTX021",
-                    $"Mip {index} uses unsupported stored data: flags=0x{mip.BulkDataFlags:X8}, " +
-                    $"prefix={Convert.ToHexString(storedData.AsSpan(0, Math.Min(8, storedData.Length)))}.");
-                throw new UnreachableException();
-            }
-
+            var (decoded, storageCodec, rawExtension, storageHeaderBytes) = DecodeStoredMip(
+                storedData, storedHash, mip, index, expectedDecodedSize, formatProfile);
             if (decoded.Length != expectedDecodedSize)
             {
                 Refuse(
@@ -392,6 +333,110 @@ public sealed class NativeTextureExportService
             outputFiles,
             ddsInspection,
             watch.Elapsed);
+    }
+
+    private (byte[] Decoded, string Codec, string Extension, int HeaderBytes) DecodeStoredMip(
+        byte[] storedData,
+        string storedHash,
+        TextureMipEvidence mip,
+        int index,
+        int expectedDecodedSize,
+        NativeTextureFormatProfile formatProfile)
+    {
+        byte[] decoded;
+        string storageCodec;
+        string rawExtension;
+        int storageHeaderBytes;
+        if (storedData.Length >= 2 && storedData[0] == (byte)'H' && storedData[1] == (byte)'x')
+        {
+            CrunchTextureInfo crnInfo;
+            try
+            {
+                crnInfo = _crunchDecoder.Inspect(storedData);
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidDataException or NotSupportedException)
+            {
+                throw new InvalidDataException(
+                    $"Mip {index} Crunch inspection failed: dimensions={mip.Width}x{mip.Height}, " +
+                    $"flags=0x{mip.BulkDataFlags:X8}, storedBytes={storedData.Length:N0}, " +
+                    $"storedSha256={storedHash}, prefix=" +
+                    Convert.ToHexString(storedData.AsSpan(0, Math.Min(16, storedData.Length))) + ".",
+                    exception);
+            }
+            if (crnInfo.Width != mip.Width || crnInfo.Height != mip.Height ||
+                crnInfo.Levels != 1 || crnInfo.Faces != 1 ||
+                crnInfo.Format != formatProfile.CrunchFormat ||
+                crnInfo.FourCc != formatProfile.CrunchFourCc ||
+                crnInfo.BytesPerBlock != formatProfile.BytesPerBlock ||
+                crnInfo.ActualDataSize != storedData.Length ||
+                crnInfo.HeaderSize <= 0 || crnInfo.HeaderSize > storedData.Length)
+            {
+                Refuse(
+                    "NTX008",
+                    $"Mip {index} CRN metadata disagrees with the verified {formatProfile.CrunchFourCc} layout: " +
+                    $"{crnInfo.Width}x{crnInfo.Height}, levels={crnInfo.Levels}, faces={crnInfo.Faces}, " +
+                    $"format={crnInfo.Format}/{crnInfo.FourCc}, data={crnInfo.ActualDataSize}.");
+            }
+
+            try
+            {
+                decoded = formatProfile.DecodeCrunch(_crunchDecoder, storedData);
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidDataException or NotSupportedException)
+            {
+                throw new InvalidDataException(
+                    $"Mip {index} Crunch {formatProfile.CrunchFourCc} transcoding failed after metadata validation: " +
+                    $"dimensions={mip.Width}x{mip.Height}, storedSha256={storedHash}.",
+                    exception);
+            }
+            storageCodec = $"Crunch CRN / {formatProfile.CrunchFourCc}";
+            rawExtension = ".crn";
+            storageHeaderBytes = crnInfo.HeaderSize;
+        }
+        else if (mip.BulkDataFlags == Ue3BulkMipDecoder.LostArkCompressedBulkFlag)
+        {
+            if (mip.ElementCount != expectedDecodedSize)
+            {
+                Refuse(
+                    "NTX020",
+                    $"Mip {index} compressed-bulk element count is {mip.ElementCount:N0}; " +
+                    $"{formatProfile.GpuFormatName} requires {expectedDecodedSize:N0} bytes.");
+            }
+
+            Ue3BulkDecodeInfo bulkInfo;
+            try
+            {
+                decoded = Ue3BulkMipDecoder.DecodeLostArkLz4(
+                    storedData,
+                    expectedDecodedSize,
+                    out bulkInfo);
+            }
+            catch (InvalidDataException exception)
+            {
+                throw new InvalidDataException(
+                    $"Mip {index} Lost Ark UE3/LZ4 bulk decoding failed: " +
+                    $"dimensions={mip.Width}x{mip.Height}, flags=0x{mip.BulkDataFlags:X8}, " +
+                    $"storedBytes={storedData.Length:N0}, expectedGpuBytes={expectedDecodedSize:N0}, " +
+                    $"storedSha256={storedHash}, prefix=" +
+                    Convert.ToHexString(storedData.AsSpan(0, Math.Min(24, storedData.Length))) + ".",
+                    exception);
+            }
+            storageCodec = bulkInfo.Codec;
+            rawExtension = ".ue3bulk";
+            storageHeaderBytes = bulkInfo.HeaderBytes;
+        }
+        else
+        {
+            Refuse(
+                "NTX021",
+                $"Mip {index} uses unsupported stored data: flags=0x{mip.BulkDataFlags:X8}, " +
+                $"prefix={Convert.ToHexString(storedData.AsSpan(0, Math.Min(8, storedData.Length)))}.");
+            throw new UnreachableException();
+        }
+
+        return (decoded, storageCodec, rawExtension, storageHeaderBytes);
     }
 
     private static NativeTextureFormatProfile ValidateReportGate(TextureReconnaissanceReport report)

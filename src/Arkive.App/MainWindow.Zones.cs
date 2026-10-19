@@ -211,89 +211,98 @@ public partial class MainWindow
             existing.Activate();
             return existing;
         }
-        var previews = Path.Combine(_projectRoot, "cache", "zone-viewer", Guid.NewGuid().ToString("N"));
-        var hashes = new Dictionary<string, Task<string>>(StringComparer.OrdinalIgnoreCase);
         var window = new ZoneViewerWindow(map, new ZoneViewerHost(
             (progress, token) => _packageIndexStore.ReadZoneMapAsync(_libraryRootPath!, map, _gameMetadataIndex!, _protectionProvider,
                 progress, token),
             ZoneUsageAsync,
-            (asset, token) => LoadZonePictureAsync(asset, previews, token),
-            (asset, token) => ReadZoneMaterialAsync(asset, hashes, token),
+            LoadZonePictureAsync,
+            ReadZoneMaterialAsync,
             OpenZonePart,
             () => _authoringDraft?.Metadata.Name,
             ShowEditModsForZone,
             AddZonePartsToModAsync,
             ExportZonePartsAsync,
             FindInLibraryFromZone,
-            Log), _effectiveAppearanceTheme)
+            Log,
+            (progress, token) => BuildZoneSceneAsync(map, progress, token),
+            Path.Combine(_projectRoot, "cache", "webview2")), _effectiveAppearanceTheme)
         {
             Owner = this,
-        };
-        window.Closed += (_, _) =>
-        {
-            try
-            {
-                if (Directory.Exists(previews)) Directory.Delete(previews, recursive: true);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                Log($"Zone viewer previews were not deleted: {exception.Message}");
-            }
         };
         Log($"Zone viewer opened: map={map.Key}, zones={string.Join(", ", map.Zones.Select(zone => zone.Id))}.");
         window.Show();
         return window;
     }
 
+    // The 3D scenes of this many maps are kept (5 to 30 MB each); older ones are removed when another is built.
+    private const int KeptZoneScenes = 3;
+
+    /// <summary>
+    /// The map's 3D scene folder under cache\zone-maps: the saved one when its level packages are unchanged since it
+    /// was built, otherwise built again (a few seconds).
+    /// </summary>
+    private async Task<string> BuildZoneSceneAsync(ZoneMap map, IProgress<ZoneSceneProgress> progress, CancellationToken cancellationToken)
+    {
+        if (_gameMetadataIndex is not { } metadata || string.IsNullOrEmpty(_libraryRootPath))
+            throw new InvalidOperationException("Load the game database and the Asset Library first.");
+        var root = Path.Combine(_projectRoot, "cache", "zone-maps");
+        var directory = Path.Combine(root, Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(map.Key)))[..16]);
+        var files = await _packageIndexStore.PackageFilesByAliasAsync(_libraryRootPath, metadata, cancellationToken) ??
+                    throw new InvalidOperationException("The Asset Library's index is not ready yet.");
+        var stamp = string.Join("|", map.LevelPackages.Where(files.ContainsKey).Select(alias =>
+        {
+            var file = new FileInfo(files[alias]);
+            return $"{alias}:{file.Length}:{file.LastWriteTimeUtc.Ticks}";
+        }));
+        var stampPath = Path.Combine(directory, "levels.txt");
+        if (ZoneMapScene.TryLoad(directory, map.Key) is not null && File.Exists(stampPath) &&
+            await File.ReadAllTextAsync(stampPath, cancellationToken) == stamp)
+        {
+            Directory.SetLastWriteTimeUtc(directory, DateTime.UtcNow);
+            return directory;
+        }
+        var watch = Stopwatch.StartNew();
+        var scene = await _packageIndexStore.BuildZoneMapSceneAsync(_libraryRootPath, map, metadata, _protectionProvider, directory,
+            _nativeTextureExportService, progress, cancellationToken);
+        await File.WriteAllTextAsync(stampPath, stamp, cancellationToken);
+        Log($"Zone 3D map built: map={map.Key}, placements={scene.Placements}, meshes={scene.Meshes.Count}, " +
+            $"unreadMeshes={scene.UnreadMeshes}, materials={scene.Materials.Count}, terrain={scene.Terrain.Count}, " +
+            $"seconds={watch.Elapsed.TotalSeconds:N1}, folder={directory}.");
+        foreach (var old in new DirectoryInfo(root).EnumerateDirectories().OrderByDescending(folder => folder.LastWriteTimeUtc).Skip(KeptZoneScenes))
+            try
+            {
+                old.Delete(recursive: true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Log($"An old zone 3D map was not deleted: {exception.Message}");
+            }
+        return directory;
+    }
+
     private static LibraryAssetRow ToLibraryRow(PackageIndexMatch match) => new(match.SourcePath, match.PackageAlias,
         match.PhysicalPackageName, match.PackageAssetCount, match.ExportIndex, match.Kind, match.ClassName, match.ObjectName,
         match.SerialSize, match.SerialOffset, match.GameMetadata);
 
-    /// <summary>Decodes a texture from the game files for the Zone Viewer's preview, into that window's own folder.</summary>
-    private async Task<RgbaImage> LoadZonePictureAsync(PackageIndexMatch asset, string folder, CancellationToken cancellationToken)
+    /// <summary>
+    /// Decodes a texture from the game files for the Zone Viewer's preview, at up to 1024 pixels across, in memory.
+    /// The package is not hashed (the preview goes nowhere), which keeps big level packages quick.
+    /// </summary>
+    private async Task<RgbaImage> LoadZonePictureAsync(PackageIndexMatch asset, CancellationToken cancellationToken)
     {
         if (_nativeTextureExportService is null)
             throw new InvalidOperationException(_nativeTextureExportUnavailableReason ?? "Arkive's texture decoder is unavailable.");
-        var directory = Path.Combine(folder, Guid.NewGuid().ToString("N"));
-        try
-        {
-            var report = await _textureReconnaissanceService.InspectAsync(new TextureReconnaissanceRequest(asset.SourcePath,
-                asset.PackageAlias, asset.ExportIndex - 1, AssetKind.Texture, asset.ClassName, asset.ObjectName, asset.SerialOffset,
-                asset.SerialSize), cancellationToken);
-            var recon = await new TextureReconnaissanceWorkspaceStore(directory).SaveAsync(report, cancellationToken);
-            var native = await _nativeTextureExportService.ExportAsync(
-                new NativeTextureExportRequest(report, Path.Combine(directory, "export"), recon.JsonPath), cancellationToken);
-            var path = native.Manifest.EditImageRelativePath is { } relative
-                ? Path.Combine(native.OutputDirectory, relative)
-                : throw new NotSupportedException($"{asset.ObjectName} has no picture Arkive can show.");
-            return (await TextureEditableImageService.LoadAsync(path, cancellationToken)).Image;
-        }
-        finally
-        {
-            try
-            {
-                if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
-            }
-            catch (IOException)
-            {
-            }
-        }
+        var report = await _textureReconnaissanceService.InspectAsync(new TextureReconnaissanceRequest(asset.SourcePath,
+            asset.PackageAlias, asset.ExportIndex - 1, AssetKind.Texture, asset.ClassName, asset.ObjectName, asset.SerialOffset,
+            asset.SerialSize, KnownPackageSha256: new string('0', 64)), cancellationToken);
+        return await _nativeTextureExportService.DecodePreviewAsync(report, 1024, cancellationToken);
     }
 
-    private async Task<MaterialInstanceReconnaissanceReport> ReadZoneMaterialAsync(PackageIndexMatch asset,
-        Dictionary<string, Task<string>> hashes, CancellationToken cancellationToken)
-    {
-        // A level package can be hundreds of megabytes; hash each once per window.
-        if (!hashes.TryGetValue(asset.SourcePath, out var hash))
-            hashes[asset.SourcePath] = hash = Task.Run(() =>
-            {
-                using var stream = File.OpenRead(asset.SourcePath);
-                return Convert.ToHexString(SHA256.HashData(stream));
-            }, CancellationToken.None);
-        return await new MaterialInstanceReconnaissanceService(_reader, _protectionProvider).InspectAsync(
+    // Read for display only: the package is not hashed, which keeps big level packages quick.
+    private Task<MaterialInstanceReconnaissanceReport> ReadZoneMaterialAsync(PackageIndexMatch asset, CancellationToken cancellationToken) =>
+        new MaterialInstanceReconnaissanceService(_reader, _protectionProvider).InspectAsync(
             new MaterialInstanceReconnaissanceRequest(asset.SourcePath, asset.PackageAlias, asset.ExportIndex, AssetKind.Material,
-                "MaterialInstanceConstant", asset.ObjectName, asset.SerialOffset, asset.SerialSize, await hash), cancellationToken);
-    }
+                "MaterialInstanceConstant", asset.ObjectName, asset.SerialOffset, asset.SerialSize, new string('0', 64)), cancellationToken);
 
     /// <summary>Opens a map part in its viewer: textures in the Texture Viewer, effects in the effect editor, meshes in
     /// the Asset Viewer, materials in UModel.</summary>

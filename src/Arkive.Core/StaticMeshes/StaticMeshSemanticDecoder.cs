@@ -29,6 +29,9 @@ internal sealed class StaticMeshSemanticDecoder
         return lods;
     }
 
+    /// <summary>One level of detail only (a map overview needs only the least detailed).</summary>
+    public DecodedStaticMeshLod DecodeOne(ReadOnlySpan<byte> exportBytes, StaticMeshLodEvidence lod) => DecodeLod(exportBytes, lod);
+
     private static DecodedStaticMeshLod DecodeLod(
         ReadOnlySpan<byte> bytes,
         StaticMeshLodEvidence lod)
