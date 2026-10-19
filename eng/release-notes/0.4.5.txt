@@ -1,0 +1,11 @@
+Recolour whole bosses and maps in a few clicks, a Zone Viewer with a 3D map, mod packs, and a Login Screen picker.
+
+- Edit mods: Recolour… recolours every selected picture, material and effect at once with one colour choice, with a before-and-after preview. Lighten brings up surfaces a material dims on purpose, and effects whose colour comes from their materials can have those tinted too. Pictures you changed yourself keep your changes unless you choose to start from the game's colours.
+- Two-tone recolour, in Recolour… and the Texture Viewer: pick a main colour and a highlight colour (white armour with gold trim, say). Glow pictures, material glows and effects take the highlight colour.
+- Asset Viewer Skills panel: Recolour this model and its effects… gathers a boss's pictures, materials and every effect of all its forms into a mod and opens Recolour on them.
+- Zone Viewer: search a zone name (Land of Death and Order, say) in the Asset Library to open its map. Its parts are grouped as terrain, sky, fog, lighting, effects, characters, meshes, materials and textures, each marked as this map's own or shared with other maps, with previews; recolour them into a mod, add them as they are, or export them. A 3D Map tab draws the whole map, and clicking a piece selects it. Asset Library results also name the maps an asset is used in.
+- Mods: mod packs switch a set of mods on and off together, and a note above the list says which mod wins when enabled mods change the same assets, with buttons to make the other one win.
+- Login Screen tab: bring back the login and server select background of an earlier update. Arkive changes only the game's movie table in data1.lpk and keeps the original to put back.
+- Mods can be far larger: up to a 1 GB manifest and 500,000 assets (was 16 MB and 2,048).
+- Fixed: saving a mod again after applying it refused because "the source package changed".
+- Fixed: assets sharing a name with another object in their package, and decal materials, could not be added.
