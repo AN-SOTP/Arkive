@@ -22,11 +22,12 @@ public sealed record ZoneSceneSection(int FirstIndex, int IndexCount, int Materi
 /// <param name="Normals">Four signed bytes a vertex (x, y, z, unused), in the viewer's space.</param>
 /// <param name="Materials">The mesh's own materials (package.object) by slot; a placement can override them.</param>
 public sealed record ZoneSceneMesh(string Key, ZoneSceneRange Positions, ZoneSceneRange? Normals, ZoneSceneRange Uvs, ZoneSceneRange Indices,
-    IReadOnlyList<ZoneSceneSection> Sections, IReadOnlyList<string?> Materials);
+    IReadOnlyList<ZoneSceneSection> Sections, IReadOnlyList<string?> Materials)
+{
+    /// <summary>The mesh's second set of texture coordinates, which lay it on its placements' baked lightmaps.</summary>
+    public ZoneSceneRange? LightmapUvs { get; init; }
+}
 
-/// <summary>A texture of the scene: a DDS file beside it, still in the game's GPU format, from a modest level down.</summary>
-/// <param name="Format">DXT1, DXT5, ATI2 or BGRA.</param>
-/// <param name="Colour">The texture's average colour (0-1, as stored), for the overview's fallbacks.</param>
 public sealed record ZoneSceneTexture(string Key, string File, string Format, int Width, int Height, float[] Colour);
 
 /// <summary>
@@ -37,14 +38,32 @@ public sealed record ZoneSceneTexture(string Key, string File, string Format, in
 /// <param name="Diffuse">An index into <see cref="ZoneMapScene.Textures"/>, or -1.</param>
 /// <param name="Masked">Leaves, grass and other cut-out pieces: the texture's alpha cuts them out.</param>
 public sealed record ZoneSceneMaterial(string Key, int Diffuse, float[] Tint, int Emissive, float[] EmissiveColour, float Tiling,
-    bool Masked, float[] Colour);
+    bool Masked, float[] Colour)
+{
+    /// <summary>The normal map (an index into <see cref="ZoneMapScene.Textures"/>), or -1.</summary>
+    public int Normal { get; init; } = -1;
+
+    public float NormalStrength { get; init; } = 1;
+
+    /// <summary>How rough (0 mirror to 1 matt) and how metallic the surface reads, from its PBR parameters.</summary>
+    public float Roughness { get; init; } = 0.85f;
+
+    public float Metalness { get; init; }
+}
 
 /// <summary>Every placement of one mesh with the same materials: one 4x4 matrix each (row-major, viewer space).</summary>
 /// <param name="Materials">Indices into <see cref="ZoneMapScene.Materials"/>, one per mesh slot (-1 for none).</param>
 /// <param name="Layer">"solid" for the map itself; "sky" for sky domes, planets and painted backdrops; "effect" for
 /// glows, water and light shafts; "cutscene" for sets the game only streams in during cinematics. All but solid start
 /// hidden: drawn as plain meshes they would cover the map.</param>
-public sealed record ZoneSceneBatch(int Mesh, IReadOnlyList<int> Materials, ZoneSceneRange Matrices, string Layer = "solid");
+public sealed record ZoneSceneBatch(int Mesh, IReadOnlyList<int> Materials, ZoneSceneRange Matrices, string Layer = "solid")
+{
+    /// <summary>The page of baked light the placements use (an index into <see cref="ZoneMapScene.Lightmaps"/>), or -1.</summary>
+    public int Lightmap { get; init; } = -1;
+
+    /// <summary>Each placement's place on that page: four floats (scale x, y, then offset x, y) for its lightmap coordinates.</summary>
+    public ZoneSceneRange? LightmapPlaces { get; init; }
+}
 
 /// <summary>One ground layer of a landscape tile, as its landscape material sets it (layer01_diffuse and so on).</summary>
 /// <param name="Texture">An index into <see cref="ZoneMapScene.Textures"/>, or -1.</param>
@@ -81,7 +100,14 @@ public sealed record ZoneSceneEnvironment(
     float[] Shadows,
     float[] Midtones,
     float[] Highlights,
-    float Desaturation);
+    float Desaturation)
+{
+    /// <summary>The game's environment cubemap for these settings (efpbrenvcubemaps), which lights and reflects.</summary>
+    public string? Cubemap { get; init; }
+
+    /// <summary>How far the cubemap is turned around the vertical, in degrees.</summary>
+    public float CubemapAngle { get; init; }
+}
 
 /// <summary>One of the map's arenas: a busy area of solid pieces (raid gates often have several, apart).</summary>
 /// <param name="Environment">The lighting that applies there (an index into <see cref="ZoneMapScene.Environments"/>).</param>
@@ -90,8 +116,8 @@ public sealed record ZoneSceneArena(float[] Centre, float Size, int Pieces, int 
 /// <summary>
 /// A whole map for the Zone Viewer's 3D view: its meshes (decoded by Arkive itself), where the levels place each one
 /// (static meshes, collections and foliage), the landscape's height grids with their ground layers, every material's
-/// textures (copied in the game's own compressed format, at most 256 pixels across, 512 for ground layers) and the
-/// map's lighting, fog and colour grading. Saved as scene.json, scene.bin and DDS files in one folder.
+/// textures (in the game's own compressed formats, at most 512 pixels across, 1024 for ground layers and 256 for
+/// normal maps), the levels' baked lightmaps packed into pages, and the map's lighting, fog and colour grading. Saved as scene.json, scene.bin and DDS files in one folder.
 /// Distances are metres, Y up, as in the Asset Viewer. In scene.bin positions and matrices are 32-bit floats,
 /// normals 8-bit, texture coordinates 16-bit floats and indices 16-bit integers, each range on a 4-byte boundary.
 /// </summary>
@@ -114,7 +140,14 @@ public sealed record ZoneMapScene(
     /// <summary>The map's arenas, busiest first; the first is <see cref="Focus"/>.</summary>
     public IReadOnlyList<ZoneSceneArena> Arenas { get; init; } = [];
 
-    public const int CurrentVersion = 2;
+    /// <summary>
+    /// The baked light of the placements (Lost Ark bakes the lighting of static pieces into lightmaps): pages of
+    /// the levels' lightmaps packed together, each an index into <see cref="Textures"/>. A texel is the light's
+    /// colour times its strength, in the lightmaps' own encoding.
+    /// </summary>
+    public IReadOnlyList<int> Lightmaps { get; init; } = [];
+
+    public const int CurrentVersion = 4;
     public const string FileName = "scene.json";
     public const string DataFileName = "scene.bin";
 
@@ -146,19 +179,45 @@ public sealed partial class ZoneMapSceneBuilder(
     NativeTextureExportService? textureExport)
 {
     // A mesh is drawn at its most detailed level with at most this many vertices (else its least detailed).
-    private const int VertexBudget = 12_000;
-    private const int TextureSize = 256;
-    private const int GroundTextureSize = 512;
-    private const int GlowTextureSize = 128;
+    private const int VertexBudget = 65_000;
+    private const int TextureSize = 512;
+    private const int GroundTextureSize = 1024;
+    private const int GlowTextureSize = 256;
+    private const int NormalTextureSize = 256;
+    // Baked light is soft: each lightmap is kept at most a quarter of its size across (64 pixels for the small ones,
+    // which are most), packed into pages of this size.
+    private const int LightmapPage = 2048;
     // A placeholder for the package hash material and texture reports carry; the scene keeps no report.
     private static readonly string NoHash = new('0', 64);
 
-    private sealed record Placement(string Mesh, string?[] Materials, Matrix4x4 World, bool Cutscene);
+    /// <summary>
+    /// Appended to package.object for the static mesh of that name, which <c>indexed</c> also lists under it: a
+    /// package can hold a redirector or a material of the same name, which the plain key may find instead.
+    /// </summary>
+    public const string StaticMeshSuffix = "|staticmesh";
+
+    private (PackageIndexDocument Document, IndexedAsset Asset) MeshEntry(string key) =>
+        indexed.TryGetValue(key + StaticMeshSuffix, out var mesh) ? mesh : indexed.GetValueOrDefault(key);
+
+    private sealed record Placement(string Mesh, string?[] Materials, Matrix4x4 World, bool Cutscene)
+    {
+        public PlacedLightmap? Lightmap { get; init; }
+    }
+
+    /// <summary>A placement's baked lightmap: its two textures in its level and where on them the placement lies.</summary>
+    private sealed record PlacedLightmap(string Alias, AssetCatalogEntry Colour, AssetCatalogEntry Directions, Vector3 ColourScale,
+        Vector3 DirectionScale, Vector4 Place)
+    {
+        public string Key => $"{Alias}.{Colour.ObjectName}|{Directions.ObjectName}".ToLowerInvariant();
+    }
 
     private sealed record Tile(Vector3[] Positions, Vector2[] Uvs, uint[] Indices, string? Material, string[] Layers, byte[]? Weights);
 
     private sealed record Environment(string Name, Vector3 Centre, Vector3 Minimum, Vector3 Maximum, IReadOnlyList<LevelProperty> Data,
-        string? Lut, IReadOnlyList<LevelProperty>? Settings);
+        string? Lut, IReadOnlyList<LevelProperty>? Settings)
+    {
+        public string? Cubemap { get; init; }
+    }
 
     private readonly ConcurrentBag<Placement> _placements = [];
     private readonly ConcurrentBag<Tile> _tiles = [];
@@ -166,7 +225,7 @@ public sealed partial class ZoneMapSceneBuilder(
     private readonly ConcurrentBag<(Vector3 Direction, Vector3 Colour, float Brightness)> _suns = [];
     // The map's own settings, used wherever no environment volume applies: WorldInfo's default post-process
     // settings and environment colour, and the level's height fog.
-    private (IReadOnlyList<LevelProperty> World, string? Lut)? _world;
+    private (IReadOnlyList<LevelProperty> World, string? Lut, string? Cubemap)? _world;
     private IReadOnlyList<LevelProperty>? _fog;
 
     public async Task<ZoneMapScene> BuildAsync(ZoneMap map, string directory, IProgress<ZoneSceneProgress>? progress,
@@ -214,6 +273,18 @@ public sealed partial class ZoneMapSceneBuilder(
             progress?.Report(new ZoneSceneProgress("Reading the materials and their textures", Interlocked.Increment(ref completed), materialKeys.Length));
         }).ConfigureAwait(false);
 
+        var bakedKeys = _placements.Where(placement => placement.Lightmap is not null && meshes.TryGetValue(placement.Mesh, out var mesh) &&
+                                                       mesh.LightmapUvs is not null)
+            .Select(placement => placement.Lightmap!).DistinctBy(lightmap => lightmap.Key).ToArray();
+        var light = new ConcurrentDictionary<string, RgbaImage>();
+        completed = 0;
+        await Parallel.ForEachAsync(bakedKeys, Options(cancellationToken), async (lightmap, token) =>
+        {
+            if (await BakedLightAsync(lightmap, token).ConfigureAwait(false) is { } picture) light[lightmap.Key] = picture;
+            progress?.Report(new ZoneSceneProgress("Reading the baked lighting", Interlocked.Increment(ref completed), bakedKeys.Length));
+        }).ConfigureAwait(false);
+        var (pages, baked) = PackLightmaps(light, directory);
+
         progress?.Report(new ZoneSceneProgress("Reading the lighting and colour grading", 0, 0));
         var arenas = Arenas(meshes);
         var focus = arenas.Count > 0 ? (arenas[0].Centre, arenas[0].Size) : Focus(meshes, _environments.Select(environment => environment.Centre).ToArray());
@@ -223,9 +294,10 @@ public sealed partial class ZoneMapSceneBuilder(
         environments.Insert(0, await DefaultEnvironmentAsync(focus.Centre, directory, cancellationToken).ConfigureAwait(false));
         var chosen = LightingAt(environments, focus.Centre);
         progress?.Report(new ZoneSceneProgress("Saving the map", 0, 0));
-        var scene = Write(map, directory, meshes, materials, layers, environments, chosen, focus) with
+        var scene = Write(map, directory, meshes, materials, layers, baked, environments, chosen, focus) with
         {
             Arenas = arenas.Select(arena => new ZoneSceneArena(Array(arena.Centre), arena.Size, arena.Pieces, LightingAt(environments, arena.Centre))).ToArray(),
+            Lightmaps = pages,
         };
         File.WriteAllText(Path.Combine(directory, ZoneMapScene.FileName), JsonSerializer.Serialize(scene, ZoneMapScene.Json));
         return scene;
@@ -274,7 +346,8 @@ public sealed partial class ZoneMapSceneBuilder(
                 world.Find("defaultpostprocesssettings") is not null)
             {
                 var defaults = LevelProperties.ReadAt(world.Find("defaultpostprocesssettings")!.Value, catalog.Names, 0, out _) ?? [];
-                _world ??= (world.Concat(defaults).ToArray(), Reference(catalog, defaults.Object("colorgrading_lookuptable"), alias));
+                _world ??= (world.Concat(defaults).ToArray(), Reference(catalog, defaults.Object("colorgrading_lookuptable"), alias),
+                    ObjectName(Reference(catalog, world.Object("pbrenvironmentcubemap"), alias)));
                 continue;
             }
             if (!cutscene && type == "exponentialheightfogcomponent")
@@ -283,22 +356,32 @@ public sealed partial class ZoneMapSceneBuilder(
                 continue;
             }
             if (!type.EndsWith("staticmeshcomponent", StringComparison.Ordinal)) continue;
-            var properties = LevelProperties.Read(Bytes(logical, asset), catalog.Names, out var end);
+            var bytes = Bytes(logical, asset);
+            var properties = LevelProperties.Read(bytes, catalog.Names, out var end);
             if (properties is null || properties.Bool("hiddengame")) continue;
             if (Reference(catalog, properties.Object("staticmesh"), alias) is not { } mesh || IsHelper(mesh)) continue;
             var overrides = properties.Objects("materials").Select(reference => Reference(catalog, reference, alias)).ToArray();
             var local = ComponentTransform(properties);
+            var tail = bytes[end..];
+            var baked = Lightmap(tail, reference => byIndex.TryGetValue(reference, out var texture) &&
+                                                    texture.ClassName.Equals("lightmaptexture2d", StringComparison.OrdinalIgnoreCase));
+            var lightmap = baked is { } found
+                ? new PlacedLightmap(alias, byIndex[found.Colour], byIndex[found.Directions], found.ColourScale, found.DirectionScale, found.Place)
+                : null;
             var outer = catalog.Exports[asset.ExportIndex - 1].OuterIndex;
             if (!actors.TryGetValue(outer, out var actor))
                 actors[outer] = actor = byIndex.TryGetValue(outer, out var owner) ? ActorTransform(catalog, logical, owner) : Matrix4x4.Identity;
             if (actor is null) continue;
             if (type.Contains("instanced", StringComparison.Ordinal))
             {
-                var bytes = Bytes(logical, asset);
-                foreach (var instance in Instances(bytes.AsSpan(end)))
-                    _placements.Add(new Placement(mesh, overrides, ToViewer(instance * local * actor.Value), cutscene));
+                // Each instance has its own corner of the component's lightmap.
+                foreach (var (instance, bias) in InstanceEntries(tail))
+                    _placements.Add(new Placement(mesh, overrides, ToViewer(instance * local * actor.Value), cutscene)
+                    {
+                        Lightmap = lightmap is null ? null : lightmap with { Place = new Vector4(lightmap.Place.X, lightmap.Place.Y, bias.X, bias.Y) },
+                    });
             }
-            else _placements.Add(new Placement(mesh, overrides, ToViewer(local * actor.Value), cutscene));
+            else _placements.Add(new Placement(mesh, overrides, ToViewer(local * actor.Value), cutscene) { Lightmap = lightmap });
         }
     }
 
@@ -372,7 +455,35 @@ public sealed partial class ZoneMapSceneBuilder(
     /// A foliage component's instances: after its properties, an array of 80-byte entries (a 4x4 matrix relative to
     /// the component, then lightmap and shadow map offsets), found by its element size and count.
     /// </summary>
-    public static IEnumerable<Matrix4x4> Instances(ReadOnlySpan<byte> tail)
+    public static IEnumerable<Matrix4x4> Instances(ReadOnlySpan<byte> tail) => InstanceEntries(tail).Select(entry => entry.Matrix);
+
+    /// <summary>
+    /// A static mesh component's baked lightmap, from the data after its properties: per level of detail its shadow
+    /// maps, then a lightmap of type 2 (textures), its light GUIDs, three (texture, scale) pairs (normalised colour,
+    /// directional strength, none) and the lightmap coordinates' scale and offset. Found by its first texture, which
+    /// <paramref name="isLightmapTexture"/> recognises.
+    /// </summary>
+    public static (int Colour, int Directions, Vector3 ColourScale, Vector3 DirectionScale, Vector4 Place)? Lightmap(
+        ReadOnlySpan<byte> tail, Func<int, bool> isLightmapTexture)
+    {
+        for (var offset = 8; offset + 64 <= tail.Length; offset += 4)
+        {
+            var colour = BinaryPrimitives.ReadInt32LittleEndian(tail[offset..]);
+            if (colour <= 0 || !isLightmapTexture(colour)) continue;
+            var directions = BinaryPrimitives.ReadInt32LittleEndian(tail[(offset + 16)..]);
+            if (BinaryPrimitives.ReadInt32LittleEndian(tail[(offset - 8)..]) != 2 || !isLightmapTexture(directions)) return null;
+            var place = new Vector4(F(tail, offset + 48), F(tail, offset + 52), F(tail, offset + 56), F(tail, offset + 60));
+            if (!float.IsFinite(place.X + place.Y + place.Z + place.W) || place.X <= 0 || place.Y <= 0) return null;
+            return (colour, directions, new Vector3(F(tail, offset + 4), F(tail, offset + 8), F(tail, offset + 12)),
+                new Vector3(F(tail, offset + 20), F(tail, offset + 24), F(tail, offset + 28)), place);
+        }
+        return null;
+
+        static float F(ReadOnlySpan<byte> bytes, int at) => BitConverter.ToSingle(bytes[at..]);
+    }
+
+    /// <summary>A foliage component's instances: each one's matrix and the offset of its corner of the lightmap.</summary>
+    public static IEnumerable<(Matrix4x4 Matrix, Vector2 LightmapBias)> InstanceEntries(ReadOnlySpan<byte> tail)
     {
         const int entry = 80;
         for (var offset = 0; offset <= tail.Length - 8; offset += 4)
@@ -385,15 +496,16 @@ public sealed partial class ZoneMapSceneBuilder(
             for (var index = 0; index < count && valid; index++)
                 valid = BitConverter.ToSingle(data[(index * entry + 60)..]) == 1f && BitConverter.ToSingle(data[(index * entry + 12)..]) == 0f;
             if (!valid) continue;
-            var matrices = new Matrix4x4[count];
+            var entries = new (Matrix4x4, Vector2)[count];
             for (var index = 0; index < count; index++)
             {
-                var floats = data.Slice(index * entry, 64);
-                matrices[index] = new Matrix4x4(
+                var floats = data.Slice(index * entry, 72);
+                entries[index] = (new Matrix4x4(
                     F(floats, 0), F(floats, 1), F(floats, 2), F(floats, 3), F(floats, 4), F(floats, 5), F(floats, 6), F(floats, 7),
-                    F(floats, 8), F(floats, 9), F(floats, 10), F(floats, 11), F(floats, 12), F(floats, 13), F(floats, 14), F(floats, 15));
+                    F(floats, 8), F(floats, 9), F(floats, 10), F(floats, 11), F(floats, 12), F(floats, 13), F(floats, 14), F(floats, 15)),
+                    new Vector2(F(floats, 16), F(floats, 17)));
             }
-            return matrices;
+            return entries;
         }
         return [];
 
@@ -514,7 +626,10 @@ public sealed partial class ZoneMapSceneBuilder(
             ? LevelProperties.ReadAt(struct1.Value, catalog.Names, 0, out _) : null;
         var lut = settings is null ? null : Reference(catalog, settings.Object("colorgrading_lookuptable"), alias);
         var (minimum, maximum) = VolumeBox(catalog, logical, byIndex, volumeProperties);
-        _environments.Add(new Environment($"{alias}.{volume.ObjectName}", (minimum + maximum) / 2, minimum, maximum, properties, lut, settings));
+        _environments.Add(new Environment($"{alias}.{volume.ObjectName}", (minimum + maximum) / 2, minimum, maximum, properties, lut, settings)
+        {
+            Cubemap = ObjectName(Reference(catalog, properties.Object("pbr_environmentcubemap"), alias)),
+        });
     }
 
     /// <summary>
@@ -600,12 +715,17 @@ public sealed partial class ZoneMapSceneBuilder(
             }
         }
         var settings = environment.Settings ?? [];
+        var cubemap = environment.Cubemap;
         return new ZoneSceneEnvironment(environment.Name, Array(environment.Centre), Array(environment.Minimum), Array(environment.Maximum),
             Array(direction), Array(sunColour), sunBrightness,
             Array(ambient), Array(fogColour), data.Float("ehf_fogdensity") ?? 0, data.Float("ehf_fogheightfalloff") ?? 0.2f,
             (data.Float("ehf_startdistance") ?? 0) * 0.01f, data.Float("ehf_fogmaxopacity") ?? 1, lut,
             Array(settings.Vector("scene_shadows") ?? Vector3.Zero), Array(settings.Vector("scene_midtones") ?? Vector3.One),
-            Array(settings.Vector("scene_highlights") ?? Vector3.One), settings.Float("scene_desaturation") ?? 0);
+            Array(settings.Vector("scene_highlights") ?? Vector3.One), settings.Float("scene_desaturation") ?? 0)
+        {
+            Cubemap = cubemap,
+            CubemapAngle = data.Float("pbr_environmentcubemapangle") ?? 0,
+        };
     }
 
     // The settings of the smallest volume around a point, as the game applies the one the player stands in; the map's own elsewhere.
@@ -614,36 +734,67 @@ public sealed partial class ZoneMapSceneBuilder(
             .Where(item => item.Inside).OrderBy(item => item.Size).Select(item => item.index).DefaultIfEmpty(0).First();
 
     /// <summary>
-    /// The map's arenas: busy areas of solid pieces found one after another (the busiest 250-metre square and what
-    /// stands within 400 metres of it, then the busiest square left once 600 metres around it are set aside), up to
-    /// six, each with at least a twentieth of the pieces. Cinematic sets, skies and effects are left out.
+    /// The map's arenas: where it has the most floor, found one after another (the 250-metre square with the most
+    /// floor and the floor within 400 metres of it, then the same for what is left once 600 metres around it are set
+    /// aside), up to six, each with at least a twentieth of all the floor. Floor is the top of wide, flat solid
+    /// pieces (by their area) and the landscape; a map with neither uses all its solid pieces. An arena's height is
+    /// its floor's.
     /// </summary>
     private IReadOnlyList<(Vector3 Centre, float Size, int Pieces)> Arenas(IReadOnlyDictionary<string, DecodedMesh> meshes)
     {
         const float cell = 250, reach = 400, apart = 600;
-        var points = _placements.Where(placement => !placement.Cutscene && meshes.ContainsKey(placement.Mesh) &&
-                                                    Layer(placement.Mesh, placement.Materials.OfType<string>().ToArray()) == "solid")
-            .Select(placement => new Vector3(placement.World.M41, placement.World.M42, placement.World.M43))
-            .Concat(_tiles.SelectMany(tile => tile.Positions.Where((_, index) => index % 64 == 0)))
-            .Where(point => float.IsFinite(point.X) && float.IsFinite(point.Y) && float.IsFinite(point.Z)).ToList();
-        var total = points.Count;
+        var boxes = meshes.ToDictionary(pair => pair.Key, pair => (Minimum: pair.Value.Positions.Aggregate(new Vector3(float.MaxValue), Vector3.Min),
+            Maximum: pair.Value.Positions.Aggregate(new Vector3(float.MinValue), Vector3.Max)), StringComparer.OrdinalIgnoreCase);
+        var solid = _placements.Where(placement => !placement.Cutscene && meshes.ContainsKey(placement.Mesh) &&
+                                                   Layer(placement.Mesh, placement.Materials.OfType<string>().ToArray()) == "solid").ToArray();
+        var points = new List<(Vector3 Point, float Weight)>();
+        foreach (var placement in solid)
+        {
+            var (minimum, maximum) = boxes[placement.Mesh];
+            if (minimum.X > maximum.X) continue;
+            var low = new Vector3(float.MaxValue);
+            var high = new Vector3(float.MinValue);
+            for (var corner = 0; corner < 8; corner++)
+            {
+                var point = Vector3.Transform(new Vector3((corner & 1) == 0 ? minimum.X : maximum.X, (corner & 2) == 0 ? minimum.Y : maximum.Y,
+                    (corner & 4) == 0 ? minimum.Z : maximum.Z), placement.World);
+                low = Vector3.Min(low, point);
+                high = Vector3.Max(high, point);
+            }
+            var size = high - low;
+            var wide = MathF.Max(size.X, size.Z);
+            if (wide > 6 && wide < 400 && size.Y < wide * 0.3f)
+                points.Add((new Vector3((low.X + high.X) / 2, high.Y, (low.Z + high.Z) / 2), size.X * size.Z));
+        }
+        foreach (var tile in _tiles)
+            foreach (var point in tile.Positions.Where((_, index) => index % 64 == 0)) points.Add((point, 64));
+        if (points.Count == 0)
+            points.AddRange(solid.Select(placement => (new Vector3(placement.World.M41, placement.World.M42, placement.World.M43), 1f)));
+        points.RemoveAll(item => !float.IsFinite(item.Point.X) || !float.IsFinite(item.Point.Y) || !float.IsFinite(item.Point.Z));
+        var total = points.Sum(item => item.Weight);
         var arenas = new List<(Vector3, float, int)>();
         while (arenas.Count < 6 && points.Count > 0)
         {
-            var busiest = points.GroupBy(point => (MathF.Floor(point.X / cell), MathF.Floor(point.Z / cell))).MaxBy(group => group.Count())!;
-            var middle = busiest.Aggregate(Vector3.Zero, (sum, point) => sum + point) / busiest.Count();
-            var near = points.Where(point => Flat(point - middle) < reach).ToArray();
-            if (near.Length < Math.Max(30, total / 20)) break;
-            var heights = near.Select(point => point.Y).Order().ToArray();
-            var centre = near.Aggregate(Vector3.Zero, (sum, point) => sum + point) / near.Length;
-            centre.Y = heights[heights.Length / 2];
-            var spread = near.Select(point => Flat(point - centre)).Order().ToArray();
+            var busiest = points.GroupBy(item => (MathF.Floor(item.Point.X / cell), MathF.Floor(item.Point.Z / cell)))
+                .MaxBy(group => group.Sum(item => item.Weight))!;
+            var middle = Mean(busiest.ToArray());
+            var near = points.Where(item => Flat(item.Point - middle) < reach).ToArray();
+            if (near.Sum(item => item.Weight) < total / 20) break;
+            var centre = Mean(near);
+            // The height most of the floor is at, by area.
+            var ordered = near.OrderBy(item => item.Point.Y).ToArray();
+            var half = 0f;
+            centre.Y = ordered.First(item => (half += item.Weight) >= near.Sum(other => other.Weight) / 2).Point.Y;
+            var spread = near.Select(item => Flat(item.Point - centre)).Order().ToArray();
             arenas.Add((centre, Math.Max(60, spread[(int)(spread.Length * 0.9)] * 2), near.Length));
-            points.RemoveAll(point => Flat(point - middle) < apart);
+            points.RemoveAll(item => Flat(item.Point - middle) < apart);
         }
         return arenas;
 
         static float Flat(Vector3 offset) => MathF.Sqrt(offset.X * offset.X + offset.Z * offset.Z);
+
+        static Vector3 Mean(IReadOnlyCollection<(Vector3 Point, float Weight)> items) =>
+            items.Aggregate(Vector3.Zero, (sum, item) => sum + item.Point * item.Weight) / Math.Max(1e-6f, items.Sum(item => item.Weight));
     }
 
     private static bool Contains(ZoneSceneEnvironment environment, Vector3 point) => environment.Name != "map" &&
@@ -680,10 +831,16 @@ public sealed partial class ZoneMapSceneBuilder(
             fog.Float("fogdensity") ?? 0, fog.Float("fogheightfalloff") ?? 0.2f, (fog.Float("startdistance") ?? 0) * 0.01f,
             fog.Float("fogmaxopacity") ?? 1, lut, Array(world.Vector("scene_shadows") ?? Vector3.Zero),
             Array(world.Vector("scene_midtones") ?? Vector3.One), Array(world.Vector("scene_highlights") ?? Vector3.One),
-            world.Float("scene_desaturation") ?? 0);
+            world.Float("scene_desaturation") ?? 0)
+        {
+            Cubemap = _world?.Cubemap,
+            CubemapAngle = world.Float("pbrenvironmentcubemapangle") ?? 0,
+        };
     }
 
     private static float[] Array(Vector3 value) => [value.X, value.Y, value.Z];
+
+    private static string? ObjectName(string? key) => key is null ? null : key[(key.IndexOf('.') + 1)..].ToLowerInvariant();
 
     // ---- Shared reading ----
 
@@ -719,11 +876,14 @@ public sealed partial class ZoneMapSceneBuilder(
     // ---- Meshes ----
 
     private sealed record DecodedMesh(Vector3[] Positions, Vector3[] Normals, Vector2[] Uvs, ushort[] Indices,
-        IReadOnlyList<ZoneSceneSection> Sections, IReadOnlyList<string?> Materials);
+        IReadOnlyList<ZoneSceneSection> Sections, IReadOnlyList<string?> Materials)
+    {
+        public Vector2[]? LightmapUvs { get; init; }
+    }
 
     private void ReadMeshes(IReadOnlyList<string> keys, ConcurrentDictionary<string, DecodedMesh> meshes, CancellationToken cancellationToken)
     {
-        var first = keys.Select(key => indexed.GetValueOrDefault(key)).FirstOrDefault(item => item.Document is not null);
+        var first = keys.Select(MeshEntry).FirstOrDefault(item => item.Document is not null);
         if (first.Document is null) return;
         AssetCatalog catalog;
         try
@@ -739,7 +899,8 @@ public sealed partial class ZoneMapSceneBuilder(
         foreach (var key in keys)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!indexed.TryGetValue(key, out var found) || found.Document.SourcePath != first.Document.SourcePath ||
+            var found = MeshEntry(key);
+            if (found.Document is null || found.Document.SourcePath != first.Document.SourcePath ||
                 !found.Asset.ClassName.Equals("StaticMesh", StringComparison.OrdinalIgnoreCase)) continue;
             try
             {
@@ -756,7 +917,10 @@ public sealed partial class ZoneMapSceneBuilder(
                     meshes[key] = new DecodedMesh(decoded.Positions, decoded.Normals,
                         decoded.TextureCoordinates.Length > 0 ? decoded.TextureCoordinates[0] : new Vector2[decoded.Positions.Length],
                         decoded.Indices, lod.Sections.Select((section, index) => new ZoneSceneSection(section.FirstIndex, section.TriangleCount * 3, index)).ToArray(),
-                        slots);
+                        slots)
+                    {
+                        LightmapUvs = decoded.TextureCoordinates.Length > 1 ? decoded.TextureCoordinates[1] : null,
+                    };
                     break;
                 }
             }
@@ -851,9 +1015,20 @@ public sealed partial class ZoneMapSceneBuilder(
             : new Vector3(glowColour == default ? 1 : glowColour.X, glowColour == default ? 1 : glowColour.Y, glowColour == default ? 1 : glowColour.Z) *
               (glowStrength > 0 ? glowStrength : 1);
         var tiling = values.Scalars.TryGetValue("uv_tiling", out var uvTiling) && uvTiling > 0 ? uvTiling : 1;
+        var normalKey = values.Textures.Where(pair => NormalParameter().IsMatch(pair.Key)).Select(pair => pair.Value).FirstOrDefault();
+        var normal = normalKey is null ? -1 : await TextureAsync(normalKey, directory, NormalTextureSize, cancellationToken).ConfigureAwait(false);
+        var roughness = values.Scalars.TryGetValue("roughness_intensity", out var rough) ? Math.Clamp(rough * 0.75f, 0.25f, 1) : 0.85f;
+        if (values.Scalars.TryGetValue("roughness_power", out var power) && power > 0) roughness = Math.Clamp(roughness * (0.6f + power), 0.25f, 1);
+        var metalness = values.Scalars.TryGetValue("metallic_intensity", out var metal) ? Math.Clamp(metal * 0.15f, 0, 0.6f) : 0;
         var masked = diffuse >= 0 && _textures[diffuse].Format == "DXT5" && (CutOut().IsMatch(key) || values.Chain.Any(CutOut().IsMatch));
         var fallback = diffuse >= 0 ? _textures[diffuse].Colour : grey;
-        return new ZoneSceneMaterial(key, diffuse, Array(tint), glow, Array(emissive), tiling, masked, fallback);
+        return new ZoneSceneMaterial(key, diffuse, Array(tint), glow, Array(emissive), tiling, masked, fallback)
+        {
+            Normal = normal,
+            NormalStrength = values.Scalars.TryGetValue("normal_intensity", out var strength) ? Math.Clamp(strength, 0, 3) : 1,
+            Roughness = roughness,
+            Metalness = metalness,
+        };
     }
 
     /// <summary>
@@ -905,22 +1080,139 @@ public sealed partial class ZoneMapSceneBuilder(
     private Task<int> TextureAsync(string key, string directory, int size, CancellationToken cancellationToken) =>
         _textureIndex.GetOrAdd(key, item => new Lazy<Task<int>>(() => WriteTextureAsync(item, directory, size, cancellationToken))).Value;
 
-    private async Task<int> WriteTextureAsync(string key, string directory, int size, CancellationToken cancellationToken)
+    private Task<int> WriteTextureAsync(string key, string directory, int size, CancellationToken cancellationToken) =>
+        indexed.TryGetValue(key, out var found)
+            ? WriteTextureAsync(key, found.Document.SourcePath, found.Document.PackageAlias, Entry(found), directory, size, cancellationToken)
+            : Task.FromResult(-1);
+
+    /// <summary>
+    /// A lightmap's light as one picture: its normalised colour times the mean of its three directional strengths
+    /// (the light a surface facing straight out of the mesh gets), each times its scale, at most a quarter of its
+    /// size across (64 pixels at least).
+    /// </summary>
+    private async Task<RgbaImage?> BakedLightAsync(PlacedLightmap lightmap, CancellationToken cancellationToken)
     {
-        if (textureExport is null || !indexed.TryGetValue(key, out var found)) return -1;
+        var path = packageFiles[lightmap.Alias];
+        var colour = await DecodeLightmapAsync(path, lightmap.Alias, lightmap.Colour, cancellationToken).ConfigureAwait(false);
+        var directions = await DecodeLightmapAsync(path, lightmap.Alias, lightmap.Directions, cancellationToken).ConfigureAwait(false);
+        if (colour is null || directions is null) return null;
+        if (directions.Width != colour.Width || directions.Height != colour.Height)
+        {
+            var size = Math.Min(Math.Max(colour.Width, colour.Height), Math.Max(directions.Width, directions.Height));
+            (colour, directions) = (Shrink(colour, size), Shrink(directions, size));
+            if (directions.Width != colour.Width || directions.Height != colour.Height) return null;
+        }
+        var pixels = new byte[colour.Width * colour.Height * 4];
+        var (cs, ds) = (lightmap.ColourScale, lightmap.DirectionScale);
+        for (var index = 0; index < pixels.Length; index += 4)
+        {
+            var strength = (directions.Pixels[index] * ds.X + directions.Pixels[index + 1] * ds.Y + directions.Pixels[index + 2] * ds.Z) / (3 * 255f);
+            pixels[index] = (byte)Math.Clamp(colour.Pixels[index] * cs.X * strength, 0, 255);
+            pixels[index + 1] = (byte)Math.Clamp(colour.Pixels[index + 1] * cs.Y * strength, 0, 255);
+            pixels[index + 2] = (byte)Math.Clamp(colour.Pixels[index + 2] * cs.Z * strength, 0, 255);
+            pixels[index + 3] = 255;
+        }
+        return new RgbaImage(colour.Width, colour.Height, pixels);
+    }
+
+    private async Task<RgbaImage?> DecodeLightmapAsync(string packagePath, string alias, AssetCatalogEntry texture, CancellationToken cancellationToken)
+    {
+        if (textureExport is null) return null;
         try
         {
             var report = await new TextureReconnaissanceService(protectionProvider: protectionProvider).InspectAsync(
-                new TextureReconnaissanceRequest(found.Document.SourcePath, found.Document.PackageAlias, found.Asset.ExportIndex - 1,
-                    AssetKind.Texture, found.Asset.ClassName, found.Asset.ObjectName, found.Asset.SerialOffset, found.Asset.SerialSize,
-                    KnownPackageSha256: NoHash), cancellationToken).ConfigureAwait(false);
+                new TextureReconnaissanceRequest(packagePath, alias, texture.ExportIndex - 1, AssetKind.Texture, texture.ClassName,
+                    texture.ObjectName, texture.SerialOffset, texture.SerialSize, KnownPackageSha256: NoHash), cancellationToken).ConfigureAwait(false);
+            var top = report.MipCandidates.FirstOrDefault()?.Mips.FirstOrDefault();
+            var size = top is null ? 64 : Math.Max(64, Math.Max(top.Width, top.Height) / 4);
+            return Shrink(await textureExport.DecodePreviewAsync(report, size, cancellationToken, opaque: false).ConfigureAwait(false), size);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or
+                                              ArgumentException or InvalidOperationException or UnauthorizedAccessException or
+                                              IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Packs the baked light into pages (shelves, tallest first, each on a 4-pixel boundary with its edge repeated
+    /// around it so neighbours never bleed together), saved as DXT1. Gives each lightmap its page and how its
+    /// coordinates map onto it (scale x, y, offset x, y).
+    /// </summary>
+    private (int[] Pages, Dictionary<string, (int Page, Vector4 Remap)> Places) PackLightmaps(
+        IReadOnlyDictionary<string, RgbaImage> light, string directory)
+    {
+        const int gutter = 2;
+        var places = new Dictionary<string, (int Page, Vector4 Remap)>();
+        var pages = new List<byte[]>();
+        int x = 0, y = 0, shelf = 0;
+        foreach (var (key, picture) in light.OrderByDescending(pair => pair.Value.Height).ThenByDescending(pair => pair.Value.Width)
+                     .ThenBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            var width = Math.Min(LightmapPage, (picture.Width + gutter * 2 + 3) / 4 * 4);
+            var height = Math.Min(LightmapPage, (picture.Height + gutter * 2 + 3) / 4 * 4);
+            if (x + width > LightmapPage) (x, y, shelf) = (0, y + shelf, 0);
+            if (pages.Count == 0 || y + height > LightmapPage)
+            {
+                pages.Add(new byte[LightmapPage * LightmapPage * 4]);
+                (x, y, shelf) = (0, 0, 0);
+            }
+            var page = pages[^1];
+            for (var row = 0; row < height; row++)
+                for (var column = 0; column < width; column++)
+                {
+                    var sx = Math.Clamp(column - gutter, 0, picture.Width - 1);
+                    var sy = Math.Clamp(row - gutter, 0, picture.Height - 1);
+                    picture.Pixels.AsSpan((sy * picture.Width + sx) * 4, 4).CopyTo(page.AsSpan(((y + row) * LightmapPage + x + column) * 4));
+                }
+            places[key] = (pages.Count - 1, new Vector4(picture.Width / (float)LightmapPage, picture.Height / (float)LightmapPage,
+                (x + gutter) / (float)LightmapPage, (y + gutter) / (float)LightmapPage));
+            x += width;
+            shelf = Math.Max(shelf, height);
+        }
+        var indices = new int[pages.Count];
+        Span<byte> block = stackalloc byte[64];
+        for (var number = 0; number < pages.Count; number++)
+        {
+            var dxt = new byte[LightmapPage * LightmapPage / 2];
+            for (var by = 0; by < LightmapPage / 4; by++)
+                for (var bx = 0; bx < LightmapPage / 4; bx++)
+                {
+                    for (var row = 0; row < 4; row++)
+                        pages[number].AsSpan(((by * 4 + row) * LightmapPage + bx * 4) * 4, 16).CopyTo(block[(row * 16)..]);
+                    BlockCompression.EncodeBc1(block, dxt.AsSpan((by * (LightmapPage / 4) + bx) * 8, 8), allowTransparency: false);
+                }
+            var file = $"t/light{number}.dds";
+            File.WriteAllBytes(Path.Combine(directory, file),
+                DdsBlockCompressedWriter.Build(LightmapPage, LightmapPage, NativeTextureFormats.Dxt1.DdsFormat, [dxt]));
+            lock (_textures)
+            {
+                _textures.Add(new ZoneSceneTexture($"baked light {number}", file, "DXT1", LightmapPage, LightmapPage, [0.5f, 0.5f, 0.5f]));
+                indices[number] = _textures.Count - 1;
+            }
+        }
+        return (indices, places);
+    }
+
+    private async Task<int> WriteTextureAsync(string key, string packagePath, string alias, AssetCatalogEntry texture, string directory,
+        int size, CancellationToken cancellationToken)
+    {
+        if (textureExport is null) return -1;
+        try
+        {
+            var report = await new TextureReconnaissanceService(protectionProvider: protectionProvider).InspectAsync(
+                new TextureReconnaissanceRequest(packagePath, alias, texture.ExportIndex - 1, AssetKind.Texture, texture.ClassName,
+                    texture.ObjectName, texture.SerialOffset, texture.SerialSize, KnownPackageSha256: NoHash), cancellationToken).ConfigureAwait(false);
             var (dds, width, height, format) = await textureExport.DecodeChainAsync(report, size, cancellationToken).ConfigureAwait(false);
-            // Some textures keep only their full-size level in the package: shrink that one and store plain pixels.
-            if (Math.Max(width, height) > size * 3 / 2)
+            // Some textures keep only their full-size level in the package (or a format the 3D view cannot draw):
+            // shrink that one and compress it again.
+            if (Math.Max(width, height) > size * 3 / 2 || format == "BGRA")
             {
                 var picture = Shrink(await textureExport.DecodePreviewAsync(report, int.MaxValue, cancellationToken, opaque: false)
                     .ConfigureAwait(false), size);
-                (dds, width, height, format) = (PlainDds(picture), picture.Width, picture.Height, "BGRA");
+                (dds, format) = CompressedDds(picture);
+                (width, height) = (picture.Width, picture.Height);
             }
             var smallest = DdsBlockTexture.Parse(key, dds);
             var average = Average(smallest.DecodeMip(smallest.Mips.Count - 1, editableView: true));
@@ -940,20 +1232,45 @@ public sealed partial class ZoneMapSceneBuilder(
         }
     }
 
-    /// <summary>A picture as an uncompressed BGRA DDS with its smaller levels, for textures stored only full size.</summary>
-    private static byte[] PlainDds(RgbaImage picture)
+    /// <summary>
+    /// A picture as a DDS with its smaller levels: DXT1 when it is opaque, else DXT5, for textures stored only full size.
+    /// </summary>
+    private static (byte[] Dds, string Format) CompressedDds(RgbaImage picture)
     {
+        var alpha = false;
+        for (var index = 3; index < picture.Pixels.Length && !alpha; index += 4) alpha = picture.Pixels[index] < 250;
         var levels = new List<ReadOnlyMemory<byte>>();
         var level = picture;
+        Span<byte> block = stackalloc byte[64];
         while (true)
         {
-            var bgra = level.Pixels.ToArray();
-            for (var index = 0; index < bgra.Length; index += 4) (bgra[index], bgra[index + 2]) = (bgra[index + 2], bgra[index]);
-            levels.Add(bgra);
+            var wide = (level.Width + 3) / 4;
+            var high = (level.Height + 3) / 4;
+            var bytes = alpha ? 16 : 8;
+            var output = new byte[wide * high * bytes];
+            for (var by = 0; by < high; by++)
+                for (var bx = 0; bx < wide; bx++)
+                {
+                    for (var pixel = 0; pixel < 16; pixel++)
+                    {
+                        var x = Math.Min(level.Width - 1, bx * 4 + pixel % 4);
+                        var y = Math.Min(level.Height - 1, by * 4 + pixel / 4);
+                        level.Pixels.AsSpan((y * level.Width + x) * 4, 4).CopyTo(block[(pixel * 4)..]);
+                    }
+                    var target = output.AsSpan((by * wide + bx) * bytes, bytes);
+                    if (alpha)
+                    {
+                        BlockCompression.EncodeBc4Channel(block, 3, target[..8]);
+                        BlockCompression.EncodeBc1(block, target[8..], allowTransparency: false);
+                    }
+                    else BlockCompression.EncodeBc1(block, target, allowTransparency: false);
+                }
+            levels.Add(output);
             if (level.Width == 1 && level.Height == 1) break;
             level = Halve(level);
         }
-        return DdsBlockCompressedWriter.Build(picture.Width, picture.Height, NativeTextureFormats.Bgra8.DdsFormat, levels);
+        var format = alpha ? NativeTextureFormats.Dxt5 : NativeTextureFormats.Dxt1;
+        return (DdsBlockCompressedWriter.Build(picture.Width, picture.Height, format.DdsFormat, levels), alpha ? "DXT5" : "DXT1");
     }
 
     // The next smaller level: each side halved (never below 1), averaging the pixels it merges.
@@ -1059,6 +1376,9 @@ public sealed partial class ZoneMapSceneBuilder(
     [GeneratedRegex("^texture_emissive$|^emissive(_texture|_tex|map)?$", RegexOptions.IgnoreCase)]
     private static partial Regex GlowParameter();
 
+    [GeneratedRegex("^(texture_normal|normal|normal_?map|normal_texture)$", RegexOptions.IgnoreCase)]
+    private static partial Regex NormalParameter();
+
     [GeneratedRegex("^emissive_?colou?r$", RegexOptions.IgnoreCase)]
     private static partial Regex GlowColour();
 
@@ -1111,7 +1431,8 @@ public sealed partial class ZoneMapSceneBuilder(
 
     private ZoneMapScene Write(ZoneMap map, string directory, IReadOnlyDictionary<string, DecodedMesh> meshes,
         IReadOnlyDictionary<string, ZoneSceneMaterial> materials, IReadOnlyDictionary<string, IReadOnlyList<ZoneSceneLayer>> layers,
-        IReadOnlyList<ZoneSceneEnvironment> environments, int environment, (Vector3 Centre, float Size) focus)
+        IReadOnlyDictionary<string, (int Page, Vector4 Remap)> baked, IReadOnlyList<ZoneSceneEnvironment> environments, int environment,
+        (Vector3 Centre, float Size) focus)
     {
         var materialList = materials.Values.OrderBy(material => material.Key, StringComparer.OrdinalIgnoreCase).ToList();
         var materialIndex = materialList.Select((material, index) => (material.Key, index))
@@ -1126,12 +1447,17 @@ public sealed partial class ZoneMapSceneBuilder(
         {
             meshIndex[key] = meshList.Count;
             meshList.Add(new ZoneSceneMesh(key, WriteVectors(data, mesh.Positions), WriteNormals(data, mesh.Normals), WriteUvs(data, mesh.Uvs),
-                WriteIndices(data, mesh.Indices.Select(index => (uint)index)), mesh.Sections, mesh.Materials));
+                WriteIndices(data, mesh.Indices.Select(index => (uint)index)), mesh.Sections, mesh.Materials)
+            {
+                LightmapUvs = mesh.LightmapUvs is { } lightmapUvs ? WriteUvs(data, lightmapUvs) : null,
+            });
         }
         foreach (var group in _placements.Where(placement => meshes.ContainsKey(placement.Mesh))
-                     .GroupBy(placement => placement.Mesh + "|" + placement.Cutscene + "|" + string.Join(",", Slots(placement))))
+                     .GroupBy(placement => placement.Mesh + "|" + placement.Cutscene + "|" + string.Join(",", Slots(placement)) + "|" +
+                                           (Baked(placement) is { } key ? baked[key].Page : -1)))
         {
             var first = group.First();
+            var lightmap = Baked(first) is { } bakedKey ? baked[bakedKey].Page : -1;
             var slots = Slots(first).Select(slot => slot is null ? -1 : materialIndex.GetValueOrDefault(slot, -1)).ToArray();
             var offset = data.BaseStream.Position;
             var count = 0;
@@ -1145,9 +1471,25 @@ public sealed partial class ZoneMapSceneBuilder(
                 count++;
             }
             placements += count;
+            ZoneSceneRange? places = null;
+            if (lightmap >= 0)
+            {
+                places = new ZoneSceneRange(data.BaseStream.Position, count);
+                foreach (var placement in group.Where(placement => float.IsFinite(placement.World.M41) && float.IsFinite(placement.World.M42) &&
+                                                                   float.IsFinite(placement.World.M43)))
+                {
+                    // Its place on its own lightmap, moved to where that lightmap sits on the page.
+                    var place = placement.Lightmap!.Place;
+                    var remap = baked[placement.Lightmap.Key].Remap;
+                    data.Write(place.X * remap.X);
+                    data.Write(place.Y * remap.Y);
+                    data.Write(place.Z * remap.X + remap.Z);
+                    data.Write(place.W * remap.Y + remap.W);
+                }
+            }
             var layer = Layer(first.Mesh, Slots(first).OfType<string>().ToArray());
             batches.Add(new ZoneSceneBatch(meshIndex[first.Mesh], slots, new ZoneSceneRange(offset, count),
-                first.Cutscene && layer == "solid" ? "cutscene" : layer));
+                first.Cutscene && layer == "solid" ? "cutscene" : layer) { Lightmap = lightmap, LightmapPlaces = places });
         }
         foreach (var tile in _tiles)
         {
@@ -1172,6 +1514,10 @@ public sealed partial class ZoneMapSceneBuilder(
             materialList, batches, terrain, environments, environment, placements,
             _placements.Select(placement => placement.Mesh).Distinct(StringComparer.OrdinalIgnoreCase).Count(key => !meshes.ContainsKey(key)));
         return scene;
+
+        // The lightmap a placement is drawn with: one the scene kept, on a mesh with lightmap coordinates.
+        string? Baked(Placement placement) =>
+            placement.Lightmap is { } light && baked.ContainsKey(light.Key) && meshes[placement.Mesh].LightmapUvs is not null ? light.Key : null;
 
         IEnumerable<string?> Slots(Placement placement) =>
             meshes[placement.Mesh].Materials.Select((slot, index) => index < placement.Materials.Length && placement.Materials[index] is { } chosen ? chosen : slot);

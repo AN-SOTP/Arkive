@@ -20,8 +20,10 @@
   <div id="status">Loading the map…</div>
   <div id="options">
     <label title="The map's busy areas: raid gates often have several arenas, apart">Go to <select id="arenaSelect"></select></label>
+    <label title="Look at the arena from the game's own camera angle, cutting away what stands above the camera"><input type="checkbox" id="gameCheck" checked /> Game camera</label>
     <label title="The game's sun, fog and colour grading for each part of the map; Plain light shows the textures as they are">Lighting <select id="environmentSelect"></select></label>
-    <label><input type="checkbox" id="skyCheck" /> Show sky and backdrops</label>
+    <label title="The light the game bakes into the map's static pieces: shade, bounced light and lamps"><input type="checkbox" id="bakedCheck" checked /> Baked lighting</label>
+    <label><input type="checkbox" id="skyCheck" checked /> Show sky and backdrops</label>
     <label><input type="checkbox" id="effectCheck" /> Show glows, water and effects</label>
     <label><input type="checkbox" id="cutsceneCheck" /> Show cutscene sets</label>
   </div>

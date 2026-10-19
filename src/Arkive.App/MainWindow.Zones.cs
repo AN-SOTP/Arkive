@@ -255,16 +255,18 @@ public partial class MainWindow
             return $"{alias}:{file.Length}:{file.LastWriteTimeUtc.Ticks}";
         }));
         var stampPath = Path.Combine(directory, "levels.txt");
-        if (ZoneMapScene.TryLoad(directory, map.Key) is not null && File.Exists(stampPath) &&
+        if (ZoneMapScene.TryLoad(directory, map.Key) is { } saved && File.Exists(stampPath) &&
             await File.ReadAllTextAsync(stampPath, cancellationToken) == stamp)
         {
             Directory.SetLastWriteTimeUtc(directory, DateTime.UtcNow);
+            if (!File.Exists(Path.Combine(directory, ZoneCubemapsFile))) await CopyZoneCubemapsAsync(saved, directory, cancellationToken);
             return directory;
         }
         var watch = Stopwatch.StartNew();
         var scene = await _packageIndexStore.BuildZoneMapSceneAsync(_libraryRootPath, map, metadata, _protectionProvider, directory,
             _nativeTextureExportService, progress, cancellationToken);
         await File.WriteAllTextAsync(stampPath, stamp, cancellationToken);
+        await CopyZoneCubemapsAsync(scene, directory, cancellationToken);
         Log($"Zone 3D map built: map={map.Key}, placements={scene.Placements}, meshes={scene.Meshes.Count}, " +
             $"unreadMeshes={scene.UnreadMeshes}, materials={scene.Materials.Count}, terrain={scene.Terrain.Count}, " +
             $"seconds={watch.Elapsed.TotalSeconds:N1}, folder={directory}.");
@@ -278,6 +280,42 @@ public partial class MainWindow
                 Log($"An old zone 3D map was not deleted: {exception.Message}");
             }
         return directory;
+    }
+
+    private const string ZoneCubemapsFile = "cubemaps.json";
+
+    /// <summary>
+    /// Copies the game's environment cubemaps the map's lighting names (exported once for the Asset Viewer, a few
+    /// hundred kilobytes each) beside its 3D scene, with cubemaps.json listing each one's six faces. A name the game's
+    /// cubemap package lacks gets its first general cubemap instead, so the map is still lit by one.
+    /// </summary>
+    private async Task CopyZoneCubemapsAsync(ZoneMapScene scene, string directory, CancellationToken cancellationToken)
+    {
+        var faces = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (await FindViewerEnvironmentsAsync(cancellationToken) is { Environments.Count: > 0 } set)
+                foreach (var name in scene.Environments.Select(environment => environment.Cubemap).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    var cubemap = set.Environments.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) ??
+                                  set.Environments.FirstOrDefault(item => item.Name.Equals("pbr_cubemap_00", StringComparison.OrdinalIgnoreCase)) ??
+                                  set.Environments[0];
+                    var copied = new string[6];
+                    for (var face = 0; face < 6; face++)
+                    {
+                        copied[face] = $"cube/{cubemap.Name}/{face}.png";
+                        var target = Path.Combine(directory, copied[face]);
+                        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                        if (!File.Exists(target)) File.Copy(Path.Combine(set.Directory, cubemap.Faces[face]), target);
+                    }
+                    faces[name] = copied;
+                }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log($"Zone 3D map cubemaps were not copied: {exception.Message}");
+        }
+        await File.WriteAllTextAsync(Path.Combine(directory, ZoneCubemapsFile), System.Text.Json.JsonSerializer.Serialize(faces), cancellationToken);
     }
 
     private static LibraryAssetRow ToLibraryRow(PackageIndexMatch match) => new(match.SourcePath, match.PackageAlias,

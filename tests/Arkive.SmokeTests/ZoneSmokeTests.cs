@@ -12,6 +12,7 @@ internal static class ZoneSmokeTests
         new("reads where a level places a mesh from its lower-case, Lost Ark-style property tags", TestLevelProperties),
         new("places map meshes in the 3D view's space and reads foliage instances", TestZoneScenePlacement),
         new("keeps sky domes and glow planes out of the 3D map's solid layer", TestZoneSceneLayers),
+        new("reads where a placed mesh lies on its level's baked lightmaps", TestZoneSceneLightmaps),
     ];
 
     private static void TestLevelProperties()
@@ -70,6 +71,28 @@ internal static class ZoneSmokeTests
         var picture = new RgbaImage(4, 4, Enumerable.Repeat((byte)200, 64).ToArray());
         Assert(ZoneMapSceneBuilder.Shrink(picture, 2) is { Width: 2, Height: 2 } small && small.Pixels.All(value => value == 200),
             "a texture was not shrunk to the 3D map's size");
+    }
+
+    private static void TestZoneSceneLightmaps()
+    {
+        // A collection component's data after its properties, as Final Day stores it: one level of detail, no shadow
+        // maps, a texture lightmap (type 2) with no light GUIDs, its two textures and the empty third with their
+        // scales, then the scale and offset of the component's lightmap coordinates.
+        var tail = Convert.FromHexString(
+            "01000000000000000000000002000000000000007D0A00000000803F0000803F0000803F980500000000803F0000803F0000803F" +
+            "000000000000004000000040000000400000BC3D00003C3E0040103F0000423E0104000000");
+        var lightmap = ZoneMapSceneBuilder.Lightmap(tail, reference => reference is 0xA7D or 0x598);
+        Assert(lightmap is { Colour: 0xA7D, Directions: 0x598 } found && Math.Abs(found.Place.X - 0.0918f) < 1e-3 &&
+               Math.Abs(found.Place.Y - 0.1836f) < 1e-3 && Math.Abs(found.Place.Z - 0.5635f) < 1e-3 && found.ColourScale.X == 1,
+            $"a component's lightmap textures and coordinates were misread: {lightmap}");
+        Assert(ZoneMapSceneBuilder.Lightmap(tail, _ => false) is null, "a lightmap was found where no texture is a lightmap");
+        Assert(ZoneMapSceneBuilder.Lightmap(new byte[8], _ => true) is null, "a lightmap was found in a component without one");
+
+        var instances = new List<byte>(BitConverter.GetBytes(80));
+        instances.AddRange(BitConverter.GetBytes(1));
+        foreach (var value in new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1, 0.25f, 0.5f, 0, 0 }) instances.AddRange(BitConverter.GetBytes(value));
+        Assert(ZoneMapSceneBuilder.InstanceEntries(instances.ToArray()).Single() is var entry && entry.LightmapBias == new System.Numerics.Vector2(0.25f, 0.5f) &&
+               entry.Matrix.M41 == 5, "a foliage instance's corner of its lightmap was misread");
     }
 
     private static void TestZoneSceneLayers()

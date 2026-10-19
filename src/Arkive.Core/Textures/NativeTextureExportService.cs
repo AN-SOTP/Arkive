@@ -96,7 +96,7 @@ public sealed class NativeTextureExportService
         CancellationToken cancellationToken = default, bool opaque = true) => Task.Run(() =>
     {
         ArgumentNullException.ThrowIfNull(report);
-        var formatProfile = ValidateReportGate(report);
+        var formatProfile = ValidateReportGate(report, viewOnly: true);
         var summary = _summaryReader.Read(report.PackagePath);
         using var logical = new LogicalPackageStream(summary, _protectionProvider);
         var exportBytes = new byte[checked((int)report.SerialSize)];
@@ -127,7 +127,7 @@ public sealed class NativeTextureExportService
         CancellationToken cancellationToken = default) => Task.Run(() =>
     {
         ArgumentNullException.ThrowIfNull(report);
-        var formatProfile = ValidateReportGate(report);
+        var formatProfile = ValidateReportGate(report, viewOnly: true);
         var summary = _summaryReader.Read(report.PackagePath);
         using var logical = new LogicalPackageStream(summary, _protectionProvider);
         var exportBytes = new byte[checked((int)report.SerialSize)];
@@ -476,7 +476,7 @@ public sealed class NativeTextureExportService
         return (decoded, storageCodec, rawExtension, storageHeaderBytes);
     }
 
-    private static NativeTextureFormatProfile ValidateReportGate(TextureReconnaissanceReport report)
+    private static NativeTextureFormatProfile ValidateReportGate(TextureReconnaissanceReport report, bool viewOnly = false)
     {
         if (report.SchemaVersion != TextureReconnaissanceService.CurrentSchemaVersion)
         {
@@ -485,7 +485,10 @@ public sealed class NativeTextureExportService
                 "The reconnaissance report schema is stale; rerun Native texture recon first.");
         }
 
-        if (!report.ClassName.Equals("Texture2D", StringComparison.OrdinalIgnoreCase))
+        // Lightmaps and shadow maps are Texture2D underneath; they can be viewed, not exported into a mod.
+        if (!report.ClassName.Equals("Texture2D", StringComparison.OrdinalIgnoreCase) &&
+            !(viewOnly && report.ClassName is { } name && (name.Equals("LightMapTexture2D", StringComparison.OrdinalIgnoreCase) ||
+                                                          name.Equals("ShadowMapTexture2D", StringComparison.OrdinalIgnoreCase))))
         {
             Refuse("NTX011", "The first exporter supports only the exact Texture2D class.");
         }

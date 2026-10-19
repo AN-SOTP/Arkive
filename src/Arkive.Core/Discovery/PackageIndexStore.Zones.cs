@@ -218,7 +218,12 @@ public sealed partial class PackageIndexStore
         var indexed = new Dictionary<string, (PackageIndexDocument Document, IndexedAsset Asset)>(StringComparer.OrdinalIgnoreCase);
         foreach (var document in documents)
             foreach (var asset in document.Assets)
+            {
                 indexed.TryAdd(document.PackageAlias + "." + asset.ObjectName, (document, asset));
+                // A package can hold a static mesh beside a redirector or a material of the same name.
+                if (asset.ClassName.Equals("StaticMesh", StringComparison.OrdinalIgnoreCase))
+                    indexed.TryAdd(document.PackageAlias + "." + asset.ObjectName + ZoneMapSceneBuilder.StaticMeshSuffix, (document, asset));
+            }
         if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         Directory.CreateDirectory(directory);
         return await new ZoneMapSceneBuilder(files, indexed, protectionProvider, textureExport).BuildAsync(map, directory, progress, cancellationToken)

@@ -14,14 +14,26 @@ const arenaSelect = document.getElementById('arenaSelect');
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
+// Skies and backdrops draw first, on their own: they are the background whatever their depth.
+const skyScene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 60000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.screenSpacePanning = true;
 const ambient = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
 const sun = new THREE.DirectionalLight(0xffffff, 2);
+// The sun casts shadows over the area being looked at (refitted whenever the view is framed).
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.6;
 scene.add(ambient, sun, sun.target);
+const pmrem = new THREE.PMREMGenerator(renderer);
+let cubemaps = {};
+const cubemapCache = new Map();
 const s3tc = renderer.extensions.has('WEBGL_compressed_texture_s3tc');
 const rgtc = renderer.extensions.has('EXT_texture_compression_rgtc');
 
@@ -138,7 +150,15 @@ function meshMaterial(item, textures) {
   const diffuse = item.diffuse >= 0 ? textures[item.diffuse] : null;
   const glow = item.emissive >= 0 ? textures[item.emissive] : null;
   // The texture's colour times the material's tint; without a texture, its average colour (or grey).
-  const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, color: new THREE.Color(item.tint[0], item.tint[1], item.tint[2]) });
+  const normal = item.normal >= 0 ? textures[item.normal] : null;
+  const material = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, color: new THREE.Color(item.tint[0], item.tint[1], item.tint[2]),
+    roughness: item.roughness ?? 0.85, metalness: item.metalness ?? 0 });
+  if (normal) {
+    material.normalMap = normal.clone();
+    material.normalMap.repeat.set(item.tiling, item.tiling);
+    // Unreal's normal maps point green down.
+    material.normalScale = new THREE.Vector2(item.normalStrength ?? 1, -(item.normalStrength ?? 1));
+  }
   if (diffuse) {
     material.map = diffuse.clone();
     material.map.repeat.set(item.tiling, item.tiling);
@@ -165,7 +185,44 @@ function meshMaterial(item, textures) {
       .replace('#include <emissivemap_fragment>', `
         #ifdef USE_EMISSIVEMAP
           totalEmissiveRadiance *= srgbToLinear(recolour(texture2D(emissiveMap, vEmissiveMapUv).rgb, uTintOn));
-        #endif`);
+        #endif`)
+      // The game's normal maps keep only x and y (two-channel compression); rebuild z.
+      .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+        'vec3 mapN = vec3(texture2D( normalMap, vNormalMapUv ).xy * 2.0 - 1.0, 0.0); mapN.z = sqrt(max(0.0, 1.0 - dot(mapN.xy, mapN.xy)));');
+  };
+  return { material, uniforms };
+}
+
+// Skies, backdrops and planets are painted, not lit: their colour texture (dimmed, as the game lights it faintly)
+// plus their glow, blended by the texture's alpha, behind everything and out of the fog.
+function skyMaterial(item, textures) {
+  const uniforms = tintUniforms();
+  const diffuse = item.diffuse >= 0 ? textures[item.diffuse] : null;
+  const glow = item.emissive >= 0 ? textures[item.emissive] : null;
+  const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, depthWrite: false, fog: false, transparent: true });
+  const first = diffuse ?? glow;
+  if (!first) return { material: null, uniforms };
+  material.map = first.clone();
+  material.map.repeat.set(item.tiling, item.tiling);
+  const second = diffuse && glow ? glow.clone() : null;
+  if (second) second.repeat.set(item.tiling, item.tiling);
+  // Sky materials often push their colours far past white (the game grades them back down); keep the hue, cap the strength.
+  const capped = (rgb, most) => { const peak = Math.max(...rgb); return new THREE.Vector3(...rgb).multiplyScalar(peak > most ? most / peak : 1); };
+  const tint = capped(item.tint, 2).multiplyScalar(diffuse ? 0.35 : 0);
+  const shine = capped(item.emissiveColour, 2);
+  Object.assign(uniforms, { uSkyTint: { value: tint }, uSkyGlow: { value: shine }, uSkySecond: { value: second ?? first },
+    uSkyFirstGlows: { value: diffuse ? 0 : 1 } });
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\n' + shaderCommon + '\nuniform vec3 uSkyTint, uSkyGlow; uniform sampler2D uSkySecond; uniform float uSkyFirstGlows;')
+      .replace('#include <map_fragment>', `
+        vec4 texel = texture2D(map, vMapUv);
+        vec3 lit = srgbToLinear(recolour(texel.rgb, uTintOn));
+        vec4 glowTexel = uSkyFirstGlows > 0.5 ? texel : texture2D(uSkySecond, vMapUv);
+        vec3 shining = srgbToLinear(recolour(glowTexel.rgb, uTintOn));
+        diffuseColor.rgb = lit * uSkyTint + shining * uSkyGlow;
+        diffuseColor.a = uSkyFirstGlows > 0.5 ? texel.a : max(texel.a, glowTexel.a);`);
   };
   return { material, uniforms };
 }
@@ -183,7 +240,7 @@ function terrainMaterial(layers, textures) {
   }
   Object.assign(uniforms, { layerMaps: { value: maps }, layerTints: { value: tints }, layerTilings: { value: tilings },
     layerTinted: { value: tinted }, layerCount: { value: Math.min(8, layers.length) } });
-  const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
+  const material = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: 0.95, metalness: 0 });
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
@@ -208,6 +265,37 @@ function terrainMaterial(layers, textures) {
         diffuseColor.rgb *= total > 0.0 ? ground / total : vec3(0.4);`);
   };
   return { material, uniforms };
+}
+
+// ---- Baked light: the levels' lightmaps, packed into pages, light the static pieces as the game does (their
+// sunlight stays live, with its shadows). A copy of a material per page samples its page at each placement's spot.
+const baked = { on: { value: 1 }, strength: { value: 9 }, gamma: { value: 1.5 } };
+const bakedCopies = new Map();
+function bakedMaterial(index, page, textures) {
+  const key = `${index}|${page}`;
+  if (!bakedCopies.has(key)) {
+    const source = materials[index].material;
+    const copy = source.clone();
+    copy.defines = { ...(copy.defines ?? {}), USE_BAKED: '' };
+    const map = textures[description.lightmaps[page]];
+    copy.onBeforeCompile = (shader) => {
+      source.onBeforeCompile(shader);
+      Object.assign(shader.uniforms, { uBaked: { value: map }, uBakedOn: baked.on, uBakedStrength: baked.strength, uBakedGamma: baked.gamma });
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute vec2 bakedUv; attribute vec4 bakedPlace; varying vec2 vBakedUv;')
+        .replace('#include <uv_vertex>', '#include <uv_vertex>\nvBakedUv = bakedUv * bakedPlace.xy + bakedPlace.zw;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uBaked; uniform float uBakedOn, uBakedStrength, uBakedGamma; varying vec2 vBakedUv;')
+        // The baked light replaces the sky's fill light and the cubemap's diffuse light; reflections stay.
+        .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>
+          if (uBakedOn > 0.5) {
+            irradiance = pow(texture2D(uBaked, vBakedUv).rgb, vec3(uBakedGamma)) * uBakedStrength * PI;
+            iblIrradiance = vec3(0.0);
+          }`);
+    };
+    bakedCopies.set(key, copy);
+  }
+  return bakedCopies.get(key);
 }
 
 // ---- Textures: DDS files in the game's formats (DXT1, DXT5, ATI2) or plain BGRA.
@@ -262,6 +350,8 @@ const box = new THREE.Box3Helper(new THREE.Box3(), 0xffa040);
 box.visible = false;
 scene.add(box);
 
+const bakedCheck = document.getElementById('bakedCheck');
+bakedCheck.addEventListener('change', () => { baked.on.value = bakedCheck.checked ? 1 : 0; });
 const layerChecks = { sky: document.getElementById('skyCheck'), effect: document.getElementById('effectCheck'), cutscene: document.getElementById('cutsceneCheck') };
 const layerVisible = (layer) => layerChecks[layer]?.checked ?? true;
 for (const check of Object.values(layerChecks))
@@ -281,17 +371,28 @@ async function load(sceneUrl, baseUrl) {
   status.textContent = 'Loading the map…';
   description = await (await fetch(sceneUrl)).json();
   const data = await (await fetch(baseUrl + 'scene.bin')).arrayBuffer();
+  try { cubemaps = await (await fetch(baseUrl + 'cubemaps.json')).json(); } catch { cubemaps = {}; }
   const textures = await Promise.all(description.textures.map(async (item) => {
     try { return loadTexture(await (await fetch(baseUrl + item.file)).arrayBuffer(), item); } catch { return null; }
   }));
+  // Pages of baked light are sampled at exact spots: no repeats, no smaller levels to blend neighbours together.
+  for (const index of description.lightmaps ?? []) {
+    const page = textures[index];
+    if (!page) continue;
+    page.wrapS = page.wrapT = THREE.ClampToEdgeWrapping;
+    page.minFilter = THREE.LinearFilter;
+    page.anisotropy = 1;
+  }
   textures.white = new THREE.DataTexture(new Uint8Array([200, 200, 200, 255]), 1, 1);
   textures.white.needsUpdate = true;
   const textureKeys = description.textures.map((item) => item.key);
   materials = description.materials.map((item) => {
     const usable = { ...item, diffuse: item.diffuse >= 0 && textures[item.diffuse] ? item.diffuse : -1, emissive: item.emissive >= 0 && textures[item.emissive] ? item.emissive : -1 };
-    const { material, uniforms } = meshMaterial(usable, textures);
+    const usableNormal = { ...usable, normal: item.normal >= 0 && textures[item.normal] ? item.normal : -1 };
+    const { material, uniforms } = meshMaterial(usableNormal, textures);
+    const sky = skyMaterial(usable, textures);
     return { key: item.key.toLowerCase(), textureKey: item.diffuse >= 0 ? textureKeys[item.diffuse] : null,
-      glowKey: item.emissive >= 0 ? textureKeys[item.emissive] : null, material, uniforms };
+      glowKey: item.emissive >= 0 ? textureKeys[item.emissive] : null, material, uniforms, sky: sky.material, skyUniforms: sky.uniforms };
   });
   const fallback = new THREE.MeshLambertMaterial({ color: 0x8c8c8c, side: THREE.DoubleSide });
   // Normals are four signed bytes a vertex (the fourth unused).
@@ -303,6 +404,7 @@ async function load(sceneUrl, baseUrl) {
       geometry.setAttribute('normal', new THREE.InterleavedBufferAttribute(new THREE.InterleavedBuffer(packed, 4), 3, 0, true));
     }
     geometry.setAttribute('uv', new THREE.Float16BufferAttribute(new Uint16Array(data, mesh.uvs.offset, mesh.uvs.count * 2), 2));
+    if (mesh.lightmapUvs) geometry.setAttribute('bakedUv', new THREE.Float16BufferAttribute(new Uint16Array(data, mesh.lightmapUvs.offset, mesh.lightmapUvs.count * 2), 2));
     geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(data, mesh.indices.offset, mesh.indices.count), 1));
     for (const section of mesh.sections) geometry.addGroup(section.firstIndex, section.indexCount, section.material);
     if (!mesh.normals) geometry.computeVertexNormals();
@@ -323,12 +425,30 @@ async function load(sceneUrl, baseUrl) {
     return decalCopies.get(index);
   };
   for (const batch of description.batches) {
-    const geometry = geometries[batch.mesh];
+    let geometry = geometries[batch.mesh];
     geometry.computeBoundingBox();
+    const page = batch.lightmap ?? -1;
+    const lit = page >= 0 && batch.lightmapPlaces && geometry.attributes.bakedUv && textures[description.lightmaps[page]];
+    if (lit) {
+      // The mesh's own buffers, plus where each placement sits on its page of baked light.
+      const view = new THREE.BufferGeometry();
+      for (const [name, attribute] of Object.entries(geometry.attributes)) view.setAttribute(name, attribute);
+      view.setIndex(geometry.index);
+      for (const group of geometry.groups) view.addGroup(group.start, group.count, group.materialIndex);
+      view.boundingBox = geometry.boundingBox;
+      view.boundingSphere = geometry.boundingSphere;
+      view.setAttribute('bakedPlace', new THREE.InstancedBufferAttribute(new Float32Array(data, batch.lightmapPlaces.offset, batch.lightmapPlaces.count * 4), 4));
+      geometry = view;
+    }
     const extent = geometry.boundingBox.getSize(new THREE.Vector3());
     const flat = Math.min(extent.x, extent.y, extent.z) < Math.max(extent.x, extent.y, extent.z) * 0.03;
+    const isSky = batch.layer === 'sky';
+    // Sky pieces whose look the material builds without textures are left out: drawn flat they would be sheets.
+    if (isSky && batch.materials.every((index) => index < 0 || !materials[index].sky)) continue;
     const slots = batch.materials.map((index) => index < 0 ? fallback
+      : isSky ? materials[index].sky ?? fallback
       : flat && description.materials[index].diffuse >= 0 && description.textures[description.materials[index].diffuse].format !== 'DXT1' ? decal(index)
+      : lit ? bakedMaterial(index, page, textures)
       : materials[index].material);
     const mesh = new THREE.InstancedMesh(geometry, slots.length ? slots : fallback, batch.matrices.count);
     const values = new Float32Array(data, batch.matrices.offset, batch.matrices.count * 16);
@@ -339,12 +459,14 @@ async function load(sceneUrl, baseUrl) {
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
+    if (isSky) { mesh.renderOrder = -10; mesh.frustumCulled = false; } else { mesh.castShadow = true; mesh.receiveShadow = true; }
     const meshKey = description.meshes[batch.mesh].key.toLowerCase();
-    const entry = { mesh, meshKey, layer: batch.layer ?? 'solid', slotKeys: batch.materials.map((index) => index >= 0 ? materials[index].key : null) };
+    const entry = { mesh, meshKey, layer: batch.layer ?? 'solid', slotKeys: batch.materials.map((index) => index >= 0 ? materials[index].key : null),
+      matrices: values };
     mesh.visible = layerVisible(entry.layer);
     mesh.userData.batch = entry;
     batches.push(entry);
-    scene.add(mesh);
+    (isSky ? skyScene : scene).add(mesh);
   }
   for (const tile of description.terrain) {
     const geometry = new THREE.BufferGeometry();
@@ -367,6 +489,7 @@ async function load(sceneUrl, baseUrl) {
     const useLayers = layers.length ? layers : [{ texture: own ? own.diffuse : -1, tint: own ? own.tint : [1, 1, 1], tiling: 1 }];
     const { material, uniforms } = terrainMaterial(useLayers.map((layer) => ({ ...layer, texture: layer.texture >= 0 && textures[layer.texture] ? layer.texture : -1 })), textures);
     const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true; mesh.receiveShadow = true;
     mesh.userData.tile = { materialKey: own ? own.key.toLowerCase() : null, layers: layers.map((layer) => layer.textureKey?.toLowerCase() ?? null), uniforms };
     tiles.push(mesh);
     scene.add(mesh);
@@ -391,8 +514,8 @@ async function load(sceneUrl, baseUrl) {
     arenaSelect.appendChild(option);
   });
   arenaSelect.parentElement.style.display = (description.arenas ?? []).length > 1 ? '' : 'none';
-  await applyEnvironment(baseUrl);
-  frame();
+  if (description.arenas?.length) await goToArena(0);
+  else { await applyEnvironment(baseUrl); frame(); }
   status.textContent = '';
   post({ type: 'loaded', placements: description.placements, meshes: description.meshes.length, terrain: description.terrain.length });
   applySelection();
@@ -407,12 +530,15 @@ async function applyEnvironment(baseUrl) {
   const direction = new THREE.Vector3(...environment.sunDirection).normalize();
   sun.color.copy(linear(environment.sunColour));
   sun.intensity = Math.max(0.6, environment.sunBrightness) * 1.6;
-  sun.position.copy(direction).multiplyScalar(-1);
-  sun.target.position.set(0, 0, 0);
+  sunDirection.copy(direction).negate();
+  fitShadows(sun.target.position.clone(), shadowSize);
   ambient.color.copy(linear(environment.ambientColour));
   ambient.groundColor.copy(linear(environment.ambientColour)).multiplyScalar(0.45);
-  ambient.intensity = 1.4;
-  scene.background = linear(environment.fogColour).multiplyScalar(0.8);
+  // The game lights and reflects with its environment cubemap; the hemisphere fills in when it is missing.
+  const faces = environment.cubemap ? cubemaps[environment.cubemap] : null;
+  scene.environment = faces ? await cubemap(baseUrl, faces) : null;
+  ambient.intensity = scene.environment ? 0.35 : 1.4;
+  skyScene.background = linear(environment.fogColour).multiplyScalar(0.8);
   u.fogColour.value.copy(linear(environment.fogColour));
   u.fogDensity.value = plain ? 0 : environment.fogDensity;
   u.fogFalloff.value = environment.fogHeightFalloff;
@@ -439,29 +565,154 @@ async function applyEnvironment(baseUrl) {
     u.hasLut.value = 1;
   }
 }
+async function cubemap(baseUrl, faces) {
+  const key = faces.join('|');
+  if (!cubemapCache.has(key)) {
+    const cube = await new THREE.CubeTextureLoader().loadAsync(faces.map((face) => baseUrl + face));
+    cube.colorSpace = THREE.SRGBColorSpace;
+    cubemapCache.set(key, pmrem.fromCubemap(cube).texture);
+  }
+  return cubemapCache.get(key);
+}
+
 let base = '';
 environmentSelect.addEventListener('change', () => applyEnvironment(base));
 // Going to an arena frames it and switches to the lighting that applies there.
 arenaSelect.addEventListener('change', () => goToArena(Number(arenaSelect.value)));
 function goToArena(index) {
   const arena = description.arenas?.[index];
-  if (!arena) return Promise.resolve();
-  look(new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(...arena.centre), new THREE.Vector3(1, 1, 1).multiplyScalar(arena.size * 0.6)));
+  if (!arena) { frame(); return Promise.resolve(); }
+  currentArena = index;
+  restorePieces();
+  showSkiesNear(new THREE.Vector3(...arena.centre), Math.max(1500, arena.size * 4));
+  if (gameCheck.checked) gameView(arena);
+  else look(new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(...arena.centre), new THREE.Vector3(1, 1, 1).multiplyScalar(arena.size * 0.6)));
   environmentSelect.value = String(arena.environment);
   return applyEnvironment(base);
 }
+
+// Each area of a map has its own sky dome and backdrops; only those around the place being looked at are drawn.
+function showSkiesNear(centre, reach) {
+  const matrix = new THREE.Matrix4(), hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  const near = (values, index) => Math.hypot(values[index * 16 + 12] - centre.x, values[index * 16 + 14] - centre.z) < reach;
+  const skies = batches.filter((batch) => batch.layer === 'sky');
+  const any = skies.some((batch) => Array.from({ length: batch.mesh.count }, (_, index) => near(batch.matrices, index)).some(Boolean));
+  for (const batch of skies) {
+    for (let index = 0; index < batch.mesh.count; index++)
+      batch.mesh.setMatrixAt(index, !any || near(batch.matrices, index) ? matrix.fromArray(batch.matrices, index * 16) : hidden);
+    batch.mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
+// ---- The game's camera: Lost Ark looks down at the player from a fixed angle, and anything higher than the
+// camera never shows; the game view frames an arena that way and cuts away what stands above the camera.
+const gameCheck = document.getElementById('gameCheck');
+// The game's usual camera, framed from three times its distance to show more of the arena.
+const gameDefaults = { yaw: 0, pitch: -50, distance: 22, fov: 50 };
+let currentArena = 0;
+function floorAt(centre) {
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(centre.x, centre.y + 3, centre.z), new THREE.Vector3(0, -1, 0), 0, 200);
+  const solid = [...batches.filter((batch) => batch.layer === 'solid').map((batch) => batch.mesh), ...tiles];
+  const hits = raycaster.intersectObjects(solid, false);
+  if (!hits.length) return centre.y;
+  return hits.reduce((best, hit) => Math.abs(hit.point.y - centre.y) < Math.abs(best - centre.y) ? hit.point.y : best, hits[0].point.y);
+}
+// Seen from the game's camera, skies and backdrops stand where the level puts them, in front of what is behind
+// them; looked at from anywhere else they are a background.
+function placeSkies(inWorld) {
+  for (const batch of batches) if (batch.layer === 'sky') (inWorld ? scene : skyScene).add(batch.mesh);
+}
+
+// Like the game, which fades out what comes between its camera and the player: pieces that stand between the camera
+// and the arena's floor are hidden while the game camera looks at it.
+let hiddenPieces = [];
+function restorePieces() {
+  const matrix = new THREE.Matrix4();
+  for (const { batch, index } of hiddenPieces) {
+    batch.mesh.setMatrixAt(index, matrix.fromArray(batch.matrices, index * 16));
+    batch.mesh.instanceMatrix.needsUpdate = true;
+  }
+  hiddenPieces = [];
+}
+function hideOccluders(target) {
+  const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  const solid = batches.filter((batch) => batch.layer !== 'sky' && batch.mesh.visible).map((batch) => batch.mesh);
+  const raycaster = new THREE.Raycaster();
+  camera.updateMatrixWorld();
+  const reach = camera.position.distanceTo(target);
+  for (let pass = 0; pass < 3; pass++) {
+    let found = false;
+    for (let x = -0.5; x <= 0.5; x += 0.25)
+      for (let y = -0.45; y <= 0.45; y += 0.3) {
+        raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+        raycaster.far = reach * 1.2;
+        for (const mesh of solid) mesh.updateMatrixWorld();
+        const hit = raycaster.intersectObjects(solid, false)[0];
+        // Close to the camera and well above the floor: something in the way.
+        if (!hit || hit.instanceId === undefined || hit.point.y < target.y + 8 || hit.distance > reach * 0.6) continue;
+        const batch = hit.object.userData.batch;
+        hit.object.setMatrixAt(hit.instanceId, hidden);
+        hit.object.instanceMatrix.needsUpdate = true;
+        hit.object.computeBoundingSphere();
+        hiddenPieces.push({ batch, index: hit.instanceId });
+        found = true;
+      }
+    if (!found) break;
+  }
+}
+
+function gameView(arena) {
+  const view = gameDefaults;
+  const centre = new THREE.Vector3(...arena.centre);
+  const target = new THREE.Vector3(centre.x, floorAt(centre), centre.z);
+  const yaw = THREE.MathUtils.degToRad(view.yaw), pitch = THREE.MathUtils.degToRad(view.pitch);
+  // Unreal's forward vector for the rotation, in the viewer's axes (Unreal's Y is the viewer's Z).
+  const forward = new THREE.Vector3(Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw));
+  const distance = view.distance * 3;
+  fitShadows(target, Math.max(80, distance * 3));
+  controls.target.copy(target);
+  camera.position.copy(target).addScaledVector(forward, -distance);
+  camera.fov = view.fov;
+  camera.near = 0.3;
+  camera.far = 40000;
+  camera.updateProjectionMatrix();
+  controls.update();
+  renderer.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, -1, 0), target.y + distance * Math.sin(-pitch) - 2)];
+  placeSkies(true);
+  hideOccluders(target);
+}
+gameCheck.addEventListener('change', () => goToArena(currentArena));
 
 function frame() {
   look(new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(...description.focus), new THREE.Vector3(1, 1, 1).multiplyScalar(description.focusSize * 0.6)));
 }
 
+// The sun shines from sunDirection (towards the light); its shadows cover the area being looked at.
+const sunDirection = new THREE.Vector3(0.4, 1, 0.3).normalize();
+let shadowSize = 100;
+function fitShadows(centre, size) {
+  shadowSize = size;
+  sun.target.position.copy(centre);
+  sun.position.copy(centre).addScaledVector(sunDirection, size * 2);
+  const half = size * 0.75;
+  Object.assign(sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, near: 1, far: size * 5 });
+  sun.shadow.camera.updateProjectionMatrix();
+  sun.target.updateMatrixWorld();
+}
+
 function look(bounds) {
+  renderer.clippingPlanes = [];
+  restorePieces();
+  placeSkies(false);
+  camera.fov = 55;
   const centre = bounds.getCenter(new THREE.Vector3());
   const size = Math.max(10, bounds.getSize(new THREE.Vector3()).length());
+  fitShadows(centre, size);
   controls.target.copy(centre);
   camera.position.copy(centre).add(new THREE.Vector3(0.55, 0.5, 0.75).normalize().multiplyScalar(size * 0.9));
-  camera.near = Math.max(0.2, size / 3000);
-  camera.far = Math.max(2000, size * 30);
+  camera.near = Math.max(0.3, size / 2000);
+  // Far enough for the sky domes and backdrops around the map.
+  camera.far = Math.max(40000, size * 40);
   camera.updateProjectionMatrix();
   controls.update();
 }
@@ -495,7 +746,9 @@ canvas.addEventListener('pointerup', (event) => {
   const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects([...batches.filter((batch) => batch.mesh.visible).map((batch) => batch.mesh), ...tiles], false)[0];
+  // The sky is behind everything, so it is picked only where nothing else is.
+  const hits = raycaster.intersectObjects([...batches.filter((batch) => batch.mesh.visible).map((batch) => batch.mesh), ...tiles], false);
+  const hit = hits.find((item) => item.object.userData.batch?.layer !== 'sky') ?? hits[0];
   if (!hit) { box.visible = false; return; }
   if (hit.object.userData.batch) {
     const batch = hit.object.userData.batch;
@@ -519,6 +772,7 @@ canvas.addEventListener('pointerup', (event) => {
 window.addEventListener('keydown', (event) => {
   if (event.key === 'f' || event.key === 'F') {
     if (box.visible) look(box.box.clone().expandByScalar(5));
+    else if (description.arenas?.length) goToArena(currentArena);
     else frame();
   }
 });
@@ -526,8 +780,11 @@ window.addEventListener('keydown', (event) => {
 function applyTint(keys, tint) {
   currentTint = tint;
   const chosen = new Set(keys.map((key) => key.toLowerCase()));
-  for (const item of materials)
-    setTint(item.uniforms, chosen.has(item.key) || (item.textureKey && chosen.has(item.textureKey)) || (item.glowKey && chosen.has(item.glowKey)));
+  for (const item of materials) {
+    const on = chosen.has(item.key) || (item.textureKey && chosen.has(item.textureKey)) || (item.glowKey && chosen.has(item.glowKey));
+    setTint(item.uniforms, on);
+    if (item.sky) setTint(item.skyUniforms, on);
+  }
   for (const tile of tiles) {
     const info = tile.userData.tile;
     setTint(info.uniforms, true);
@@ -555,6 +812,13 @@ window.arkiveMap = {
   low() { frame(); const offset = camera.position.clone().sub(controls.target); offset.y *= 0.35; camera.position.copy(controls.target).add(offset.multiplyScalar(0.6)); controls.update(); },
   environment(value) { environmentSelect.value = String(value); return applyEnvironment(base); },
   arena(index) { arenaSelect.value = String(index); return goToArena(index); },
+  where() { return { target: controls.target.toArray(), camera: camera.position.toArray() }; },
+  heights(x, z) {
+    const raycaster = new THREE.Raycaster(new THREE.Vector3(x, 5000, z), new THREE.Vector3(0, -1, 0), 0, 10000);
+    return raycaster.intersectObjects([...batches.filter((batch) => batch.layer === 'solid').map((batch) => batch.mesh), ...tiles], false)
+      .map((hit) => [Math.round(hit.point.y), hit.object.userData.batch?.meshKey ?? 'terrain']);
+  },
+  game(on, defaults) { gameCheck.checked = on; Object.assign(gameDefaults, defaults ?? {}); return goToArena(currentArena); },
   arenas() { return (description.arenas ?? []).length; },
   visit(index, size) {
     const environment = description.environments[index];
@@ -563,6 +827,12 @@ window.arkiveMap = {
     return applyEnvironment(base);
   },
   highlighted() { return batches.filter((batch) => batch.on).length; },
+  baked(on, strength, gamma) {
+    bakedCheck.checked = on; baked.on.value = on ? 1 : 0;
+    if (strength !== undefined) baked.strength.value = strength;
+    if (gamma !== undefined) baked.gamma.value = gamma;
+    return bakedCopies.size;
+  },
   pick(x, y) { canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, button: 0 })); canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, button: 0 })); },
 };
 
@@ -570,7 +840,14 @@ function render() {
   requestAnimationFrame(render);
   controls.update();
   renderer.setRenderTarget(target);
+  const clipping = renderer.clippingPlanes;
+  renderer.clippingPlanes = [];
+  renderer.render(skyScene, camera);
+  renderer.clippingPlanes = clipping;
+  renderer.autoClear = false;
+  renderer.clearDepth();
   renderer.render(scene, camera);
+  renderer.autoClear = true;
   finish.uniforms.projectionInverse.value.copy(camera.projectionMatrixInverse);
   finish.uniforms.cameraWorld.value.copy(camera.matrixWorld);
   renderer.setRenderTarget(null);
@@ -579,3 +856,6 @@ function render() {
 resize();
 render();
 post({ type: 'ready' });
+// Opened outside Arkive (map.html?scene=<the scene folder's address>), to look at a saved map in a browser.
+const standalone = !host && new URLSearchParams(location.search).get('scene');
+if (standalone) { base = standalone; load(standalone + 'scene.json', standalone).catch((error) => { status.textContent = String(error); }); }
