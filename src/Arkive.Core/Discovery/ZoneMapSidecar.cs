@@ -245,9 +245,21 @@ public static partial class ZoneMapSidecar
     /// and the ones it imports from other packages (the outermost package of an import is its package).
     /// </summary>
     public static IReadOnlyList<LevelReference> LevelContents(
-        string packagePath, string alias, IChunkProtectionProvider protectionProvider)
+        string packagePath, string alias, IChunkProtectionProvider protectionProvider) =>
+        ReadLevel(packagePath, alias, protectionProvider).References;
+
+    /// <summary>A level package's editable contents and references (see <see cref="LevelContents"/>) and how many
+    /// objects of each class it holds (lights, fog and environment volumes are level settings, not assets).</summary>
+    /// <param name="Landscapes">The landscape's materials, which Arkive does not edit itself but reads to find the
+    /// layer materials and textures the ground draws with.</param>
+    public sealed record LevelRead(IReadOnlyList<LevelReference> References, IReadOnlyDictionary<string, int> ClassCounts,
+        IReadOnlyList<AssetCatalogEntry> Landscapes);
+
+    public static LevelRead ReadLevel(string packagePath, string alias, IChunkProtectionProvider protectionProvider)
     {
         var catalog = new AssetCatalogReader(protectionProvider: protectionProvider).Read(packagePath);
+        var counts = catalog.Assets.GroupBy(asset => asset.ClassName.ToLowerInvariant())
+            .ToDictionary(group => group.Key, group => group.Count());
         var results = new List<LevelReference>();
         foreach (var asset in catalog.Assets)
             if (AssetTypes.Editable(AssetTypes.CatalogKind(asset.ClassName), asset.ClassName) is not null)
@@ -264,7 +276,9 @@ public static partial class ZoneMapSidecar
             results.Add(new LevelReference(outer.ObjectName.Resolve(catalog.Names).ToLowerInvariant(),
                 import.ObjectName.Resolve(catalog.Names), className, true));
         }
-        return results.Distinct().ToArray();
+        return new LevelRead(results.Distinct().ToArray(), counts, catalog.Assets
+            .Where(asset => asset.ClassName.Equals("LandscapeMaterialInstanceConstant", StringComparison.OrdinalIgnoreCase))
+            .ToArray());
     }
 
     public static async Task SaveAsync(string path, ZoneMapDocument document, CancellationToken cancellationToken = default)

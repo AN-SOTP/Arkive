@@ -32,6 +32,8 @@ internal static class Program
             {
                 if (args is ["--public-screenshots", var destination])
                     await PublicScreenshotCapture.RunAsync(root, destination);
+                else if (args is ["--zone-viewer", ..])
+                    await ZoneViewerChecks.VerifyAsync(root, args.ElementAtOrDefault(1));
                 else
                     await RunAsync(root, args.FirstOrDefault());
                 Console.WriteLine(args is ["--public-screenshots", _]
@@ -179,6 +181,7 @@ internal static class Program
         Console.WriteLine("PASS: reopening restores authoring identity and metadata");
         WorkflowLayoutChecks.VerifyRestored(window, root);
         await ModLibraryRowChecks.VerifyAsync(window, root);
+        await ZoneViewerChecks.VerifyAsync(root, screenshotDirectory);
         if (screenshotDirectory is not null)
         {
             tabs = Control<TabControl>(window, "MainTabControl");
@@ -361,6 +364,8 @@ internal static class Program
         Height = 900,
         Left = -5000,
         Top = -5000,
+        // Off screen and never taking focus, so a local run does not get in the way of whoever uses the PC.
+        ShowActivated = false,
         WindowStartupLocation = WindowStartupLocation.Manual,
     };
 

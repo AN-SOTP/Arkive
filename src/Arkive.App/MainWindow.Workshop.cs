@@ -422,6 +422,7 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(query) && string.IsNullOrEmpty(category) &&
             string.IsNullOrEmpty(archetype))
         {
+            LibraryZonePanel.Visibility = Visibility.Collapsed;
             LibraryGrid.ItemsSource = Array.Empty<LibraryAssetRow>();
             LibraryCountText.Text = "Enter a UPK, object, or in-game name to search";
             return new PackageIndexSearchResult([], 0, 0, 0);
@@ -462,6 +463,9 @@ public partial class MainWindow : Window
                 result = await AddZoneMatchesAsync(result, query, category, searchScope, resultLimit,
                     text => LibraryCountText.Text = text, searchCancellation.Token);
             }
+            if (!searchCancellation.IsCancellationRequested)
+                result = await AddMapNamesAsync(result, searchCancellation.Token);
+            if (!searchCancellation.IsCancellationRequested) await ShowZoneCardsAsync(query);
         }
         catch (OperationCanceledException) when (searchCancellation.IsCancellationRequested)
         {
