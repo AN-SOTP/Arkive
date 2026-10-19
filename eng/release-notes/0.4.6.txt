@@ -1,0 +1,8 @@
+An early, very rough second pass at the Zone Viewer's 3D map.
+
+- The 3D map is now labelled an early preview. It is still extremely rough: many areas will not look as they do in game, and some detail drops out up close.
+- The 3D map uses the game's baked lighting, the map's lighting cubemap and sun shadows, with a Baked lighting switch.
+- Meshes are drawn at full detail with sharper textures and surface detail.
+- Pieces that were missing are now drawn, including floors in raids such as Final Day.
+- Go to jumps between the arenas, and Game camera frames each one from the game's angle.
+- Skies, clouds and backdrops show with their own colours and see-through parts.
