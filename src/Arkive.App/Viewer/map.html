@@ -19,9 +19,13 @@
   <div id="hint">Drag to turn · right-drag or Shift-drag to move · wheel to zoom · click a piece to select it · F frames the selection</div>
   <div id="status">Loading the map…</div>
   <div id="options">
-    <label><input type="checkbox" id="skyCheck" /> Show sky and clouds</label>
+    <label title="The map's busy areas: raid gates often have several arenas, apart">Go to <select id="arenaSelect"></select></label>
+    <label title="The game's sun, fog and colour grading for each part of the map; Plain light shows the textures as they are">Lighting <select id="environmentSelect"></select></label>
+    <label><input type="checkbox" id="skyCheck" /> Show sky and backdrops</label>
     <label><input type="checkbox" id="effectCheck" /> Show glows, water and effects</label>
+    <label><input type="checkbox" id="cutsceneCheck" /> Show cutscene sets</label>
   </div>
-  <script type="module" src="map.js"></script>
+  <!-- The page's address carries map.js's version, so a cached older copy is never used after an update. -->
+  <script type="module">import(`./map.js${location.search}`);</script>
 </body>
 </html>

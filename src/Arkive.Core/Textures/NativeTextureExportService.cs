@@ -118,6 +118,43 @@ public sealed class NativeTextureExportService
         return DdsBlockTexture.Parse(report.ObjectName + ".dds", dds).DecodeMip(0, editableView: opaque);
     }, cancellationToken);
 
+    /// <summary>
+    /// A texture's levels from the largest stored one no wider or taller than <paramref name="maximumSize"/> down to
+    /// the smallest, still in their GPU format (DXT1, DXT5, BC5 or BGRA), as one DDS in memory: what a 3D view can
+    /// upload as it is. The checks of a full export are skipped; nothing decoded here goes into a mod.
+    /// </summary>
+    public Task<(byte[] Dds, int Width, int Height, string Format)> DecodeChainAsync(TextureReconnaissanceReport report, int maximumSize,
+        CancellationToken cancellationToken = default) => Task.Run(() =>
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        var formatProfile = ValidateReportGate(report);
+        var summary = _summaryReader.Read(report.PackagePath);
+        using var logical = new LogicalPackageStream(summary, _protectionProvider);
+        var exportBytes = new byte[checked((int)report.SerialSize)];
+        logical.Position = report.SerialOffset;
+        logical.ReadExactly(exportBytes);
+        var width = RequiredIntProperty(report, "SizeX");
+        var height = RequiredIntProperty(report, "SizeY");
+        var mips = report.MipCandidates[0].Mips;
+        var first = 0;
+        while (first < mips.Count - 1 && Math.Max(mips[first].Width, mips[first].Height) > maximumSize) first++;
+        var decoded = new List<ReadOnlyMemory<byte>>();
+        for (var index = first; index < mips.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var mip = mips[index];
+            if (mip.PayloadRelativeOffset is not { } offset || mip.StoredSize <= 0) break;
+            var stored = exportBytes.AsSpan(checked((int)offset), mip.StoredSize).ToArray();
+            var (bytes, _, _, _) = DecodeStoredMip(stored, Convert.ToHexString(SHA256.HashData(stored)), mip, index,
+                formatProfile.CalculateMipBytes(Math.Max(1, width >> index), Math.Max(1, height >> index)), formatProfile);
+            decoded.Add(bytes);
+        }
+        var topWidth = Math.Max(1, width >> first);
+        var topHeight = Math.Max(1, height >> first);
+        return (DdsBlockCompressedWriter.Build(topWidth, topHeight, formatProfile.DdsFormat, decoded), topWidth, topHeight,
+            formatProfile.DdsFormat.FourCc);
+    }, cancellationToken);
+
     private async Task<NativeTextureExportResult> ExportCoreAsync(
         NativeTextureExportRequest request,
         CancellationToken cancellationToken)

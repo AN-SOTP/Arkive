@@ -672,7 +672,8 @@ public partial class ZoneViewerWindow : Window
             core.NewWindowRequested += (_, args) => args.Handled = true;
             MapBrowser.Visibility = Visibility.Visible;
             MapMessage.Text = string.Empty;
-            core.Navigate($"https://{ViewerHost}/map.html");
+            var page = new FileInfo(Path.Combine(AppContext.BaseDirectory, "Viewer", "map.js"));
+            core.Navigate($"https://{ViewerHost}/map.html?v={(page.Exists ? page.LastWriteTimeUtc.Ticks : 0)}");
         }
         catch (Exception exception) when (exception is WebView2RuntimeNotFoundException or System.Runtime.InteropServices.COMException or
                                               IOException or UnauthorizedAccessException)

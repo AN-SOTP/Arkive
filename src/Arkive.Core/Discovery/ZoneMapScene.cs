@@ -18,51 +18,103 @@ public sealed record ZoneSceneRange(long Offset, int Count);
 /// <param name="Material">The section's slot, an index into the mesh's <see cref="ZoneSceneMesh.Materials"/>.</param>
 public sealed record ZoneSceneSection(int FirstIndex, int IndexCount, int Material);
 
-/// <summary>One mesh of the map, at its least detailed level of detail (a 3D overview needs no more).</summary>
+/// <summary>One mesh of the map at the most detailed level within the scene's vertex budget.</summary>
+/// <param name="Normals">Four signed bytes a vertex (x, y, z, unused), in the viewer's space.</param>
 /// <param name="Materials">The mesh's own materials (package.object) by slot; a placement can override them.</param>
-public sealed record ZoneSceneMesh(string Key, ZoneSceneRange Positions, ZoneSceneRange Uvs, ZoneSceneRange Indices,
+public sealed record ZoneSceneMesh(string Key, ZoneSceneRange Positions, ZoneSceneRange? Normals, ZoneSceneRange Uvs, ZoneSceneRange Indices,
     IReadOnlyList<ZoneSceneSection> Sections, IReadOnlyList<string?> Materials);
 
-/// <param name="Texture">A small copy of the material's colour texture (a file beside the scene), or null.</param>
-/// <param name="TextureKey">The texture's package.object, for tinting it with the textures the user picked.</param>
-public sealed record ZoneSceneMaterial(string Key, float[] Colour, string? Texture, string? TextureKey);
+/// <summary>A texture of the scene: a DDS file beside it, still in the game's GPU format, from a modest level down.</summary>
+/// <param name="Format">DXT1, DXT5, ATI2 or BGRA.</param>
+/// <param name="Colour">The texture's average colour (0-1, as stored), for the overview's fallbacks.</param>
+public sealed record ZoneSceneTexture(string Key, string File, string Format, int Width, int Height, float[] Colour);
+
+/// <summary>
+/// A material as the overview draws it: its colour texture times its tint (diffuse_color x diffuse_brightness), plus
+/// its glow (texture_emissive x emissive_color x emissive_intensity), the parameters Lost Ark's background materials
+/// use, read from the instance and the instances it derives from.
+/// </summary>
+/// <param name="Diffuse">An index into <see cref="ZoneMapScene.Textures"/>, or -1.</param>
+/// <param name="Masked">Leaves, grass and other cut-out pieces: the texture's alpha cuts them out.</param>
+public sealed record ZoneSceneMaterial(string Key, int Diffuse, float[] Tint, int Emissive, float[] EmissiveColour, float Tiling,
+    bool Masked, float[] Colour);
 
 /// <summary>Every placement of one mesh with the same materials: one 4x4 matrix each (row-major, viewer space).</summary>
 /// <param name="Materials">Indices into <see cref="ZoneMapScene.Materials"/>, one per mesh slot (-1 for none).</param>
-/// <param name="Layer">"solid" for the map itself, "sky" for sky domes and cloud planes, "effect" for glows, water and
-/// light shafts (see off by default: drawn solid they would cover the map).</param>
+/// <param name="Layer">"solid" for the map itself; "sky" for sky domes, planets and painted backdrops; "effect" for
+/// glows, water and light shafts; "cutscene" for sets the game only streams in during cinematics. All but solid start
+/// hidden: drawn as plain meshes they would cover the map.</param>
 public sealed record ZoneSceneBatch(int Mesh, IReadOnlyList<int> Materials, ZoneSceneRange Matrices, string Layer = "solid");
 
-/// <summary>One ground layer of a landscape tile: its colour (texture average x layer colour x brightness).</summary>
-/// <param name="Texture">The layer's colour texture (package.object), so picking it in the list tints this layer.</param>
-public sealed record ZoneSceneLayer(string Name, float[] Colour, string? Texture);
+/// <summary>One ground layer of a landscape tile, as its landscape material sets it (layer01_diffuse and so on).</summary>
+/// <param name="Texture">An index into <see cref="ZoneMapScene.Textures"/>, or -1.</param>
+/// <param name="TextureKey">The texture's package.object, so picking it in the list tints this layer.</param>
+public sealed record ZoneSceneLayer(string Name, int Texture, string? TextureKey, float[] Tint, float Tiling);
 
-/// <summary>A landscape tile: a height grid already in viewer space, drawn with its layer material.</summary>
-/// <param name="Layers">The ground layers the tile blends, when its blend masks could be read.</param>
+/// <summary>A landscape tile: a height grid already in viewer space, drawn with its ground layers.</summary>
 /// <param name="Weights">Each vertex's weight of each layer (bytes, vertex by vertex, layer by layer).</param>
 public sealed record ZoneSceneTerrain(ZoneSceneRange Positions, ZoneSceneRange Uvs, ZoneSceneRange Indices, int Material,
-    IReadOnlyList<ZoneSceneLayer>? Layers = null, ZoneSceneRange? Weights = null);
+    IReadOnlyList<ZoneSceneLayer> Layers, ZoneSceneRange? Weights);
 
 /// <summary>
-/// A whole map for the Zone Viewer's 3D view: its meshes (decoded by Arkive itself, least detailed level), where the
-/// levels place each one (static meshes, collections and foliage), the landscape's height grids, and each material
-/// as a colour and a 64-pixel texture. Saved as scene.json, scene.bin and small PNGs in one folder (5 to 30 MB).
-/// Distances are metres, Y up, as in the Asset Viewer. In scene.bin positions and matrices are 32-bit floats,
-/// texture coordinates 16-bit floats and indices 16-bit integers, each range starting on a 4-byte boundary.
+/// One of the map's lighting set-ups (an environment volume: raid phases often have several), as the game's
+/// environment settings give it: the sun, the height fog and the post-process colour grading.
 /// </summary>
+/// <param name="SunDirection">The way the sunlight travels, in the viewer's space.</param>
+/// <param name="Lut">A colour-grading look-up table (a 256x16 PNG beside the scene), or null.</param>
+/// <param name="Minimum">The volume's box (viewer space): where in the map these settings apply.</param>
+public sealed record ZoneSceneEnvironment(
+    string Name,
+    float[] Centre,
+    float[] Minimum,
+    float[] Maximum,
+    float[] SunDirection,
+    float[] SunColour,
+    float SunBrightness,
+    float[] AmbientColour,
+    float[] FogColour,
+    float FogDensity,
+    float FogHeightFalloff,
+    float FogStart,
+    float FogMaxOpacity,
+    string? Lut,
+    float[] Shadows,
+    float[] Midtones,
+    float[] Highlights,
+    float Desaturation);
+
+/// <summary>One of the map's arenas: a busy area of solid pieces (raid gates often have several, apart).</summary>
+/// <param name="Environment">The lighting that applies there (an index into <see cref="ZoneMapScene.Environments"/>).</param>
+public sealed record ZoneSceneArena(float[] Centre, float Size, int Pieces, int Environment);
+
+/// <summary>
+/// A whole map for the Zone Viewer's 3D view: its meshes (decoded by Arkive itself), where the levels place each one
+/// (static meshes, collections and foliage), the landscape's height grids with their ground layers, every material's
+/// textures (copied in the game's own compressed format, at most 256 pixels across, 512 for ground layers) and the
+/// map's lighting, fog and colour grading. Saved as scene.json, scene.bin and DDS files in one folder.
+/// Distances are metres, Y up, as in the Asset Viewer. In scene.bin positions and matrices are 32-bit floats,
+/// normals 8-bit, texture coordinates 16-bit floats and indices 16-bit integers, each range on a 4-byte boundary.
+/// </summary>
+/// <param name="Focus">Where the play area is: the camera starts looking at it.</param>
 public sealed record ZoneMapScene(
     int Version,
     string Map,
-    float[] Minimum,
-    float[] Maximum,
+    float[] Focus,
+    float FocusSize,
     IReadOnlyList<ZoneSceneMesh> Meshes,
+    IReadOnlyList<ZoneSceneTexture> Textures,
     IReadOnlyList<ZoneSceneMaterial> Materials,
     IReadOnlyList<ZoneSceneBatch> Batches,
     IReadOnlyList<ZoneSceneTerrain> Terrain,
+    IReadOnlyList<ZoneSceneEnvironment> Environments,
+    int Environment,
     int Placements,
     int UnreadMeshes)
 {
-    public const int CurrentVersion = 1;
+    /// <summary>The map's arenas, busiest first; the first is <see cref="Focus"/>.</summary>
+    public IReadOnlyList<ZoneSceneArena> Arenas { get; init; } = [];
+
+    public const int CurrentVersion = 2;
     public const string FileName = "scene.json";
     public const string DataFileName = "scene.bin";
 
@@ -93,16 +145,29 @@ public sealed partial class ZoneMapSceneBuilder(
     IChunkProtectionProvider protectionProvider,
     NativeTextureExportService? textureExport)
 {
-    private const int TextureSize = 64;
+    // A mesh is drawn at its most detailed level with at most this many vertices (else its least detailed).
+    private const int VertexBudget = 12_000;
+    private const int TextureSize = 256;
+    private const int GroundTextureSize = 512;
+    private const int GlowTextureSize = 128;
     // A placeholder for the package hash material and texture reports carry; the scene keeps no report.
     private static readonly string NoHash = new('0', 64);
 
-    private sealed record Placement(string Mesh, string?[] Materials, Matrix4x4 World);
+    private sealed record Placement(string Mesh, string?[] Materials, Matrix4x4 World, bool Cutscene);
 
     private sealed record Tile(Vector3[] Positions, Vector2[] Uvs, uint[] Indices, string? Material, string[] Layers, byte[]? Weights);
 
+    private sealed record Environment(string Name, Vector3 Centre, Vector3 Minimum, Vector3 Maximum, IReadOnlyList<LevelProperty> Data,
+        string? Lut, IReadOnlyList<LevelProperty>? Settings);
+
     private readonly ConcurrentBag<Placement> _placements = [];
     private readonly ConcurrentBag<Tile> _tiles = [];
+    private readonly ConcurrentBag<Environment> _environments = [];
+    private readonly ConcurrentBag<(Vector3 Direction, Vector3 Colour, float Brightness)> _suns = [];
+    // The map's own settings, used wherever no environment volume applies: WorldInfo's default post-process
+    // settings and environment colour, and the level's height fog.
+    private (IReadOnlyList<LevelProperty> World, string? Lut)? _world;
+    private IReadOnlyList<LevelProperty>? _fog;
 
     public async Task<ZoneMapScene> BuildAsync(ZoneMap map, string directory, IProgress<ZoneSceneProgress>? progress,
         CancellationToken cancellationToken)
@@ -113,7 +178,7 @@ public sealed partial class ZoneMapSceneBuilder(
         {
             try
             {
-                await ReadLevelAsync(alias, token).ConfigureAwait(false);
+                await ReadLevelAsync(map, alias, token).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or
                                                   UnauthorizedAccessException)
@@ -138,31 +203,50 @@ public sealed partial class ZoneMapSceneBuilder(
             .Concat(_tiles.Select(tile => tile.Material))
             .OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var materials = new ConcurrentDictionary<string, ZoneSceneMaterial>(StringComparer.OrdinalIgnoreCase);
+        var layers = new ConcurrentDictionary<string, IReadOnlyList<ZoneSceneLayer>>(StringComparer.OrdinalIgnoreCase);
+        var terrainMaterials = _tiles.Select(tile => tile.Material).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
         Directory.CreateDirectory(Path.Combine(directory, "t"));
-        var textures = new ConcurrentDictionary<string, Lazy<Task<(string? File, float[] Colour)>>>(StringComparer.OrdinalIgnoreCase);
         completed = 0;
         await Parallel.ForEachAsync(materialKeys, Options(cancellationToken), async (key, token) =>
         {
-            materials[key] = await ReadMaterialAsync(key, directory, textures, token).ConfigureAwait(false);
-            progress?.Report(new ZoneSceneProgress("Reading the materials' colours", Interlocked.Increment(ref completed), materialKeys.Length));
+            materials[key] = await ReadMaterialAsync(key, directory, token).ConfigureAwait(false);
+            if (terrainMaterials.Contains(key)) layers[key] = await ReadLayersAsync(key, directory, token).ConfigureAwait(false);
+            progress?.Report(new ZoneSceneProgress("Reading the materials and their textures", Interlocked.Increment(ref completed), materialKeys.Length));
         }).ConfigureAwait(false);
 
-        progress?.Report(new ZoneSceneProgress("Colouring the ground layers", 0, 0));
-        var layers = new Dictionary<string, IReadOnlyList<ZoneSceneLayer>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var key in _tiles.Where(tile => tile.Layers.Length > 0).Select(tile => tile.Material).OfType<string>()
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
-            layers[key] = await ReadLayersAsync(key, directory, textures, cancellationToken).ConfigureAwait(false);
+        progress?.Report(new ZoneSceneProgress("Reading the lighting and colour grading", 0, 0));
+        var arenas = Arenas(meshes);
+        var focus = arenas.Count > 0 ? (arenas[0].Centre, arenas[0].Size) : Focus(meshes, _environments.Select(environment => environment.Centre).ToArray());
+        var environments = new List<ZoneSceneEnvironment>();
+        foreach (var environment in _environments.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase))
+            environments.Add(await ReadEnvironmentAsync(environment, directory, environments.Count, cancellationToken).ConfigureAwait(false));
+        environments.Insert(0, await DefaultEnvironmentAsync(focus.Centre, directory, cancellationToken).ConfigureAwait(false));
+        var chosen = LightingAt(environments, focus.Centre);
         progress?.Report(new ZoneSceneProgress("Saving the map", 0, 0));
-        return Write(map, directory, meshes, materials, layers);
+        var scene = Write(map, directory, meshes, materials, layers, environments, chosen, focus) with
+        {
+            Arenas = arenas.Select(arena => new ZoneSceneArena(Array(arena.Centre), arena.Size, arena.Pieces, LightingAt(environments, arena.Centre))).ToArray(),
+        };
+        File.WriteAllText(Path.Combine(directory, ZoneMapScene.FileName), JsonSerializer.Serialize(scene, ZoneMapScene.Json));
+        return scene;
     }
 
     private static ParallelOptions Options(CancellationToken cancellationToken) =>
-        new() { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 6), CancellationToken = cancellationToken };
+        new() { MaxDegreeOfParallelism = Math.Clamp(System.Environment.ProcessorCount / 2, 1, 6), CancellationToken = cancellationToken };
 
     // ---- Placements ----
 
-    private async Task ReadLevelAsync(string alias, CancellationToken cancellationToken)
+    /// <summary>A map's cinematic sets are its levels named scene (lv_kur_death_ed_04_scene10a).</summary>
+    public static bool IsCutsceneLevel(ZoneMap map, string alias) => map.Zones.SelectMany(zone => zone.Levels).Any(persistent =>
     {
+        var stem = persistent.EndsWith("_ps", StringComparison.OrdinalIgnoreCase) ? persistent[..^2] : persistent + "_";
+        return alias.StartsWith(stem, StringComparison.OrdinalIgnoreCase) &&
+               alias[stem.Length..].StartsWith("scene", StringComparison.OrdinalIgnoreCase);
+    });
+
+    private async Task ReadLevelAsync(ZoneMap map, string alias, CancellationToken cancellationToken)
+    {
+        var cutscene = IsCutsceneLevel(map, alias);
         var catalog = new AssetCatalogReader(protectionProvider: protectionProvider).Read(packageFiles[alias]);
         using var logical = new LogicalPackageStream(catalog.Summary, protectionProvider);
         var byIndex = catalog.Assets.ToDictionary(asset => asset.ExportIndex);
@@ -174,6 +258,28 @@ public sealed partial class ZoneMapSceneBuilder(
             if (type == "landscapecomponent")
             {
                 await ReadLandscapeAsync(alias, catalog, logical, byIndex, asset, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+            if (!cutscene && type == "efenvironmentinfodata")
+            {
+                ReadEnvironment(alias, catalog, logical, byIndex, asset);
+                continue;
+            }
+            if (!cutscene && type == "dominantdirectionallight")
+            {
+                ReadSun(catalog, logical, byIndex, asset);
+                continue;
+            }
+            if (!cutscene && type == "worldinfo" && LevelProperties.Read(Bytes(logical, asset), catalog.Names, out _) is { } world &&
+                world.Find("defaultpostprocesssettings") is not null)
+            {
+                var defaults = LevelProperties.ReadAt(world.Find("defaultpostprocesssettings")!.Value, catalog.Names, 0, out _) ?? [];
+                _world ??= (world.Concat(defaults).ToArray(), Reference(catalog, defaults.Object("colorgrading_lookuptable"), alias));
+                continue;
+            }
+            if (!cutscene && type == "exponentialheightfogcomponent")
+            {
+                _fog ??= LevelProperties.Read(Bytes(logical, asset), catalog.Names, out _);
                 continue;
             }
             if (!type.EndsWith("staticmeshcomponent", StringComparison.Ordinal)) continue;
@@ -190,9 +296,9 @@ public sealed partial class ZoneMapSceneBuilder(
             {
                 var bytes = Bytes(logical, asset);
                 foreach (var instance in Instances(bytes.AsSpan(end)))
-                    _placements.Add(new Placement(mesh, overrides, ToViewer(instance * local * actor.Value)));
+                    _placements.Add(new Placement(mesh, overrides, ToViewer(instance * local * actor.Value), cutscene));
             }
-            else _placements.Add(new Placement(mesh, overrides, ToViewer(local * actor.Value)));
+            else _placements.Add(new Placement(mesh, overrides, ToViewer(local * actor.Value), cutscene));
         }
     }
 
@@ -213,9 +319,15 @@ public sealed partial class ZoneMapSceneBuilder(
         if (type.Contains("volume", StringComparison.Ordinal) || type.Contains("brush", StringComparison.Ordinal)) return null;
         var properties = LevelProperties.Read(Bytes(logical, actor), catalog.Names, out _) ?? [];
         if (properties.Bool("bhidden")) return null;
+        return ActorMatrix(properties);
+    }
+
+    private static Matrix4x4 ActorMatrix(IReadOnlyList<LevelProperty> properties)
+    {
         var scale = (properties.Vector("drawscale3d") ?? Vector3.One) * (properties.Float("drawscale") ?? 1);
-        return Matrix4x4.CreateScale(scale) * Rotation(properties.Rotator("rotation")) *
-               Matrix4x4.CreateTranslation(properties.Vector("location") ?? Vector3.Zero);
+        // PrePivot moves the actor's own origin before it is scaled, turned and placed.
+        return Matrix4x4.CreateTranslation(-(properties.Vector("prepivot") ?? Vector3.Zero)) * Matrix4x4.CreateScale(scale) *
+               Rotation(properties.Rotator("rotation")) * Matrix4x4.CreateTranslation(properties.Vector("location") ?? Vector3.Zero);
     }
 
     private static Matrix4x4 ComponentTransform(IReadOnlyList<LevelProperty> properties)
@@ -253,6 +365,8 @@ public sealed partial class ZoneMapSceneBuilder(
         result.M43 *= 0.01f;
         return result;
     }
+
+    private static Vector3 ToViewer(Vector3 unreal) => new(unreal.X * 0.01f, unreal.Z * 0.01f, unreal.Y * 0.01f);
 
     /// <summary>
     /// A foliage component's instances: after its properties, an array of 80-byte entries (a 4x4 matrix relative to
@@ -305,7 +419,7 @@ public sealed partial class ZoneMapSceneBuilder(
                        Reference(catalog, properties.Object("materialinstance"), alias);
         var outer = catalog.Exports[component.ExportIndex - 1].OuterIndex;
         var proxy = byIndex.TryGetValue(outer, out var owner) ? ActorTransform(catalog, logical, owner) ?? Matrix4x4.Identity : Matrix4x4.Identity;
-        var picture = await DecodeTextureAsync(packageFiles[alias], alias, heightmap, mip: 0, cancellationToken).ConfigureAwait(false);
+        var picture = await DecodePictureAsync(packageFiles[alias], alias, heightmap, 0, cancellationToken).ConfigureAwait(false);
         if (picture is null) return;
         var width = (int)Math.Round(1 / scaleBias.X);
         var offsetX = (int)Math.Round(scaleBias.Z * width);
@@ -324,9 +438,9 @@ public sealed partial class ZoneMapSceneBuilder(
                 py = Math.Clamp(py, 0, picture.Height - 1);
                 var pixel = (py * picture.Width + px) * 4;
                 var height = (picture.Pixels[pixel] << 8 | picture.Pixels[pixel + 1]) - 32768;
-                var local = new Vector3(baseX + x, baseY + y, height / 128f);
                 // The same swap and scale the mesh decoder gives a vertex, then the landscape actor's placement.
-                positions[y * size + x] = Vector3.Transform(new Vector3(local.X, local.Z, local.Y) * 0.01f, world);
+                positions[y * size + x] = Vector3.Transform(ToViewer(new Vector3(baseX + x, baseY + y, height / 128f)), world);
+                // Ground textures repeat about every 8 quads before each layer's own tiling.
                 uvs[y * size + x] = new Vector2((baseX + x) / 8f, (baseY + y) / 8f);
             }
         var indices = new List<uint>(quads * quads * 6);
@@ -357,7 +471,7 @@ public sealed partial class ZoneMapSceneBuilder(
         var pictures = new RgbaImage?[textures.Length];
         for (var index = 0; index < textures.Length; index++)
             if (byIndex.TryGetValue(textures[index], out var texture))
-                pictures[index] = await DecodeTextureAsync(packageFiles[alias], alias, texture, 0, cancellationToken, opaque: false).ConfigureAwait(false);
+                pictures[index] = await DecodePictureAsync(packageFiles[alias], alias, texture, 0, cancellationToken, opaque: false).ConfigureAwait(false);
         var scaleBias = properties.Vector4("weightmapscalebias") ?? new Vector4(1f / (quads + 1), 1f / (quads + 1), 0, 0);
         var size = quads + 1;
         var weights = new byte[size * size * allocations.Length];
@@ -378,6 +492,200 @@ public sealed partial class ZoneMapSceneBuilder(
             }
         return (allocations.Select(item => item.Layer!.ToLowerInvariant()).ToArray(), weights);
     }
+
+    // ---- Lighting ----
+
+    /// <summary>
+    /// An environment volume's settings (Lost Ark's EFEnvironmentInfoData: sun, fog, environment colour, and its
+    /// post-process settings with the colour-grading table), placed at its volume.
+    /// </summary>
+    private void ReadEnvironment(string alias, AssetCatalog catalog, LogicalPackageStream logical,
+        Dictionary<int, AssetCatalogEntry> byIndex, AssetCatalogEntry data)
+    {
+        var properties = LevelProperties.Read(Bytes(logical, data), catalog.Names, out _);
+        if (properties is null) return;
+        var outer = catalog.Exports[data.ExportIndex - 1].OuterIndex;
+        // Only an info volume's own settings: blend volumes hold partial overrides for transitions.
+        if (!byIndex.TryGetValue(outer, out var volume) ||
+            !volume.ClassName.Equals("efenvironmentinfovolume", StringComparison.OrdinalIgnoreCase)) return;
+        var volumeProperties = LevelProperties.Read(Bytes(logical, volume), catalog.Names, out _) ?? [];
+        // The volume itself holds the post-process settings (colour grading and its look-up table).
+        var settings = volumeProperties.Find("settings") is { StructName: "postprocesssettings" } struct1
+            ? LevelProperties.ReadAt(struct1.Value, catalog.Names, 0, out _) : null;
+        var lut = settings is null ? null : Reference(catalog, settings.Object("colorgrading_lookuptable"), alias);
+        var (minimum, maximum) = VolumeBox(catalog, logical, byIndex, volumeProperties);
+        _environments.Add(new Environment($"{alias}.{volume.ObjectName}", (minimum + maximum) / 2, minimum, maximum, properties, lut, settings));
+    }
+
+    /// <summary>
+    /// A volume's box in viewer space: its brush's collision shapes (BrushAggGeom: each convex element's ElemBox),
+    /// placed by the volume actor. A volume without them is a 1-metre box at its location.
+    /// </summary>
+    private static (Vector3 Minimum, Vector3 Maximum) VolumeBox(AssetCatalog catalog, LogicalPackageStream logical,
+        Dictionary<int, AssetCatalogEntry> byIndex, IReadOnlyList<LevelProperty> volume)
+    {
+        var placement = ActorMatrix(volume);
+        var low = new Vector3(float.MaxValue);
+        var high = new Vector3(float.MinValue);
+        if (byIndex.TryGetValue(volume.Object("brushcomponent"), out var component) &&
+            LevelProperties.Read(Bytes(logical, component), catalog.Names, out _) is { } brush &&
+            brush.Find("brushagggeom") is { } geometry &&
+            LevelProperties.ReadAt(geometry.Value, catalog.Names, 0, out _) is { } aggregate)
+            foreach (var element in aggregate.Structs("convexelems", catalog.Names))
+            {
+                // A Box is stored as it is in memory: minimum, maximum (three floats each) and a valid flag.
+                if (element.Find("elembox") is not { Value.Length: 25 } box || box.Value[24] == 0) continue;
+                var min = new Vector3(BitConverter.ToSingle(box.Value, 0), BitConverter.ToSingle(box.Value, 4), BitConverter.ToSingle(box.Value, 8));
+                var max = new Vector3(BitConverter.ToSingle(box.Value, 12), BitConverter.ToSingle(box.Value, 16), BitConverter.ToSingle(box.Value, 20));
+                for (var corner = 0; corner < 8; corner++)
+                {
+                    var point = ToViewer(Vector3.Transform(new Vector3((corner & 1) == 0 ? min.X : max.X, (corner & 2) == 0 ? min.Y : max.Y,
+                        (corner & 4) == 0 ? min.Z : max.Z), placement));
+                    low = Vector3.Min(low, point);
+                    high = Vector3.Max(high, point);
+                }
+            }
+        if (low.X > high.X)
+        {
+            var at = ToViewer(volume.Vector("location") ?? Vector3.Zero);
+            (low, high) = (at - Vector3.One * 0.5f, at + Vector3.One * 0.5f);
+        }
+        return (low, high);
+    }
+
+    private void ReadSun(AssetCatalog catalog, LogicalPackageStream logical, Dictionary<int, AssetCatalogEntry> byIndex, AssetCatalogEntry actor)
+    {
+        var properties = LevelProperties.Read(Bytes(logical, actor), catalog.Names, out _);
+        if (properties is null) return;
+        var axis = Rotation(properties.Rotator("rotation"));
+        var direction = Vector3.Normalize(ToViewer(new Vector3(axis.M11, axis.M12, axis.M13)) * 100);
+        var colour = Vector3.One;
+        var brightness = 1f;
+        if (byIndex.TryGetValue(properties.Object("lightcomponent"), out var component) &&
+            LevelProperties.Read(Bytes(logical, component), catalog.Names, out _) is { } light)
+        {
+            colour = Colour(light, "lightcolor") ?? colour;
+            brightness = light.Float("brightness") ?? brightness;
+        }
+        _suns.Add((direction, colour, brightness));
+    }
+
+    /// <summary>A Color property (stored blue, green, red, alpha) as 0-1 red, green, blue.</summary>
+    private static Vector3? Colour(IReadOnlyList<LevelProperty> properties, string name) =>
+        properties.Find(name) is { StructName: "color", Value.Length: 4 } property
+            ? new Vector3(property.Value[2] / 255f, property.Value[1] / 255f, property.Value[0] / 255f)
+            : properties.Find(name) is { StructName: "linearcolor", Value.Length: 16 } linear
+                ? new Vector3(BitConverter.ToSingle(linear.Value, 0), BitConverter.ToSingle(linear.Value, 4), BitConverter.ToSingle(linear.Value, 8))
+                : null;
+
+    private async Task<ZoneSceneEnvironment> ReadEnvironmentAsync(Environment environment, string directory, int number,
+        CancellationToken cancellationToken)
+    {
+        var data = environment.Data;
+        var sun = _suns.FirstOrDefault();
+        var direction = sun.Direction == default ? Vector3.Normalize(new Vector3(-0.4f, -1, -0.3f)) : sun.Direction;
+        var sunColour = data.Bool("ddl_override") ? Colour(data, "ddl_lightcolor") ?? sun.Colour : sun.Colour == default ? Vector3.One : sun.Colour;
+        var sunBrightness = data.Bool("ddl_override") ? data.Float("ddl_brightness") ?? sun.Brightness : sun.Brightness == 0 ? 1 : sun.Brightness;
+        var fogColour = Colour(data, "ehf_lightinscatteringcolor") ?? Colour(data, "ehf_oppositelightcolor") ?? new Vector3(0.5f, 0.55f, 0.65f);
+        var ambient = Colour(data, "pbr_environmentcolor") ?? Colour(data, "ehf_oppositelightcolor") ?? new Vector3(0.45f, 0.48f, 0.55f);
+        string? lut = null;
+        if (environment.Lut is { } key && indexed.TryGetValue(key, out var found))
+        {
+            var picture = await DecodePictureAsync(found.Document.SourcePath, found.Document.PackageAlias, Entry(found), 0, cancellationToken)
+                .ConfigureAwait(false);
+            if (picture is { Width: 256, Height: 16 })
+            {
+                lut = $"t/lut{number}.png";
+                await PngRgbaCodec.WriteAsync(Path.Combine(directory, lut), picture, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        var settings = environment.Settings ?? [];
+        return new ZoneSceneEnvironment(environment.Name, Array(environment.Centre), Array(environment.Minimum), Array(environment.Maximum),
+            Array(direction), Array(sunColour), sunBrightness,
+            Array(ambient), Array(fogColour), data.Float("ehf_fogdensity") ?? 0, data.Float("ehf_fogheightfalloff") ?? 0.2f,
+            (data.Float("ehf_startdistance") ?? 0) * 0.01f, data.Float("ehf_fogmaxopacity") ?? 1, lut,
+            Array(settings.Vector("scene_shadows") ?? Vector3.Zero), Array(settings.Vector("scene_midtones") ?? Vector3.One),
+            Array(settings.Vector("scene_highlights") ?? Vector3.One), settings.Float("scene_desaturation") ?? 0);
+    }
+
+    // The settings of the smallest volume around a point, as the game applies the one the player stands in; the map's own elsewhere.
+    private static int LightingAt(IReadOnlyList<ZoneSceneEnvironment> environments, Vector3 point) =>
+        environments.Select((environment, index) => (Inside: Contains(environment, point), Size: Volume(environment), index))
+            .Where(item => item.Inside).OrderBy(item => item.Size).Select(item => item.index).DefaultIfEmpty(0).First();
+
+    /// <summary>
+    /// The map's arenas: busy areas of solid pieces found one after another (the busiest 250-metre square and what
+    /// stands within 400 metres of it, then the busiest square left once 600 metres around it are set aside), up to
+    /// six, each with at least a twentieth of the pieces. Cinematic sets, skies and effects are left out.
+    /// </summary>
+    private IReadOnlyList<(Vector3 Centre, float Size, int Pieces)> Arenas(IReadOnlyDictionary<string, DecodedMesh> meshes)
+    {
+        const float cell = 250, reach = 400, apart = 600;
+        var points = _placements.Where(placement => !placement.Cutscene && meshes.ContainsKey(placement.Mesh) &&
+                                                    Layer(placement.Mesh, placement.Materials.OfType<string>().ToArray()) == "solid")
+            .Select(placement => new Vector3(placement.World.M41, placement.World.M42, placement.World.M43))
+            .Concat(_tiles.SelectMany(tile => tile.Positions.Where((_, index) => index % 64 == 0)))
+            .Where(point => float.IsFinite(point.X) && float.IsFinite(point.Y) && float.IsFinite(point.Z)).ToList();
+        var total = points.Count;
+        var arenas = new List<(Vector3, float, int)>();
+        while (arenas.Count < 6 && points.Count > 0)
+        {
+            var busiest = points.GroupBy(point => (MathF.Floor(point.X / cell), MathF.Floor(point.Z / cell))).MaxBy(group => group.Count())!;
+            var middle = busiest.Aggregate(Vector3.Zero, (sum, point) => sum + point) / busiest.Count();
+            var near = points.Where(point => Flat(point - middle) < reach).ToArray();
+            if (near.Length < Math.Max(30, total / 20)) break;
+            var heights = near.Select(point => point.Y).Order().ToArray();
+            var centre = near.Aggregate(Vector3.Zero, (sum, point) => sum + point) / near.Length;
+            centre.Y = heights[heights.Length / 2];
+            var spread = near.Select(point => Flat(point - centre)).Order().ToArray();
+            arenas.Add((centre, Math.Max(60, spread[(int)(spread.Length * 0.9)] * 2), near.Length));
+            points.RemoveAll(point => Flat(point - middle) < apart);
+        }
+        return arenas;
+
+        static float Flat(Vector3 offset) => MathF.Sqrt(offset.X * offset.X + offset.Z * offset.Z);
+    }
+
+    private static bool Contains(ZoneSceneEnvironment environment, Vector3 point) => environment.Name != "map" &&
+        point.X >= environment.Minimum[0] && point.X <= environment.Maximum[0] && point.Y >= environment.Minimum[1] - 200 &&
+        point.Y <= environment.Maximum[1] + 200 && point.Z >= environment.Minimum[2] && point.Z <= environment.Maximum[2];
+
+    private static float Volume(ZoneSceneEnvironment environment) =>
+        (environment.Maximum[0] - environment.Minimum[0]) * (environment.Maximum[2] - environment.Minimum[2]);
+
+    /// <summary>
+    /// The map's own lighting, used wherever no environment volume applies: WorldInfo's default post-process settings
+    /// and environment colour, the level's height fog and its sun.
+    /// </summary>
+    private async Task<ZoneSceneEnvironment> DefaultEnvironmentAsync(Vector3 centre, string directory, CancellationToken cancellationToken)
+    {
+        var sun = _suns.FirstOrDefault();
+        var world = _world?.World ?? [];
+        var fog = _fog ?? [];
+        string? lut = null;
+        if (_world?.Lut is { } key && indexed.TryGetValue(key, out var found) &&
+            await DecodePictureAsync(found.Document.SourcePath, found.Document.PackageAlias, Entry(found), 0, cancellationToken)
+                .ConfigureAwait(false) is { Width: 256, Height: 16 } picture)
+        {
+            lut = "t/lut-map.png";
+            await PngRgbaCodec.WriteAsync(Path.Combine(directory, lut), picture, cancellationToken).ConfigureAwait(false);
+        }
+        var environment = world.Find("pbrenvironmentcolor") is { Value.Length: 16 } colour
+            ? new Vector3(BitConverter.ToSingle(colour.Value, 0), BitConverter.ToSingle(colour.Value, 4), BitConverter.ToSingle(colour.Value, 8))
+            : new Vector3(0.45f, 0.48f, 0.55f);
+        return new ZoneSceneEnvironment("map", Array(centre), Array(centre - Vector3.One * 1e5f), Array(centre + Vector3.One * 1e5f),
+            Array(sun.Direction == default ? Vector3.Normalize(new Vector3(-0.4f, -1, -0.3f)) : sun.Direction),
+            Array(sun.Colour == default ? Vector3.One : sun.Colour), sun.Brightness == 0 ? 1 : sun.Brightness,
+            Array(environment), Array(Colour(fog, "lightinscatteringcolor") ?? Colour(fog, "oppositelightcolor") ?? new Vector3(0.5f, 0.55f, 0.65f)),
+            fog.Float("fogdensity") ?? 0, fog.Float("fogheightfalloff") ?? 0.2f, (fog.Float("startdistance") ?? 0) * 0.01f,
+            fog.Float("fogmaxopacity") ?? 1, lut, Array(world.Vector("scene_shadows") ?? Vector3.Zero),
+            Array(world.Vector("scene_midtones") ?? Vector3.One), Array(world.Vector("scene_highlights") ?? Vector3.One),
+            world.Float("scene_desaturation") ?? 0);
+    }
+
+    private static float[] Array(Vector3 value) => [value.X, value.Y, value.Z];
+
+    // ---- Shared reading ----
 
     private static byte[] Bytes(LogicalPackageStream logical, AssetCatalogEntry asset)
     {
@@ -404,10 +712,14 @@ public sealed partial class ZoneMapSceneBuilder(
             : outer.ObjectName.Resolve(catalog.Names).ToLowerInvariant() + "." + import.ObjectName.Resolve(catalog.Names);
     }
 
+    private static AssetCatalogEntry Entry((PackageIndexDocument Document, IndexedAsset Asset) found) =>
+        new(found.Asset.ExportIndex, found.Asset.ObjectName, found.Asset.ObjectName, found.Asset.ClassName, found.Asset.Kind,
+            (int)found.Asset.SerialSize, (int)found.Asset.SerialOffset);
+
     // ---- Meshes ----
 
-    private sealed record DecodedMesh(Vector3[] Positions, Vector2[] Uvs, ushort[] Indices, IReadOnlyList<ZoneSceneSection> Sections,
-        IReadOnlyList<string?> Materials);
+    private sealed record DecodedMesh(Vector3[] Positions, Vector3[] Normals, Vector2[] Uvs, ushort[] Indices,
+        IReadOnlyList<ZoneSceneSection> Sections, IReadOnlyList<string?> Materials);
 
     private void ReadMeshes(IReadOnlyList<string> keys, ConcurrentDictionary<string, DecodedMesh> meshes, CancellationToken cancellationToken)
     {
@@ -437,11 +749,12 @@ public sealed partial class ZoneMapSceneBuilder(
                 foreach (var candidate in Ue3PropertyStreamProbe.FindCandidates(bytes, found.Asset.SerialOffset, catalog.Names))
                 {
                     if (!parser.TryParse(bytes, found.Asset.SerialOffset, candidate.EndOffset, out var layout, out _) || layout is null) continue;
-                    var lod = layout.Lods[^1];
+                    var lod = layout.Lods.FirstOrDefault(item => item.VertexCount <= VertexBudget) ?? layout.Lods[^1];
                     var decoded = new StaticMeshSemanticDecoder().DecodeOne(bytes, lod);
                     var slots = lod.Sections.Select(section => Reference(catalog, section.MaterialReference, found.Document.PackageAlias))
                         .ToArray();
-                    meshes[key] = new DecodedMesh(decoded.Positions, decoded.TextureCoordinates.Length > 0 ? decoded.TextureCoordinates[0] : new Vector2[decoded.Positions.Length],
+                    meshes[key] = new DecodedMesh(decoded.Positions, decoded.Normals,
+                        decoded.TextureCoordinates.Length > 0 ? decoded.TextureCoordinates[0] : new Vector2[decoded.Positions.Length],
                         decoded.Indices, lod.Sections.Select((section, index) => new ZoneSceneSection(section.FirstIndex, section.TriangleCount * 3, index)).ToArray(),
                         slots);
                     break;
@@ -454,36 +767,50 @@ public sealed partial class ZoneMapSceneBuilder(
         }
     }
 
-    // ---- Materials ----
+    // ---- Materials and textures ----
 
-    /// <summary>
-    /// A landscape material's ground layers (layer01_diffuse, layer01_color, layer01_brightness and so on): each
-    /// layer's colour is its texture's average, tinted by its colour and scaled by its brightness.
-    /// </summary>
-    private async Task<IReadOnlyList<ZoneSceneLayer>> ReadLayersAsync(string key, string directory,
-        ConcurrentDictionary<string, Lazy<Task<(string? File, float[] Colour)>>> textures, CancellationToken cancellationToken)
+    /// <summary>A material's parameters merged down its chain of instances: the closest one setting a value wins.</summary>
+    private sealed record MaterialValues(
+        Dictionary<string, string> Textures,
+        Dictionary<string, Vector4> Vectors,
+        Dictionary<string, float> Scalars,
+        string Package,
+        IReadOnlyList<string> Chain);
+
+    private readonly ConcurrentDictionary<string, Lazy<Task<MaterialValues?>>> _values = new(StringComparer.OrdinalIgnoreCase);
+
+    private Task<MaterialValues?> ValuesAsync(string key, CancellationToken cancellationToken) =>
+        _values.GetOrAdd(key, item => new Lazy<Task<MaterialValues?>>(() => ReadValuesAsync(item, cancellationToken))).Value;
+
+    private async Task<MaterialValues?> ReadValuesAsync(string key, CancellationToken cancellationToken)
     {
-        if (await InspectMaterialAsync(key, cancellationToken).ConfigureAwait(false) is not { } report) return [];
-        var package = indexed[key].Document.PackageAlias;
-        var result = new List<ZoneSceneLayer>();
-        foreach (var texture in report.TextureParameters)
+        var textures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var vectors = new Dictionary<string, Vector4>(StringComparer.OrdinalIgnoreCase);
+        var scalars = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        var chain = new List<string>();
+        string? package = null;
+        var current = key;
+        for (var depth = 0; depth < 6 && current is not null; depth++)
         {
-            var name = texture.Name.ToLowerInvariant();
-            if (!name.EndsWith("_diffuse", StringComparison.Ordinal) || ZoneParts.ReferencedName(texture.ResolvedObject) is not { } objectName) continue;
-            var layer = name[..^"_diffuse".Length];
-            var textureKey = FindTexture(package, objectName);
-            float[] colour = [0.55f, 0.55f, 0.55f];
-            if (textureKey is not null)
-                (_, colour) = await textures.GetOrAdd(textureKey, item => new Lazy<Task<(string?, float[])>>(() =>
-                    SmallTextureAsync(item, directory, cancellationToken))).Value.ConfigureAwait(false);
-            var tint = report.VectorParameters.FirstOrDefault(vector => vector.Name.Equals(layer + "_color", StringComparison.OrdinalIgnoreCase));
-            var brightness = report.ScalarParameters.FirstOrDefault(scalar => scalar.Name.Equals(layer + "_brightness", StringComparison.OrdinalIgnoreCase))?.Value ?? 1;
-            result.Add(new ZoneSceneLayer(layer, [
-                Math.Clamp(colour[0] * (tint?.Red ?? 1) * brightness, 0, 1),
-                Math.Clamp(colour[1] * (tint?.Green ?? 1) * brightness, 0, 1),
-                Math.Clamp(colour[2] * (tint?.Blue ?? 1) * brightness, 0, 1)], textureKey?.ToLowerInvariant()));
+            if (await InspectMaterialAsync(current, cancellationToken).ConfigureAwait(false) is not { } report) break;
+            var currentPackage = indexed[current].Document.PackageAlias;
+            package ??= currentPackage;
+            chain.Add(current);
+            foreach (var texture in report.TextureParameters)
+                if (ZoneParts.ReferencedName(texture.ResolvedObject) is { } name && FindTexture(currentPackage, name) is { } textureKey)
+                    textures.TryAdd(texture.Name, textureKey);
+            foreach (var vector in report.VectorParameters)
+                vectors.TryAdd(vector.Name, new Vector4(vector.Red, vector.Green, vector.Blue, vector.Alpha));
+            foreach (var scalar in report.ScalarParameters) scalars.TryAdd(scalar.Name, scalar.Value);
+            if (report.ParentObject is { } parent)
+            {
+                chain.Add(parent);
+                current = parent.StartsWith("materialinstanceconstant'", StringComparison.OrdinalIgnoreCase) &&
+                          ZoneParts.ReferencedName(parent) is { } parentName ? FindMaterial(currentPackage, parentName) : null;
+            }
+            else current = null;
         }
-        return result;
+        return package is null ? null : new MaterialValues(textures, vectors, scalars, package, chain);
     }
 
     private async Task<MaterialInstanceReconnaissanceReport?> InspectMaterialAsync(string key, CancellationToken cancellationToken)
@@ -503,37 +830,52 @@ public sealed partial class ZoneMapSceneBuilder(
         }
     }
 
-    private async Task<ZoneSceneMaterial> ReadMaterialAsync(string key, string directory,
-        ConcurrentDictionary<string, Lazy<Task<(string? File, float[] Colour)>>> textures, CancellationToken cancellationToken)
+    private async Task<ZoneSceneMaterial> ReadMaterialAsync(string key, string directory, CancellationToken cancellationToken)
     {
         float[] grey = [0.55f, 0.55f, 0.55f];
-        if (await InspectMaterialAsync(key, cancellationToken).ConfigureAwait(false) is not { } report)
-            return new ZoneSceneMaterial(key, grey, null, null);
-        var tint = report.VectorParameters.FirstOrDefault(vector => ColourParameter().IsMatch(vector.Name));
-        // An instance that sets no colour texture draws with its parent's; follow a few parents up.
-        string? textureKey = null;
-        var current = (Key: key, Report: report);
-        for (var depth = 0; depth < 4; depth++)
+        if (await ValuesAsync(key, cancellationToken).ConfigureAwait(false) is not { } values)
+            return new ZoneSceneMaterial(key, -1, [1, 1, 1], -1, [0, 0, 0], 1, false, grey);
+        var diffuseKey = values.Textures.Where(pair => DiffuseParameter().IsMatch(pair.Key) && !NotColour().IsMatch(pair.Key))
+                             .Select(pair => pair.Value).FirstOrDefault() ??
+                         values.Textures.Where(pair => !NotColour().IsMatch(pair.Key) && DiffuseTexture().IsMatch(pair.Value))
+                             .Select(pair => pair.Value).FirstOrDefault();
+        var diffuse = diffuseKey is null ? -1 : await TextureAsync(diffuseKey, directory, TextureSize, cancellationToken).ConfigureAwait(false);
+        var colour = values.Vectors.FirstOrDefault(pair => DiffuseColour().IsMatch(pair.Key)).Value;
+        var tint = colour == default ? Vector3.One : new Vector3(colour.X, colour.Y, colour.Z);
+        tint *= values.Scalars.FirstOrDefault(pair => DiffuseBrightness().IsMatch(pair.Key)).Value is var brightness and > 0 ? brightness : 1;
+        var glowKey = values.Textures.Where(pair => GlowParameter().IsMatch(pair.Key)).Select(pair => pair.Value).FirstOrDefault();
+        var glow = glowKey is null ? -1 : await TextureAsync(glowKey, directory, GlowTextureSize, cancellationToken).ConfigureAwait(false);
+        var glowColour = values.Vectors.FirstOrDefault(pair => GlowColour().IsMatch(pair.Key)).Value;
+        var glowStrength = values.Scalars.FirstOrDefault(pair => GlowStrength().IsMatch(pair.Key)).Value;
+        var emissive = glow < 0 ? Vector3.Zero
+            : new Vector3(glowColour == default ? 1 : glowColour.X, glowColour == default ? 1 : glowColour.Y, glowColour == default ? 1 : glowColour.Z) *
+              (glowStrength > 0 ? glowStrength : 1);
+        var tiling = values.Scalars.TryGetValue("uv_tiling", out var uvTiling) && uvTiling > 0 ? uvTiling : 1;
+        var masked = diffuse >= 0 && _textures[diffuse].Format == "DXT5" && (CutOut().IsMatch(key) || values.Chain.Any(CutOut().IsMatch));
+        var fallback = diffuse >= 0 ? _textures[diffuse].Colour : grey;
+        return new ZoneSceneMaterial(key, diffuse, Array(tint), glow, Array(emissive), tiling, masked, fallback);
+    }
+
+    /// <summary>
+    /// A landscape material's ground layers (layer01_diffuse, layer01_color, layer01_brightness, layer01_tiling and so
+    /// on, as Lost Ark's landscape_base material names them).
+    /// </summary>
+    private async Task<IReadOnlyList<ZoneSceneLayer>> ReadLayersAsync(string key, string directory, CancellationToken cancellationToken)
+    {
+        if (await ValuesAsync(key, cancellationToken).ConfigureAwait(false) is not { } values) return [];
+        var result = new List<ZoneSceneLayer>();
+        foreach (var (parameter, textureKey) in values.Textures)
         {
-            var package = indexed[current.Key].Document.PackageAlias;
-            var textureName = current.Report.TextureParameters
-                .OrderBy(texture => DiffuseParameter().IsMatch(texture.Name) ? 0 : DiffuseTexture().IsMatch(ZoneParts.ReferencedName(texture.ResolvedObject) ?? "") ? 1 : 2)
-                .Where(texture => !NotColour().IsMatch(texture.Name))
-                .Select(texture => ZoneParts.ReferencedName(texture.ResolvedObject))
-                .FirstOrDefault(name => name is not null);
-            textureKey = textureName is null ? null : FindTexture(package, textureName);
-            if (textureKey is not null || current.Report.ParentObject is not { } parent ||
-                !parent.StartsWith("materialinstanceconstant'", StringComparison.OrdinalIgnoreCase) ||
-                ZoneParts.ReferencedName(parent) is not { } parentName ||
-                FindMaterial(package, parentName) is not { } parentKey ||
-                await InspectMaterialAsync(parentKey, cancellationToken).ConfigureAwait(false) is not { } parentReport) break;
-            current = (parentKey, parentReport);
+            var name = parameter.ToLowerInvariant();
+            if (!name.EndsWith("_diffuse", StringComparison.Ordinal)) continue;
+            var layer = name[..^"_diffuse".Length];
+            var texture = await TextureAsync(textureKey, directory, GroundTextureSize, cancellationToken).ConfigureAwait(false);
+            var colour = values.Vectors.TryGetValue(layer + "_color", out var vector) ? new Vector3(vector.X, vector.Y, vector.Z) : Vector3.One;
+            var brightness = values.Scalars.TryGetValue(layer + "_brightness", out var value) ? value : 1;
+            var tiling = values.Scalars.TryGetValue(layer + "_tiling", out var repeat) && repeat > 0 ? repeat : 1;
+            result.Add(new ZoneSceneLayer(layer, texture, textureKey.ToLowerInvariant(), Array(colour * brightness), tiling));
         }
-        if (textureKey is null)
-            return new ZoneSceneMaterial(key, tint is null ? grey : [Math.Clamp(tint.Red, 0, 1), Math.Clamp(tint.Green, 0, 1), Math.Clamp(tint.Blue, 0, 1)], null, null);
-        var (file, colour) = await textures.GetOrAdd(textureKey, texture => new Lazy<Task<(string?, float[])>>(() =>
-            SmallTextureAsync(texture, directory, cancellationToken))).Value.ConfigureAwait(false);
-        return new ZoneSceneMaterial(key, colour, file, textureKey);
+        return result;
     }
 
     /// <summary>A texture a material names (by object name only): in the material's own package, else any package.</summary>
@@ -556,17 +898,89 @@ public sealed partial class ZoneMapSceneBuilder(
             .GroupBy(pair => pair.Value.Asset.ObjectName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().Key, StringComparer.OrdinalIgnoreCase));
 
-    private int _textureCount;
+    private readonly List<ZoneSceneTexture> _textures = [];
+    private readonly ConcurrentDictionary<string, Lazy<Task<int>>> _textureIndex = new(StringComparer.OrdinalIgnoreCase);
 
-    private async Task<(string? File, float[] Colour)> SmallTextureAsync(string key, string directory, CancellationToken cancellationToken)
+    /// <summary>The scene's index of a texture, writing it once (the largest size anyone asks for first wins).</summary>
+    private Task<int> TextureAsync(string key, string directory, int size, CancellationToken cancellationToken) =>
+        _textureIndex.GetOrAdd(key, item => new Lazy<Task<int>>(() => WriteTextureAsync(item, directory, size, cancellationToken))).Value;
+
+    private async Task<int> WriteTextureAsync(string key, string directory, int size, CancellationToken cancellationToken)
     {
-        float[] grey = [0.55f, 0.55f, 0.55f];
-        if (!indexed.TryGetValue(key, out var found)) return (null, grey);
-        var asset = new AssetCatalogEntry(found.Asset.ExportIndex, found.Asset.ObjectName, found.Asset.ObjectName, found.Asset.ClassName,
-            found.Asset.Kind, (int)found.Asset.SerialSize, (int)found.Asset.SerialOffset);
-        var picture = await DecodeTextureAsync(found.Document.SourcePath, found.Document.PackageAlias, asset, TextureSize, cancellationToken)
-            .ConfigureAwait(false);
-        if (picture is null) return (null, grey);
+        if (textureExport is null || !indexed.TryGetValue(key, out var found)) return -1;
+        try
+        {
+            var report = await new TextureReconnaissanceService(protectionProvider: protectionProvider).InspectAsync(
+                new TextureReconnaissanceRequest(found.Document.SourcePath, found.Document.PackageAlias, found.Asset.ExportIndex - 1,
+                    AssetKind.Texture, found.Asset.ClassName, found.Asset.ObjectName, found.Asset.SerialOffset, found.Asset.SerialSize,
+                    KnownPackageSha256: NoHash), cancellationToken).ConfigureAwait(false);
+            var (dds, width, height, format) = await textureExport.DecodeChainAsync(report, size, cancellationToken).ConfigureAwait(false);
+            // Some textures keep only their full-size level in the package: shrink that one and store plain pixels.
+            if (Math.Max(width, height) > size * 3 / 2)
+            {
+                var picture = Shrink(await textureExport.DecodePreviewAsync(report, int.MaxValue, cancellationToken, opaque: false)
+                    .ConfigureAwait(false), size);
+                (dds, width, height, format) = (PlainDds(picture), picture.Width, picture.Height, "BGRA");
+            }
+            var smallest = DdsBlockTexture.Parse(key, dds);
+            var average = Average(smallest.DecodeMip(smallest.Mips.Count - 1, editableView: true));
+            lock (_textures)
+            {
+                var file = $"t/{_textures.Count}.dds";
+                File.WriteAllBytes(Path.Combine(directory, file), dds);
+                _textures.Add(new ZoneSceneTexture(key.ToLowerInvariant(), file, format, width, height, average));
+                return _textures.Count - 1;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or
+                                              ArgumentException or InvalidOperationException or UnauthorizedAccessException or
+                                              IndexOutOfRangeException)
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>A picture as an uncompressed BGRA DDS with its smaller levels, for textures stored only full size.</summary>
+    private static byte[] PlainDds(RgbaImage picture)
+    {
+        var levels = new List<ReadOnlyMemory<byte>>();
+        var level = picture;
+        while (true)
+        {
+            var bgra = level.Pixels.ToArray();
+            for (var index = 0; index < bgra.Length; index += 4) (bgra[index], bgra[index + 2]) = (bgra[index + 2], bgra[index]);
+            levels.Add(bgra);
+            if (level.Width == 1 && level.Height == 1) break;
+            level = Halve(level);
+        }
+        return DdsBlockCompressedWriter.Build(picture.Width, picture.Height, NativeTextureFormats.Bgra8.DdsFormat, levels);
+    }
+
+    // The next smaller level: each side halved (never below 1), averaging the pixels it merges.
+    private static RgbaImage Halve(RgbaImage picture)
+    {
+        var width = Math.Max(1, picture.Width / 2);
+        var height = Math.Max(1, picture.Height / 2);
+        var pixels = new byte[width * height * 4];
+        for (var y = 0; y < height; y++)
+            for (var x = 0; x < width; x++)
+                for (var channel = 0; channel < 4; channel++)
+                {
+                    var sum = 0;
+                    for (var dy = 0; dy < 2; dy++)
+                        for (var dx = 0; dx < 2; dx++)
+                        {
+                            var sx = Math.Min(picture.Width - 1, x * 2 + dx);
+                            var sy = Math.Min(picture.Height - 1, y * 2 + dy);
+                            sum += picture.Pixels[(sy * picture.Width + sx) * 4 + channel];
+                        }
+                    pixels[(y * width + x) * 4 + channel] = (byte)(sum / 4);
+                }
+        return new RgbaImage(width, height, pixels);
+    }
+
+    private static float[] Average(RgbaImage picture)
+    {
         double red = 0, green = 0, blue = 0;
         for (var index = 0; index < picture.Pixels.Length; index += 4)
         {
@@ -574,17 +988,12 @@ public sealed partial class ZoneMapSceneBuilder(
             green += picture.Pixels[index + 1];
             blue += picture.Pixels[index + 2];
         }
-        var pixels = picture.Pixels.Length / 4 * 255.0;
-        var file = $"t/{Interlocked.Increment(ref _textureCount)}.png";
-        await PngRgbaCodec.WriteAsync(Path.Combine(directory, file), picture, cancellationToken).ConfigureAwait(false);
-        return (file, [(float)(red / pixels), (float)(green / pixels), (float)(blue / pixels)]);
+        var pixels = Math.Max(1, picture.Pixels.Length / 4) * 255.0;
+        return [(float)(red / pixels), (float)(green / pixels), (float)(blue / pixels)];
     }
 
-    /// <summary>
-    /// A texture decoded by Arkive's own reader, at the first level of detail no larger than <paramref name="mip"/>
-    /// pixels across (0 for the full picture), in memory.
-    /// </summary>
-    private async Task<RgbaImage?> DecodeTextureAsync(string packagePath, string alias, AssetCatalogEntry texture, int mip,
+    /// <summary>A texture decoded to pixels (height maps, blend masks, colour-grading tables), in memory.</summary>
+    private async Task<RgbaImage?> DecodePictureAsync(string packagePath, string alias, AssetCatalogEntry texture, int mip,
         CancellationToken cancellationToken, bool opaque = true)
     {
         if (textureExport is null) return null;
@@ -638,16 +1047,71 @@ public sealed partial class ZoneMapSceneBuilder(
     [GeneratedRegex(@"_(d|da|diff|diffuse)(_|$)", RegexOptions.IgnoreCase)]
     private static partial Regex DiffuseTexture();
 
-    [GeneratedRegex("(normal|mask|spec|rough|metal|emiss|height|weight|_n$|noise|flow)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("(normal|mask|spec|rough|metal|emiss|height|weight|_n$|noise|flow|overlay|detail|reflection|panning|cube)", RegexOptions.IgnoreCase)]
     private static partial Regex NotColour();
 
-    [GeneratedRegex("^(diffuse_?colou?r|basecolou?r|colou?r|tint|diffuse_tint)$", RegexOptions.IgnoreCase)]
-    private static partial Regex ColourParameter();
+    [GeneratedRegex("^(diffuse_?colou?r|basecolou?r|base_colou?r|colou?r|tint|diffuse_tint)$", RegexOptions.IgnoreCase)]
+    private static partial Regex DiffuseColour();
+
+    [GeneratedRegex("^(diffuse_?brightness|brightness|base_?brightness)$", RegexOptions.IgnoreCase)]
+    private static partial Regex DiffuseBrightness();
+
+    [GeneratedRegex("^texture_emissive$|^emissive(_texture|_tex|map)?$", RegexOptions.IgnoreCase)]
+    private static partial Regex GlowParameter();
+
+    [GeneratedRegex("^emissive_?colou?r$", RegexOptions.IgnoreCase)]
+    private static partial Regex GlowColour();
+
+    [GeneratedRegex("^emissive_?(intensity|brightness|power)$", RegexOptions.IgnoreCase)]
+    private static partial Regex GlowStrength();
+
+    // Cut-out materials: foliage, grass, hair, chains and fences draw their texture's alpha as holes.
+    [GeneratedRegex("grass|leaf|leaves|tree|bush|plant|flower|foliage|ivy|vine|fern|weed|hair|chain|fence|net_|_net|masked")]
+    private static partial Regex CutOut();
 
     // ---- Output ----
 
+    /// <summary>
+    /// Where the play area is: of the environment volumes' centres, the terrain's middle and the busiest 300-metre
+    /// square, the one with the most solid pieces around it (cinematic sets, skies and backdrops stand apart).
+    /// </summary>
+    private (Vector3 Centre, float Size) Focus(IReadOnlyDictionary<string, DecodedMesh> meshes, IReadOnlyList<Vector3> environments)
+    {
+        const float reach = 450;
+        var solid = _placements.Where(placement => !placement.Cutscene && meshes.ContainsKey(placement.Mesh) &&
+                                                   Layer(placement.Mesh, placement.Materials.OfType<string>().ToArray()) == "solid")
+            .Select(placement => new Vector3(placement.World.M41, placement.World.M42, placement.World.M43))
+            .Where(point => float.IsFinite(point.X) && float.IsFinite(point.Y) && float.IsFinite(point.Z)).ToArray();
+        var candidates = new List<Vector3>(environments);
+        if (!_tiles.IsEmpty)
+        {
+            var low = _tiles.SelectMany(tile => tile.Positions).Aggregate(new Vector3(float.MaxValue), Vector3.Min);
+            var high = _tiles.SelectMany(tile => tile.Positions).Aggregate(new Vector3(float.MinValue), Vector3.Max);
+            candidates.Add((low + high) / 2);
+        }
+        if (solid.Length > 0)
+        {
+            const float cell = 300;
+            var best = solid.GroupBy(point => (MathF.Floor(point.X / cell), MathF.Floor(point.Z / cell)))
+                .OrderByDescending(group => group.Count()).First();
+            candidates.Add(best.Aggregate(Vector3.Zero, (sum, point) => sum + point) / best.Count());
+        }
+        if (candidates.Count == 0) return (Vector3.Zero, 100);
+        var centre = candidates.OrderByDescending(candidate => solid.Count(point => Flat(point - candidate) < reach)).First();
+        var near = solid.Where(point => Flat(point - centre) < reach).ToArray();
+        if (near.Length == 0) return (centre, 200);
+        // The pieces' middle height, so the camera looks at the ground the map stands on.
+        var heights = near.Select(point => point.Y).Order().ToArray();
+        var middle = new Vector3(centre.X, heights[heights.Length / 2], centre.Z);
+        var spread = near.Select(point => Flat(point - middle)).Order().ToArray();
+        return (middle, Math.Max(60, spread[(int)(spread.Length * 0.9)] * 2));
+
+        static float Flat(Vector3 offset) => MathF.Sqrt(offset.X * offset.X + offset.Z * offset.Z);
+    }
+
     private ZoneMapScene Write(ZoneMap map, string directory, IReadOnlyDictionary<string, DecodedMesh> meshes,
-        IReadOnlyDictionary<string, ZoneSceneMaterial> materials, IReadOnlyDictionary<string, IReadOnlyList<ZoneSceneLayer>> layers)
+        IReadOnlyDictionary<string, ZoneSceneMaterial> materials, IReadOnlyDictionary<string, IReadOnlyList<ZoneSceneLayer>> layers,
+        IReadOnlyList<ZoneSceneEnvironment> environments, int environment, (Vector3 Centre, float Size) focus)
     {
         var materialList = materials.Values.OrderBy(material => material.Key, StringComparer.OrdinalIgnoreCase).ToList();
         var materialIndex = materialList.Select((material, index) => (material.Key, index))
@@ -656,18 +1120,16 @@ public sealed partial class ZoneMapSceneBuilder(
         var meshIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var batches = new List<ZoneSceneBatch>();
         var terrain = new List<ZoneSceneTerrain>();
-        var minimum = new Vector3(float.MaxValue);
-        var maximum = new Vector3(float.MinValue);
         var placements = 0;
         using var data = new BinaryWriter(File.Create(Path.Combine(directory, ZoneMapScene.DataFileName)));
         foreach (var (key, mesh) in meshes.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
         {
             meshIndex[key] = meshList.Count;
-            meshList.Add(new ZoneSceneMesh(key, WriteVectors(data, mesh.Positions), WriteUvs(data, mesh.Uvs),
+            meshList.Add(new ZoneSceneMesh(key, WriteVectors(data, mesh.Positions), WriteNormals(data, mesh.Normals), WriteUvs(data, mesh.Uvs),
                 WriteIndices(data, mesh.Indices.Select(index => (uint)index)), mesh.Sections, mesh.Materials));
         }
         foreach (var group in _placements.Where(placement => meshes.ContainsKey(placement.Mesh))
-                     .GroupBy(placement => placement.Mesh + "|" + string.Join(",", Slots(placement))))
+                     .GroupBy(placement => placement.Mesh + "|" + placement.Cutscene + "|" + string.Join(",", Slots(placement))))
         {
             var first = group.First();
             var slots = Slots(first).Select(slot => slot is null ? -1 : materialIndex.GetValueOrDefault(slot, -1)).ToArray();
@@ -680,28 +1142,22 @@ public sealed partial class ZoneMapSceneBuilder(
                 foreach (var value in new[] { world.M11, world.M12, world.M13, world.M14, world.M21, world.M22, world.M23, world.M24,
                              world.M31, world.M32, world.M33, world.M34, world.M41, world.M42, world.M43, world.M44 })
                     data.Write(value);
-                var at = new Vector3(world.M41, world.M42, world.M43);
-                minimum = Vector3.Min(minimum, at);
-                maximum = Vector3.Max(maximum, at);
                 count++;
             }
             placements += count;
+            var layer = Layer(first.Mesh, Slots(first).OfType<string>().ToArray());
             batches.Add(new ZoneSceneBatch(meshIndex[first.Mesh], slots, new ZoneSceneRange(offset, count),
-                Layer(first.Mesh, Slots(first).OfType<string>().ToArray())));
+                first.Cutscene && layer == "solid" ? "cutscene" : layer));
         }
         foreach (var tile in _tiles)
         {
-            foreach (var position in tile.Positions)
-            {
-                minimum = Vector3.Min(minimum, position);
-                maximum = Vector3.Max(maximum, position);
-            }
             var positions = WriteVectors(data, tile.Positions);
             var uvs = WriteUvs(data, tile.Uvs);
             var indices = WriteIndices(data, tile.Indices);
             var known = tile.Material is not null && layers.TryGetValue(tile.Material, out var materialLayers) ? materialLayers : [];
-            // The tile's layers in its own order, each with the colour its material gives that layer.
-            var tileLayers = tile.Layers.Select(name => known.FirstOrDefault(layer => layer.Name == name) ?? new ZoneSceneLayer(name, [0.55f, 0.55f, 0.55f], null)).ToArray();
+            // The tile's layers in its own order, each as its material sets it.
+            var tileLayers = tile.Layers.Select(name => known.FirstOrDefault(layer => layer.Name == name) ??
+                                                        new ZoneSceneLayer(name, -1, null, [0.55f, 0.55f, 0.55f], 1)).ToArray();
             ZoneSceneRange? weights = null;
             if (tile.Weights is { } values && tileLayers.Length > 0 && known.Count > 0)
             {
@@ -710,13 +1166,11 @@ public sealed partial class ZoneMapSceneBuilder(
                 Align(data);
             }
             terrain.Add(new ZoneSceneTerrain(positions, uvs, indices, tile.Material is null ? -1 : materialIndex.GetValueOrDefault(tile.Material, -1),
-                weights is null ? null : tileLayers, weights));
+                weights is null ? [] : tileLayers, weights));
         }
-        if (minimum.X > maximum.X) (minimum, maximum) = (Vector3.Zero, Vector3.Zero);
-        var scene = new ZoneMapScene(ZoneMapScene.CurrentVersion, map.Key, [minimum.X, minimum.Y, minimum.Z], [maximum.X, maximum.Y, maximum.Z],
-            meshList, materialList, batches, terrain, placements, _placements.Select(placement => placement.Mesh)
-                .Distinct(StringComparer.OrdinalIgnoreCase).Count(key => !meshes.ContainsKey(key)));
-        File.WriteAllText(Path.Combine(directory, ZoneMapScene.FileName), JsonSerializer.Serialize(scene, ZoneMapScene.Json));
+        var scene = new ZoneMapScene(ZoneMapScene.CurrentVersion, map.Key, Array(focus.Centre), focus.Size, meshList, _textures.ToArray(),
+            materialList, batches, terrain, environments, environment, placements,
+            _placements.Select(placement => placement.Mesh).Distinct(StringComparer.OrdinalIgnoreCase).Count(key => !meshes.ContainsKey(key)));
         return scene;
 
         IEnumerable<string?> Slots(Placement placement) =>
@@ -728,15 +1182,20 @@ public sealed partial class ZoneMapSceneBuilder(
     {
         string Name(string key) => key[(key.IndexOf('.') + 1)..].ToLowerInvariant();
         string Package(string key) => key[..Math.Max(0, key.IndexOf('.'))].ToLowerInvariant();
-        if (SkyName().IsMatch(Name(mesh)) || materials.Any(material => SkyName().IsMatch(Name(material)))) return "sky";
+        if (SkyName().IsMatch(Name(mesh)) || SkyPackage().IsMatch(Package(mesh)) ||
+            materials.Any(material => SkyName().IsMatch(Name(material)))) return "sky";
         if (EffectPackage().IsMatch(Package(mesh)) || EffectMesh().IsMatch(Name(mesh)) ||
             materials.Any(material => EffectPackage().IsMatch(Package(material)) || BlendedMaterial().IsMatch(Name(material))))
             return "effect";
         return "solid";
     }
 
-    [GeneratedRegex("sky|cloud")]
+    // Skies, clouds, planets and moons in the distance, and painted backdrops (lv_matte).
+    [GeneratedRegex("sky|cloud|planet|moon|_matte|matte_|backdrop|horizon|skybox")]
     private static partial Regex SkyName();
+
+    [GeneratedRegex("^(lv_matte|lv_dynamicsky|lv_sky)")]
+    private static partial Regex SkyPackage();
 
     [GeneratedRegex("^(b?fx_|efmaster|fx$)")]
     private static partial Regex EffectPackage();
@@ -760,7 +1219,23 @@ public sealed partial class ZoneMapSceneBuilder(
         return new ZoneSceneRange(offset, values.Count);
     }
 
-    // Texture coordinates as half floats: plenty for 64-pixel textures, and half the size.
+    // Normals as signed bytes (x, y, z and a pad byte): plenty for lighting, a third the size of floats.
+    private static ZoneSceneRange? WriteNormals(BinaryWriter data, IReadOnlyList<Vector3> values)
+    {
+        if (values.Count == 0) return null;
+        var offset = data.BaseStream.Position;
+        foreach (var value in values)
+        {
+            var normal = value.LengthSquared() > 0 ? Vector3.Normalize(value) : Vector3.UnitY;
+            data.Write((sbyte)Math.Round(normal.X * 127));
+            data.Write((sbyte)Math.Round(normal.Y * 127));
+            data.Write((sbyte)Math.Round(normal.Z * 127));
+            data.Write((sbyte)0);
+        }
+        return new ZoneSceneRange(offset, values.Count);
+    }
+
+    // Texture coordinates as half floats: plenty at these texture sizes, and half the size.
     private static ZoneSceneRange WriteUvs(BinaryWriter data, IReadOnlyList<Vector2> values)
     {
         var offset = data.BaseStream.Position;

@@ -274,11 +274,14 @@ internal static class ZoneViewerChecks
             for (var instance = 0; instance < 2; instance++)
                 foreach (var value in new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, instance * 3, 0, 0, 1 }) data.Write(value);
         }
-        var scene = new ZoneMapScene(ZoneMapScene.CurrentVersion, mapKey, [0, 0, 0], [4, 1, 0],
-            [new ZoneSceneMesh("bg_fixture_stone.fixture_rock_sm", new ZoneSceneRange(0, 3), new ZoneSceneRange(36, 3),
+        var scene = new ZoneMapScene(ZoneMapScene.CurrentVersion, mapKey, [2, 0, 0], 10,
+            [new ZoneSceneMesh("bg_fixture_stone.fixture_rock_sm", new ZoneSceneRange(0, 3), null, new ZoneSceneRange(36, 3),
                 new ZoneSceneRange(48, 3), [new ZoneSceneSection(0, 3, 0)], ["lv_fixture_ed_01_ps.fogvolumemi_0"])],
-            [new ZoneSceneMaterial("lv_fixture_ed_01_ps.fogvolumemi_0", [0.8f, 0.5f, 0.3f], null, null)],
-            [new ZoneSceneBatch(0, [0], new ZoneSceneRange(56, 2))], [], 2, 0);
+            [],
+            [new ZoneSceneMaterial("lv_fixture_ed_01_ps.fogvolumemi_0", -1, [1, 1, 1], -1, [0, 0, 0], 1, false, [0.8f, 0.5f, 0.3f])],
+            [new ZoneSceneBatch(0, [0], new ZoneSceneRange(56, 2))], [],
+            [new ZoneSceneEnvironment("fixture", [2, 0, 0], [-10, -10, -10], [10, 10, 10], [-0.4f, -1, -0.3f], [1, 1, 1], 1, [0.5f, 0.5f, 0.55f], [0.5f, 0.55f, 0.65f],
+                0.02f, 0.2f, 0, 0.5f, null, [0, 0, 0], [1, 1, 1], [1, 1, 1], 0)], 0, 2, 0);
         File.WriteAllText(Path.Combine(directory, ZoneMapScene.FileName), JsonSerializer.Serialize(scene, ZoneMapScene.Json));
         return directory;
     }

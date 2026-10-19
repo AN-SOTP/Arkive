@@ -1,6 +1,7 @@
-// Arkive's 3D map: a whole map from the Zone Viewer's scene (scene.json + scene.bin + small textures), drawn as
-// instanced meshes and terrain tiles. Clicking a piece tells the host which mesh and material it is; the host sends
-// back which parts are selected (highlighted) and the recolour being set up (previewed on their textures).
+// Arkive's 3D map: a whole map from the Zone Viewer's scene (scene.json + scene.bin + DDS textures in the game's own
+// compressed formats), drawn as instanced meshes and terrain tiles under the map's own sun, height fog and colour
+// grading. Clicking a piece tells the host which mesh and material it is; the host sends back which parts are
+// selected (highlighted) and the recolour being set up, which the materials' shaders preview live.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
@@ -8,91 +9,327 @@ const host = window.chrome?.webview;
 const post = (message) => host?.postMessage(message);
 const canvas = document.getElementById('view');
 const status = document.getElementById('status');
+const environmentSelect = document.getElementById('environmentSelect');
+const arenaSelect = document.getElementById('arenaSelect');
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x2a3140);
-const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 200000);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 60000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.screenSpacePanning = true;
-scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x3b342c, 1.6));
-const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-sun.position.set(0.4, 1, 0.3);
-scene.add(sun);
+const ambient = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+const sun = new THREE.DirectionalLight(0xffffff, 2);
+scene.add(ambient, sun, sun.target);
+const s3tc = renderer.extensions.has('WEBGL_compressed_texture_s3tc');
+const rgtc = renderer.extensions.has('EXT_texture_compression_rgtc');
 
-const highlight = new THREE.Color(1.0, 0.62, 0.25);
-// Sky domes and cloud planes wrap the whole map, and glows, water and light shafts drawn solid cover it, so both
-// layers start hidden.
-const layerChecks = { sky: document.getElementById('skyCheck'), effect: document.getElementById('effectCheck') };
-const layerVisible = (layer) => layerChecks[layer]?.checked ?? true;
-for (const check of Object.values(layerChecks))
-  check.addEventListener('change', () => { for (const batch of batches) batch.mesh.visible = layerVisible(batch.layer); });
+// ---- Post-processing: the scene renders into a floating-point target, then one pass adds the map's height fog,
+// its colour grading (shadows, mid-tones, highlights, desaturation), tone mapping and its look-up table.
+const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+target.depthTexture = new THREE.DepthTexture(1, 1, THREE.FloatType);
+const finish = new THREE.ShaderMaterial({
+  uniforms: {
+    tColor: { value: target.texture }, tDepth: { value: target.depthTexture }, tLut: { value: null }, hasLut: { value: 0 },
+    projectionInverse: { value: new THREE.Matrix4() }, cameraWorld: { value: new THREE.Matrix4() },
+    fogColour: { value: new THREE.Color() }, fogDensity: { value: 0 }, fogFalloff: { value: 0 }, fogStart: { value: 0 },
+    fogMax: { value: 0 }, fogBase: { value: 0 }, shadows: { value: new THREE.Vector3() }, midtones: { value: new THREE.Vector3(1, 1, 1) },
+    highlights: { value: new THREE.Vector3(1, 1, 1) }, desaturation: { value: 0 }, exposure: { value: 1 },
+  },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tColor, tDepth, tLut; uniform float hasLut;
+    uniform mat4 projectionInverse, cameraWorld;
+    uniform vec3 fogColour; uniform float fogDensity, fogFalloff, fogStart, fogMax, fogBase;
+    uniform vec3 shadows, midtones, highlights; uniform float desaturation, exposure;
+    varying vec2 vUv;
+    vec3 toSrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+    // The game's 256x16 table: 16 slices of 16x16, blue choosing the slice, red across, green down.
+    vec3 grade(vec3 c) {
+      c = clamp(c, 0.0, 1.0);
+      float blue = c.b * 15.0; float first = floor(blue); float second = min(first + 1.0, 15.0);
+      vec2 a = vec2((first * 16.0 + c.r * 15.0 + 0.5) / 256.0, (c.g * 15.0 + 0.5) / 16.0);
+      vec2 b = vec2((second * 16.0 + c.r * 15.0 + 0.5) / 256.0, (c.g * 15.0 + 0.5) / 16.0);
+      return mix(texture2D(tLut, a).rgb, texture2D(tLut, b).rgb, blue - first);
+    }
+    vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+    void main() {
+      vec3 colour = texture2D(tColor, vUv).rgb * exposure;
+      float depth = texture2D(tDepth, vUv).x;
+      if (fogDensity > 0.0 && depth < 1.0) {
+        vec4 view = projectionInverse * vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+        vec3 position = view.xyz / view.w;
+        vec3 world = (cameraWorld * vec4(position, 1.0)).xyz;
+        float travelled = max(length(position) - fogStart, 0.0);
+        float height = exp(-fogFalloff * max(world.y - fogBase, -50.0) * 0.05);
+        float amount = min(1.0 - exp(-fogDensity * 0.003 * travelled * height), fogMax);
+        colour = mix(colour, fogColour, amount);
+      }
+      // As Unreal 3 grades a frame: tone map, then on the display colour desaturate, lift the shadows, scale the
+      // highlights and bend the mid-tones (an inverse gamma), then the look-up table.
+      colour = toSrgb(aces(colour));
+      float grey = dot(colour, vec3(0.3, 0.59, 0.11));
+      colour = mix(colour, vec3(grey), desaturation);
+      colour = pow(clamp((colour - shadows) * highlights, 0.0, 1.0), 1.0 / max(midtones, vec3(0.01)));
+      if (hasLut > 0.5) colour = grade(colour);
+      gl_FragColor = vec4(colour, 1.0);
+    }`,
+  depthTest: false, depthWrite: false,
+});
+const finishScene = new THREE.Scene();
+const triangle = new THREE.BufferGeometry();
+triangle.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+triangle.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 2, 0, 0, 2], 2));
+finishScene.add(new THREE.Mesh(triangle, finish));
+const finishCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+// ---- Shared shader code: sRGB decoding (textures stay as stored) and the Texture Viewer's recolour rule
+// (TextureRecolour and ColourSelections in Arkive.Core), so the recolour previews on any texture.
+const shaderCommon = `
+  uniform float uTintOn, uSelection, uHue, uWidth, uStrength, uBrightness; uniform vec3 uTarget;
+  vec3 srgbToLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
+  vec3 toSrgbApprox(vec3 c) { return pow(max(c, 0.0), vec3(1.0 / 2.2)); }
+  float tintHue(vec3 c) {
+    float high = max(c.r, max(c.g, c.b)); float delta = high - min(c.r, min(c.g, c.b));
+    if (delta <= 0.0) return 0.0;
+    float h = high == c.r ? mod((c.g - c.b) / delta, 6.0) : high == c.g ? (c.b - c.r) / delta + 2.0 : (c.r - c.g) / delta + 4.0;
+    return mod(h * 60.0 + 360.0, 360.0);
+  }
+  float tintRamp(float value, float from, float to) { return clamp((value - from) / (to - from), 0.0, 1.0); }
+  float tintWeight(vec3 c) {
+    if (uSelection < 0.5) return 1.0;
+    float high = max(c.r, max(c.g, c.b)); float low = min(c.r, min(c.g, c.b));
+    if (high <= 0.0) return 0.0;
+    float saturation = (high - low) / high;
+    if (uSelection > 1.5) return tintRamp(0.25 - saturation, 0.0, 0.12) * tintRamp(high, 0.5, 0.75);
+    float distance = abs(mod(tintHue(c) - uHue + 540.0, 360.0) - 180.0);
+    return tintRamp(uWidth + 12.0 - distance, 0.0, 12.0) * tintRamp(saturation, 0.08, 0.2);
+  }
+  vec3 recolour(vec3 c, float on) {
+    if (on < 0.5) return c;
+    float amount = tintWeight(c);
+    if (amount <= 0.0) return c;
+    float high = max(c.r, max(c.g, c.b));
+    float peak = max(uTarget.r, max(uTarget.g, uTarget.b));
+    vec3 tinted = high * uTarget / max(peak, 0.0001);
+    vec3 changed = (c + (tinted - c) * uStrength) * (1.0 + uBrightness);
+    return c + (changed - c) * amount;
+  }`;
+
+const tintUniforms = () => ({
+  uTintOn: { value: 0 }, uSelection: { value: 0 }, uHue: { value: 45 }, uWidth: { value: 25 }, uStrength: { value: 0 },
+  uBrightness: { value: 0 }, uTarget: { value: new THREE.Vector3(1, 1, 1) },
+});
+let currentTint = null;
+function setTint(uniforms, on) {
+  uniforms.uTintOn.value = on && currentTint ? 1 : 0;
+  if (!currentTint) return;
+  uniforms.uSelection.value = { All: 0, ColourRange: 1, LightAreas: 2 }[currentTint.selection] ?? 0;
+  uniforms.uHue.value = currentTint.rangeHue; uniforms.uWidth.value = currentTint.rangeWidth;
+  uniforms.uStrength.value = currentTint.strength; uniforms.uBrightness.value = currentTint.brightness;
+  uniforms.uTarget.value.set(currentTint.red, currentTint.green, currentTint.blue);
+}
+
+const linear = (rgb) => new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
+
+function meshMaterial(item, textures) {
+  const uniforms = tintUniforms();
+  const diffuse = item.diffuse >= 0 ? textures[item.diffuse] : null;
+  const glow = item.emissive >= 0 ? textures[item.emissive] : null;
+  // The texture's colour times the material's tint; without a texture, its average colour (or grey).
+  const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, color: new THREE.Color(item.tint[0], item.tint[1], item.tint[2]) });
+  if (diffuse) {
+    material.map = diffuse.clone();
+    material.map.repeat.set(item.tiling, item.tiling);
+    material.map.needsUpdate = true;
+  } else material.color.multiply(linear(item.colour));
+  if (glow) {
+    material.emissiveMap = glow.clone();
+    material.emissiveMap.repeat.set(item.tiling, item.tiling);
+    material.emissive = new THREE.Color(item.emissiveColour[0], item.emissiveColour[1], item.emissiveColour[2]);
+  }
+  if (item.masked && diffuse) material.alphaTest = 0.5;
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\n' + shaderCommon)
+      .replace('#include <map_fragment>', `
+        #ifdef USE_MAP
+          vec4 texel = texture2D(map, vMapUv);
+          diffuseColor.rgb *= srgbToLinear(recolour(texel.rgb, uTintOn));
+          diffuseColor.a *= texel.a;
+        #else
+          diffuseColor.rgb = srgbToLinear(recolour(toSrgbApprox(diffuseColor.rgb), uTintOn));
+        #endif`)
+      .replace('#include <emissivemap_fragment>', `
+        #ifdef USE_EMISSIVEMAP
+          totalEmissiveRadiance *= srgbToLinear(recolour(texture2D(emissiveMap, vEmissiveMapUv).rgb, uTintOn));
+        #endif`);
+  };
+  return { material, uniforms };
+}
+
+// A terrain tile mixes up to eight ground layers by the weights its blend masks give each vertex.
+function terrainMaterial(layers, textures) {
+  const uniforms = tintUniforms();
+  const maps = [], tints = [], tilings = [], tinted = [];
+  for (let index = 0; index < 8; index++) {
+    const layer = layers[index];
+    maps.push(layer && layer.texture >= 0 ? textures[layer.texture] : textures.white);
+    tints.push(layer ? new THREE.Vector3(...layer.tint) : new THREE.Vector3());
+    tilings.push(layer ? layer.tiling : 1);
+    tinted.push(0);
+  }
+  Object.assign(uniforms, { layerMaps: { value: maps }, layerTints: { value: tints }, layerTilings: { value: tilings },
+    layerTinted: { value: tinted }, layerCount: { value: Math.min(8, layers.length) } });
+  const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec4 weightsA, weightsB; attribute vec2 terrainUv; varying vec4 vWeightsA, vWeightsB; varying vec2 vTerrainUv;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWeightsA = weightsA; vWeightsB = weightsB; vTerrainUv = terrainUv;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${shaderCommon}
+        uniform sampler2D layerMaps[8]; uniform vec3 layerTints[8]; uniform float layerTilings[8]; uniform float layerTinted[8]; uniform int layerCount;
+        varying vec4 vWeightsA, vWeightsB; varying vec2 vTerrainUv;`)
+      .replace('#include <map_fragment>', `
+        float weights[8] = float[8](vWeightsA.x, vWeightsA.y, vWeightsA.z, vWeightsA.w, vWeightsB.x, vWeightsB.y, vWeightsB.z, vWeightsB.w);
+        vec3 ground = vec3(0.0); float total = 0.0;
+        #pragma unroll_loop_start
+        for (int i = 0; i < 8; i++) {
+          if (i < layerCount && weights[i] > 0.0) {
+            vec3 texel = texture2D(layerMaps[i], vTerrainUv * layerTilings[i]).rgb;
+            ground += weights[i] * srgbToLinear(recolour(texel, layerTinted[i] * uTintOn)) * layerTints[i];
+            total += weights[i];
+          }
+        }
+        #pragma unroll_loop_end
+        diffuseColor.rgb *= total > 0.0 ? ground / total : vec3(0.4);`);
+  };
+  return { material, uniforms };
+}
+
+// ---- Textures: DDS files in the game's formats (DXT1, DXT5, ATI2) or plain BGRA.
+
+function loadTexture(buffer, item) {
+  const view = new DataView(buffer);
+  const mipCount = Math.max(1, view.getUint32(28, true));
+  let width = item.width, height = item.height, offset = 128;
+  const block = { DXT1: 8, DXT5: 16, ATI2: 16 }[item.format];
+  const mipmaps = [];
+  for (let level = 0; level < mipCount && offset < buffer.byteLength; level++) {
+    const size = block ? Math.max(1, Math.ceil(width / 4)) * Math.max(1, Math.ceil(height / 4)) * block : width * height * 4;
+    if (offset + size > buffer.byteLength) break;
+    mipmaps.push({ data: new Uint8Array(buffer, offset, size), width, height });
+    offset += size; width = Math.max(1, width >> 1); height = Math.max(1, height >> 1);
+  }
+  let texture;
+  if (block) {
+    if ((item.format === 'ATI2' && !rgtc) || (item.format !== 'ATI2' && !s3tc)) return null;
+    const format = item.format === 'DXT1' ? THREE.RGBA_S3TC_DXT1_Format : item.format === 'DXT5' ? THREE.RGBA_S3TC_DXT5_Format : THREE.RED_GREEN_RGTC2_Format;
+    texture = new THREE.CompressedTexture(mipmaps, item.width, item.height, format);
+  } else {
+    for (const mip of mipmaps) {
+      const rgba = new Uint8Array(mip.data.length);
+      for (let index = 0; index < rgba.length; index += 4) {
+        rgba[index] = mip.data[index + 2]; rgba[index + 1] = mip.data[index + 1]; rgba[index + 2] = mip.data[index]; rgba[index + 3] = mip.data[index + 3];
+      }
+      mip.data = rgba;
+    }
+    texture = new THREE.DataTexture(mipmaps[0].data, item.width, item.height, THREE.RGBAFormat);
+    texture.mipmaps = mipmaps;
+  }
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = mipmaps.length > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  texture.needsUpdate = true;
+  return texture;
+}
+
+// ---- Scene ----
+
+const highlight = new THREE.Color(1.0, 0.72, 0.42);
 const white = new THREE.Color(1, 1, 1);
-let materials = [];        // { key, textureKey, material, image (ImageData), colour }
-let batches = [];          // { mesh: InstancedMesh, meshKey, slotKeys[] }
-let tiles = [];            // { mesh, materialKey }
-let selected = new Set();  // part keys the host has selected
-let picked = null;         // { batch, instance } last clicked
+let description = null;
+let materials = [];        // { key, textureKey, glowKey, material, uniforms }
+let batches = [];          // { mesh: InstancedMesh, meshKey, layer, slotKeys[] }
+let tiles = [];            // terrain meshes; userData.tile = { materialKey, layers[], uniforms }
+let selected = new Set();
 const box = new THREE.Box3Helper(new THREE.Box3(), 0xffa040);
 box.visible = false;
 scene.add(box);
 
+const layerChecks = { sky: document.getElementById('skyCheck'), effect: document.getElementById('effectCheck'), cutscene: document.getElementById('cutsceneCheck') };
+const layerVisible = (layer) => layerChecks[layer]?.checked ?? true;
+for (const check of Object.values(layerChecks))
+  check.addEventListener('change', () => { for (const batch of batches) batch.mesh.visible = layerVisible(batch.layer); });
+
 function resize() {
-  const width = canvas.clientWidth, height = canvas.clientHeight;
+  const width = Math.max(1, canvas.clientWidth), height = Math.max(1, canvas.clientHeight);
   renderer.setSize(width, height, false);
-  camera.aspect = width / Math.max(1, height);
+  const ratio = renderer.getPixelRatio();
+  target.setSize(Math.floor(width * ratio), Math.floor(height * ratio));
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
 
 async function load(sceneUrl, baseUrl) {
   status.textContent = 'Loading the map…';
-  const description = await (await fetch(sceneUrl)).json();
+  description = await (await fetch(sceneUrl)).json();
   const data = await (await fetch(baseUrl + 'scene.bin')).arrayBuffer();
-  const loader = new THREE.TextureLoader();
-  materials = await Promise.all(description.materials.map(async (item) => {
-    const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, color: new THREE.Color().setRGB(...item.colour, THREE.SRGBColorSpace) });
-    const entry = { key: item.key.toLowerCase(), textureKey: item.textureKey?.toLowerCase() ?? null, material, image: null, texture: null, colour: material.color.clone() };
-    if (item.texture) {
-      try {
-        const texture = await loader.loadAsync(baseUrl + item.texture);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-        texture.magFilter = THREE.LinearFilter;
-        entry.image = pixels(texture.image);
-        entry.texture = new THREE.DataTexture(new Uint8ClampedArray(entry.image.data), entry.image.width, entry.image.height);
-        entry.texture.colorSpace = THREE.SRGBColorSpace;
-        entry.texture.wrapS = entry.texture.wrapT = THREE.RepeatWrapping;
-        entry.texture.magFilter = THREE.LinearFilter;
-        entry.texture.minFilter = THREE.LinearMipmapLinearFilter;
-        entry.texture.generateMipmaps = true;
-        entry.texture.flipY = false;
-        entry.texture.needsUpdate = true;
-        material.map = entry.texture;
-        material.color.set(0xffffff);
-        entry.colour = material.color.clone();
-      } catch { /* a missing texture leaves the colour */ }
-    }
-    return entry;
+  const textures = await Promise.all(description.textures.map(async (item) => {
+    try { return loadTexture(await (await fetch(baseUrl + item.file)).arrayBuffer(), item); } catch { return null; }
   }));
+  textures.white = new THREE.DataTexture(new Uint8Array([200, 200, 200, 255]), 1, 1);
+  textures.white.needsUpdate = true;
+  const textureKeys = description.textures.map((item) => item.key);
+  materials = description.materials.map((item) => {
+    const usable = { ...item, diffuse: item.diffuse >= 0 && textures[item.diffuse] ? item.diffuse : -1, emissive: item.emissive >= 0 && textures[item.emissive] ? item.emissive : -1 };
+    const { material, uniforms } = meshMaterial(usable, textures);
+    return { key: item.key.toLowerCase(), textureKey: item.diffuse >= 0 ? textureKeys[item.diffuse] : null,
+      glowKey: item.emissive >= 0 ? textureKeys[item.emissive] : null, material, uniforms };
+  });
   const fallback = new THREE.MeshLambertMaterial({ color: 0x8c8c8c, side: THREE.DoubleSide });
+  // Normals are four signed bytes a vertex (the fourth unused).
   const geometries = description.meshes.map((mesh) => {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data, mesh.positions.offset, mesh.positions.count * 3), 3));
+    if (mesh.normals) {
+      const packed = new Int8Array(data, mesh.normals.offset, mesh.normals.count * 4);
+      geometry.setAttribute('normal', new THREE.InterleavedBufferAttribute(new THREE.InterleavedBuffer(packed, 4), 3, 0, true));
+    }
     geometry.setAttribute('uv', new THREE.Float16BufferAttribute(new Uint16Array(data, mesh.uvs.offset, mesh.uvs.count * 2), 2));
     geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(data, mesh.indices.offset, mesh.indices.count), 1));
     for (const section of mesh.sections) geometry.addGroup(section.firstIndex, section.indexCount, section.material);
-    geometry.computeVertexNormals();
+    if (!mesh.normals) geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     return geometry;
   });
   const matrix = new THREE.Matrix4();
+  // Flat pieces with an alpha channel (sand drifts, puddles, ground decals) blend into what is under them.
+  const decalCopies = new Map();
+  const decal = (index) => {
+    if (!decalCopies.has(index)) {
+      const copy = materials[index].material.clone();
+      copy.onBeforeCompile = materials[index].material.onBeforeCompile;
+      copy.transparent = true; copy.depthWrite = false; copy.alphaTest = 0;
+      copy.polygonOffset = true; copy.polygonOffsetFactor = -2;
+      decalCopies.set(index, copy);
+    }
+    return decalCopies.get(index);
+  };
   for (const batch of description.batches) {
     const geometry = geometries[batch.mesh];
-    const slots = batch.materials.map((index) => index >= 0 ? materials[index].material : fallback);
+    geometry.computeBoundingBox();
+    const extent = geometry.boundingBox.getSize(new THREE.Vector3());
+    const flat = Math.min(extent.x, extent.y, extent.z) < Math.max(extent.x, extent.y, extent.z) * 0.03;
+    const slots = batch.materials.map((index) => index < 0 ? fallback
+      : flat && description.materials[index].diffuse >= 0 && description.textures[description.materials[index].diffuse].format !== 'DXT1' ? decal(index)
+      : materials[index].material);
     const mesh = new THREE.InstancedMesh(geometry, slots.length ? slots : fallback, batch.matrices.count);
     const values = new Float32Array(data, batch.matrices.offset, batch.matrices.count * 16);
     for (let index = 0; index < batch.matrices.count; index++) {
@@ -111,117 +348,142 @@ async function load(sceneUrl, baseUrl) {
   }
   for (const tile of description.terrain) {
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data, tile.positions.offset, tile.positions.count * 3), 3));
-    geometry.setAttribute('uv', new THREE.Float16BufferAttribute(new Uint16Array(data, tile.uvs.offset, tile.uvs.count * 2), 2));
+    const count = tile.positions.count;
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data, tile.positions.offset, count * 3), 3));
+    geometry.setAttribute('terrainUv', new THREE.Float16BufferAttribute(new Uint16Array(data, tile.uvs.offset, count * 2), 2));
     geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(data, tile.indices.offset, tile.indices.count), 1));
     geometry.computeVertexNormals();
-    const info = { materialKey: tile.material >= 0 ? materials[tile.material].key : null, layers: null, weights: null };
-    let material = tile.material >= 0 ? materials[tile.material].material : fallback;
-    if (tile.layers?.length && tile.weights) {
-      // The ground's own blend: each vertex mixes its layers' colours by the tile's blend masks.
-      info.layers = tile.layers.map((layer) => ({ texture: layer.texture?.toLowerCase() ?? null, colour: new THREE.Color().setRGB(...layer.colour, THREE.SRGBColorSpace) }));
-      info.weights = new Uint8Array(data, tile.weights.offset, tile.weights.count);
-      geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tile.positions.count * 3), 3));
-      material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-      colourTile(geometry, info, null, new Set());
-    }
+    const layers = tile.layers ?? [];
+    const a = new Float32Array(count * 4), b = new Float32Array(count * 4);
+    if (tile.weights && layers.length) {
+      const weights = new Uint8Array(data, tile.weights.offset, tile.weights.count);
+      for (let vertex = 0; vertex < count; vertex++)
+        for (let layer = 0; layer < Math.min(8, layers.length); layer++)
+          (layer < 4 ? a : b)[vertex * 4 + (layer % 4)] = weights[vertex * layers.length + layer] / 255;
+    } else for (let vertex = 0; vertex < count; vertex++) a[vertex * 4] = 1;
+    geometry.setAttribute('weightsA', new THREE.BufferAttribute(a, 4));
+    geometry.setAttribute('weightsB', new THREE.BufferAttribute(b, 4));
+    const own = tile.material >= 0 ? description.materials[tile.material] : null;
+    const useLayers = layers.length ? layers : [{ texture: own ? own.diffuse : -1, tint: own ? own.tint : [1, 1, 1], tiling: 1 }];
+    const { material, uniforms } = terrainMaterial(useLayers.map((layer) => ({ ...layer, texture: layer.texture >= 0 && textures[layer.texture] ? layer.texture : -1 })), textures);
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.tile = info;
+    mesh.userData.tile = { materialKey: own ? own.key.toLowerCase() : null, layers: layers.map((layer) => layer.textureKey?.toLowerCase() ?? null), uniforms };
     tiles.push(mesh);
     scene.add(mesh);
   }
+  environmentSelect.innerHTML = '';
+  description.environments.forEach((environment, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    const name = environment.name === 'map' ? "The map's own" : `Area ${index}`;
+    option.textContent = index === description.environment ? `${name} (the play area's)` : name;
+    environmentSelect.appendChild(option);
+  });
+  const plain = document.createElement('option');
+  plain.value = 'plain'; plain.textContent = 'Plain light (no fog or grading)';
+  environmentSelect.appendChild(plain);
+  environmentSelect.value = String(description.environment);
+  arenaSelect.innerHTML = '';
+  (description.arenas ?? []).forEach((arena, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = index === 0 ? 'Arena 1 (the busiest)' : `Arena ${index + 1}`;
+    arenaSelect.appendChild(option);
+  });
+  arenaSelect.parentElement.style.display = (description.arenas ?? []).length > 1 ? '' : 'none';
+  await applyEnvironment(baseUrl);
   frame();
   status.textContent = '';
   post({ type: 'loaded', placements: description.placements, meshes: description.meshes.length, terrain: description.terrain.length });
   applySelection();
+  applyTint([], null);
 }
 
-// The play area: the terrain when the map has one, otherwise where most pieces stand (cinematic sets and skies sit
-// far away from it).
-function frame() {
-  if (tiles.length) {
-    const bounds = new THREE.Box3();
-    for (const tile of tiles) { tile.geometry.computeBoundingBox(); bounds.union(tile.geometry.boundingBox); }
-    look(bounds);
-    return;
-  }
-  const cell = 150, counts = new Map(), points = [];
-  const position = new THREE.Vector3(), matrix = new THREE.Matrix4();
-  for (const batch of batches) {
-    if (batch.layer !== 'solid') continue;
-    for (let index = 0; index < batch.mesh.count; index++) {
-      batch.mesh.getMatrixAt(index, matrix);
-      position.setFromMatrixPosition(matrix);
-      points.push(position.clone());
-      const key = `${Math.floor(position.x / cell)},${Math.floor(position.z / cell)}`;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+const lutCache = new Map();
+async function applyEnvironment(baseUrl) {
+  const plain = environmentSelect.value === 'plain';
+  const environment = description.environments[plain ? description.environment : Number(environmentSelect.value)];
+  const u = finish.uniforms;
+  const direction = new THREE.Vector3(...environment.sunDirection).normalize();
+  sun.color.copy(linear(environment.sunColour));
+  sun.intensity = Math.max(0.6, environment.sunBrightness) * 1.6;
+  sun.position.copy(direction).multiplyScalar(-1);
+  sun.target.position.set(0, 0, 0);
+  ambient.color.copy(linear(environment.ambientColour));
+  ambient.groundColor.copy(linear(environment.ambientColour)).multiplyScalar(0.45);
+  ambient.intensity = 1.4;
+  scene.background = linear(environment.fogColour).multiplyScalar(0.8);
+  u.fogColour.value.copy(linear(environment.fogColour));
+  u.fogDensity.value = plain ? 0 : environment.fogDensity;
+  u.fogFalloff.value = environment.fogHeightFalloff;
+  u.fogStart.value = environment.fogStart;
+  u.fogMax.value = environment.fogMaxOpacity;
+  u.fogBase.value = description.focus[1];
+  u.shadows.value.set(...(plain ? [0, 0, 0] : environment.shadows));
+  u.midtones.value.set(...(plain ? [1, 1, 1] : environment.midtones));
+  u.highlights.value.set(...(plain ? [1, 1, 1] : environment.highlights));
+  u.desaturation.value = plain ? 0 : environment.desaturation;
+  u.hasLut.value = 0;
+  if (!plain && environment.lut) {
+    let lut = lutCache.get(environment.lut);
+    if (!lut) {
+      lut = await new THREE.TextureLoader().loadAsync(baseUrl + environment.lut);
+      lut.magFilter = lut.minFilter = THREE.LinearFilter;
+      lut.generateMipmaps = false;
+      lut.flipY = false;
+      lut.colorSpace = THREE.NoColorSpace;
+      lut.needsUpdate = true;
+      lutCache.set(environment.lut, lut);
     }
+    u.tLut.value = lut;
+    u.hasLut.value = 1;
   }
-  if (!points.length) return;
-  const [best] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-  const [cx, cz] = best.split(',').map(Number);
-  const near = points.filter((point) => Math.abs(point.x / cell - cx - 0.5) < 3 && Math.abs(point.z / cell - cz - 0.5) < 3);
-  look(new THREE.Box3().setFromPoints(near));
+}
+let base = '';
+environmentSelect.addEventListener('change', () => applyEnvironment(base));
+// Going to an arena frames it and switches to the lighting that applies there.
+arenaSelect.addEventListener('change', () => goToArena(Number(arenaSelect.value)));
+function goToArena(index) {
+  const arena = description.arenas?.[index];
+  if (!arena) return Promise.resolve();
+  look(new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(...arena.centre), new THREE.Vector3(1, 1, 1).multiplyScalar(arena.size * 0.6)));
+  environmentSelect.value = String(arena.environment);
+  return applyEnvironment(base);
+}
+
+function frame() {
+  look(new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(...description.focus), new THREE.Vector3(1, 1, 1).multiplyScalar(description.focusSize * 0.6)));
 }
 
 function look(bounds) {
   const centre = bounds.getCenter(new THREE.Vector3());
   const size = Math.max(10, bounds.getSize(new THREE.Vector3()).length());
   controls.target.copy(centre);
-  camera.position.copy(centre).add(new THREE.Vector3(0.55, 0.6, 0.75).normalize().multiplyScalar(size * 0.9));
-  camera.near = Math.max(0.1, size / 5000);
-  camera.far = size * 40;
+  camera.position.copy(centre).add(new THREE.Vector3(0.55, 0.5, 0.75).normalize().multiplyScalar(size * 0.9));
+  camera.near = Math.max(0.2, size / 3000);
+  camera.far = Math.max(2000, size * 30);
   camera.updateProjectionMatrix();
   controls.update();
 }
 
-// A tile's vertex colours from its layers, with the layers the recolour applies to tinted.
-function colourTile(geometry, info, tint, chosen) {
-  const colours = geometry.getAttribute('color');
-  const count = info.layers.length;
-  const layerColours = info.layers.map((layer) => {
-    if (!tint || !(chosen.has(info.materialKey) || (layer.texture && chosen.has(layer.texture)))) return layer.colour;
-    const srgb = layer.colour.clone().convertLinearToSRGB();
-    const pixel = [srgb.r * 255, srgb.g * 255, srgb.b * 255, 255], out = [0, 0, 0, 255];
-    recolour(pixel, out, tint);
-    return new THREE.Color().setRGB(out[0] / 255, out[1] / 255, out[2] / 255, THREE.SRGBColorSpace);
-  });
-  for (let vertex = 0; vertex < colours.count; vertex++) {
-    let r = 0, g = 0, b = 0, total = 0;
-    for (let layer = 0; layer < count; layer++) {
-      const weight = info.weights[vertex * count + layer];
-      r += layerColours[layer].r * weight; g += layerColours[layer].g * weight; b += layerColours[layer].b * weight; total += weight;
-    }
-    if (total === 0) { r = layerColours[0].r; g = layerColours[0].g; b = layerColours[0].b; total = 1; }
-    colours.setXYZ(vertex, r / total, g / total, b / total);
-  }
-  colours.needsUpdate = true;
-}
-
-function pixels(image) {
-  const surface = document.createElement('canvas');
-  surface.width = image.width; surface.height = image.height;
-  const context = surface.getContext('2d', { willReadFrequently: true });
-  context.drawImage(image, 0, 0);
-  return context.getImageData(0, 0, image.width, image.height);
-}
-
 // ---- Selection ----
 
-function matches(key) { return key && selected.has(key); }
+const matches = (key) => key && selected.has(key);
 
 function applySelection() {
   for (const batch of batches) {
-    const on = matches(batch.meshKey) || batch.slotKeys.some((key) => matches(key) || matches(materials.find((item) => item.key === key)?.textureKey));
+    const on = matches(batch.meshKey) || batch.slotKeys.some((key) => {
+      const material = materials.find((item) => item.key === key);
+      return matches(key) || matches(material?.textureKey) || matches(material?.glowKey);
+    });
     batch.on = on;
     for (let index = 0; index < batch.mesh.count; index++) batch.mesh.setColorAt(index, on ? highlight : white);
     batch.mesh.instanceColor.needsUpdate = true;
   }
   for (const tile of tiles) {
     const info = tile.userData.tile;
-    const on = matches(info.materialKey) || matches(materials.find((item) => item.key === info.materialKey)?.textureKey) ||
-      (info.layers ?? []).some((layer) => matches(layer.texture));
-    tile.material.emissive?.set(on ? 0x2a1a08 : 0x000000);
+    const on = matches(info.materialKey) || info.layers.some(matches);
+    tile.material.emissive?.set(on ? 0x1a1206 : 0x000000);
   }
 }
 
@@ -234,24 +496,23 @@ canvas.addEventListener('pointerup', (event) => {
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(pointer, camera);
   const hit = raycaster.intersectObjects([...batches.filter((batch) => batch.mesh.visible).map((batch) => batch.mesh), ...tiles], false)[0];
-  if (!hit) { box.visible = false; picked = null; return; }
+  if (!hit) { box.visible = false; return; }
   if (hit.object.userData.batch) {
     const batch = hit.object.userData.batch;
-    const slot = hit.face ? (hit.object.geometry.groups.find((group) => hit.faceIndex * 3 >= group.start && hit.faceIndex * 3 < group.start + group.count)?.materialIndex ?? 0) : 0;
-    picked = { batch, instance: hit.instanceId };
+    const group = hit.object.geometry.groups.find((item) => hit.faceIndex * 3 >= item.start && hit.faceIndex * 3 < item.start + item.count);
     const matrix = new THREE.Matrix4();
     batch.mesh.getMatrixAt(hit.instanceId, matrix);
     hit.object.geometry.computeBoundingBox();
     box.box.copy(hit.object.geometry.boundingBox).applyMatrix4(matrix);
     box.visible = true;
-    const material = batch.slotKeys[slot];
+    const material = batch.slotKeys[group?.materialIndex ?? 0];
     post({ type: 'pick', mesh: batch.meshKey, material, texture: materials.find((item) => item.key === material)?.textureKey ?? null });
   } else {
-    const key = hit.object.userData.tile.materialKey;
+    const info = hit.object.userData.tile;
     hit.object.geometry.computeBoundingBox();
     box.box.copy(hit.object.geometry.boundingBox);
     box.visible = true;
-    post({ type: 'pick', mesh: null, material: key, texture: materials.find((item) => item.key === key)?.textureKey ?? null });
+    post({ type: 'pick', mesh: null, material: info.materialKey, texture: null });
   }
 });
 
@@ -262,68 +523,23 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
-// ---- Recolour preview (the Texture Viewer's rule: TextureRecolour and ColourSelections in Arkive.Core) ----
-
-function hue(red, green, blue) {
-  const max = Math.max(red, green, blue), delta = max - Math.min(red, green, blue);
-  if (delta <= 0) return 0;
-  const value = max === red ? ((green - blue) / delta) % 6 : max === green ? (blue - red) / delta + 2 : (red - green) / delta + 4;
-  return (value * 60 + 360) % 360;
-}
-
-const ramp = (value, from, to) => Math.min(1, Math.max(0, (value - from) / (to - from)));
-
-function weight(tint, red, green, blue, lightness) {
-  if (tint.selection === 'All') return 1;
-  const strongest = Math.max(red, green, blue), weakest = Math.min(red, green, blue);
-  if (strongest <= 0 || weakest < 0) return 0;
-  const saturation = (strongest - weakest) / strongest;
-  if (tint.selection === 'LightAreas') return ramp(0.25 - saturation, 0, 0.12) * ramp(lightness, 0.5, 0.75);
-  const distance = Math.abs((((hue(red, green, blue) - tint.rangeHue) % 360) + 540) % 360 - 180);
-  return ramp(tint.rangeWidth + 12 - distance, 0, 12) * ramp(saturation, 0.08, 0.2);
-}
-
-function recolour(source, target, tint) {
-  const peak = Math.max(tint.red, tint.green, tint.blue) || 1;
-  const [r, g, b] = [tint.red / peak, tint.green / peak, tint.blue / peak];
-  const scale = 1 + tint.brightness;
-  const mix = (original, tinted, amount) => Math.round(original + ((original + (tinted - original) * tint.strength) * scale - original) * amount);
-  for (let index = 0; index < source.length; index += 4) {
-    const red = source[index], green = source[index + 1], blue = source[index + 2];
-    const amount = weight(tint, red, green, blue, Math.max(red, green, blue) / 255);
-    if (amount <= 0) { target[index] = red; target[index + 1] = green; target[index + 2] = blue; continue; }
-    const strongest = Math.max(red, green, blue);
-    target[index] = mix(red, strongest * r, amount);
-    target[index + 1] = mix(green, strongest * g, amount);
-    target[index + 2] = mix(blue, strongest * b, amount);
-  }
-}
-
 function applyTint(keys, tint) {
+  currentTint = tint;
   const chosen = new Set(keys.map((key) => key.toLowerCase()));
-  for (const tile of tiles) if (tile.userData.tile.layers) colourTile(tile.geometry, tile.userData.tile, tint, chosen);
-  for (const item of materials) {
-    const on = tint && (chosen.has(item.key) || (item.textureKey && chosen.has(item.textureKey)));
-    if (item.texture && item.image) {
-      const target = item.texture.image.data;
-      if (on) recolour(item.image.data, target, tint); else target.set(item.image.data);
-      item.texture.needsUpdate = true;
-    } else {
-      const base = item.colour;
-      if (on) {
-        const pixel = [base.r * 255, base.g * 255, base.b * 255, 255];
-        const out = [0, 0, 0, 255];
-        recolour(pixel, out, tint);
-        item.material.color.setRGB(out[0] / 255, out[1] / 255, out[2] / 255);
-      } else item.material.color.copy(base);
-    }
+  for (const item of materials)
+    setTint(item.uniforms, chosen.has(item.key) || (item.textureKey && chosen.has(item.textureKey)) || (item.glowKey && chosen.has(item.glowKey)));
+  for (const tile of tiles) {
+    const info = tile.userData.tile;
+    setTint(info.uniforms, true);
+    const whole = chosen.has(info.materialKey);
+    info.uniforms.layerTinted.value = info.uniforms.layerTinted.value.map((_, index) => whole || (info.layers[index] && chosen.has(info.layers[index])) ? 1 : 0);
   }
 }
 
 host?.addEventListener('message', (event) => {
   const message = event.data;
   if (message.type === 'load') {
-    document.documentElement.dataset.theme = message.theme === 'Light' ? 'light' : 'dark';
+    base = message.base;
     load(message.scene, message.base).catch((error) => { status.textContent = 'The map could not be drawn: ' + error.message; post({ type: 'error', message: String(error) }); });
   } else if (message.type === 'select') {
     selected = new Set((message.keys ?? []).map((key) => key.toLowerCase()));
@@ -333,9 +549,19 @@ host?.addEventListener('message', (event) => {
   }
 });
 
-// For Arkive's own tests: views from fixed directions.
+// For Arkive's own tests: views from fixed directions, a lighting choice and a click.
 window.arkiveMap = {
   top() { frame(); camera.position.set(controls.target.x, controls.target.y + camera.position.distanceTo(controls.target), controls.target.z + 0.01); controls.update(); },
+  low() { frame(); const offset = camera.position.clone().sub(controls.target); offset.y *= 0.35; camera.position.copy(controls.target).add(offset.multiplyScalar(0.6)); controls.update(); },
+  environment(value) { environmentSelect.value = String(value); return applyEnvironment(base); },
+  arena(index) { arenaSelect.value = String(index); return goToArena(index); },
+  arenas() { return (description.arenas ?? []).length; },
+  visit(index, size) {
+    const environment = description.environments[index];
+    environmentSelect.value = String(index);
+    look(new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(...environment.centre), new THREE.Vector3(size, size, size)));
+    return applyEnvironment(base);
+  },
   highlighted() { return batches.filter((batch) => batch.on).length; },
   pick(x, y) { canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, button: 0 })); canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, button: 0 })); },
 };
@@ -343,7 +569,12 @@ window.arkiveMap = {
 function render() {
   requestAnimationFrame(render);
   controls.update();
+  renderer.setRenderTarget(target);
   renderer.render(scene, camera);
+  finish.uniforms.projectionInverse.value.copy(camera.projectionMatrixInverse);
+  finish.uniforms.cameraWorld.value.copy(camera.matrixWorld);
+  renderer.setRenderTarget(null);
+  renderer.render(finishScene, finishCamera);
 }
 resize();
 render();
