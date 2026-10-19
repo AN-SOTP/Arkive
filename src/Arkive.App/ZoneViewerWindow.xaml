@@ -1,0 +1,227 @@
+<Window x:Class="Arkive.App.ZoneViewerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Arkive Zone Viewer"
+        Width="1360"
+        Height="820"
+        MinWidth="980"
+        MinHeight="560"
+        Background="{DynamicResource AppBackgroundBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="10">
+        <Border DockPanel.Dock="Top" Padding="9" Margin="0,0,0,8"
+                Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+            <StackPanel>
+                <TextBlock x:Name="HeaderText" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
+                <TextBlock x:Name="DetailText" Margin="0,3,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+                <TextBlock x:Name="SharingText" Margin="0,3,0,0" TextWrapping="Wrap" />
+                <TextBlock x:Name="SettingsText" Margin="0,3,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+            </StackPanel>
+        </Border>
+        <Border x:Name="ProgressPanel" DockPanel.Dock="Top" Padding="8,5" Margin="0,0,0,8" Visibility="Collapsed"
+                Background="{DynamicResource InfoSurfaceBrush}" BorderBrush="{DynamicResource InfoBorderBrush}" BorderThickness="1">
+            <DockPanel>
+                <Button x:Name="StopButton" DockPanel.Dock="Right" Content="Stop" MinWidth="70" Margin="8,0,0,0"
+                        Visibility="Collapsed" Click="StopButton_Click" />
+                <StackPanel>
+                    <TextBlock x:Name="ProgressText" Foreground="{DynamicResource InfoTextBrush}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <ProgressBar x:Name="ProgressBar" Height="6" Minimum="0" Maximum="1" IsIndeterminate="True" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Close" MinWidth="70" Margin="8,0,0,0" IsCancel="True" Click="CloseButton_Click" />
+                <Button x:Name="ExportButton" DockPanel.Dock="Right" Content="Export selected…" Margin="8,0,0,0" Click="ExportButton_Click"
+                        ToolTip="Export the selected parts with UModel into a folder you choose (textures as pictures, meshes as models), to edit in other apps." />
+                <Button x:Name="AddButton" DockPanel.Dock="Right" Margin="8,0,0,0" Click="AddButton_Click"
+                        ToolTip="Adds the selected parts to the mod as working copies, unchanged, to edit in Edit Mods or in your own apps." />
+                <Button x:Name="TintButton" DockPanel.Dock="Right" Click="TintButton_Click" Style="{StaticResource PrimaryButtonStyle}" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock x:Name="TargetModText" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    <Button x:Name="ShowEditModsButton" Content="Open Edit Mods" Margin="8,0,0,0" Click="ShowEditModsButton_Click"
+                            ToolTip="Choose or create the mod to add map parts to, then come back here." />
+                </StackPanel>
+            </DockPanel>
+            <TextBlock x:Name="StatusText" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+        </StackPanel>
+        <ListBox x:Name="GroupsList" DockPanel.Dock="Left" Width="215" Margin="0,0,10,0" SelectionChanged="GroupsList_SelectionChanged">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Margin="2,3" ToolTip="{Binding Description}">
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <ScrollViewer DockPanel.Dock="Right" Width="340" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="Selected Part" FontWeight="SemiBold" />
+                <Border Margin="0,4,0,0" Height="230" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                    <Grid>
+                        <Rectangle x:Name="Checkerboard" />
+                        <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
+                               MouseLeftButtonDown="PreviewImage_MouseLeftButtonDown" />
+                        <TextBlock x:Name="PreviewMessage" Margin="12" TextWrapping="Wrap" TextAlignment="Center"
+                                   VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </Grid>
+                </Border>
+                <TextBlock x:Name="PartNameText" Margin="0,6,0,0" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock x:Name="PartDetailText" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+                <TextBlock x:Name="PartUsedByText" Margin="0,3,0,0" TextWrapping="Wrap" />
+                <StackPanel x:Name="MaterialPanel" Margin="0,8,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Colour parameters" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,2,0,4" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="The game's colour on the left; with the recolour below on the right." />
+                    <ItemsControl x:Name="VectorsList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel Margin="0,1">
+                                    <Border DockPanel.Dock="Right" Width="26" Height="16" Margin="4,0,0,0" CornerRadius="2"
+                                            BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}" Background="{Binding Tinted}" />
+                                    <Border DockPanel.Dock="Right" Width="26" Height="16" CornerRadius="2"
+                                            BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}" Background="{Binding Original}" />
+                                    <TextBlock Text="{Binding Name}" ToolTip="{Binding Values}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="Textures it draws with" FontWeight="SemiBold" Margin="0,8,0,2" />
+                    <ListBox x:Name="MaterialTexturesList" MaxHeight="130" DisplayMemberPath="Label"
+                             MouseDoubleClick="MaterialTexturesList_MouseDoubleClick"
+                             ToolTip="Double-click a texture this map uses to select it in the list." />
+                </StackPanel>
+                <WrapPanel Margin="0,8,0,0">
+                    <Button x:Name="OpenButton" Content="Open in viewer" Click="OpenButton_Click" Margin="0,0,6,6" />
+                </WrapPanel>
+                <Separator Margin="0,6" />
+                <TextBlock Text="Recolour Selected Parts" FontWeight="SemiBold" />
+                <TextBlock Margin="0,2,0,6" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                           Text="Pick which colours change and the new colour. The selected part's preview shows the result as you go. Textures and material colours change; open meshes and effects in their own editors." />
+                <TextBlock Text="Change" />
+                <ComboBox x:Name="SelectionComboBox" Margin="0,4,0,0" SelectionChanged="SelectionComboBox_SelectionChanged">
+                    <ComboBoxItem Content="Every colour" Tag="All" IsSelected="True"
+                                  ToolTip="Every pixel and colour takes the new colour." />
+                    <ComboBoxItem Content="One colour range (gold, say)" Tag="ColourRange"
+                                  ToolTip="Only colours near the chosen hue change; greys and other colours stay as they are." />
+                    <ComboBoxItem Content="Light and white areas" Tag="LightAreas"
+                                  ToolTip="Only light, nearly white colours change (white stone, pale highlights). Lower Brightness to darken them." />
+                </ComboBox>
+                <StackPanel x:Name="RangePanel" Margin="0,6,0,0" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="74" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="44" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Hue" VerticalAlignment="Center" />
+                        <Slider x:Name="RangeHueSlider" Grid.Column="1" Minimum="0" Maximum="359" Value="45" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                        <TextBlock x:Name="RangeHueText" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Text="Width" VerticalAlignment="Center" />
+                        <Slider x:Name="RangeWidthSlider" Grid.Row="1" Grid.Column="1" Minimum="5" Maximum="90" Value="25" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                        <TextBlock x:Name="RangeWidthText" Grid.Row="1" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                    <Border x:Name="RangePreview" Height="14" CornerRadius="3" Margin="0,4,0,0" BorderThickness="1"
+                            BorderBrush="{DynamicResource BorderBrush}" />
+                    <ToggleButton x:Name="PickHueButton" Content="Pick the colour from the preview" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                  ToolTip="Then click the preview picture: the hue under the pointer becomes the middle of the range." />
+                </StackPanel>
+                <TextBlock Text="New colour" Margin="0,10,0,0" />
+                <WrapPanel x:Name="SwatchPanel" Margin="0,4,0,6" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="74" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="44" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Red" VerticalAlignment="Center" />
+                    <Slider x:Name="RedSlider" Grid.Column="1" Minimum="0" Maximum="1" Value="1" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                    <TextBlock x:Name="RedText" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="1" Text="Green" VerticalAlignment="Center" />
+                    <Slider x:Name="GreenSlider" Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="1" Value="1" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                    <TextBlock x:Name="GreenText" Grid.Row="1" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="2" Text="Blue" VerticalAlignment="Center" />
+                    <Slider x:Name="BlueSlider" Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="1" Value="1" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                    <TextBlock x:Name="BlueText" Grid.Row="2" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="3" Text="Strength" VerticalAlignment="Center" />
+                    <Slider x:Name="StrengthSlider" Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="1" Value="0" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                    <TextBlock x:Name="StrengthText" Grid.Row="3" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="4" Text="Brightness" VerticalAlignment="Center" />
+                    <Slider x:Name="BrightnessSlider" Grid.Row="4" Grid.Column="1" Minimum="-1" Maximum="1" Value="0" ValueChanged="Adjustment_ValueChanged" Margin="0,3" />
+                    <TextBlock x:Name="BrightnessText" Grid.Row="4" Grid.Column="2" TextAlignment="Right" VerticalAlignment="Center" />
+                </Grid>
+                <Border x:Name="ColourPreview" Height="22" CornerRadius="4" Margin="0,8,0,0" BorderThickness="1"
+                        BorderBrush="{DynamicResource BorderBrush}" />
+                <CheckBox x:Name="ShowOriginalCheckBox" Content="Show the game's colours" Margin="0,8,0,0"
+                          Checked="ShowOriginal_Changed" Unchecked="ShowOriginal_Changed" />
+                <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                           Text="Select the parts to change in the list (Ctrl or Shift for several), then use Recolour and add to mod below." />
+            </StackPanel>
+        </ScrollViewer>
+        <DockPanel>
+            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                <TextBox x:Name="FilterTextBox" Width="230" TextChanged="FilterTextBox_TextChanged"
+                         ToolTip="Show only parts whose name or package contains this text." />
+                <ComboBox x:Name="ShowComboBox" Width="200" Margin="8,0,0,0" SelectedIndex="0" SelectionChanged="ShowComboBox_SelectionChanged"
+                          ToolTip="Parts only this map uses are safe to recolour on their own; shared parts change every map that uses them.">
+                    <ComboBoxItem Content="All parts" Tag="All" />
+                    <ComboBoxItem Content="Only this map's parts" Tag="Only" />
+                    <ComboBoxItem Content="Parts shared with other maps" Tag="Shared" />
+                </ComboBox>
+                <TextBlock x:Name="CountText" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
+            </WrapPanel>
+            <DataGrid x:Name="PartsGrid"
+                      IsReadOnly="True"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False"
+                      SelectionMode="Extended"
+                      GridLinesVisibility="Horizontal"
+                      HeadersVisibility="Column"
+                      SelectionChanged="PartsGrid_SelectionChanged"
+                      MouseDoubleClick="PartsGrid_MouseDoubleClick">
+                <DataGrid.ContextMenu>
+                    <ContextMenu x:Name="PartsMenu" Opened="PartsMenu_Opened">
+                        <MenuItem x:Name="OpenMenuItem" Header="Open in viewer" Click="OpenButton_Click" />
+                        <Separator />
+                        <MenuItem x:Name="TintMenuItem" Click="TintButton_Click" />
+                        <MenuItem x:Name="AddMenuItem" Click="AddButton_Click" />
+                        <MenuItem x:Name="ExportMenuItem" Header="Export selected…" Click="ExportButton_Click" />
+                        <Separator />
+                        <MenuItem x:Name="SelectOnlyMenuItem" Header="Select only this map's parts in the list" Click="SelectOnlyMenuItem_Click" />
+                        <MenuItem Header="Select all in the list" Click="SelectAllMenuItem_Click" />
+                        <Separator />
+                        <MenuItem x:Name="FindMenuItem" Header="Find in Asset Library" Click="FindMenuItem_Click" />
+                        <MenuItem x:Name="CopyMenuItem" Header="Copy name" Click="CopyMenuItem_Click" />
+                    </ContextMenu>
+                </DataGrid.ContextMenu>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Part" Binding="{Binding Name}" Width="2*" MinWidth="180" />
+                    <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="120" />
+                    <DataGridTextColumn Header="Used by" Binding="{Binding UsedBy}" Width="170">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="ToolTip" Value="{Binding UsedByTip}" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Package" Binding="{Binding Package}" Width="*" MinWidth="130" />
+                    <DataGridTextColumn Header="Level" Binding="{Binding Levels}" Width="*" MinWidth="110" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+    </DockPanel>
+</Window>

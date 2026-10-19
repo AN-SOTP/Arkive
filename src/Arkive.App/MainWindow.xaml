@@ -537,6 +537,41 @@
                                 </Grid>
                             </Expander>
                         </StackPanel>
+                        <Border x:Name="LibraryZonePanel"
+                                DockPanel.Dock="Top"
+                                Visibility="Collapsed"
+                                Margin="0,0,0,6"
+                                Padding="8,6"
+                                Background="{DynamicResource SurfaceAltBrush}"
+                                BorderBrush="{DynamicResource BorderStrongBrush}"
+                                BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock x:Name="LibraryZoneHeaderText" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,5" />
+                                <ItemsControl x:Name="LibraryZoneCards">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Click="LibraryZoneCard_Click"
+                                                    Margin="0,0,8,4"
+                                                    Padding="10,6"
+                                                    MinWidth="220"
+                                                    HorizontalContentAlignment="Left"
+                                                    ToolTip="{Binding Tip}">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="{Binding Action}" FontSize="12" Margin="0,3,0,0" Foreground="{DynamicResource AccentBrush}" />
+                                                </StackPanel>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
                         <DataGrid x:Name="LibraryGrid"
                                   IsReadOnly="True"
                                   AutoGenerateColumns="False"
