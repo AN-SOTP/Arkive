@@ -62,6 +62,23 @@ public sealed record ArkiveModPairConflict(
     IReadOnlyList<string> SharedObjects,
     string Outcome);
 
+/// <summary>Two enabled mods that change the same assets; the winner's changes are the ones that reach the game.</summary>
+public sealed record ArkiveModOverlap(
+    string WinnerModId,
+    string WinnerName,
+    int WinnerPriority,
+    string OtherModId,
+    string OtherName,
+    int OtherPriority,
+    bool Tied,
+    IReadOnlyList<string> SharedAssets)
+{
+    /// <summary>Identifies a set of overlaps and their outcomes, so a hidden warning shows again when either changes.</summary>
+    public static string Signature(IEnumerable<ArkiveModOverlap> overlaps) => string.Join("|", overlaps
+        .Select(overlap => $"{overlap.WinnerModId}>{overlap.OtherModId}:{overlap.Tied}:{overlap.SharedAssets.Count}")
+        .Order(StringComparer.OrdinalIgnoreCase));
+}
+
 public sealed class ArkiveModResolution
 {
     private readonly Dictionary<(string ModId, string AssetId), ArkiveModTargetResolution> _byAsset;
@@ -134,6 +151,39 @@ public sealed class ArkiveModResolution
             .OrderByDescending(item => item.OtherEnabled)
             .ThenByDescending(item => item.OtherPriority)
             .ThenBy(item => item.OtherModName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Every pair of enabled mods that change the same asset, with the mod that wins it. When three or more share an
+    /// asset, only the winner is paired with each of the others, since the losers' changes never reach the game.
+    /// </summary>
+    public IReadOnlyList<ArkiveModOverlap> EnabledOverlaps()
+    {
+        var pairs = new Dictionary<(string, string), (ArkiveModAssetContender Winner, ArkiveModAssetContender Other, List<ArkiveModTargetResolution> Targets)>();
+        foreach (var target in Targets)
+        {
+            var enabled = target.EnabledContenders.ToArray();
+            if (enabled.Length < 2) continue;
+            var lead = target.Winner ?? target.Tied[0];
+            foreach (var other in enabled.Where(item => !ReferenceEquals(item, lead)))
+            {
+                var key = (lead.ModId.ToUpperInvariant(), other.ModId.ToUpperInvariant());
+                if (!pairs.TryGetValue(key, out var pair)) pairs[key] = pair = (lead, other, []);
+                pair.Targets.Add(target);
+            }
+        }
+        return pairs.Values
+            .Select(pair => new ArkiveModOverlap(
+                pair.Winner.ModId, pair.Winner.ModName, pair.Winner.Priority,
+                pair.Other.ModId, pair.Other.ModName, pair.Other.Priority,
+                pair.Winner.Priority == pair.Other.Priority,
+                pair.Targets.Select(target => $"{target.ObjectName} ({target.PackageAlias})")
+                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray()))
+            .OrderByDescending(overlap => overlap.Tied)
+            .ThenByDescending(overlap => overlap.SharedAssets.Count)
+            .ThenBy(overlap => overlap.WinnerName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(overlap => overlap.OtherName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 

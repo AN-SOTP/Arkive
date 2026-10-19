@@ -105,7 +105,8 @@ public partial class MainWindow : Window
                 .ThenByDescending(row => row.Priority)
                 .ThenBy(row => row.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            ModLibraryGrid.ItemsSource = rows;
+            ModLibraryGrid.ItemsSource = GroupModRows(rows, ArkiveModConflictResolver.Resolve(library.Mods));
+            ShowModOverlapWarning();
             var selected = rows.FirstOrDefault(row => row.Entry.ModId.Equals(
                                previous, StringComparison.OrdinalIgnoreCase)) ?? rows.FirstOrDefault();
             ModLibraryGrid.SelectedItem = selected;
@@ -224,6 +225,7 @@ public partial class MainWindow : Window
         ModLibraryApplyButton.IsEnabled = idle;
         ModLibraryProgressBar.Visibility = _modLibraryBusy ? Visibility.Visible : Visibility.Collapsed;
         ModLibraryNewButton.IsEnabled = idle;
+        ModLibraryNewPackButton.IsEnabled = idle && ModLibraryGrid.Items.Count > 1;
         ModLibraryEditButton.IsEnabled = idle && hasRow;
         ModLibraryPrepareButton.IsEnabled = idle && hasRow;
         var assetCount = ModLibraryAssetsGrid.SelectedItems.OfType<ModAssetRow>().Count();
@@ -322,6 +324,8 @@ public partial class MainWindow : Window
     {
         "Enable mod" => "Enabling the mod…",
         "Disable mod" => "Disabling the mod…",
+        "Turn pack on" => "Turning the pack on…",
+        "Turn pack off" => "Turning the pack off…",
         "Mod priority" => "Changing the priority…",
         "Rename mod" => "Renaming the mod…",
         "Remove mod" => "Removing the mod…",
@@ -355,10 +359,12 @@ public partial class MainWindow : Window
     private Task SetModEnabledAsync(ModLibraryRow row, bool enabled) =>
         RunModLibraryOperationAsync(enabled ? "Enable mod" : "Disable mod", async () =>
         {
-            await _arkiveModLibrary.SetEnabledAsync(row.Entry.ModId, enabled);
+            var library = await _arkiveModLibrary.SetEnabledAsync(row.Entry.ModId, enabled);
             Log($"Mod {(enabled ? "enabled" : "disabled")}: mod={row.Entry.ModId}, name={row.DisplayName}.");
             await SynchronizeModSelectionsAsync(enabled ? "mod enabled" : "mod disabled", onlyIfChanged: true, deferWorkspace: true);
-            return $"{row.DisplayName} {(enabled ? "enabled" : "disabled")}. Choose Apply changes to update the game.";
+            return enabled
+                ? $"{row.DisplayName} enabled.{OverlapNotice(library.Mods, [row.Entry.ModId])} Choose Apply changes to update the game."
+                : $"{row.DisplayName} disabled. Choose Apply changes to update the game.";
         }, row.Entry.ModId);
 
     /// <summary>Renames a mod typed into the Mod column (F2, a slow second click or right-click, Rename).</summary>
@@ -439,6 +445,8 @@ public partial class MainWindow : Window
         ModLibraryRowEnableItem.IsEnabled = ModLibraryRowPriorityUpItem.IsEnabled =
             ModLibraryRowPriorityDownItem.IsEnabled = enabled;
         ModLibraryRowRenameItem.IsEnabled = enabled && !row!.Status.FileMissing;
+        FillAddToPackMenu(row);
+        ModLibraryRowAddToPackItem.IsEnabled = ModLibraryRowRemoveFromPackItem.IsEnabled = enabled;
     }
 
     /// <summary>The priority box: Enter applies a typed number, Up and Down step it, Escape puts it back.</summary>
@@ -832,6 +840,7 @@ public partial class MainWindow : Window
         await RunModLibraryOperationAsync("Remove mod", async () =>
         {
             await _arkiveModAuthoring.RemoveModAsync(row.Entry.ModId);
+            TryChangePacks(() => ModPacks.RemoveMod(row.Entry.ModId));
             Log($"Mod removed: mod={row.Entry.ModId}, name={row.DisplayName}, origin={row.Entry.Origin}, file={row.FilePath}.");
             await SynchronizeModSelectionsAsync("mod removed");
             return $"Removed {row.DisplayName}.";
@@ -964,8 +973,14 @@ public partial class MainWindow : Window
                                    (package.Contributors.Count == 0
                                        ? string.Empty
                                        : $" — {string.Join(", ", package.Contributors.Select(item => item.IsDraft ? item.ObjectName + " (draft)" : item.ModName).Distinct())}"));
+            var overlaps = OverlapRows().Where(overlap => !overlap.Tied).ToArray();
+            var overlapLines = overlaps.Length == 0 ? string.Empty :
+                "\n\nThese enabled mods change the same assets; only the winner's version goes into the game:\n" +
+                string.Join("\n", overlaps.Take(5).Select(overlap =>
+                    $"  • {overlap.Winner.SentenceLabel} wins over {overlap.Other.Label} on {overlap.SharedAssets.Count:N0} asset(s)")) +
+                (overlaps.Length > 5 ? $"\n  • and {overlaps.Length - 5:N0} more" : string.Empty);
             if (MessageBox.Show(this,
-                    $"Apply mod changes?\n\n{string.Join("\n", lines)}\n\n{plan.Summary}\n\n" +
+                    $"Apply mod changes?\n\n{string.Join("\n", lines)}{overlapLines}\n\n{plan.Summary}\n\n" +
                     "Installed packages are restored first, every rebuilt package passes Arkive's native validation, and all installs happen in one transaction that rolls back on failure. " +
                     "Close Lost Ark, its launcher, and Easy Anti-Cheat before continuing.",
                     "Apply mod changes", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) !=

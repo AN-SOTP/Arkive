@@ -1,0 +1,51 @@
+<Window x:Class="Arkive.App.ModPackWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="New mod pack"
+        Width="520"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="{DynamicResource SurfaceBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="18,14,18,18">
+        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12"
+                   Text="A pack turns a set of mods on and off with one switch. Each mod keeps its own priority, and you can still turn single mods on or off." />
+        <TextBlock Text="Pack name" Margin="0,0,0,4" />
+        <TextBox x:Name="NameTextBox" />
+        <TextBlock Text="Mods in this pack" Margin="0,12,0,4" />
+        <ListBox x:Name="ModsListBox" Height="260" SelectionMode="Single"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <CheckBox IsChecked="{Binding Included, Mode=TwoWay}" VerticalContentAlignment="Center">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Note}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       TextTrimming="CharacterEllipsis">
+                                <TextBlock.Style>
+                                    <Style TargetType="{x:Type TextBlock}">
+                                        <Style.Triggers>
+                                            <Trigger Property="Text" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </CheckBox>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock x:Name="MessageText" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource DangerTextBrush}"
+                   Visibility="Collapsed" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button x:Name="SaveButton" Content="Create pack" MinWidth="110" IsDefault="True"
+                    Style="{StaticResource PrimaryButtonStyle}" Click="SaveButton_Click" />
+            <Button Content="Cancel" MinWidth="80" Margin="0" IsCancel="True" />
+        </StackPanel>
+    </StackPanel>
+</Window>

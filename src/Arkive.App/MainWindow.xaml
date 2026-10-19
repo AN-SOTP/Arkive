@@ -2571,6 +2571,8 @@
                                     <WrapPanel Margin="0,0,0,7">
                                         <Button x:Name="ModLibraryNewButton" Content="New mod" Click="NewModButton_Click" />
                                         <Button x:Name="ModLibraryImportButton" Content="Import…" Click="ModLibraryImportButton_Click" />
+                                        <Button x:Name="ModLibraryNewPackButton" Content="New pack…" Click="ModLibraryNewPackButton_Click"
+                                                ToolTip="Group several mods into a pack that turns on and off with one switch." />
                                         <Button x:Name="ModLibraryEditButton" Content="Edit mod" Click="ModLibraryEditButton_Click" />
                                         <Button x:Name="ModLibrarySaveButton" Content="Save mod" Click="ModLibrarySaveButton_Click" />
                                         <Button x:Name="ModLibraryExportButton" Content="Share…" Click="ModLibraryExportButton_Click" />
@@ -2605,6 +2607,43 @@
                                             </Button.ContextMenu>
                                         </Button>
                                     </WrapPanel>
+                                    <Border x:Name="ModOverlapBanner" Visibility="Collapsed" Padding="9,7" Margin="0,0,0,7"
+                                            Background="{DynamicResource WarningSurfaceBrush}" BorderBrush="{DynamicResource WarningBorderBrush}"
+                                            BorderThickness="1">
+                                        <DockPanel>
+                                            <Button x:Name="ModOverlapHideButton" DockPanel.Dock="Right" VerticalAlignment="Top" Margin="8,0,0,0"
+                                                    Padding="9,2" MinHeight="24" Content="Hide" Click="ModOverlapHideButton_Click"
+                                                    ToolTip="Hide this warning until the overlapping mods or their winners change." />
+                                            <StackPanel>
+                                                <TextBlock x:Name="ModOverlapTitleText" FontWeight="SemiBold" TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource WarningTextBrush}" />
+                                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource WarningTextBrush}" Margin="0,2,0,0"
+                                                           Text="Only the winning mod's version of a shared asset goes into the game. The mod with the higher priority wins." />
+                                                <ItemsControl x:Name="ModOverlapList" Focusable="False">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <DockPanel Margin="0,5,0,0">
+                                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                                                    <Button Content="{Binding MakeWinnerWinLabel}" Visibility="{Binding TiedVisibility}"
+                                                                            Padding="9,2" MinHeight="24" Margin="8,0,0,0"
+                                                                            Click="ModOverlapMakeWinnerWin_Click" />
+                                                                    <Button Content="{Binding MakeOtherWinLabel}" Padding="9,2" MinHeight="24" Margin="8,0,0,0"
+                                                                            Click="ModOverlapMakeOtherWin_Click"
+                                                                            ToolTip="Give this mod a priority above every enabled mod it overlaps." />
+                                                                    <Button Content="Show shared assets" Padding="9,2" MinHeight="24" Margin="8,0,0,0"
+                                                                            Click="ModOverlapShow_Click" ToolTip="{Binding ToolTip}" />
+                                                                </StackPanel>
+                                                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                                                           Foreground="{DynamicResource WarningTextBrush}" ToolTip="{Binding ToolTip}" />
+                                                            </DockPanel>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBlock x:Name="ModOverlapMoreText" Visibility="Collapsed" TextWrapping="Wrap" Margin="0,5,0,0"
+                                                           Foreground="{DynamicResource WarningTextBrush}" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Border>
                                     <TextBlock x:Name="ModLibraryPendingText" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"
                                                TextWrapping="Wrap" Margin="0,0,0,5" />
                                     <TextBlock x:Name="ModLibraryStatusText" TextWrapping="Wrap"
@@ -2636,8 +2675,84 @@
                                                           Click="ModLibraryPriorityDownButton_Click" />
                                                 <MenuItem x:Name="ModLibraryRowRenameItem" Header="Rename" InputGestureText="F2"
                                                           Click="ModLibraryRowRenameItem_Click" />
+                                                <Separator />
+                                                <MenuItem x:Name="ModLibraryRowAddToPackItem" Header="Add to pack" />
+                                                <MenuItem x:Name="ModLibraryRowRemoveFromPackItem" Header="Remove from pack"
+                                                          Click="ModLibraryRowRemoveFromPack_Click" />
                                             </ContextMenu>
                                         </DataGrid.ContextMenu>
+                                        <!-- Mods in a pack are listed under the pack's heading: its switch, name, state and any overlap. -->
+                                        <DataGrid.GroupStyle>
+                                            <GroupStyle>
+                                                <GroupStyle.ContainerStyle>
+                                                    <Style TargetType="{x:Type GroupItem}">
+                                                        <Setter Property="Template">
+                                                            <Setter.Value>
+                                                                <ControlTemplate TargetType="{x:Type GroupItem}">
+                                                                    <StackPanel>
+                                                                        <Border x:Name="PackHeader" Visibility="Collapsed" MinHeight="{DynamicResource RowHeight}"
+                                                                                Background="{DynamicResource SurfaceAltBrush}"
+                                                                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,1"
+                                                                                ToolTip="A mod pack. Its box turns all of its mods on or off; right-click for more.">
+                                                                            <Border.ContextMenu>
+                                                                                <ContextMenu Opened="ModPackMenu_Opened"
+                                                                                             DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                                                                    <MenuItem x:Name="ModPackTurnOnItem" Header="Turn pack on" Click="ModPackTurnOnItem_Click" />
+                                                                                    <MenuItem Header="Edit pack…" Click="ModPackEditItem_Click" />
+                                                                                    <MenuItem Header="Make this pack win" Click="ModPackMakeWinItem_Click"
+                                                                                              ToolTip="Raise the priority of every mod in the pack so it wins over enabled mods outside it." />
+                                                                                    <Separator />
+                                                                                    <MenuItem Header="Remove pack (keeps its mods)" Click="ModPackRemoveItem_Click" />
+                                                                                </ContextMenu>
+                                                                            </Border.ContextMenu>
+                                                                            <DockPanel>
+                                                                                <Border Width="45">
+                                                                                    <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                                              IsChecked="{Binding Name.OnState, Mode=OneWay}"
+                                                                                              Click="ModPackSwitch_Click"
+                                                                                              ToolTip="Turn every mod in this pack on or off. Choose Apply changes to update the game." />
+                                                                                </Border>
+                                                                                <ToggleButton x:Name="PackToggle" Cursor="Hand" Focusable="False"
+                                                                                              IsChecked="{Binding Name.IsExpanded, Mode=TwoWay}" Click="ModPackToggle_Click"
+                                                                                              ToolTip="Show or hide the mods in this pack.">
+                                                                                    <ToggleButton.Template>
+                                                                                        <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                                                                            <StackPanel Orientation="Horizontal" Background="Transparent">
+                                                                                                <TextBlock x:Name="Arrow" Text="▾" Width="16" VerticalAlignment="Center"
+                                                                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                                                                <TextBlock Text="{Binding Name.Title}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                                                            </StackPanel>
+                                                                                            <ControlTemplate.Triggers>
+                                                                                                <Trigger Property="IsChecked" Value="False">
+                                                                                                    <Setter TargetName="Arrow" Property="Text" Value="▸" />
+                                                                                                </Trigger>
+                                                                                            </ControlTemplate.Triggers>
+                                                                                        </ControlTemplate>
+                                                                                    </ToggleButton.Template>
+                                                                                </ToggleButton>
+                                                                                <TextBlock Text="{Binding Name.Summary}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                                                <TextBlock Text="{Binding Name.Warning}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                                                           Foreground="{DynamicResource WarningTextBrush}" TextTrimming="CharacterEllipsis" />
+                                                                            </DockPanel>
+                                                                        </Border>
+                                                                        <ItemsPresenter x:Name="PackItems" />
+                                                                    </StackPanel>
+                                                                    <ControlTemplate.Triggers>
+                                                                        <DataTrigger Binding="{Binding Name.IsPack}" Value="True">
+                                                                            <Setter TargetName="PackHeader" Property="Visibility" Value="Visible" />
+                                                                        </DataTrigger>
+                                                                        <Trigger SourceName="PackToggle" Property="IsChecked" Value="False">
+                                                                            <Setter TargetName="PackItems" Property="Visibility" Value="Collapsed" />
+                                                                        </Trigger>
+                                                                    </ControlTemplate.Triggers>
+                                                                </ControlTemplate>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </Style>
+                                                </GroupStyle.ContainerStyle>
+                                            </GroupStyle>
+                                        </DataGrid.GroupStyle>
                                         <DataGrid.Columns>
                                             <DataGridTemplateColumn Header="On" Width="45">
                                                 <DataGridTemplateColumn.CellTemplate>
@@ -2718,7 +2833,7 @@
                                                 </DataGrid>
                                             </DockPanel>
                                         </TabItem>
-                                        <TabItem Header="Conflicts">
+                                        <TabItem x:Name="ModLibraryConflictsTab" Header="Conflicts">
                                             <DataGrid x:Name="ModLibraryConflictsGrid" IsReadOnly="True"
                                                       AutoGenerateColumns="False" CanUserAddRows="False"
                                                       CanUserResizeColumns="True" GridLinesVisibility="Horizontal"
