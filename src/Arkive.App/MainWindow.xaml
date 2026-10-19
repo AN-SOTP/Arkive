@@ -941,6 +941,56 @@
                         </DataGrid>
                     </DockPanel>
                 </TabItem>
+                <TabItem x:Name="LoginScreenTab" Header="Login Screen">
+                    <DockPanel Margin="8">
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <TextBlock Text="Login screen" FontSize="20" Margin="0,0,0,6" />
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                       Text="Choose the background the game plays behind its login and server select screens. The game still keeps the backgrounds of earlier updates, so you can bring one back. It shows the next time you start Lost Ark; close the game before changing it." />
+                        </StackPanel>
+                        <Border DockPanel.Dock="Bottom" Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource SurfaceAltBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="LoginScreenUseButton" Content="Use this background" MinWidth="150" IsEnabled="False"
+                                            Style="{StaticResource PrimaryButtonStyle}" Click="LoginScreenUseButton_Click" />
+                                    <Button x:Name="LoginScreenRestoreButton" Content="Back to the game's own" Margin="8,0,0,0"
+                                            Click="LoginScreenRestoreButton_Click"
+                                            ToolTip="Puts the game's own file back exactly as it was." />
+                                </StackPanel>
+                                <TextBlock x:Name="LoginScreenStatusText" TextWrapping="Wrap" VerticalAlignment="Center"
+                                           Text="Pick a background to use." />
+                            </DockPanel>
+                        </Border>
+                        <ListBox x:Name="LoginScreenList" SelectionMode="Single" BorderThickness="0" Background="Transparent"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 SelectionChanged="LoginScreenList_SelectionChanged" MouseDoubleClick="LoginScreenList_MouseDoubleClick">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Width="250" Height="120" Margin="4" Padding="12,10" CornerRadius="6" BorderThickness="1"
+                                            BorderBrush="{DynamicResource BorderStrongBrush}" Background="{DynamicResource SurfaceBrush}">
+                                        <DockPanel>
+                                            <Border DockPanel.Dock="Bottom" HorizontalAlignment="Left" Padding="7,2" CornerRadius="9"
+                                                    Background="{DynamicResource AccentBrush}" Visibility="{Binding InUseVisibility}">
+                                                <TextBlock Text="In use" FontSize="12" Foreground="{DynamicResource AccentTextBrush}" />
+                                            </Border>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Detail}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                </TabItem>
                 <TabItem x:Name="EntityBrowserTab" Header="Characters &amp; NPCs" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,7">

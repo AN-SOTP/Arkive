@@ -62,8 +62,8 @@ internal static class Program
             () => $"The game database mapping did not load: {Control<TextBlock>(window, "GameMetadataText").Text}");
         var tabs = Control<TabControl>(window, "MainTabControl");
         Check(tabs.Items.OfType<TabItem>().Where(tab => tab.Visibility == Visibility.Visible)
-                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Sounds", "Mods"]),
-            "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, Sounds, and Mods.");
+                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Sounds", "Login Screen", "Mods"]),
+            "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, Sounds, Login screen, and Mods.");
         Check(tabs.SelectedItem == Control<TabItem>(window, "ModifiedUpksTab"), "Mods was not the initial destination.");
         var kinds = Control<ComboBox>(window, "WorkshopKindComboBox").Items.OfType<ComboBoxItem>()
             .Select(item => $"{item.Content}={item.Tag}").ToArray();
@@ -73,6 +73,13 @@ internal static class Program
               Control<ComboBox>(window, "WorkshopKindComboBox").SelectedIndex == 6,
             "Edit mods does not offer the moddable asset types: " + string.Join(", ", kinds));
         Check(Control<Button>(window, "ModLibraryNewButton").IsVisible, "The initial mod library has no visible content.");
+        // Without the game's EFGame folder the Login screen tab says what it needs instead of failing.
+        tabs.SelectedItem = Control<TabItem>(window, "LoginScreenTab");
+        await UntilAsync(() => Control<TextBlock>(window, "LoginScreenStatusText").Text.Contains("game folder", StringComparison.Ordinal),
+            () => $"The Login screen tab did not explain that it needs the game folder: {Control<TextBlock>(window, "LoginScreenStatusText").Text}");
+        Check(!Control<Button>(window, "LoginScreenUseButton").IsEnabled, "Use this background was enabled with nothing to use.");
+        Console.WriteLine("PASS: the Login screen tab explains what it needs when the game folder is unknown");
+        tabs.SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");
         tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");
         Check(Control<Button>(window, "BuildGameDatabaseButton").IsEnabled &&

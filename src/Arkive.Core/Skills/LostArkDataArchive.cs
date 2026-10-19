@@ -68,10 +68,71 @@ public static class LostArkDataArchive
         return result;
     }
 
-    private static void Decrypt(byte[] data)
+    /// <summary>
+    /// Writes a copy of the archive at <paramref name="sourcePath"/> to <paramref name="outputPath"/> with one compressed
+    /// entry's contents replaced: the entry is compressed and encrypted the way the game stores it, its sizes updated in
+    /// the index, and every other entry copied byte for byte.
+    /// </summary>
+    public static void ReplaceEntry(string sourcePath, string entryPath, byte[] contents, string outputPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(contents);
+        using var source = File.OpenRead(sourcePath);
+        var entries = ReadEntries(source, cancellationToken);
+        var normalised = entryPath.Replace(Path.DirectorySeparatorChar, '/');
+        var index = entries.ToList().FindIndex(entry => entry.Path.Equals(normalised, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) throw new InvalidDataException($"{entryPath} is not in {Path.GetFileName(sourcePath)}.");
+        var target = entries[index];
+        if (target.CompressedSize <= 0) throw new InvalidDataException($"{entryPath} is not a compressed data archive entry.");
+
+        using var packed = new MemoryStream();
+        using (var zlib = new ZLibStream(packed, CompressionLevel.Optimal, leaveOpen: true)) zlib.Write(contents);
+        var compressed = (int)packed.Length;
+        // The game always pads to the next whole 8-byte block, a full block when the data already ends on one.
+        var encrypted = new byte[(compressed / 8 + 1) * 8];
+        packed.ToArray().CopyTo(encrypted, 0);
+        Crypt(encrypted, encrypt: true);
+
+        source.Position = 0;
+        var header = new byte[4 + entries.Count * EntrySize + 4];
+        source.ReadExactly(header);
+        var table = header.AsSpan(4, entries.Count * EntrySize).ToArray();
+        Decrypt(table);
+        var record = table.AsSpan(index * EntrySize, EntrySize);
+        BinaryPrimitives.WriteInt32LittleEndian(record[^12..], contents.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(record[^8..], encrypted.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(record[^4..], compressed);
+        Crypt(table, encrypt: true);
+        table.CopyTo(header, 4);
+
+        using var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20);
+        output.Write(header);
+        CopyRange(source, output, header.Length, target.Offset - header.Length, cancellationToken);
+        output.Write(encrypted);
+        var after = target.Offset + target.EncryptedSize;
+        CopyRange(source, output, after, source.Length - after, cancellationToken);
+    }
+
+    private static void CopyRange(Stream source, Stream output, long offset, long length, CancellationToken cancellationToken)
+    {
+        source.Position = offset;
+        var buffer = new byte[1 << 20];
+        while (length > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = source.Read(buffer, 0, (int)Math.Min(buffer.Length, length));
+            if (read <= 0) throw new EndOfStreamException("The data archive ended early.");
+            output.Write(buffer, 0, read);
+            length -= read;
+        }
+    }
+
+    private static void Decrypt(byte[] data) => Crypt(data, encrypt: false);
+
+    private static void Crypt(byte[] data, bool encrypt)
     {
         var cipher = new BlowfishEngine();
-        cipher.Init(false, new KeyParameter(Key));
+        cipher.Init(encrypt, new KeyParameter(Key));
         for (var offset = 0; offset + 8 <= data.Length; offset += 8)
         {
             var block = data.AsSpan(offset, 8);
