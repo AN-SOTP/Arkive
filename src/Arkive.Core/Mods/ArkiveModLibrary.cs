@@ -356,6 +356,39 @@ public sealed class ArkiveModLibrary
         string modId, bool enabled, CancellationToken cancellationToken = default) =>
         UpdateModAsync(modId, mod => mod with { Enabled = enabled }, cancellationToken);
 
+    /// <summary>Turns several mods on or off in one library update, as a mod pack's switch does.</summary>
+    public Task<ArkiveModLibraryManifest> SetEnabledAsync(
+        IReadOnlyCollection<string> modIds, bool enabled, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(modIds);
+        var ids = modIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return UpdateAsync(current =>
+        {
+            if (ids.FirstOrDefault(id => current.Find(id) is null) is { } missing)
+                Refuse("LIB020", $"Mod {missing} is not in the library.");
+            return current with
+            {
+                Mods = current.Mods.Select(mod => ids.Contains(mod.ModId) ? mod with { Enabled = enabled } : mod).ToArray(),
+            };
+        }, cancellationToken);
+    }
+
+    /// <summary>Moves several mods' priorities by the same amount, keeping their order among themselves.</summary>
+    public Task<ArkiveModLibraryManifest> RaisePrioritiesAsync(
+        IReadOnlyCollection<string> modIds, int raise, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(modIds);
+        var ids = modIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return UpdateAsync(current =>
+        {
+            var mods = current.Mods.Select(mod => ids.Contains(mod.ModId)
+                ? mod with { Priority = mod.Priority + raise }
+                : mod).ToArray();
+            foreach (var mod in mods.Where(mod => ids.Contains(mod.ModId))) ValidatePriority(mod.Priority);
+            return current with { Mods = mods };
+        }, cancellationToken);
+    }
+
     public Task<ArkiveModLibraryManifest> SetPriorityAsync(
         string modId, int priority, CancellationToken cancellationToken = default)
     {

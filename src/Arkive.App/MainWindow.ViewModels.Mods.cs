@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.ComponentModel;
 using Arkive.Core.Assets;
 using Arkive.Core.Mods;
 
@@ -66,6 +67,9 @@ public partial class MainWindow : Window
 
         public bool HasActiveAssets => Status.Assets.Any(asset => asset.InGame == true);
 
+        /// <summary>The pack this mod is listed under, or the run of mods outside packs it sits in.</summary>
+        public ModListGroup Group { get; set; } = null!;
+
         private static string KindLabel(UnifiedPackageAssetKind kind, int count) =>
             count == 1 ? AssetTypes.For(kind).Singular : AssetTypes.For(kind).Plural;
     }
@@ -128,6 +132,77 @@ public partial class MainWindow : Window
             material.Vectors.Count(item => item.Changed) +
             material.Textures.Count(item => item.Changed) +
             (material.Parent?.Changed == true ? 1 : 0);
+    }
+
+    /// <summary>
+    /// A heading in the Mods list. For a pack it shows the pack's switch, name and state; consecutive mods outside packs
+    /// share a group with no heading, so the list reads as before.
+    /// </summary>
+    private sealed class ModListGroup(ArkiveModPack? pack)
+    {
+        public ArkiveModPack? Pack { get; } = pack;
+
+        public bool IsPack => Pack is not null;
+
+        public List<ModLibraryRow> Rows { get; } = [];
+
+        public string Title => Pack?.Name ?? string.Empty;
+
+        /// <summary>On when every mod is on, off when none is, and part-way (shown as a filled box) otherwise.</summary>
+        public bool? OnState => Rows.All(row => row.Enabled) ? true : Rows.Any(row => row.Enabled) ? null : false;
+
+        public string Summary => Rows.Count(row => row.Enabled) switch
+        {
+            0 => $"Pack of {Rows.Count:N0} mods · all off",
+            var on when on == Rows.Count => $"Pack of {Rows.Count:N0} mods · all on",
+            var on => $"Pack of {Rows.Count:N0} mods · {on:N0} on",
+        };
+
+        /// <summary>Set when a mod of this pack changes the same assets as an enabled mod outside it.</summary>
+        public string Warning { get; set; } = string.Empty;
+
+        public bool IsExpanded { get; set; } = !(pack?.Collapsed ?? false);
+    }
+
+    private sealed class ModListGrouping : GroupDescription
+    {
+        public override object GroupNameFromItem(object item, int level, System.Globalization.CultureInfo culture) =>
+            ((ModLibraryRow)item).Group;
+    }
+
+    /// <summary>A mod, or a pack counted as one, on one side of an overlap.</summary>
+    private sealed record ModOverlapSide(string ModId, string ModName, int Priority, ArkiveModPack? Pack)
+    {
+        public string Label => Pack is null ? ModName : $"the {Pack.Name} pack";
+
+        public string SentenceLabel => Pack is null ? ModName : $"The {Pack.Name} pack";
+    }
+
+    /// <summary>
+    /// One line of the overlap warning above the Mods list. Mods of one pack that overlap the same mod share a line,
+    /// so a pack reads as one switch here too; a tie is always about two single mods.
+    /// </summary>
+    private sealed record ModOverlapRow(ModOverlapSide Winner, ModOverlapSide Other, bool Tied, IReadOnlyList<string> SharedAssets)
+    {
+        public string Text => Tied
+            ? $"{Winner.SentenceLabel} and {Other.Label} both change {AssetCount} and have the same priority " +
+              $"({Winner.Priority:N0}). Choose which one wins before applying."
+            : Winner.Pack is null && Other.Pack is null
+                ? $"{Winner.SentenceLabel} and {Other.Label} both change {AssetCount}. {Winner.SentenceLabel} wins them " +
+                  $"because its priority is higher ({Winner.Priority:N0} over {Other.Priority:N0})."
+                : $"{Winner.SentenceLabel} and {Other.Label} both change {AssetCount}. {Winner.SentenceLabel} wins them " +
+                  "because it has the higher priority.";
+
+        public string MakeOtherWinLabel => $"Make {Other.Label} win";
+
+        public string MakeWinnerWinLabel => $"Make {Winner.Label} win";
+
+        public Visibility TiedVisibility => Tied ? Visibility.Visible : Visibility.Collapsed;
+
+        public string ToolTip => "Shared assets: " + string.Join(", ", SharedAssets.Take(12)) +
+                                 (SharedAssets.Count > 12 ? $" and {SharedAssets.Count - 12:N0} more" : string.Empty);
+
+        private string AssetCount => SharedAssets.Count == 1 ? "1 asset" : $"{SharedAssets.Count:N0} assets";
     }
 
     private sealed record ModConflictRow(ArkiveModPairConflict Conflict)

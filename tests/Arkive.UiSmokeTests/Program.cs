@@ -179,6 +179,7 @@ internal static class Program
         Console.WriteLine("PASS: reopening restores authoring identity and metadata");
         WorkflowLayoutChecks.VerifyRestored(window, root);
         await ModLibraryRowChecks.VerifyAsync(window, root);
+        await ModPackChecks.VerifyAsync(window, root, screenshotDirectory);
         if (screenshotDirectory is not null)
         {
             tabs = Control<TabControl>(window, "MainTabControl");

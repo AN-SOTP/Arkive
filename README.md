@@ -197,6 +197,8 @@ Use **Mods → Import**, or open a `.arkive` file with Arkive. Import never inst
 - Equal-priority competing edits block Apply. Change priority or use **Make this mod win**.
 - Resolved ownership is not proof of animation/material compatibility; dependency and source checks still run.
 - Enable/priority edits are desired state. Only confirmed Apply changes the game.
+- When enabled mods change the same assets, a warning above the list names each pair and which mod wins, with buttons to make the other mod win or show the shared assets. **Hide** keeps it out of the way until the overlaps change; ties can't be hidden.
+- **New pack…** (or right-click a mod → **Add to pack**) groups mods, such as a mod split into several parts, under one heading whose box turns them all on or off. Each mod keeps its own priority; right-click the heading to edit the pack, make it win its overlaps or remove it (its mods stay). Packs are kept in `arkive-mod-packs.json` beside the mod library, so earlier versions open the same library without them.
 
 #### Restoring the original game files
 

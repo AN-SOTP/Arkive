@@ -10,6 +10,8 @@ internal static class ArkiveModSmokeTests
         new("refuses unsafe, unknown, or newer .arkive containers", TestArkiveFileRefusals),
         new("imports, scans, and persists .arkive library state and priorities", TestArkiveLibraryImportAndPriorities),
         new("resolves .arkive conflicts by priority, merges disjoint assets, and blocks ties", TestArkiveConflictResolution),
+        new("warns about enabled mods that change the same assets and names the winner", TestArkiveEnabledOverlaps),
+        new("switches mod packs as one and keeps them beside an unchanged library", TestArkiveModPacks),
         new("applies the higher-priority .arkive mod and rebuilds when priorities change", TestArkiveApplyPriorityEndToEnd),
         new("rebuilds and installs several packages in one apply", TestArkiveApplySeveralPackages),
         new("saves an applied mod again by reading its originals from the clean backup", TestArkiveSaveAfterApply),
@@ -257,6 +259,100 @@ internal static class ArkiveModSmokeTests
                tied.PriorityToWinAll(b.ModId) == 6 &&
                tied.ConflictsFor(a.ModId).Single().Outcome.StartsWith("Tie", StringComparison.Ordinal),
             "equal-priority conflicts were not reported as blocking ties with a winning-priority suggestion");
+    }
+
+    private static void TestArkiveEnabledOverlaps()
+    {
+        var stone = TextureDescriptor("arena.upk", "stone_d");
+        var sky = TextureDescriptor("arena.upk", "sky_d");
+        var bar = TextureDescriptor("efui.upk", "skillbar");
+        var red = LibraryEntry("Red Kazeros", enabled: true, priority: 5, stone, bar);
+        var holy = LibraryEntry("Holy Kazeros", enabled: true, priority: 0,
+            stone with { AssetId = NewId() }, bar with { AssetId = NewId() }, sky);
+        var golden = LibraryEntry("Holy Kazeros - golden sky", enabled: true, priority: 0, sky with { AssetId = NewId() });
+        var off = LibraryEntry("Old recolour", enabled: false, priority: 50, stone with { AssetId = NewId() });
+        var overlaps = ArkiveModConflictResolver.Resolve([red, holy, golden, off]).EnabledOverlaps();
+        Assert(overlaps.Count == 2 &&
+               overlaps[0] is { Tied: true, SharedAssets.Count: 1 } tie &&
+               new[] { tie.WinnerModId, tie.OtherModId }.Order().SequenceEqual(new[] { holy.ModId, golden.ModId }.Order()) &&
+               overlaps[1] is { Tied: false, WinnerName: "Red Kazeros", OtherName: "Holy Kazeros", SharedAssets.Count: 2 },
+            "enabled overlaps did not pair Red over Holy on two assets and the tied sky, ignoring the disabled mod: " +
+            string.Join(" | ", overlaps.Select(item => $"{item.WinnerName}>{item.OtherName}:{item.Tied}:{item.SharedAssets.Count}")));
+        var signature = ArkiveModOverlap.Signature(overlaps);
+        Assert(signature == ArkiveModOverlap.Signature(overlaps.Reverse()) &&
+               signature != ArkiveModOverlap.Signature(ArkiveModConflictResolver.Resolve([red with { Priority = -1 }, holy, golden]).EnabledOverlaps()),
+            "the overlap signature did not ignore order or notice a changed winner");
+        Assert(ArkiveModConflictResolver.Resolve([red, holy with { Enabled = false }]).EnabledOverlaps().Count == 0,
+            "a disabled mod was reported as overlapping");
+    }
+
+    private static void TestArkiveModPacks()
+    {
+        var root = Path.Combine(fixtureDirectory, "arkive-packs");
+        var library = new ArkiveModLibrary(Path.Combine(root, "mods"), Path.Combine(root, "state"));
+        var ids = new[] { "Holy Kazeros", "Holy Kazeros - skill effects 1", "Holy Kazeros - golden sky", "Red Kazeros" }
+            .Select(name => library.ImportAsync(WriteTextureMod(Path.Combine(root, "downloads", name + ".arkive"), name, out _))
+                .GetAwaiter().GetResult().Entry.ModId)
+            .ToArray();
+        var libraryBefore = File.ReadAllText(library.ManifestPath);
+        var store = new ArkiveModPackStore(library.StateDirectory);
+        Assert(store.Load().Packs.Count == 0, "a library with no packs file did not load with no packs");
+
+        var holy = store.Save(null, " Holy Kazeros ", ids[..3]);
+        var red = store.Save(null, "Red", [ids[3]]);
+        Assert(File.ReadAllText(library.ManifestPath) == libraryBefore,
+            "saving packs changed the mod library manifest, which earlier versions read");
+        var loaded = new ArkiveModPackStore(library.StateDirectory).Load(ids);
+        Assert(loaded.Packs.Count == 2 && loaded.Find(holy.PackId) is { Name: "Holy Kazeros", ModIds.Count: 3 } &&
+               loaded.PackOf(ids[3])?.PackId == red.PackId,
+            "packs were not saved and read back with their names and mods");
+
+        store.Save(red.PackId, "Red", [ids[3], ids[2]]);
+        loaded = store.Load(ids);
+        Assert(loaded.PackOf(ids[2])?.PackId == red.PackId && loaded.Find(holy.PackId)!.ModIds.Count == 2,
+            "adding a mod to a pack did not take it out of its previous pack");
+
+        library.SetEnabledAsync(loaded.Find(holy.PackId)!.ModIds, true).GetAwaiter().GetResult();
+        var mods = library.LoadAsync().GetAwaiter().GetResult().Mods;
+        Assert(mods.Count(mod => mod.Enabled) == 2 && mods.Where(mod => mod.Enabled).All(mod => loaded.Find(holy.PackId)!.Contains(mod.ModId)),
+            "turning a pack on did not enable exactly its mods");
+
+        // Every test mod changes the same texture, so the Holy pack overlaps Red once Red is on.
+        library.SetEnabledAsync([ids[3], ids[2]], true).GetAwaiter().GetResult();
+        library.SetPriorityAsync(ids[3], 4).GetAwaiter().GetResult();
+        library.SetPriorityAsync(ids[1], 2).GetAwaiter().GetResult();
+        mods = library.LoadAsync().GetAwaiter().GetResult().Mods;
+        var holyPack = store.Load(ids).Find(holy.PackId)!;
+        var raise = ArkiveModPackStore.PriorityRaiseToWin(holyPack, mods);
+        Assert(raise == 5, $"the raise for the Holy pack to beat Red (priority 4) from its lowest mod (0) was {raise}, not 5");
+        library.RaisePrioritiesAsync(holyPack.ModIds, raise).GetAwaiter().GetResult();
+        mods = library.LoadAsync().GetAwaiter().GetResult().Mods;
+        Assert(mods.Single(mod => mod.ModId == ids[0]).Priority == 5 && mods.Single(mod => mod.ModId == ids[1]).Priority == 7 &&
+               ArkiveModPackStore.PriorityRaiseToWin(holyPack, mods) == 0,
+            "making the pack win did not raise its mods together, keeping their order");
+
+        store.RemoveMod(ids[0]);
+        store.SetCollapsed(holy.PackId, true);
+        store.HideOverlapWarning("a>b:False:1");
+        loaded = store.Load(ids.Skip(1));
+        Assert(loaded.Find(holy.PackId) is { Collapsed: true, ModIds: [var only] } && only == ids[1] &&
+               loaded.HiddenOverlapWarning == "a>b:False:1",
+            "removing a mod, folding a pack or hiding the warning was not saved");
+        store.RemoveMod(ids[1]);
+        Assert(store.Load(ids).Find(holy.PackId) is null, "a pack left with no mods was kept");
+        store.Remove(red.PackId);
+        Assert(store.Load(ids).Packs.Count == 0, "removing a pack did not remove it");
+
+        File.WriteAllText(store.FilePath, "{ not json");
+        Assert(store.Load(ids).Packs.Count == 0, "a damaged packs file stopped the packs from loading");
+        try
+        {
+            store.Save(null, " ", ids);
+            throw new InvalidOperationException("a pack without a name was saved");
+        }
+        catch (ArkiveModRefusalException exception) when (exception.Code == "PCK001")
+        {
+        }
     }
 
     private static void TestArkiveApplySeveralPackages()
