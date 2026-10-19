@@ -16,6 +16,33 @@ public partial class ModelViewerWindow
     /// <summary>Prepares one skill branch for the page (shown mesh, class file, skill id, branch, progress); set by Arkive's main window.</summary>
     public Func<ModelViewerRequest, string, int, int, Action<string, double?>, CancellationToken, Task<SkillPlayback>>? SkillPlayback { get; init; }
 
+    /// <summary>
+    /// Adds a model's skill effects to the mod open in Edit mods (shown mesh, action file, one skill or null for all)
+    /// and says what it did; set by Arkive's main window.
+    /// </summary>
+    public Func<ModelViewerRequest, string, int?, Task<string>>? AddSkillEffects { get; init; }
+
+    private async Task AddSkillEffectsAsync(JsonElement root)
+    {
+        if (AddSkillEffects is null || _request is not { } request) return;
+        var classFile = root.GetProperty("classFile").GetString() ?? string.Empty;
+        int? skill = root.TryGetProperty("skill", out var skillElement) && skillElement.ValueKind == JsonValueKind.Number
+            ? skillElement.GetInt32() : null;
+        PostSkill(new { type = "skillStatus", text = "Adding the effects to the mod…", progress = (double?)null });
+        string text;
+        try
+        {
+            text = await AddSkillEffects(request, classFile, skill);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or
+                                              UnauthorizedAccessException)
+        {
+            text = "The effects could not be added: " + exception.Message;
+            _log($"Adding skill effects failed: class={classFile}, skill={skill}, error={exception}");
+        }
+        PostSkill(new { type = "skillStatus", text, progress = (double?)null });
+    }
+
     private string? _skillScene;
 
     /// <summary>The folder the effects' textures and meshes are kept in, served to the page as particles.arkive.local.</summary>

@@ -416,6 +416,9 @@ public partial class ModelViewerWindow : Window
             case "playSkill":
                 _ = PlaySkillAsync(root.Clone());
                 break;
+            case "addSkillEffects":
+                _ = AddSkillEffectsAsync(root.Clone());
+                break;
             case "showEdits":
                 _showEdits = root.GetProperty("value").GetBoolean();
                 if (_request is not null) _ = ShowObjectAsync(_request, _edits, keepView: true);

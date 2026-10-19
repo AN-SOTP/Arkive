@@ -16,7 +16,7 @@ public sealed record SkillBranch(string Name, IReadOnlyList<SkillActionStage> St
 /// Every class's skills from the game's action files (data3.lpk) with their names (data2.lpk), for the skill preview.
 /// Only skills that play an animation and start at least one effect are listed.
 /// </summary>
-public sealed class SkillCatalog
+public sealed partial class SkillCatalog
 {
     private readonly Dictionary<string, IReadOnlyList<SkillCatalogEntry>> _classes;
 
@@ -34,6 +34,45 @@ public sealed class SkillCatalog
 
     public IReadOnlyList<SkillCatalogEntry> Skills(string classFile) =>
         _classes.TryGetValue(classFile, out var skills) ? skills : [];
+
+    /// <summary>
+    /// The effects the skills of an action file start (one skill's, or every skill's when <paramref name="skillId"/> is
+    /// null), as PACKAGE.Object, split into the action file's own and those from effect packages that many action files
+    /// share (screen blur, film noise, common hit sparks): changing a shared one changes it for everyone who plays it.
+    /// </summary>
+    /// <param name="sharedFrom">An effect package used by more action files than this is shared.</param>
+    public (IReadOnlyList<string> Own, IReadOnlyList<string> Shared) Effects(string classFile, int? skillId = null, int sharedFrom = 3)
+    {
+        var effects = Skills(classFile).Where(skill => skillId is null || skill.Id == skillId)
+            .SelectMany(skill => skill.Action.ParticleSystems)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        // A monster's own effect packages are named after its model code (FX_MN_CNCU_00_W for MN_CNCU_00) and stay its
+        // own however many of its forms and phases use them.
+        var code = NpcCode().Match(classFile) is { Success: true } match ? match.Groups[1].Value : null;
+        var shared = effects.Where(effect => IsSharedPackage(EffectPackage(effect), sharedFrom) &&
+                                             (code is null || !EffectPackage(effect).Contains(code, StringComparison.OrdinalIgnoreCase)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return (effects.Where(effect => !shared.Contains(effect)).ToArray(), shared.ToArray());
+    }
+
+    /// <summary>Whether more than <paramref name="sharedFrom"/> action files start effects from this effect package.</summary>
+    public bool IsSharedPackage(string package, int sharedFrom = 3)
+    {
+        _packageUsers ??= _classes
+            .SelectMany(pair => pair.Value.SelectMany(skill => skill.Action.ParticleSystems)
+                .Select(EffectPackage).Distinct(StringComparer.OrdinalIgnoreCase).Select(effectPackage => (effectPackage, pair.Key)))
+            .GroupBy(item => item.effectPackage, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Select(item => item.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                StringComparer.OrdinalIgnoreCase);
+        return _packageUsers.TryGetValue(package, out var users) && users > sharedFrom;
+    }
+
+    private Dictionary<string, int>? _packageUsers;
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(?:MN|NP)_([A-Z0-9]{3,})_", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex NpcCode();
+
+    private static string EffectPackage(string effect) => effect.Contains('.') ? effect[..effect.IndexOf('.')] : effect;
 
     public static SkillCatalog Load(string packagesRoot, string language = "English", CancellationToken cancellationToken = default)
     {

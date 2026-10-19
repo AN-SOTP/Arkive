@@ -58,6 +58,10 @@ export function createSkillPreview(context) {
       </div>
       ${player.sets.length > 1 ? `<label class="field">Effects <select id="skillSet">${player.sets.map((set) =>
         `<option value="${escapeHtml(set)}"${set === ui.effectSet ? ' selected' : ''}>${set === DEFAULT_SET ? 'Standard (FX-00)' : escapeHtml(set.toUpperCase())}</option>`).join('')}</select></label>` : ''}
+      <div class="skill-row">
+        <button id="skillAddOne" title="Adds every effect this skill starts to the mod open in Edit mods, to tint there.">Add this skill's effects to my mod</button>
+        <button id="skillAddAll" title="Adds the effects of all its skills, and the ones it always shows (an aura, glowing wings), to the mod open in Edit mods.">Add all its effects</button>
+      </div>
       <progress id="skillBar" class="skill-progress" max="1"${ui.progress == null ? ' hidden' : ''}></progress>
       <div id="skillStatus" class="muted"></div>
       <div id="skillTimeline" class="mono"></div>`;
@@ -70,6 +74,8 @@ export function createSkillPreview(context) {
     $('skillLoop').addEventListener('change', (e) => { player.loop = e.target.checked; });
     $('skillSet')?.addEventListener('change', (e) => { ui.effectSet = e.target.value; restart(); renderTimeline(); });
     $('skillPlay').addEventListener('click', () => { if (player.playing) stop(); else play(); });
+    $('skillAddOne').addEventListener('click', () => post({ type: 'addSkillEffects', classFile: ui.classFile, skill: ui.skill }));
+    $('skillAddAll').addEventListener('click', () => post({ type: 'addSkillEffects', classFile: ui.classFile, skill: null }));
     renderTimeline();
   }
 

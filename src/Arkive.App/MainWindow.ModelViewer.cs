@@ -46,6 +46,7 @@ public partial class MainWindow
         Environments = FindViewerEnvironmentsAsync,
         SkillOffer = FindSkillPreviewAsync,
         SkillPlayback = PrepareSkillPreviewAsync,
+        AddSkillEffects = AddSkillEffectsToModAsync,
         ParticleAssetRoot = ParticleTextureRoot,
     };
 

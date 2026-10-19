@@ -17,6 +17,9 @@ public sealed record LookWeapon(string Item, LookMesh Mesh, string Slot, string?
 /// <param name="DefaultMesh">The class's skeleton mesh (PC_DK_Shadow_SK), which holds the sockets its skills use.</param>
 public sealed record ClassLook(string Name, LookMesh? DefaultMesh, IReadOnlyDictionary<string, LookMesh> Parts, IReadOnlyList<LookWeapon> Weapons)
 {
+    /// <summary>The effects the look plays on the model all the time (a boss's aura, its wings' glow), as PACKAGE.Object.</summary>
+    public IReadOnlyList<string> Effects { get; init; } = [];
+
     /// <summary>The look's AnimSets (the body's, then the class's own, which holds its skill animations).</summary>
     public IReadOnlyList<LookMesh> AnimSets { get; init; } = [];
 }
@@ -65,7 +68,11 @@ public static partial class CharacterLooks
             var animSets = strings.Select(value => ObjectPath().Match(value))
                 .Where(match => match.Success && match.Groups["class"].Value.Equals("AnimSet", StringComparison.OrdinalIgnoreCase))
                 .Select(match => new LookMesh(match.Groups["package"].Value, match.Groups["object"].Value)).ToArray();
-            return new ClassLook(lookName, Mesh(strings), parts, Weapons(strings, code.Groups["code"].Value, items, Strings)) { AnimSets = animSets };
+            return new ClassLook(lookName, Mesh(strings), parts, Weapons(strings, code.Groups["code"].Value, items, Strings))
+            {
+                AnimSets = animSets,
+                Effects = LookEffects(strings),
+            };
         }
         return null;
     }
@@ -95,6 +102,14 @@ public static partial class CharacterLooks
         }
         return first;
     }
+
+    // A look's CEFParticleData entries name the effects it attaches to a socket for as long as the model is shown.
+    private static IReadOnlyList<string> LookEffects(IReadOnlyList<string> strings) => strings
+        .Select(value => ObjectPath().Match(value))
+        .Where(match => match.Success && match.Groups["class"].Value.Equals("ParticleSystem", StringComparison.OrdinalIgnoreCase))
+        .Select(match => $"{match.Groups["package"].Value}.{match.Groups["object"].Value}")
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
     private static ClassLook ModelLook(string name, IReadOnlyList<string> strings)
     {
@@ -134,7 +149,7 @@ public static partial class CharacterLooks
             if (socket is null) parts.TryAdd($"Part{parts.Count + 1}", mesh);
             else weapons.Add(new LookWeapon(name, mesh, socket, null, null) { BattleSocket = socket });
         }
-        return new ClassLook(name, Mesh(strings), parts, weapons) { AnimSets = animSets };
+        return new ClassLook(name, Mesh(strings), parts, weapons) { AnimSets = animSets, Effects = LookEffects(strings) };
     }
 
     [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9_]*$")]

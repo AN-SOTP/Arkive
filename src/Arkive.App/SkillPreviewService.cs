@@ -167,6 +167,24 @@ public sealed class SkillPreviewService(
     }
 
     /// <summary>
+    /// The effects to add to a mod for a model: one skill's (when <paramref name="skillId"/> is given) or every skill's
+    /// of the action file plus the ones its look always plays (a boss's aura), as PACKAGE.Object. Effects from packages
+    /// many action files share are listed apart: changing them changes other skills and bosses too.
+    /// </summary>
+    public async Task<(IReadOnlyList<string> Own, IReadOnlyList<string> Shared)> EffectsForModAsync(
+        ModelViewerRequest request, string classFile, int? skillId, CancellationToken cancellationToken)
+    {
+        var catalog = await CatalogAsync().WaitAsync(cancellationToken) ??
+                      throw new InvalidOperationException("The game's skill data could not be read.");
+        var (own, shared) = catalog.Effects(classFile, skillId);
+        if (skillId is not null || libraryRoot() is not { Length: > 0 } root) return (own, shared);
+        var look = IsPlayer(request) ? await LookAsync(root, classFile, cancellationToken) : await NpcLookAsync(root, request, cancellationToken);
+        var always = (look?.Effects ?? []).Where(effect =>
+            !catalog.IsSharedPackage(effect.Contains('.') ? effect[..effect.IndexOf('.')] : effect)).ToArray();
+        return (own.Concat(always).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), shared);
+    }
+
+    /// <summary>
     /// Everything the viewer needs to play one branch of a skill: the class's skill animations, each effect's
     /// particle model (from the game's current packages, so installed mods show) and their textures and meshes.
     /// </summary>
