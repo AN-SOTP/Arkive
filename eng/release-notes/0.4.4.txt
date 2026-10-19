@@ -1,0 +1,3 @@
+Colour-grading LUTs and uncompressed sky layers can be edited.
+
+- Textures stored as plain 32-bit colour (PF_A8R8G8B8), such as a map's colour-grading LUT and some cloud layers, no longer fail with NTX013: they open in the Texture Viewer and Edit colours, and rebuild into the game like other textures.
