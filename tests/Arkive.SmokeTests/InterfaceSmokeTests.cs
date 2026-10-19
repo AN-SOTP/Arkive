@@ -157,7 +157,7 @@ internal static class InterfaceSmokeTests
         byte[] Pixel(RgbaImage image, int index) => image.Pixels.AsSpan(index * 4, 3).ToArray();
 
         var gold = Picture();
-        new TextureRecolour(1, 0, 0) { Selection = TextureColourSelection.ColourRange, RangeHue = 43, RangeWidth = 20 }.Apply(gold);
+        new TextureRecolour(1, 0, 0) { Selection = ColourSelection.ColourRange, RangeHue = 43, RangeWidth = 20 }.Apply(gold);
         Assert(Pixel(gold, 0).SequenceEqual(new byte[] { 200, 0, 0 }) && Pixel(gold, 4).SequenceEqual(new byte[] { 60, 0, 0 }),
             "gold pixels, lit and shaded, did not turn red while keeping their brightness: " +
             string.Join(" ", Pixel(gold, 0)) + " / " + string.Join(" ", Pixel(gold, 4)));
@@ -165,7 +165,7 @@ internal static class InterfaceSmokeTests
             "a gold colour range also changed the grey, the white or the blue");
 
         var light = Picture();
-        new TextureRecolour(1, 0, 0, Brightness: -0.75f) { Selection = TextureColourSelection.LightAreas }.Apply(light);
+        new TextureRecolour(1, 0, 0, Brightness: -0.75f) { Selection = ColourSelection.LightAreas }.Apply(light);
         Assert(Pixel(light, 2).SequenceEqual(new byte[] { 60, 0, 0 }),
             "the white pixel was not darkened to a deep red: " + string.Join(" ", Pixel(light, 2)));
         Assert(new[] { 0, 1, 3, 4 }.All(index => Pixel(light, index).SequenceEqual(colours[index])),

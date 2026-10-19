@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Arkive.Core.Archives;
 using Arkive.Core.Assets;
+using Arkive.Core.Textures;
 
 namespace Arkive.Core.Particles;
 
@@ -18,8 +19,8 @@ public sealed record ParticleEffectTint(float Red, float Green, float Blue)
 /// <summary>
 /// What a particle edit does to an effect: an optional tint (blended in by <paramref name="TintStrength"/>), then
 /// multipliers on its colour brightness, opacity, particle size, particle lifetime, spawn rate and starting speed.
-/// With <paramref name="OnlyGoldAndWhite"/> the tint changes only gold, yellow, orange and white colours and keeps the
-/// others (blue, purple, green) as they are.
+/// <paramref name="TintSelection"/> limits the tint to one range of hues (<paramref name="TintHue"/> ± <paramref name="TintRange"/>
+/// degrees) or to light, nearly white colours, the way the Texture Viewer picks colours, and keeps the others.
 /// </summary>
 public sealed record ParticleEffectRecipe(
     ParticleEffectTint? Tint = null,
@@ -30,13 +31,16 @@ public sealed record ParticleEffectRecipe(
     float Lifetime = 1,
     float SpawnRate = 1,
     float Speed = 1,
-    bool OnlyGoldAndWhite = false)
+    ColourSelection TintSelection = ColourSelection.All,
+    float TintHue = 45,
+    float TintRange = 25)
 {
     public const float MaximumMultiplier = 20;
 
     public static ParticleEffectRecipe Unchanged { get; } = new();
 
     public bool IsValid => (Tint is null || Tint.IsValid) && float.IsFinite(TintStrength) && TintStrength is >= 0 and <= 1 &&
+                           float.IsFinite(TintHue) && TintRange is >= 0 and <= 180 &&
                            new[] { Brightness, Opacity, Size, Lifetime, SpawnRate, Speed }
                                .All(value => float.IsFinite(value) && value is >= 0 and <= MaximumMultiplier);
 
@@ -200,12 +204,13 @@ public static class ParticleEffects
     }
 
     /// <summary>
-    /// The table with only its gold, yellow, orange and white colours recoloured to <paramref name="tint"/>; other colours
-    /// keep their hue. In a scale-over-life table, which multiplies the emitter's base colour, a white entry means
-    /// "unchanged" rather than white, so only its warm colours are tinted: tinting a neutral multiplier would turn a blue
-    /// base black.
+    /// The table with only the colours <paramref name="selection"/> picks recoloured to <paramref name="tint"/>, each by
+    /// how far it belongs to the selection; other colours keep their hue. In a scale-over-life table, which multiplies the
+    /// emitter's base colour, a white entry means "unchanged" rather than white, so light areas are never picked there:
+    /// tinting a neutral multiplier would turn a blue base black.
     /// </summary>
-    public static float[] TintGoldAndWhite(float[] table, ParticleEffectTint tint, float strength = 1, bool baseColour = true)
+    public static float[] TintSelected(float[] table, ParticleEffectTint tint, float strength, ColourSelection selection,
+        float hue, float range, bool baseColour = true)
     {
         ArgumentNullException.ThrowIfNull(table);
         if (!tint.IsValid) throw new ArgumentException("A tint needs finite, non-negative channels and some colour.", nameof(tint));
@@ -215,29 +220,15 @@ public static class ParticleEffects
         for (var index = 2; index + 2 < result.Length; index += 3)
         {
             float r = result[index], g = result[index + 1], b = result[index + 2];
+            if (selection == ColourSelection.LightAreas && !baseColour) continue;
+            var weight = ColourSelections.Weight(selection, r, g, b, hue, range) * strength;
+            if (weight <= 0) continue;
             var strongest = Math.Max(r, Math.Max(g, b));
-            var weakest = Math.Min(r, Math.Min(g, b));
-            if (strongest <= 0 || weakest < 0) continue;
-            var saturation = (strongest - weakest) / strongest;
-            var neutral = saturation <= 0.12f;
-            if (neutral ? !baseColour : !IsWarm(r, g, b, strongest, weakest)) continue;
-            result[index] += (strongest * red - r) * strength;
-            result[index + 1] += (strongest * green - g) * strength;
-            result[index + 2] += (strongest * blue - b) * strength;
+            result[index] += (strongest * red - r) * weight;
+            result[index + 1] += (strongest * green - g) * weight;
+            result[index + 2] += (strongest * blue - b) * weight;
         }
         return result;
-    }
-
-    // Gold, yellow and orange: hues from 15 to 75 degrees.
-    private static bool IsWarm(float r, float g, float b, float strongest, float weakest)
-    {
-        var delta = strongest - weakest;
-        float hue;
-        if (strongest == r) hue = 60 * ((g - b) / delta % 6);
-        else if (strongest == g) hue = 60 * ((b - r) / delta + 2);
-        else hue = 60 * ((r - g) / delta + 4);
-        hue = (hue + 360) % 360;
-        return hue is >= 15 and <= 75;
     }
 
     /// <summary>The table with the recipe applied: colours tinted, then every table scaled by its kind's multiplier.</summary>
@@ -247,9 +238,10 @@ public static class ParticleEffects
         // tables multiply that base, so scaling them too would apply the change twice.
         var multiplierOfBase = !table.Property.Contains("scale", StringComparison.OrdinalIgnoreCase);
         var values = table.Kind == ParticleTableKind.Color && recipe.Tint is { } tint && recipe.TintStrength > 0
-            ? recipe.OnlyGoldAndWhite
-                ? TintGoldAndWhite(table.Values, tint, recipe.TintStrength, multiplierOfBase)
-                : Tint(table.Values, tint, recipe.TintStrength)
+            ? recipe.TintSelection == ColourSelection.All
+                ? Tint(table.Values, tint, recipe.TintStrength)
+                : TintSelected(table.Values, tint, recipe.TintStrength, recipe.TintSelection, recipe.TintHue, recipe.TintRange,
+                    multiplierOfBase)
             : (float[])table.Values.Clone();
         var scale = table.Kind switch
         {

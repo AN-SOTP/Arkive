@@ -26,6 +26,7 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
 #swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 #swatches button { width: 26px; height: 22px; padding: 0; border-radius: 4px; }
 #tintPreview { height: 18px; border-radius: 4px; border: 1px solid var(--line); margin: 6px 0 2px; }
+#tintRangeBand { height: 12px; border-radius: 3px; border: 1px solid var(--line); margin: 4px 0 2px; }
 #resetButton { margin-top: 8px; }
 .hint { color: var(--muted); font-size: 12px; }
 #emitterList label { display: flex; gap: 6px; align-items: center; padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

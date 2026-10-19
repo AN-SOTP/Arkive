@@ -49,13 +49,20 @@
         <div class="slider"><span>Blue</span><input type="range" id="tintBlue" min="0" max="1" step="0.01" value="1" /><output id="tintBlueText"></output></div>
         <div class="slider"><span>Strength</span><input type="range" id="tintStrength" min="0" max="1" step="0.01" value="1" /><output id="tintStrengthText"></output></div>
         <div id="tintPreview"></div>
-        <label class="row" title="The tint changes only gold, yellow, orange and white colours; blue, purple and other colours stay as they are.">
-          <input type="checkbox" id="goldWhiteCheck" /> Only gold, yellow and white colours</label>
+        <label class="field">Change <select id="tintSelection">
+          <option value="All">Every colour</option>
+          <option value="ColourRange">One colour range</option>
+          <option value="LightAreas">Light and white colours</option>
+        </select></label>
+        <div id="tintRangePanel" hidden>
+          <div class="slider"><span>Hue</span><input type="range" id="tintHue" min="0" max="359" step="1" value="45" /><output id="tintHueText"></output></div>
+          <div class="slider"><span>Width</span><input type="range" id="tintRange" min="5" max="90" step="1" value="25" /><output id="tintRangeText"></output></div>
+          <div id="tintRangeBand"></div>
+        </div>
         <h3>Adjust</h3>
         <div id="multipliers"></div>
         <button id="resetButton">Reset all</button>
-        <p class="hint">Every colour of the effect (or, with the option above, only its gold, yellow and white ones) takes the
-          tint's hue and keeps its own brightness. Parts drawn only by
+        <p class="hint">Every colour of the effect (or only the ones Change picks) takes the tint's hue and keeps its own brightness. Parts drawn only by
           their texture or material keep their look. The preview approximates the game's renderer.</p>
       </section>
       <section>

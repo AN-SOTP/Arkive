@@ -91,7 +91,9 @@ function readRecipe() {
   const recipe = {
     tint: tinted ? { red: +$('tintRed').value, green: +$('tintGreen').value, blue: +$('tintBlue').value } : null,
     tintStrength: +$('tintStrength').value,
-    onlyGoldAndWhite: $('goldWhiteCheck').checked,
+    tintSelection: $('tintSelection').value,
+    tintHue: +$('tintHue').value,
+    tintRange: +$('tintRange').value,
   };
   for (const [key] of MULTIPLIERS) recipe[key] = +$(`m-${key}`).value;
   return recipe;
@@ -102,7 +104,9 @@ function showRecipe(recipe) {
   const tint = recipe.tint ?? { red: 1, green: 1, blue: 1 };
   $('tintRed').value = tint.red; $('tintGreen').value = tint.green; $('tintBlue').value = tint.blue;
   $('tintStrength').value = recipe.tintStrength ?? 1;
-  $('goldWhiteCheck').checked = !!recipe.onlyGoldAndWhite;
+  $('tintSelection').value = recipe.tintSelection ?? 'All';
+  $('tintHue').value = recipe.tintHue ?? 45;
+  $('tintRange').value = recipe.tintRange ?? 25;
   for (const [key] of MULTIPLIERS) $(`m-${key}`).value = recipe[key] ?? 1;
   refreshOutputs();
 }
@@ -113,6 +117,12 @@ function refreshOutputs() {
   for (const [key] of MULTIPLIERS) $(`m-${key}Text`).textContent = `${(+$(`m-${key}`).value).toFixed(2)}×`;
   const [r, g, b] = ['tintRed', 'tintGreen', 'tintBlue'].map((id) => Math.round(Math.pow(+$(id).value, 1 / 2.2) * 255));
   $('tintPreview').style.background = $('tintCheck').checked ? `rgb(${r},${g},${b})` : 'transparent';
+  $('tintRangePanel').hidden = $('tintSelection').value !== 'ColourRange';
+  $('tintHueText').textContent = `${$('tintHue').value}°`;
+  $('tintRangeText').textContent = `±${$('tintRange').value}°`;
+  const [hue, width] = [+$('tintHue').value, +$('tintRange').value];
+  const stops = [0, 1, 2, 3, 4, 5, 6].map((step) => `hsl(${(hue - width + width * step / 3 + 360) % 360}, 100%, 50%)`);
+  $('tintRangeBand').style.background = `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
 function recipeChanged() {
@@ -140,7 +150,7 @@ function buildControls() {
     row.innerHTML = `<span>${label}</span><input type="range" id="m-${key}" min="0" max="4" step="0.05" value="1" /><output id="m-${key}Text"></output>`;
     $('multipliers').appendChild(row);
   }
-  for (const input of document.querySelectorAll('#panel input[type="range"], #tintCheck, #goldWhiteCheck')) input.addEventListener('input', recipeChanged);
+  for (const input of document.querySelectorAll('#panel input[type="range"], #tintCheck, #tintSelection')) input.addEventListener('input', recipeChanged);
   $('resetButton').addEventListener('click', () => { showRecipe(defaultRecipe()); recipeChanged(); });
   $('playButton').addEventListener('click', () => { state.playing = !state.playing; $('playButton').textContent = state.playing ? 'Pause' : 'Play'; });
   $('restartButton').addEventListener('click', restart);

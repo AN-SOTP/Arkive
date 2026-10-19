@@ -103,9 +103,9 @@ public partial class TextureViewerWindow : Window
         RangeWidth = (float)RangeWidthSlider.Value,
     };
 
-    private TextureColourSelection Selection =>
-        Enum.TryParse<TextureColourSelection>((SelectionComboBox.SelectedItem as ComboBoxItem)?.Tag as string, out var selection)
-            ? selection : TextureColourSelection.All;
+    private ColourSelection Selection =>
+        Enum.TryParse<ColourSelection>((SelectionComboBox.SelectedItem as ComboBoxItem)?.Tag as string, out var selection)
+            ? selection : ColourSelection.All;
 
     private bool HasPendingChange => StrengthSlider.Value > 0 || BrightnessSlider.Value != 0;
 
@@ -224,7 +224,7 @@ public partial class TextureViewerWindow : Window
     private void SelectionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (RangePanel is null) return;
-        RangePanel.Visibility = Selection == TextureColourSelection.ColourRange ? Visibility.Visible : Visibility.Collapsed;
+        RangePanel.Visibility = Selection == ColourSelection.ColourRange ? Visibility.Visible : Visibility.Collapsed;
         if (!IsLoaded) return;
         _previewTimer.Stop();
         _previewTimer.Start();
@@ -297,8 +297,8 @@ public partial class TextureViewerWindow : Window
         var part = (PartsList.SelectedItem as PartRow)?.Label ?? "the picture";
         StatusText.Text = Selection switch
         {
-            TextureColourSelection.ColourRange => $"Recoloured the {RangeHueSlider.Value:0}° hues of {part}.",
-            TextureColourSelection.LightAreas => $"Recoloured the light areas of {part}.",
+            ColourSelection.ColourRange => $"Recoloured the {RangeHueSlider.Value:0}° hues of {part}.",
+            ColourSelection.LightAreas => $"Recoloured the light areas of {part}.",
             _ => $"Recoloured {part}.",
         };
         _savedChanges = false;

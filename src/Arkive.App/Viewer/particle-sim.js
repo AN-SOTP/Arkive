@@ -15,7 +15,7 @@ const FIRST_CAPACITY = 16;
 
 export function defaultRecipe() {
   return { tint: null, tintStrength: 1, brightness: 1, opacity: 1, size: 1, lifetime: 1, spawnRate: 1, speed: 1,
-    onlyGoldAndWhite: false };
+    tintSelection: 'All', tintHue: 45, tintRange: 25 };
 }
 
 // ---- Edit recipe, the same rules as Arkive's ParticleEffects.Apply ----
@@ -31,10 +31,11 @@ export function applyRecipe(table, property, recipe) {
     for (let i = 2; i + 2 < values.length; i += 3) {
       const strongest = Math.max(values[i], values[i + 1], values[i + 2]);
       if (strongest <= 0) continue;
-      if (recipe.onlyGoldAndWhite && !goldOrWhite(values[i], values[i + 1], values[i + 2], base)) continue;
-      values[i] += (strongest * r - values[i]) * recipe.tintStrength;
-      values[i + 1] += (strongest * g - values[i + 1]) * recipe.tintStrength;
-      values[i + 2] += (strongest * b - values[i + 2]) * recipe.tintStrength;
+      const weight = selectionWeight(recipe, values[i], values[i + 1], values[i + 2], base) * recipe.tintStrength;
+      if (weight <= 0) continue;
+      values[i] += (strongest * r - values[i]) * weight;
+      values[i + 1] += (strongest * g - values[i + 1]) * weight;
+      values[i + 2] += (strongest * b - values[i + 2]) * weight;
     }
   }
   const scale = { Color: base ? recipe.brightness : 1, Alpha: base ? recipe.opacity : 1, Size: recipe.size,
@@ -43,16 +44,23 @@ export function applyRecipe(table, property, recipe) {
   return { ...table, values };
 }
 
-// The colours "only gold and white" tints, as ParticleEffects.TintGoldAndWhite: hues from 15 to 75 degrees, and greys and
-// whites in base colour tables (in a scale-over-life table a white entry means "unchanged").
-function goldOrWhite(r, g, b, base) {
+// How much the tint changes a colour, as ColourSelections.Weight: every colour, colours near tintHue (± tintRange
+// degrees, fading over 12 more), or light, nearly white ones. In a scale-over-life table a white entry means
+// "unchanged", so light areas are never picked there.
+function selectionWeight(recipe, r, g, b, base) {
+  const selection = recipe.tintSelection ?? 'All';
+  if (selection === 'All') return 1;
   const strongest = Math.max(r, g, b), weakest = Math.min(r, g, b);
-  if (weakest < 0) return false;
+  if (strongest <= 0 || weakest < 0) return 0;
+  const saturation = (strongest - weakest) / strongest;
+  const ramp = (value, from, to) => Math.min(1, Math.max(0, (value - from) / (to - from)));
+  if (selection === 'LightAreas') return base ? ramp(0.25 - saturation, 0, 0.12) : 0;
   const delta = strongest - weakest;
-  if (delta / strongest <= 0.12) return base;
+  if (delta <= 0) return 0;
   let hue = strongest === r ? ((g - b) / delta) % 6 : strongest === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
   hue = (hue * 60 + 360) % 360;
-  return hue >= 15 && hue <= 75;
+  const distance = Math.abs((((hue - (recipe.tintHue ?? 45)) % 360) + 540) % 360 - 180);
+  return ramp((recipe.tintRange ?? 25) + 12 - distance, 0, 12) * ramp(saturation, 0.08, 0.2);
 }
 
 // ---- Baked value tables: two header floats, then samples of ChunkSize floats ----

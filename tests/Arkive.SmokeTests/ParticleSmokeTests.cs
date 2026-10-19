@@ -1,4 +1,5 @@
 using Arkive.Core.Particles;
+using Arkive.Core.Textures;
 
 namespace Arkive.SmokeTests;
 
@@ -10,29 +11,39 @@ internal static class ParticleSmokeTests
         new("tints particle colour tables by hue, keeping brightness, the header and darkening colours", TestTint),
         new("writes particle patches only over the values they were made for", TestPatches),
         new("applies particle edit settings once per value, scaling base colours but not their over-life scales", TestRecipe),
-        new("tints only gold and white particle colours and keeps blue, purple and neutral multipliers", TestTintGoldAndWhite),
+        new("tints only the particle colours in a chosen hue range, or only the white ones, keeping neutral multipliers", TestTintSelected),
     ];
 
-    private static void TestTintGoldAndWhite()
+    private static void TestTintSelected()
     {
         // Header, then gold, white, blue, purple and a darkening (negative) colour.
         float[] table = [0, 2, 2, 1.6f, 0.4f, 1, 1, 1, 0.1f, 0.2f, 2, 0.6f, 0.1f, 1, -1, -1, -1];
         var red = new ParticleEffectTint(1, 0, 0);
-        var based = ParticleEffects.TintGoldAndWhite(table, red);
-        Assert(based[..2].SequenceEqual(table[..2]) && based[2..5].SequenceEqual(new[] { 2f, 0, 0 }) &&
-               based[5..8].SequenceEqual(new[] { 1f, 0, 0 }),
-            "gold and white were not tinted red at their own brightness: " + string.Join(",", based));
-        Assert(based[8..].SequenceEqual(table[8..]), "blue, purple or a darkening colour was tinted");
-        var scale = ParticleEffects.TintGoldAndWhite(table, red, baseColour: false);
-        Assert(scale[2..5].SequenceEqual(new[] { 2f, 0, 0 }) && scale[5..8].SequenceEqual(table[5..8]),
-            "a scale-over-life table did not keep its neutral (unchanging) multiplier while tinting its gold");
+        var gold = ParticleEffects.TintSelected(table, red, 1, ColourSelection.ColourRange, 45, 25);
+        Assert(gold[..2].SequenceEqual(table[..2]) && gold[2..5].SequenceEqual(new[] { 2f, 0, 0 }) && gold[5..].SequenceEqual(table[5..]),
+            "a gold hue range did not tint only the gold colour at its own brightness: " + string.Join(",", gold));
+        var blue = ParticleEffects.TintSelected(table, red, 1, ColourSelection.ColourRange, 225, 20);
+        Assert(blue[8..11].SequenceEqual(new[] { 2f, 0, 0 }) && blue[2..8].SequenceEqual(table[2..8]) && blue[11..].SequenceEqual(table[11..]),
+            "a blue hue range did not tint only the blue colour: " + string.Join(",", blue));
+        var white = ParticleEffects.TintSelected(table, red, 1, ColourSelection.LightAreas, 0, 0);
+        Assert(white[5..8].SequenceEqual(new[] { 1f, 0, 0 }) && white[2..5].SequenceEqual(table[2..5]) && white[8..].SequenceEqual(table[8..]),
+            "light areas did not tint only the white colour");
+        var scale = ParticleEffects.TintSelected(table, red, 1, ColourSelection.LightAreas, 0, 0, baseColour: false);
+        Assert(scale.SequenceEqual(table), "a scale-over-life table's neutral (unchanging) multiplier was tinted");
 
         var everything = new ParticleEffectRecipe(red);
-        var selective = everything with { OnlyGoldAndWhite = true };
-        var blueTable = new ParticleValueTable(null!, "", "startcolor", ParticleTableKind.Color, 0, [0, 1, 0.1f, 0.2f, 1]);
-        Assert(ParticleEffects.Apply(blueTable, everything)[2..].SequenceEqual(new[] { 1f, 0, 0 }) &&
-               ParticleEffects.Apply(blueTable, selective)[2..].SequenceEqual(new[] { 0.1f, 0.2f, 1 }),
-            "the recipe's gold-and-white option did not decide whether a blue colour is tinted");
+        var bluesOnly = everything with { TintSelection = ColourSelection.ColourRange, TintHue = 225, TintRange = 20 };
+        var goldTable = new ParticleValueTable(null!, "", "startcolor", ParticleTableKind.Color, 0, [0, 1, 1, 0.8f, 0.2f]);
+        Assert(ParticleEffects.Apply(goldTable, everything)[2..].SequenceEqual(new[] { 1f, 0, 0 }) &&
+               ParticleEffects.Apply(goldTable, bluesOnly)[2..].SequenceEqual(new[] { 1, 0.8f, 0.2f }),
+            "the recipe's colour range did not decide whether a gold colour is tinted");
+        var web = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        var json = System.Text.Json.JsonSerializer.Serialize(bluesOnly, web);
+        var page = System.Text.Json.JsonSerializer.Deserialize<ParticleEffectRecipe>(
+            """{"tint":{"red":1,"green":0,"blue":0},"tintStrength":1,"tintSelection":"ColourRange","tintHue":225,"tintRange":20}""", web);
+        Assert(json.Contains("\"tintSelection\":\"ColourRange\"") &&
+               page is { TintSelection: ColourSelection.ColourRange, TintHue: 225, TintRange: 20 },
+            "the colour range did not travel to and from the effect editor's page by name: " + json);
     }
 
     private static readonly UnrealNameEntry[] Names = new[] { "none", "lifetime", "structproperty", "rawdistributionfloat",
