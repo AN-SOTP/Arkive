@@ -1,0 +1,4 @@
+Effects can be tinted by any colour range, like textures in the Texture Viewer.
+
+- Effect editor: Change picks which colours the tint changes: every colour, one colour range (any hue and width), or light and white colours.
+- Includes everything from 0.4.3, which was not released: Texture Viewer colour-range and light-area recolour, adding a model's skill and aura effects to a mod from the Skills tab, applying mods about three times faster, a faster first start after applying a large mod, and the fix for mods with particle effects staying "Ready to apply".
