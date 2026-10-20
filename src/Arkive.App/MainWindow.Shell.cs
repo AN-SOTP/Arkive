@@ -58,7 +58,7 @@ public partial class MainWindow : Window
         // The advanced views list the package workspace, which enabling mods leaves to be reloaded when needed.
         if (_packageWorkspaceStale && MainTabControl.SelectedItem is TabItem tab &&
             tab != LibraryTab && tab != CreateModTab && tab != WorkshopTab && tab != ModifiedUpksTab && tab != BodyProportionsTab &&
-            tab != SoundsTab && tab != LoginScreenTab && tab != FontsTab)
+            tab != SoundsTab && tab != LoginScreenTab && tab != FontsTab && tab != LanguageTab)
             _ = RefreshStalePackageWorkspaceWithNoticeAsync();
     }
 
@@ -106,6 +106,12 @@ public partial class MainWindow : Window
             PackageAliasText.Text = "Fonts";
             PathText.Text = "Choose the fonts the game uses for body text, titles and damage numbers.";
             _ = RefreshFontsAsync();
+        }
+        else if (MainTabControl.SelectedItem == LanguageTab)
+        {
+            PackageAliasText.Text = "Language";
+            PathText.Text = "Choose the language of the game's text, including languages the game has removed.";
+            _ = RefreshLanguagesAsync();
         }
         else if (_currentPackagePath is { } packagePath)
         { DisplayPackageAlias(packagePath); PathText.Text = packagePath; }

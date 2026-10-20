@@ -4,6 +4,7 @@ using Arkive.Core.Archives;
 using Arkive.Core.Assets;
 using Arkive.Core.Baselines;
 using Arkive.Core.Interface;
+using Arkive.Core.Languages;
 using Arkive.Core.Discovery;
 using Arkive.Core.Databases;
 using Arkive.Core.External;
@@ -323,6 +324,8 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--filter"), json),
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
+            "language" => Language(target, ReadTextOption(arguments, "--data"), ReadTextOption(arguments, "--use"),
+                arguments.Contains("--restore", StringComparer.OrdinalIgnoreCase), json),
             "metadata-resolve" => MetadataResolve(
                 target,
                 ReadTextOption(arguments, "--package"),
@@ -2835,6 +2838,29 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
     return 0;
 }
 
+static int Language(string efGame, string? dataRoot, string? use, bool restore, bool json)
+{
+    if (string.IsNullOrWhiteSpace(dataRoot)) throw new ArgumentException("language requires --data DIR (Arkive's data folder).");
+    var service = new GameLanguageService(efGame, dataRoot, new LostArkProcessGuard());
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    if (service.NeedsSaving()) service.SaveAsync().GetAwaiter().GetResult();
+    var saved = watch.Elapsed;
+    int? lines = null;
+    if (restore) service.RestoreAsync().GetAwaiter().GetResult();
+    else if (!string.IsNullOrWhiteSpace(use)) lines = service.ApplyAsync(use).GetAwaiter().GetResult();
+    var languages = service.Languages();
+    if (json) WriteJson(new { Current = service.CurrentLanguage(), Lines = lines, Languages = languages });
+    else
+    {
+        Console.WriteLine($"Saved text:         {saved.TotalSeconds:N1}s");
+        foreach (var language in languages)
+            Console.WriteLine($"  {language.Title,-22} {language.Coverage:P1} ({language.Translated:N0} of {language.Lines:N0}){(language.InGame ? string.Empty : " saved copy only")}");
+        if (lines is not null) Console.WriteLine($"Applied {use}:     {lines:N0} lines in {(watch.Elapsed - saved).TotalSeconds:N1}s");
+        Console.WriteLine($"Current:            {service.CurrentLanguage()}");
+    }
+    return 0;
+}
+
 static int MetadataResolve(
     string metadataPath,
     string? packageName,
@@ -3521,6 +3547,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
+    Console.WriteLine("  arkive language <EFGAME_DIR> --data DIR [--use LANGUAGE | --restore] [--json]");
     Console.WriteLine("  arkive umodel-list <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine(
         "  arkive metadata-resolve <metadata.json> --package NAME --object NAME [--json]");

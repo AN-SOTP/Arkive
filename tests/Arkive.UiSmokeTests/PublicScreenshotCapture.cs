@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using Arkive.App;
 using Arkive.Core.Assets;
 using Arkive.Core.Discovery;
+using Arkive.Core.Languages;
 using Arkive.Core.Mods;
 using Arkive.Core.Textures;
 using static Program;
@@ -54,7 +55,7 @@ internal static class PublicScreenshotCapture
             WindowHeight = 1000,
         }));
         var window = new MainWindow(root)
-        { Width = 1600, Height = 1000, Left = -5000, Top = -5000, WindowStartupLocation = WindowStartupLocation.Manual };
+        { Width = 1600, Height = 1000, Left = -5000, Top = -5000, WindowStartupLocation = WindowStartupLocation.Manual, ShowActivated = false };
         window.Show();
         await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == assets.Length);
         var tabs = Control<TabControl>(window, "MainTabControl");
@@ -110,6 +111,23 @@ internal static class PublicScreenshotCapture
         ResizeColumns(window, "ModLibraryGrid", [40, 70, 270, 80, 145, 180, 165, 175, 125, 275]);
         ResizeColumns(window, "ModLibraryAssetsGrid", [95, 190, 185, 285, 190, 130, 130, 130, 130]);
         await CaptureAsync(window, destination, "mod-library.png");
+
+        tabs.SelectedItem = Control<TabItem>(window, "LanguageTab");
+        await UntilAsync(() => Control<TextBlock>(window, "LanguageStatusText").Text.Contains("game folder", StringComparison.Ordinal));
+        const int lines = 620_782;
+        Control<ListBox>(window, "LanguageList").ItemsSource = new[]
+        {
+            new LanguageRow(new GameLanguage("English", "English", lines, lines, true), false),
+            new LanguageRow(new GameLanguage("Spanish", "Español (Spanish)", lines, lines, true), true),
+            new LanguageRow(new GameLanguage("French", "Français (French)", 550_321, lines, true), false),
+            new LanguageRow(new GameLanguage("German", "Deutsch (German)", 550_381, lines, false), false),
+        };
+        Control<TextBlock>(window, "LanguageSavedText").Text =
+            "Translations saved from the game on 20 October 2026. Arkive keeps them, so a language the game removes can still be used.";
+        Control<TextBlock>(window, "LanguageStatusText").Text = "In use: Español (Spanish).";
+        Control<Button>(window, "LanguageRestoreButton").IsEnabled = true;
+        DemoStatus(window);
+        await CaptureAsync(window, destination, "language.png");
         window.Close();
         await UntilAsync(() => !window.IsVisible);
     }
