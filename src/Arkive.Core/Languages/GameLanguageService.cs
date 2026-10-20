@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -212,6 +213,7 @@ public sealed class GameLanguageService
         var text = work.File("text.db");
         var saved = work.File("saved.db");
         LostArkDatabaseArchive.Extract(ArchivePath, TextEntry, text, cancellationToken);
+        var pattern = PageMarker(text);
 
         // The game's database is kept first, so the change can always be undone.
         var original = await HashAsync(ArchivePath, cancellationToken).ConfigureAwait(false);
@@ -234,6 +236,7 @@ public sealed class GameLanguageService
             }
             Execute(connection, "DETACH DATABASE saved");
         }
+        MarkPages(text, pattern);
         cancellationToken.ThrowIfCancellationRequested();
 
         var staged = ArchivePath + ".arkive-new";
@@ -374,6 +377,43 @@ public sealed class GameLanguageService
             if (language.Length is > 0 and <= 32 && language.All(char.IsAsciiLetter)) names.Add(language);
         }
         return names;
+    }
+
+    /// <summary>
+    /// The bytes the game's databases end every page with: SQLite's reserved space, filled the way a padded AES block
+    /// is (16 bytes of 0x10). The game rejects a page that ends otherwise, and SQLite leaves new and rebuilt pages'
+    /// reserved space empty, so it is filled again after every change (<see cref="MarkPages"/>).
+    /// </summary>
+    private static byte[] PageMarker(string database)
+    {
+        using var stream = File.OpenRead(database);
+        var header = new byte[100];
+        stream.ReadExactly(header);
+        var pageSize = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(16)) is var size && size == 1 ? 65536 : size;
+        int reserved = header[20];
+        if (reserved == 0) return [];
+        var marker = new byte[reserved];
+        stream.Position = pageSize - reserved;
+        stream.ReadExactly(marker);
+        if (marker.Any(value => value != reserved))
+            throw new InvalidDataException("The game's text is stored in a way Arkive does not know, so it was not changed.");
+        return marker;
+    }
+
+    private static void MarkPages(string database, byte[] marker)
+    {
+        if (marker.Length == 0) return;
+        using var stream = new FileStream(database, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var header = new byte[100];
+        stream.ReadExactly(header);
+        var pageSize = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(16)) is var size && size == 1 ? 65536 : size;
+        if (header[20] != marker.Length || stream.Length % pageSize != 0)
+            throw new InvalidDataException("The changed game text has an unexpected layout, so it was not written.");
+        for (long end = pageSize; end <= stream.Length; end += pageSize)
+        {
+            stream.Position = end - marker.Length;
+            stream.Write(marker);
+        }
     }
 
     private static string Quote(string value) => "'" + value.Replace("'", "''") + "'";

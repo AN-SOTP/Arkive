@@ -1,4 +1,5 @@
 using Arkive.Core.Languages;
+using System.Runtime.InteropServices;
 using Microsoft.Data.Sqlite;
 using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Parameters;
@@ -22,6 +23,9 @@ internal static class LanguageSmokeTests
         public IReadOnlyList<string> FindBlockingProcesses() => running;
     }
 
+    private const int PageSize = 1024;
+    private const int Reserved = 16;
+
     private const string Columns = "([KEY] TEXT NOT NULL, [MSG] TEXT NOT NULL, [SOUND] TEXT NOT NULL, PRIMARY KEY ([KEY]))";
 
     private static string GameText(bool withSpanish) =>
@@ -35,7 +39,7 @@ internal static class LanguageSmokeTests
             ? $"""
               CREATE TABLE GameMsg_Spanish {Columns};
               INSERT INTO GameMsg_Spanish VALUES ('sys.welcome','¡Te damos la bienvenida a Lost Ark!',''),
-                  ('sys.yorn','¡{"{"}Gender{"}"}|gender(Bienvenido,Bienvenida) a Yorn!',''), ('sys.new','Una línea nueva',''), ('sys.empty','x','');
+                  ('sys.yorn','¡{"{"}Gender{"}"}|gender(Bienvenido,Bienvenida) a Yorn!',''), ('sys.new','Una línea nueva' || printf('%.*c', 3000, '.'),''), ('sys.empty','x','');
               """
             : string.Empty);
 
@@ -64,6 +68,7 @@ internal static class LanguageSmokeTests
                text["sys.yorn"] == "¡{Gender}|gender(Bienvenido,Bienvenida) a Yorn!" && text["sys.empty"] == string.Empty,
             "the English table does not hold the Spanish lines: " + string.Join(" | ", text.Values));
         Assert(Payload(archive, OtherPath).SequenceEqual(Payload(original, OtherPath)), "another database in data2.lpk changed");
+        AssertPagesMarked(archive);
         Assert(service.CurrentLanguage() == "Spanish" && !service.GameUpdated() && !service.NeedsSaving(),
             "Arkive's own change was mistaken for a game update");
 
@@ -91,7 +96,8 @@ internal static class LanguageSmokeTests
             "the Spanish lines the game dropped were not kept");
 
         var lines = service.ApplyAsync("Spanish").GetAwaiter().GetResult();
-        Assert(lines == 3 && Text(archive)["sys.new"] == "Una línea nueva", "the saved Spanish lines were not used");
+        Assert(lines == 3 && Text(archive)["sys.new"].StartsWith("Una línea nueva", StringComparison.Ordinal), "the saved Spanish lines were not used");
+        AssertPagesMarked(archive);
         service.RestoreAsync().GetAwaiter().GetResult();
         Assert(File.ReadAllBytes(archive).SequenceEqual(patched), "the updated game's data2.lpk was not put back exactly");
     });
@@ -112,6 +118,17 @@ internal static class LanguageSmokeTests
         }
         Assert(File.ReadAllBytes(archive).SequenceEqual(original), "data2.lpk changed while the game ran");
     });
+
+    // The game's databases end every page with 16 bytes of 0x10, and the game cannot read a page that does not.
+    private static void AssertPagesMarked(string archive)
+    {
+        var bytes = File.ReadAllBytes(archive);
+        var database = Decrypt(Payload(bytes, TextPath, out var size), size);
+        var pages = database.Length / PageSize;
+        Assert(database.Length % PageSize == 0 && database[20] == Reserved && pages > 3 && Enumerable.Range(1, pages)
+                .All(page => database.AsSpan(page * PageSize - Reserved, Reserved).IndexOfAnyExcept((byte)Reserved) < 0),
+            "a page of the changed game text does not end with the game's marker");
+    }
 
     private static Dictionary<string, string> Text(string archive)
     {
@@ -240,14 +257,36 @@ internal static class LanguageSmokeTests
         using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
         {
             connection.Open();
+            // Shaped like the game's: 1 KB pages with 16 reserved bytes each.
+            var reserve = Marshal.AllocHGlobal(sizeof(int));
+            try
+            {
+                Marshal.WriteInt32(reserve, Reserved);
+                using (var pageSize = connection.CreateCommand())
+                {
+                    pageSize.CommandText = $"PRAGMA page_size = {PageSize}";
+                    pageSize.ExecuteNonQuery();
+                }
+                Assert(FileControl(connection.Handle!.DangerousGetHandle(), "main"u8.ToArray(), 38 /* SQLITE_FCNTL_RESERVE_BYTES */, reserve) == 0,
+                    "the fixture database's reserved bytes could not be set");
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(reserve);
+            }
             using var command = connection.CreateCommand();
             command.CommandText = sql;
             command.ExecuteNonQuery();
         }
         var bytes = File.ReadAllBytes(path);
         File.Delete(path);
+        Assert(bytes[20] == Reserved, "the fixture database has no reserved bytes");
+        for (var end = PageSize; end <= bytes.Length; end += PageSize) bytes.AsSpan(end - Reserved, Reserved).Fill(Reserved);
         return bytes;
     }
+
+    [DllImport("e_sqlite3", EntryPoint = "sqlite3_file_control")]
+    private static extern int FileControl(IntPtr database, byte[] name, int operation, IntPtr argument);
 
     private static void InWorkspace(Action<string, string> test)
     {
