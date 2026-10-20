@@ -1,0 +1,4 @@
+The Language tab now works in game.
+
+- Choosing Spanish, French or German in 0.5.0 made the game show the names of its text lines instead of the text. Arkive now writes the game's text database the way the game expects, and German has been checked in game.
+- Includes everything in 0.5.0: the Fonts and Language tabs, and the fix for applying colour-only material changes (such as Holy Kazeros's Final Day fog).
