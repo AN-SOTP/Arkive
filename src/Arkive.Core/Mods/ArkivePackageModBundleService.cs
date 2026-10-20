@@ -159,7 +159,7 @@ public sealed class ArkivePackageModBundleService
             {
                 // UModel cannot export particle objects. A particle edit only rewrites floats inside value tables, so
                 // Arkive checks that the export's property stream still reads through to its end in the payload.
-                externalResults.Add(ValidateParticleExport(catalogue, asset));
+                externalResults.Add(ValidatePropertyStream(catalogue, asset, "Arkive particle property check"));
                 continue;
             }
             if (AssetTypes.InterfaceMovie.CanEditClass(asset.ClassName))
@@ -186,6 +186,15 @@ public sealed class ArkivePackageModBundleService
                     CataloguePassed: true, NativeLoadPassed: true, ExpectedObjectFound: true,
                     [$"UModel cannot read {asset.ObjectName} in the clean game file either; Arkive's own decode-back check was used. {exception.Message}"],
                     TimeSpan.Zero));
+            }
+            catch (External.UmodelBridgeException) when (asset.ClassName.Contains("MaterialInstance", StringComparison.OrdinalIgnoreCase))
+            {
+                // UModel exports nothing for a material instance with no texture parameters ("empty parameters"), such
+                // as a fog volume's colour-only material, so it cannot check one. When it cannot export the clean
+                // original either, Arkive's own property reader checks the edited export instead.
+                if (await ExternalValidatorReadsAsync(sourcePath, packageRoot, asset, cancellationToken).ConfigureAwait(false))
+                    throw;
+                externalResults.Add(ValidatePropertyStream(catalogue, asset, "Arkive material property check (UModel cannot export the original)"));
             }
         }
         if (externalResults.Any(result => !result.CataloguePassed || !result.NativeLoadPassed ||
@@ -445,7 +454,7 @@ public sealed class ArkivePackageModBundleService
     /// <summary>The bundle format of a particle effect's value-table exports.</summary>
     public const string ParticleSystemValuesFormat = "ParticleSystemValues";
 
-    private ModExternalValidationResult ValidateParticleExport(AssetCatalog catalogue, ArkiveModAsset asset)
+    private ModExternalValidationResult ValidatePropertyStream(AssetCatalog catalogue, ArkiveModAsset asset, string validator)
     {
         var match = catalogue.Assets.Single(candidate => candidate.ExportIndex == asset.NativeExportIndex);
         using var logical = new LogicalPackageStream(catalogue.Summary, _protectionProvider);
@@ -455,7 +464,7 @@ public sealed class ArkivePackageModBundleService
         var readable = Particles.ParticlePropertyStream.Read(bytes, catalogue.Names) is not null;
         if (!readable)
             Refuse("CPB015", $"{asset.ObjectName}'s properties no longer read through in the combined payload.");
-        return new ModExternalValidationResult("Arkive particle property check", 1, 1,
+        return new ModExternalValidationResult(validator, 1, 1,
             CataloguePassed: true, NativeLoadPassed: true, ExpectedObjectFound: true,
             [$"{asset.ObjectName}: property stream reads through to the end of the export."], TimeSpan.Zero);
     }
