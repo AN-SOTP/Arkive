@@ -93,7 +93,7 @@ internal static class Program
         tabs.SelectedItem = Control<TabItem>(window, "LoginScreenTab");
         await UntilAsync(() => Control<TextBlock>(window, "LoginScreenStatusText").Text.Contains("game folder", StringComparison.Ordinal),
             () => $"The Login screen tab did not explain that it needs the game folder: {Control<TextBlock>(window, "LoginScreenStatusText").Text}");
-        Check(!Control<Button>(window, "LoginScreenUseButton").IsEnabled, "Use this background was enabled with nothing to use.");
+        Check(!Control<Button>(window, "LoginScreenUseButton").IsEnabled, "Use this screen was enabled with nothing to use.");
         Console.WriteLine("PASS: the Login screen tab explains what it needs when the game folder is unknown");
         tabs.SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");

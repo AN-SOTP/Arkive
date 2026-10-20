@@ -98,7 +98,7 @@ public partial class MainWindow : Window
         else if (MainTabControl.SelectedItem == LoginScreenTab)
         {
             PackageAliasText.Text = "Login Screen";
-            PathText.Text = "Choose the background behind the game's login and server select screens.";
+            PathText.Text = "Choose the screen behind the game's login and server select menus, with its music and ambience.";
             _ = RefreshLoginScreensAsync();
         }
         else if (_currentPackagePath is { } packagePath)

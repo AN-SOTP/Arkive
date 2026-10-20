@@ -946,20 +946,32 @@
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <TextBlock Text="Login screen" FontSize="20" Margin="0,0,0,6" />
                             <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
-                                       Text="Choose the background the game plays behind its login and server select screens. The game still keeps the backgrounds of earlier updates, so you can bring one back. It shows the next time you start Lost Ark; close the game before changing it." />
+                                       Text="Choose the screen behind the login and server select menus. The game always shows its current update's screen, so Arkive plays the one you choose in its place, with that screen's own music and ambience. It shows the next time you start Lost Ark; close the game before changing it." />
+                            <Border Padding="10,7" Background="{DynamicResource InfoSurfaceBrush}"
+                                    BorderBrush="{DynamicResource InfoBorderBrush}" BorderThickness="1">
+                                <DockPanel>
+                                    <TextBlock Text="Your game shows" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <ComboBox x:Name="LoginScreenLiveBox" Width="220"
+                                              SelectionChanged="LoginScreenLiveBox_SelectionChanged"
+                                              ToolTip="The screen this game update shows on its own. Arkive puts your choice in its place." />
+                                    <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Margin="12,0,0,0"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="Change this only when a game update brings a new screen." />
+                                </DockPanel>
+                            </Border>
                         </StackPanel>
                         <Border DockPanel.Dock="Bottom" Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource SurfaceAltBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <Button x:Name="LoginScreenUseButton" Content="Use this background" MinWidth="150" IsEnabled="False"
+                                    <Button x:Name="LoginScreenUseButton" Content="Use this screen" MinWidth="150" IsEnabled="False"
                                             Style="{StaticResource PrimaryButtonStyle}" Click="LoginScreenUseButton_Click" />
                                     <Button x:Name="LoginScreenRestoreButton" Content="Back to the game's own" Margin="8,0,0,0"
                                             Click="LoginScreenRestoreButton_Click"
-                                            ToolTip="Puts the game's own file back exactly as it was." />
+                                            ToolTip="Puts the game's own video and sounds back exactly as they were." />
                                 </StackPanel>
                                 <TextBlock x:Name="LoginScreenStatusText" TextWrapping="Wrap" VerticalAlignment="Center"
-                                           Text="Pick a background to use." />
+                                           Text="Pick a screen to use." />
                             </DockPanel>
                         </Border>
                         <ListBox x:Name="LoginScreenList" SelectionMode="Single" BorderThickness="0" Background="Transparent"
@@ -972,19 +984,30 @@
                             </ListBox.ItemsPanel>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Width="250" Height="120" Margin="4" Padding="12,10" CornerRadius="6" BorderThickness="1"
+                                    <Border Width="300" Margin="4" CornerRadius="6" BorderThickness="1" ClipToBounds="True"
                                             BorderBrush="{DynamicResource BorderStrongBrush}" Background="{DynamicResource SurfaceBrush}">
-                                        <DockPanel>
-                                            <Border DockPanel.Dock="Bottom" HorizontalAlignment="Left" Padding="7,2" CornerRadius="9"
-                                                    Background="{DynamicResource AccentBrush}" Visibility="{Binding InUseVisibility}">
-                                                <TextBlock Text="In use" FontSize="12" Foreground="{DynamicResource AccentTextBrush}" />
-                                            </Border>
-                                            <StackPanel>
+                                        <StackPanel>
+                                            <Grid Height="128" Background="{DynamicResource SurfaceAltBrush}">
+                                                <TextBlock Text="{Binding PreviewNote}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <Image Source="{Binding Preview}" Stretch="UniformToFill" />
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6">
+                                                    <Border Padding="7,2" CornerRadius="9" Background="{DynamicResource AccentBrush}"
+                                                            Visibility="{Binding InUseVisibility}">
+                                                        <TextBlock Text="In use" FontSize="12" Foreground="{DynamicResource AccentTextBrush}" />
+                                                    </Border>
+                                                    <Border Padding="7,2" Margin="4,0,0,0" CornerRadius="9" Background="{DynamicResource SurfaceBrush}"
+                                                            Visibility="{Binding LiveVisibility}">
+                                                        <TextBlock Text="Game's own" FontSize="12" />
+                                                    </Border>
+                                                </StackPanel>
+                                            </Grid>
+                                            <StackPanel Margin="12,8,12,10">
                                                 <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{Binding Detail}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                <TextBlock Text="{Binding Detail}" Margin="0,3,0,0" TextWrapping="Wrap"
                                                            Foreground="{DynamicResource TextSecondaryBrush}" />
                                             </StackPanel>
-                                        </DockPanel>
+                                        </StackPanel>
                                     </Border>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>

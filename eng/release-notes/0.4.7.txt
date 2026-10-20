@@ -1,0 +1,8 @@
+The Login Screen tab now works in game, with each screen's own music and ambience.
+
+- Choosing a login screen now changes what the game shows. The game always shows its current update's screen, so Arkive puts the video you choose in that screen's place, and links that screen's music and ambience too, so the right music plays without the current screen's birds and wind.
+- Every screen shows a picture of its video, decoded with the game's own video library. Earlier versions could not show them.
+- Every login screen but one can be used: Ocean, Papunika, Legion Commanders, South Vern, Voldis, Elgacia, Eclipse, Kazeros, South Kurzan, North Kurzan, South Rimeria and Act 1 ending. Faton's video is in a different format and is not supported yet.
+- "Your game shows" says which screen the game shows on its own. Change it only when a game update brings a new screen.
+- Back to the game's own puts the game's video and sound files back exactly as they were.
+- If you used the Login Screen tab in 0.4.5 or 0.4.6, the movie table change it made (which the game ignored) is undone the first time you change or restore the screen.
