@@ -34,6 +34,8 @@ internal static class Program
                     await PublicScreenshotCapture.RunAsync(root, destination);
                 else if (args is ["--zone-viewer", ..])
                     await ZoneViewerChecks.VerifyAsync(root, args.ElementAtOrDefault(1));
+                else if (args is ["--fonts", ..])
+                    await FontChecks.VerifyAsync(root, args.ElementAtOrDefault(1));
                 else
                     await RunAsync(root, args.FirstOrDefault());
                 Console.WriteLine(args is ["--public-screenshots", _]
@@ -78,8 +80,8 @@ internal static class Program
             () => $"The game database mapping did not load: {Control<TextBlock>(window, "GameMetadataText").Text}");
         var tabs = Control<TabControl>(window, "MainTabControl");
         Check(tabs.Items.OfType<TabItem>().Where(tab => tab.Visibility == Visibility.Visible)
-                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Sounds", "Login Screen", "Mods"]),
-            "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, Sounds, Login screen, and Mods.");
+                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Sounds", "Login Screen", "Fonts", "Mods"]),
+            "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, Sounds, Login screen, Fonts, and Mods.");
         Check(tabs.SelectedItem == Control<TabItem>(window, "ModifiedUpksTab"), "Mods was not the initial destination.");
         var kinds = Control<ComboBox>(window, "WorkshopKindComboBox").Items.OfType<ComboBoxItem>()
             .Select(item => $"{item.Content}={item.Tag}").ToArray();
@@ -95,6 +97,12 @@ internal static class Program
             () => $"The Login screen tab did not explain that it needs the game folder: {Control<TextBlock>(window, "LoginScreenStatusText").Text}");
         Check(!Control<Button>(window, "LoginScreenUseButton").IsEnabled, "Use this screen was enabled with nothing to use.");
         Console.WriteLine("PASS: the Login screen tab explains what it needs when the game folder is unknown");
+        tabs.SelectedItem = Control<TabItem>(window, "FontsTab");
+        await UntilAsync(() => Control<TextBlock>(window, "FontStatusText").Text.Contains("game folder", StringComparison.Ordinal),
+            () => $"The Fonts tab did not explain that it needs the game folder: {Control<TextBlock>(window, "FontStatusText").Text}");
+        Check(!Control<Button>(window, "FontApplyButton").IsEnabled && !Control<ItemsControl>(window, "FontSlotList").IsEnabled,
+            "The Fonts tab offers choices without a game folder.");
+        Console.WriteLine("PASS: the Fonts tab explains what it needs when the game folder is unknown");
         tabs.SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");
         tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");
@@ -206,6 +214,7 @@ internal static class Program
         await ModLibraryRowChecks.VerifyAsync(window, root);
         await ModPackChecks.VerifyAsync(window, root, screenshotDirectory);
         await ZoneViewerChecks.VerifyAsync(root, screenshotDirectory);
+        await FontChecks.VerifyAsync(root, screenshotDirectory);
         if (screenshotDirectory is not null)
         {
             tabs = Control<TabControl>(window, "MainTabControl");

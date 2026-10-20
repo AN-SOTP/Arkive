@@ -1014,6 +1014,57 @@
                         </ListBox>
                     </DockPanel>
                 </TabItem>
+                <TabItem x:Name="FontsTab" Header="Fonts">
+                    <DockPanel Margin="8">
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <TextBlock Text="Fonts" FontSize="20" Margin="0,0,0,6" />
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Text="Choose the fonts the game uses for its text. Pick a TrueType font (.ttf) for each kind of text you want to change, then apply. They show the next time you start Lost Ark; close the game before applying. A font without some letters of your language shows blanks for them." />
+                        </StackPanel>
+                        <Border DockPanel.Dock="Bottom" Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource SurfaceAltBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="FontApplyButton" Content="Apply fonts" MinWidth="150" IsEnabled="False"
+                                            Style="{StaticResource PrimaryButtonStyle}" Click="FontApplyButton_Click" />
+                                    <Button x:Name="FontRestoreButton" Content="Back to the game's own" Margin="8,0,0,0" IsEnabled="False"
+                                            Click="FontRestoreButton_Click"
+                                            ToolTip="Puts the game's own font.lpk back exactly as it was." />
+                                </StackPanel>
+                                <TextBlock x:Name="FontStatusText" TextWrapping="Wrap" VerticalAlignment="Center"
+                                           Text="Choose a font for any kind of text." />
+                            </DockPanel>
+                        </Border>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsControl x:Name="FontSlotList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,8" Padding="14,10" CornerRadius="6" BorderThickness="1"
+                                                BorderBrush="{DynamicResource BorderStrongBrush}" Background="{DynamicResource SurfaceBrush}">
+                                            <DockPanel>
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top" Margin="12,0,0,0">
+                                                    <Button Content="Choose font…" MinWidth="120" Click="FontChooseButton_Click" />
+                                                    <Button Content="{Binding ResetLabel}" MinWidth="120" Margin="8,0,0,0"
+                                                            IsEnabled="{Binding Chosen}" Click="FontResetButton_Click" />
+                                                </StackPanel>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding Detail}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="{Binding Choice}" Margin="0,6,0,0" TextTrimming="CharacterEllipsis" />
+                                                    <Border Margin="0,8,0,0" Padding="10,6" Background="{DynamicResource SurfaceAltBrush}" CornerRadius="4">
+                                                        <TextBlock Text="{Binding Sample}" FontSize="22" TextTrimming="CharacterEllipsis"
+                                                                   FontFamily="{Binding Preview, TargetNullValue={x:Static SystemFonts.MessageFontFamily}}" />
+                                                    </Border>
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </DockPanel>
+                </TabItem>
                 <TabItem x:Name="EntityBrowserTab" Header="Characters &amp; NPCs" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,7">
