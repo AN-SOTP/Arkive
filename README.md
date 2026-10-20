@@ -210,6 +210,8 @@ The model changes as you move them. **Save as mod** creates a new mod with a wor
 
 **Login Screen** brings back the screen of an earlier update behind the game's login and server select menus, with that screen's own music and ambience. The game keeps the earlier screens' videos in its Movies folder (Eclipse, Kazeros, Kurzan, Vern, Voldis, Elgacia, Papunika and more), and each tile shows a picture of its video. Pick one and **Use this screen**. The game always shows its current update's screen, so Arkive writes the chosen video over that screen's file (each video is scrambled with its own key, which Arkive works out from the video's header) and points that screen's music and ambience events at the chosen screen's in the game's sound banks. **Your game shows** names the screen the game shows on its own; change it only when an update brings a new one. Arkive keeps the game's video and records every sound id it changes, so **Back to the game's own** puts them back byte for byte. It shows the next time Lost Ark starts, and the game must be closed. A game update replaces the files; the tab then says so and you choose again. Faton's video is in a format Arkive cannot read yet.
 
+![Arkive Login Screen tab with a picture of each earlier login screen, Eclipse in use in place of the game's own Act 1 ending](docs/screenshots/login-screen.png)
+
 ### Import, priorities and deployment
 
 Use **Mods → Import**, or open a `.arkive` file with Arkive. Import never installs automatically. Review, enable, set priority, preview the plan, then confirm **Apply changes**.
