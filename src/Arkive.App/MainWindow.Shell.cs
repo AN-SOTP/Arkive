@@ -58,7 +58,7 @@ public partial class MainWindow : Window
         // The advanced views list the package workspace, which enabling mods leaves to be reloaded when needed.
         if (_packageWorkspaceStale && MainTabControl.SelectedItem is TabItem tab &&
             tab != LibraryTab && tab != CreateModTab && tab != WorkshopTab && tab != ModifiedUpksTab && tab != BodyProportionsTab &&
-            tab != SoundsTab && tab != LoginScreenTab)
+            tab != SoundsTab && tab != LoginScreenTab && tab != LanguageTab)
             _ = RefreshStalePackageWorkspaceWithNoticeAsync();
     }
 
@@ -100,6 +100,12 @@ public partial class MainWindow : Window
             PackageAliasText.Text = "Login Screen";
             PathText.Text = "Choose the screen behind the game's login and server select menus, with its music and ambience.";
             _ = RefreshLoginScreensAsync();
+        }
+        else if (MainTabControl.SelectedItem == LanguageTab)
+        {
+            PackageAliasText.Text = "Language";
+            PathText.Text = "Choose the language of the game's text, including languages the game has removed.";
+            _ = RefreshLanguagesAsync();
         }
         else if (_currentPackagePath is { } packagePath)
         { DisplayPackageAlias(packagePath); PathText.Text = packagePath; }

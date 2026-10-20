@@ -138,7 +138,7 @@ Use a trusted local folder, not the game's Packages directory. Avoid simultaneou
 
 ## GUI workflow
 
-The primary tabs separate discovery (**Asset Library**), creation (**Create Mod**), editing (**Edit Mods**, **Simple Upscale**), sounds (**Sounds**), the login screen (**Login Screen**) and deployment (**Mods**). **Advanced** retains native diagnostics and specialist/legacy workflows.
+The primary tabs separate discovery (**Asset Library**), creation (**Create Mod**), editing (**Edit Mods**, **Simple Upscale**), sounds (**Sounds**), the login screen (**Login Screen**), the game's text language (**Language**) and deployment (**Mods**). **Advanced** retains native diagnostics and specialist/legacy workflows.
 
 ### Asset Library
 
@@ -211,6 +211,10 @@ The model changes as you move them. **Save as mod** creates a new mod with a wor
 **Login Screen** brings back the screen of an earlier update behind the game's login and server select menus, with that screen's own music and ambience. The game keeps the earlier screens' videos in its Movies folder (Eclipse, Kazeros, Kurzan, Vern, Voldis, Elgacia, Papunika and more), and each tile shows a picture of its video. Pick one and **Use this screen**. The game always shows its current update's screen, so Arkive writes the chosen video over that screen's file (each video is scrambled with its own key, which Arkive works out from the video's header) and points that screen's music and ambience events at the chosen screen's in the game's sound banks. **Your game shows** names the screen the game shows on its own; change it only when an update brings a new one. Arkive keeps the game's video and records every sound id it changes, so **Back to the game's own** puts them back byte for byte. It shows the next time Lost Ark starts, and the game must be closed. A game update replaces the files; the tab then says so and you choose again. Faton's video is in a format Arkive cannot read yet.
 
 ![Arkive Login Screen tab with a picture of each earlier login screen, Eclipse in use in place of the game's own Act 1 ending](docs/screenshots/login-screen.png)
+
+### Language
+
+**Language** shows the game's text in another language, including languages the game has removed. All of the game's text is in one database in `data2.lpk`, which still holds English, Spanish, French and German. The game shows the English text, so Arkive writes the chosen language's lines in place of the English ones; a line without a translation stays in English. French and German stopped receiving translations when the game removed them, so newer lines stay in English. Each tile shows how much of the game is translated. Arkive copies every translation to its data folder the first time the tab opens and after each game update, so a language the game later drops can still be used. Voices are not changed. **Back to English** puts the game's own `data2.lpk` back byte for byte. It shows the next time Lost Ark starts, and the game must be closed. A game update replaces the file; the tab then says so and you choose again.
 
 ### Import, priorities and deployment
 
@@ -482,6 +486,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 - The Zone Viewer's 3D map is a very early, extremely rough preview: Lost Ark's layered materials are only roughly reproduced, so many areas look different from the game, the arenas and camera angle are guesses, and some detail drops out when zoomed in. Pieces whose material lives in a package the map does not reference are drawn plain grey. Map lights and height fog colours are level settings Arkive cannot change yet.
 - Recolour changes colours the game exposes (pixels, material colour settings, effect colour tables). Colour that comes from shared textures or base materials changes everything that uses them, and material edits are newer and less tested in game than texture edits.
 - Login Screen edits game files outside the packages: one video in `EFGame\Movies` and two small sound banks in `WwiseAudioPackage`. Pictures need the game's own `bink2w64.dll` in `Binaries\Win64`.
+- Language rewrites `EFGame\data2.lpk` (about 1.4 GB) and keeps a compressed copy of the game's text (about 130 MB) plus the saved translations (about 85 MB) in Arkive's data folder. Grammar markers in translations (such as Spanish gender forms) are shown by the game's English text engine and are not yet confirmed in game.
 - CLI authoring requires explicit manifest chaining; the GUI is the recommended named-mod editor.
 - The installer/updater is an unsigned preview; uninstall preserves data and does not restore the game.
 - Not every bug is known. Report it on [GitHub Issues](https://github.com/AN-SOTP/Arkive/issues) with version, operation, asset identity, failure code and a sanitized diagnostic excerpt. Review paths/names before sharing logs; never submit credentials or whole game packages casually.

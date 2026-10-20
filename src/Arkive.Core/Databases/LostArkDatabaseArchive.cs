@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Parameters;
+using Arkive.Core.Skills;
 
 namespace Arkive.Core.Databases;
 
@@ -116,6 +117,114 @@ internal static class LostArkDatabaseArchive
             consumed += length;
         }
         decryptor.TransformFinalBlock([], 0, 0);
+    }
+
+    /// <summary>Decrypts the database stored at <paramref name="entryPath"/> (EFGame_Extra/ClientData/TableData/...) to <paramref name="output"/>.</summary>
+    internal static void Extract(string archivePath, string entryPath, string output, CancellationToken cancellation)
+    {
+        using var archive = File.OpenRead(archivePath);
+        var entry = Find(archive, entryPath, cancellation);
+        if (entry.CompressedSize != 0 || entry.EncryptedSize % 16 != 0 || entry.EncryptedSize < entry.Size)
+            throw new InvalidDataException($"{entryPath} is not a database entry.");
+        Extract(archive, new DatabaseEntry(entry.Path.Split('/')[^1], entry.Offset, entry.Size, entry.EncryptedSize), output, cancellation);
+    }
+
+    /// <summary>
+    /// Writes a copy of <paramref name="archivePath"/> to <paramref name="outputPath"/> with the database at
+    /// <paramref name="entryPath"/> replaced by <paramref name="databasePath"/>, encrypted the way the game stores it.
+    /// </summary>
+    internal static void Replace(string archivePath, string entryPath, string databasePath, string outputPath, CancellationToken cancellation)
+    {
+        using var source = File.OpenRead(archivePath);
+        var target = Find(source, entryPath, cancellation);
+        if (target.CompressedSize != 0) throw new InvalidDataException($"{entryPath} is not a database entry.");
+        var size = new FileInfo(databasePath).Length;
+        if (size < 16 || size > MaximumDatabaseSize) throw new InvalidDataException($"{Path.GetFileName(databasePath)} is not a usable database.");
+
+        // The index with the entry's sizes changed; every other entry is copied byte for byte.
+        source.Position = 0;
+        var header = new byte[8];
+        source.ReadExactly(header.AsSpan(0, 4));
+        var count = BinaryPrimitives.ReadInt32LittleEndian(header);
+        var table = new byte[count * EntrySize];
+        source.ReadExactly(table);
+        CryptIndex(table, encrypt: false);
+        var index = Enumerable.Range(0, count).First(item =>
+        {
+            var record = table.AsSpan(item * EntrySize, EntrySize);
+            var name = Encoding.UTF8.GetString(record.Slice(4, BinaryPrimitives.ReadInt32LittleEndian(record))).TrimEnd('\0');
+            return name.Replace('\\', '/').Equals(target.Path, StringComparison.OrdinalIgnoreCase);
+        });
+        var entry = table.AsSpan(index * EntrySize, EntrySize);
+        BinaryPrimitives.WriteInt32LittleEndian(entry[^12..], (int)size);
+        BinaryPrimitives.WriteInt32LittleEndian(entry[^8..], (int)((size + 15) / 16 * 16));
+        CryptIndex(table, encrypt: true);
+
+        using var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20);
+        output.Write(header.AsSpan(0, 4));
+        output.Write(table);
+        output.Write(header.AsSpan(4, 4));
+        CopyRange(source, output, 8 + table.Length, target.Offset - 8 - table.Length, cancellation);
+        Encrypt(target.Path.Split('/')[^1], databasePath, output, cancellation);
+        var after = target.Offset + target.EncryptedSize;
+        CopyRange(source, output, after, source.Length - after, cancellation);
+    }
+
+    // The LPK cipher: Blowfish with each word stored little-endian.
+    private static void CryptIndex(byte[] table, bool encrypt)
+    {
+        var cipher = new BlowfishEngine();
+        cipher.Init(encrypt, new KeyParameter(IndexKey));
+        for (var offset = 0; offset < table.Length; offset += 8)
+        {
+            ReverseWords(table.AsSpan(offset, 8));
+            cipher.ProcessBlock(table, offset, table, offset);
+            ReverseWords(table.AsSpan(offset, 8));
+        }
+    }
+
+    private static void CopyRange(Stream source, Stream output, long offset, long length, CancellationToken cancellation)
+    {
+        source.Position = offset;
+        var buffer = new byte[1 << 20];
+        while (length > 0)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var read = source.Read(buffer, 0, (int)Math.Min(buffer.Length, length));
+            if (read <= 0) throw new EndOfStreamException("The data archive ended early.");
+            output.Write(buffer, 0, read);
+            length -= read;
+        }
+    }
+
+    private static LostArkDataEntry Find(Stream archive, string entryPath, CancellationToken cancellation)
+    {
+        var normalised = "/" + entryPath.Replace('\\', '/').TrimStart('/');
+        return LostArkDataArchive.ReadEntries(archive, cancellation)
+                   .FirstOrDefault(entry => entry.Path.Equals(normalised, StringComparison.OrdinalIgnoreCase))
+               ?? throw new InvalidDataException($"{entryPath} is not in the game's data archive.");
+    }
+
+    // The game's cipher: AES-CBC from a zero IV, restarted every 0x400 bytes; the last block is zero padded.
+    private static void Encrypt(string name, string databasePath, Stream output, CancellationToken cancellation)
+    {
+        using var aes = Aes.Create();
+        aes.Key = DeriveKey(name);
+        var iv = new byte[16];
+        var chunk = new byte[0x400];
+        var encrypted = new byte[0x400];
+        using var source = File.OpenRead(databasePath);
+        while (true)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var read = source.ReadAtLeast(chunk, chunk.Length, throwOnEndOfStream: false);
+            if (read == 0) break;
+            var length = (read + 15) / 16 * 16;
+            chunk.AsSpan(read, length - read).Clear();
+            aes.EncryptCbc(chunk.AsSpan(0, length), iv, encrypted, PaddingMode.None);
+            output.Write(encrypted, 0, length);
+            if (read < chunk.Length) break;
+        }
     }
 
     private static byte[] DeriveKey(string filename)
