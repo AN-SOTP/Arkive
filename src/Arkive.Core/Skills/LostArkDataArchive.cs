@@ -69,48 +69,93 @@ public static class LostArkDataArchive
     }
 
     /// <summary>
-    /// Writes a copy of the archive at <paramref name="sourcePath"/> to <paramref name="outputPath"/> with one compressed
-    /// entry's contents replaced: the entry is compressed and encrypted the way the game stores it, its sizes updated in
-    /// the index, and every other entry copied byte for byte.
+    /// Writes a copy of the archive at <paramref name="sourcePath"/> to <paramref name="outputPath"/> with the entries in
+    /// <paramref name="changes"/> (by path, such as /Binaries/Fonts/FontMap.xml) replaced, or added in name order when the
+    /// archive has none by that path. Changed entries are compressed and encrypted the way the game stores them, and every
+    /// other entry is copied byte for byte.
     /// </summary>
-    public static void ReplaceEntry(string sourcePath, string entryPath, byte[] contents, string outputPath,
+    public static void Rewrite(string sourcePath, IReadOnlyDictionary<string, byte[]> changes, string outputPath,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(contents);
         using var source = File.OpenRead(sourcePath);
         var entries = ReadEntries(source, cancellationToken);
-        var normalised = entryPath.Replace(Path.DirectorySeparatorChar, '/');
-        var index = entries.ToList().FindIndex(entry => entry.Path.Equals(normalised, StringComparison.OrdinalIgnoreCase));
-        if (index < 0) throw new InvalidDataException($"{entryPath} is not in {Path.GetFileName(sourcePath)}.");
-        var target = entries[index];
-        if (target.CompressedSize <= 0) throw new InvalidDataException($"{entryPath} is not a compressed data archive entry.");
-
-        using var packed = new MemoryStream();
-        using (var zlib = new ZLibStream(packed, CompressionLevel.Optimal, leaveOpen: true)) zlib.Write(contents);
-        var compressed = (int)packed.Length;
-        // The game always pads to the next whole 8-byte block, a full block when the data already ends on one.
-        var encrypted = new byte[(compressed / 8 + 1) * 8];
-        packed.ToArray().CopyTo(encrypted, 0);
-        Crypt(encrypted, encrypt: true);
-
-        source.Position = 0;
-        var header = new byte[4 + entries.Count * EntrySize + 4];
-        source.ReadExactly(header);
-        var table = header.AsSpan(4, entries.Count * EntrySize).ToArray();
+        source.Position = 4;
+        var table = new byte[entries.Count * EntrySize];
+        source.ReadExactly(table);
         Decrypt(table);
-        var record = table.AsSpan(index * EntrySize, EntrySize);
-        BinaryPrimitives.WriteInt32LittleEndian(record[^12..], contents.Length);
-        BinaryPrimitives.WriteInt32LittleEndian(record[^8..], encrypted.Length);
-        BinaryPrimitives.WriteInt32LittleEndian(record[^4..], compressed);
+
+        var pending = changes.ToDictionary(change => Normalise(change.Key), change => change.Value, StringComparer.OrdinalIgnoreCase);
+        var items = new List<(byte[] Record, LostArkDataEntry? Copy, byte[]? Contents)>();
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var record = table.AsSpan(index * EntrySize, EntrySize).ToArray();
+            if (pending.Remove(entries[index].Path, out var contents)) items.Add((record, null, contents));
+            else items.Add((record, entries[index], null));
+        }
+        // Every entry added so far sorts before the first existing entry greater than the next one.
+        foreach (var (path, contents) in pending.OrderBy(change => change.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var at = entries.ToList().FindIndex(entry => StringComparer.OrdinalIgnoreCase.Compare(entry.Path, path) > 0);
+            items.Insert(at < 0 ? items.Count : at + items.Count - entries.Count, (NewRecord(path), null, contents));
+        }
+        Write(source, items, outputPath, cancellationToken);
+    }
+
+    /// <summary>Writes a new archive holding <paramref name="files"/> (path and contents), in the order given.</summary>
+    public static void Create(IEnumerable<KeyValuePair<string, byte[]>> files, string outputPath, CancellationToken cancellationToken = default) =>
+        Write(Stream.Null, files.Select(file => (NewRecord(Normalise(file.Key)), (LostArkDataEntry?)null, (byte[]?)file.Value)).ToList(),
+            outputPath, cancellationToken);
+
+    private static string Normalise(string path) => "/" + path.Replace('\\', '/').TrimStart('/');
+
+    // The game stores names with backslashes and no terminator; the rest of the record before the sizes is zero.
+    private static byte[] NewRecord(string path)
+    {
+        var name = Encoding.UTF8.GetBytes(path.Replace('/', '\\'));
+        if (name.Length > EntrySize - 20) throw new ArgumentException($"{path} is too long for a data archive entry.");
+        var record = new byte[EntrySize];
+        BinaryPrimitives.WriteInt32LittleEndian(record, name.Length);
+        name.CopyTo(record, 4);
+        return record;
+    }
+
+    private static void Write(Stream source, List<(byte[] Record, LostArkDataEntry? Copy, byte[]? Contents)> items, string outputPath,
+        CancellationToken cancellationToken)
+    {
+        if (items.Count is < 1 or > MaximumEntries) throw new ArgumentException("A data archive holds 1 to 200,000 entries.");
+        var payloads = new byte[items.Count][];
+        var table = new byte[items.Count * EntrySize];
+        for (var index = 0; index < items.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (record, copy, contents) = items[index];
+            if (contents is not null)
+            {
+                using var packed = new MemoryStream();
+                using (var zlib = new ZLibStream(packed, CompressionLevel.Optimal, leaveOpen: true)) zlib.Write(contents);
+                var compressed = (int)packed.Length;
+                // The game always pads to the next whole 8-byte block, a full block when the data already ends on one.
+                var encrypted = new byte[(compressed / 8 + 1) * 8];
+                packed.ToArray().CopyTo(encrypted, 0);
+                Crypt(encrypted, encrypt: true);
+                payloads[index] = encrypted;
+                BinaryPrimitives.WriteInt32LittleEndian(record.AsSpan(EntrySize - 12), contents.Length);
+                BinaryPrimitives.WriteInt32LittleEndian(record.AsSpan(EntrySize - 8), encrypted.Length);
+                BinaryPrimitives.WriteInt32LittleEndian(record.AsSpan(EntrySize - 4), compressed);
+            }
+            record.CopyTo(table, index * EntrySize);
+        }
         Crypt(table, encrypt: true);
-        table.CopyTo(header, 4);
 
         using var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20);
-        output.Write(header);
-        CopyRange(source, output, header.Length, target.Offset - header.Length, cancellationToken);
-        output.Write(encrypted);
-        var after = target.Offset + target.EncryptedSize;
-        CopyRange(source, output, after, source.Length - after, cancellationToken);
+        var count = new byte[4];
+        BinaryPrimitives.WriteInt32LittleEndian(count, items.Count);
+        output.Write(count);
+        output.Write(table);
+        output.Write(new byte[4]);
+        for (var index = 0; index < items.Count; index++)
+            if (items[index].Copy is { } copy) CopyRange(source, output, copy.Offset, copy.EncryptedSize, cancellationToken);
+            else output.Write(payloads[index]);
     }
 
     private static void CopyRange(Stream source, Stream output, long offset, long length, CancellationToken cancellationToken)
