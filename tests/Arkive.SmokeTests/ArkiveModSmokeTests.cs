@@ -756,7 +756,8 @@ internal static class ArkiveModSmokeTests
         player.Library.SetEnabledAsync(mod.ModId, true).GetAwaiter().GetResult();
         var blocked = service.PlanAsync().GetAwaiter().GetResult();
         Assert(!blocked.CanApply && blocked.BlockingProblems.Any(problem =>
-                   problem.Contains("Update for this game version", StringComparison.Ordinal)),
+                   problem.Contains("Update for this game version", StringComparison.Ordinal)) &&
+               blocked.ModsNeedingClientUpdate.SetEquals([mod.ModId]),
             "a game change to the modded asset was not held for an explicit mod update");
         var updates = service.UpdateModForCurrentClientAsync(mod.ModId).GetAwaiter().GetResult();
         Assert(updates is [{ Succeeded: true, Changed: true }],

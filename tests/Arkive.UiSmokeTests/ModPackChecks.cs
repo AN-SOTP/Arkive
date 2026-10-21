@@ -144,6 +144,44 @@ internal static class ModPackChecks
             () => $"Removing the pack did not leave its mods in the list without a heading: context={remove.DataContext?.GetType().Name}, status={status.Text}.");
         Check(store.Load().Packs.Count == 0, "Removing the pack did not remove it from the packs file.");
         Console.WriteLine("PASS: packs fold, offer their actions on right-click, and removing a pack keeps its mods");
+
+        // Removing the pack refreshes the list in the background; the mod buttons come back when it has finished.
+        await UntilAsync(() => Control<Button>(window, "ModLibraryApplyButton").IsEnabled);
+        grid.SelectedItems.Clear();
+        foreach (var row in Rows(grid).Where(row => packIds.Contains(Id(row))).ToArray()) grid.SelectedItems.Add(row);
+        rowMenu.RaiseEvent(new RoutedEventArgs(ContextMenu.OpenedEvent, rowMenu));
+        MenuItem Item(string name) => rowMenu.Items.OfType<MenuItem>().Single(item => item.Name == name);
+        Check(Item("ModLibraryRowEnableItem").Header as string == "Disable 2 mods" &&
+              Item("ModLibraryRowUpdateItem").Header as string == "Update 2 mods for this game version" &&
+              Item("ModLibraryRowRenameItem").Visibility == Visibility.Collapsed &&
+              Item("ModLibraryRowAuthorItem").Visibility == Visibility.Collapsed,
+            "Right-clicking two chosen mods does not offer to act on both: " +
+            string.Join(", ", rowMenu.Items.OfType<MenuItem>().Where(item => item.Visibility == Visibility.Visible).Select(item => item.Header)));
+        bool BothOff() => Rows(grid).Where(row => packIds.Contains(Id(row))).All(row => !Enabled(row)) && grid.SelectedItems.Count == 2;
+        // A click while the list is still refreshing in the background is ignored, as a user's would be; click again.
+        for (var attempt = 0; attempt < 6 && !BothOff(); attempt++)
+        {
+            Invoke(window, "ModLibraryEnableButton_Click", null, new RoutedEventArgs());
+            var settle = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (!BothOff() && DateTime.UtcNow < settle) await Task.Delay(50);
+        }
+        Check(BothOff(), $"Disabling two chosen mods did not turn both off and keep both chosen: status={status.Text}, chosen={grid.SelectedItems.Count}.");
+        Console.WriteLine("PASS: several mods chosen together turn off together and stay chosen");
+
+        await UntilAsync(() => Control<Panel>(window, "BusyOverlay").Visibility != Visibility.Visible);
+        grid.SelectedItem = Rows(grid).First(row => packIds.Contains(Id(row)));
+        var authorId = Id(grid.SelectedItem);
+        Invoke(window, "ModLibraryRowAuthorItem_Click", null, new RoutedEventArgs());
+        await window.Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ContextIdle);
+        var authorColumn = grid.Columns.First(column => column.Header?.ToString() == "Author");
+        var editor = (authorColumn.GetCellContent(grid.SelectedItem) is { } content ? FindVisual<TextBox>(content) : null)
+                     ?? throw new InvalidOperationException("Change author did not open the author for typing.");
+        editor.Text = "UI author";
+        grid.CommitEdit(DataGridEditingUnit.Cell, true);
+        await UntilAsync(() => Rows(grid).FirstOrDefault(row => Id(row) == authorId) is { } changed &&
+                               (string)changed.GetType().GetProperty("Author")!.GetValue(changed)! == "UI author",
+            () => $"Typing an author did not save it: status={status.Text}.");
+        Console.WriteLine("PASS: Change author types a new author into the Mods list and saves it");
     }
 
     private static IEnumerable<object> Rows(DataGrid grid) => grid.Items.Cast<object>();

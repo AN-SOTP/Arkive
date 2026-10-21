@@ -62,6 +62,9 @@ public sealed record ArkiveModApplyPlan(
     IReadOnlyList<string> BlockingProblems,
     IReadOnlyList<string> Warnings)
 {
+    /// <summary>Enabled mods with an asset the game has changed since the mod was made: they need an update for this game version.</summary>
+    public IReadOnlySet<string> ModsNeedingClientUpdate { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     public bool HasChanges => Packages.Any(package => package.Action is not ArkiveModPackageAction.None);
 
     public bool CanApply => BlockingProblems.Count == 0;
@@ -332,6 +335,7 @@ public sealed class ArkiveModApplyService
         var resolution = ArkiveModConflictResolver.Resolve(library.Mods);
         var problems = new List<string>();
         var warnings = new List<string>();
+        var needClientUpdate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var tie in resolution.BlockingTies)
             problems.Add(
                 $"{tie.ObjectName} ({tie.PackageAlias}) is replaced by {string.Join(" and ", tie.Tied.Select(item => item.ModName))} " +
@@ -441,11 +445,14 @@ public sealed class ArkiveModApplyService
                         setups.Add(new ArkiveModPendingSetup(mod.ModId, mod.Manifest.Name, asset, binding,
                             "The client was updated but this asset is unchanged; it will be set up again automatically."));
                     else
+                    {
+                        if (check.State == ArkiveModTargetState.Changed) needClientUpdate.Add(mod.ModId);
                         packageProblems.Add(
                             $"{mod.Manifest.Name}: {asset.DisplayName} — {check.Message}" +
                             (check.State == ArkiveModTargetState.Changed
                                 ? " Select the mod and choose 'Update for this game version'."
                                 : string.Empty));
+                    }
                     continue;
                 }
                 if (ChangesNothing(local))
@@ -570,7 +577,10 @@ public sealed class ArkiveModApplyService
 
         if (plans.Any(plan => plan.Action == ArkiveModPackageAction.Rebuild) && _composer is null)
             problems.Add(_rebuildUnavailable);
-        return new ArkiveModApplyPlan(resolution, plans, problems.Distinct().ToArray(), warnings);
+        return new ArkiveModApplyPlan(resolution, plans, problems.Distinct().ToArray(), warnings)
+        {
+            ModsNeedingClientUpdate = needClientUpdate,
+        };
     }
 
     public async Task<ArkiveModApplyResult> ApplyAsync(

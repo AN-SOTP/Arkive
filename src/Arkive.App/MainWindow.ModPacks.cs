@@ -266,21 +266,28 @@ public partial class MainWindow : Window
 
     private void ModLibraryRowAddToPack_Click(object sender, RoutedEventArgs e)
     {
-        if (!ModLibraryIdle || ModLibraryGrid.SelectedItem is not ModLibraryRow row ||
+        var rows = SelectedModRows();
+        if (!ModLibraryIdle || rows.Length == 0 ||
             sender is not MenuItem { Tag: string packId } || _modPackManifest.Find(packId) is not { } pack) return;
-        if (!TryChangePacks(() => ModPacks.Save(pack.PackId, pack.Name, [.. pack.ModIds, row.Entry.ModId]))) return;
-        Log($"Mod added to pack: mod={row.Entry.ModId}, pack={pack.PackId}, name={pack.Name}.");
-        _ = RefreshArkiveModsAsync("mod added to pack", row.Entry.ModId);
-        ModLibraryStatusText.Text = StatusText.Text = $"Added {row.DisplayName} to the pack {pack.Name}.";
+        var ids = rows.Select(row => row.Entry.ModId).ToArray();
+        if (!TryChangePacks(() => ModPacks.Save(pack.PackId, pack.Name, [.. pack.ModIds, .. ids]))) return;
+        Log($"Mods added to pack: mods={string.Join(", ", ids)}, pack={pack.PackId}, name={pack.Name}.");
+        _ = RefreshArkiveModsAsync("mod added to pack", ids[0]);
+        ModLibraryStatusText.Text = StatusText.Text = rows.Length == 1
+            ? $"Added {rows[0].DisplayName} to the pack {pack.Name}."
+            : $"Added {rows.Length:N0} mods to the pack {pack.Name}.";
     }
 
     private void ModLibraryRowRemoveFromPack_Click(object sender, RoutedEventArgs e)
     {
-        if (!ModLibraryIdle || ModLibraryGrid.SelectedItem is not ModLibraryRow { Group.Pack: { } pack } row) return;
-        if (!TryChangePacks(() => ModPacks.RemoveMod(row.Entry.ModId))) return;
-        Log($"Mod removed from pack: mod={row.Entry.ModId}, pack={pack.PackId}, name={pack.Name}.");
-        _ = RefreshArkiveModsAsync("mod removed from pack", row.Entry.ModId);
-        ModLibraryStatusText.Text = StatusText.Text = $"Took {row.DisplayName} out of the pack {pack.Name}. The mod stays in the list.";
+        var rows = SelectedModRows().Where(row => row.Group?.Pack is not null).ToArray();
+        if (!ModLibraryIdle || rows.Length == 0) return;
+        if (!TryChangePacks(() => { foreach (var row in rows) ModPacks.RemoveMod(row.Entry.ModId); })) return;
+        Log($"Mods removed from packs: mods={string.Join(", ", rows.Select(row => row.Entry.ModId))}.");
+        _ = RefreshArkiveModsAsync("mod removed from pack", rows[0].Entry.ModId);
+        ModLibraryStatusText.Text = StatusText.Text = rows.Length == 1
+            ? $"Took {rows[0].DisplayName} out of the pack {rows[0].Group.Pack!.Name}. The mod stays in the list."
+            : $"Took {rows.Length:N0} mods out of their packs. They stay in the list.";
     }
 
     private void ModOverlapHideButton_Click(object sender, RoutedEventArgs e)

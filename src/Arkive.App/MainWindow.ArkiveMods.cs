@@ -93,6 +93,8 @@ public partial class MainWindow : Window
                 outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray());
             Lap("status"); 
             var previous = selectModId ?? (ModLibraryGrid.SelectedItem as ModLibraryRow)?.Entry.ModId;
+            // Mods chosen together stay chosen when the list is rebuilt after acting on them.
+            var previousGroup = SelectedModRows().Select(row => row.Entry.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var drafts = (await _modAuthoringWorkspace.LoadAsync()).Where(draft => draft.ModId is not null)
                 .ToDictionary(draft => draft.ModId!, StringComparer.OrdinalIgnoreCase);
             var rows = statuses
@@ -110,6 +112,9 @@ public partial class MainWindow : Window
             var selected = rows.FirstOrDefault(row => row.Entry.ModId.Equals(
                                previous, StringComparison.OrdinalIgnoreCase)) ?? rows.FirstOrDefault();
             ModLibraryGrid.SelectedItem = selected;
+            if (previousGroup.Count > 1 && selected is not null && previousGroup.Contains(selected.Entry.ModId))
+                foreach (var row in rows.Where(row => row != selected && previousGroup.Contains(row.Entry.ModId)))
+                    ModLibraryGrid.SelectedItems.Add(row);
             if (selected is not null) ModLibraryGrid.ScrollIntoView(selected);
             ApplySelectedModLibraryRow();
 
@@ -240,7 +245,11 @@ public partial class MainWindow : Window
         ModLibraryRefreshButton.IsEnabled = idle;
         ModLibraryExportButton.IsEnabled = idle && hasRow;
         ModLibraryEnableButton.IsEnabled = idle && row is not null;
-        ModLibraryEnableButton.Header = row?.Enabled == true ? "Disable" : "Enable";
+        var chosen = SelectedModRows();
+        ModLibraryEnableButton.Header = chosen.Length > 1
+            ? $"{(chosen.Any(item => !item.Enabled) ? "Enable" : "Disable")} {chosen.Length:N0} mods"
+            : row?.Enabled == true ? "Disable" : "Enable";
+        ModLibraryUpdateButton.Header = chosen.Length > 1 ? $"Update {chosen.Length:N0} mods for this game version" : "Update for this game version";
         ModLibraryPriorityUpButton.IsEnabled = idle && row is not null;
         ModLibraryPriorityDownButton.IsEnabled = idle && row is not null;
         ModLibraryMakeWinnerButton.IsEnabled = idle && row is not null &&
@@ -351,11 +360,27 @@ public partial class MainWindow : Window
             await SetModEnabledAsync(row, !row.Enabled);
     }
 
+    private ModLibraryRow[] SelectedModRows() => ModLibraryGrid.SelectedItems.OfType<ModLibraryRow>().ToArray();
+
     private async void ModLibraryEnableButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ModLibraryGrid.SelectedItem is ModLibraryRow row)
-            await SetModEnabledAsync(row, !row.Enabled);
+        var rows = SelectedModRows();
+        if (rows.Length > 1) await SetModsEnabledAsync(rows, rows.Any(row => !row.Enabled));
+        else if (ModLibraryGrid.SelectedItem is ModLibraryRow row) await SetModEnabledAsync(row, !row.Enabled);
     }
+
+    /// <summary>Turns the selected mods on, unless every one is on already, in which case it turns them off.</summary>
+    private Task SetModsEnabledAsync(IReadOnlyList<ModLibraryRow> rows, bool enabled) =>
+        RunModLibraryOperationAsync(enabled ? "Enable mods" : "Disable mods", async () =>
+        {
+            var ids = rows.Select(row => row.Entry.ModId).ToArray();
+            var library = await _arkiveModLibrary.SetEnabledAsync(ids, enabled);
+            Log($"Mods {(enabled ? "enabled" : "disabled")}: mods={string.Join(", ", ids)}.");
+            await SynchronizeModSelectionsAsync(enabled ? "mods enabled" : "mods disabled", onlyIfChanged: true, deferWorkspace: true);
+            return enabled
+                ? $"Enabled {ids.Length:N0} mods.{OverlapNotice(library.Mods, ids)} Choose Apply changes to update the game."
+                : $"Disabled {ids.Length:N0} mods. Choose Apply changes to update the game.";
+        });
 
     private Task SetModEnabledAsync(ModLibraryRow row, bool enabled) =>
         RunModLibraryOperationAsync(enabled ? "Enable mod" : "Disable mod", async () =>
@@ -372,16 +397,20 @@ public partial class MainWindow : Window
     private void ModLibraryGrid_CellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
     {
         if (e.EditAction != DataGridEditAction.Commit || e.Row.Item is not ModLibraryRow row ||
-            e.Column != ModLibraryNameColumn || FindChild<TextBox>(e.EditingElement) is not { } textBox)
+            (e.Column != ModLibraryNameColumn && e.Column != ModLibraryAuthorColumn) ||
+            FindChild<TextBox>(e.EditingElement) is not { } textBox)
             return;
-        var name = textBox.Text.Trim();
-        if (name.Length == 0 || name == row.DisplayName) return;
+        var text = textBox.Text.Trim();
+        var author = e.Column == ModLibraryAuthorColumn;
+        if (author ? text == (row.Entry.Manifest.Author ?? string.Empty) : text.Length == 0 || text == row.DisplayName) return;
         // The grid is still inside its edit; finish it before the list is rebuilt, or the rebuild fails and the
         // list and its buttons stay stale until another tab is opened.
         _ = Dispatcher.InvokeAsync(async () =>
         {
             ModLibraryGrid.CommitEdit(DataGridEditingUnit.Row, exitEditingMode: true);
-            await SaveModMetadataAsync(row, ModMetadata(row) with { Name = name }, "Rename mod");
+            await SaveModMetadataAsync(row,
+                author ? ModMetadata(row) with { Author = text.Length == 0 ? null : text } : ModMetadata(row) with { Name = text },
+                author ? "Change author" : "Rename mod");
         }, DispatcherPriority.Background);
     }
 
@@ -433,7 +462,8 @@ public partial class MainWindow : Window
              element = VisualTreeHelper.GetParent(element))
         {
             if (element is not DataGridRow { Item: ModLibraryRow row }) continue;
-            ModLibraryGrid.SelectedItem = row;
+            // Right-clicking one of several chosen mods acts on all of them.
+            if (!ModLibraryGrid.SelectedItems.Contains(row)) ModLibraryGrid.SelectedItem = row;
             return;
         }
     }
@@ -441,13 +471,38 @@ public partial class MainWindow : Window
     private void ModLibraryRowMenu_Opened(object sender, RoutedEventArgs e)
     {
         var row = ModLibraryGrid.SelectedItem as ModLibraryRow;
+        var rows = SelectedModRows();
+        var several = rows.Length > 1;
         var enabled = ModLibraryIdle && row is not null;
-        ModLibraryRowEnableItem.Header = row?.Enabled == true ? "Disable" : "Enable";
+        ModLibraryRowEnableItem.Header = several
+            ? $"{(rows.Any(item => !item.Enabled) ? "Enable" : "Disable")} {rows.Length:N0} mods"
+            : row?.Enabled == true ? "Disable" : "Enable";
         ModLibraryRowEnableItem.IsEnabled = ModLibraryRowPriorityUpItem.IsEnabled =
             ModLibraryRowPriorityDownItem.IsEnabled = enabled;
-        ModLibraryRowRenameItem.IsEnabled = enabled && !row!.Status.FileMissing;
-        FillAddToPackMenu(row);
+        ModLibraryRowRenameItem.IsEnabled = ModLibraryRowAuthorItem.IsEnabled = enabled && !row!.Status.FileMissing;
+        // Priority, name and author belong to one mod; with several chosen only what applies to all of them shows.
+        var single = several ? Visibility.Collapsed : Visibility.Visible;
+        ModLibraryRowPriorityUpItem.Visibility = ModLibraryRowPriorityDownItem.Visibility =
+            ModLibraryRowRenameItem.Visibility = ModLibraryRowAuthorItem.Visibility = single;
+        ModLibraryRowUpdateItem.Header = several ? $"Update {rows.Length:N0} mods for this game version" : "Update for this game version";
+        ModLibraryRowUpdateItem.IsEnabled = enabled && rows.All(item => !item.Status.FileMissing);
+        FillAddToPackMenu(several ? null : row);
+        if (several && rows.Any(item => item.Group?.Pack is not null))
+        {
+            ModLibraryRowRemoveFromPackItem.Visibility = Visibility.Visible;
+            ModLibraryRowRemoveFromPackItem.Header = "Remove from their packs";
+        }
         ModLibraryRowAddToPackItem.IsEnabled = ModLibraryRowRemoveFromPackItem.IsEnabled = enabled;
+    }
+
+    /// <summary>Starts typing a new author into the selected mod's Author cell.</summary>
+    private void ModLibraryRowAuthorItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (ModLibraryGrid.SelectedItem is not ModLibraryRow row || !ModLibraryIdle) return;
+        ModLibraryGrid.ScrollIntoView(row, ModLibraryAuthorColumn);
+        ModLibraryGrid.Focus();
+        ModLibraryGrid.CurrentCell = new DataGridCellInfo(row, ModLibraryAuthorColumn);
+        ModLibraryGrid.BeginEdit();
     }
 
     /// <summary>The priority box: Enter applies a typed number, Up and Down step it, Escape puts it back.</summary>
@@ -722,43 +777,15 @@ public partial class MainWindow : Window
             return $"Saved details for {saved.Manifest.Name} {saved.Manifest.Version}.";
         }, row.Entry.ModId);
 
+    /// <summary>Updates the selected mods for the installed game version (More actions, or right-click for several).</summary>
     private async void ModLibraryUpdateButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ModLibraryGrid.SelectedItem is not ModLibraryRow row) return;
-        if (MessageBox.Show(this,
-                $"Update '{row.DisplayName}' for the installed Lost Ark version?\n\n" +
-                "Arkive sets up every asset of this mod against your current clean game files. Assets the game has changed since the mod was made are re-applied only if they pass every native safety check (texture layout, mesh skeleton and preflight, material parameters). " +
-                "Review changed assets in UModel before playing. No game file is changed until you choose Apply changes.",
-                "Update for this game version", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        await RunModLibraryOperationAsync("Update for this game version", async () =>
-        {
-            ModLibraryProgressBar.IsIndeterminate = true;
-            try
-            {
-                var outcomes = await _arkiveModApply.UpdateModForCurrentClientAsync(row.Entry.ModId);
-                foreach (var outcome in outcomes)
-                    Log($"Mod asset update: mod={row.Entry.ModId}, asset={outcome.DisplayName}, " +
-                        $"succeeded={outcome.Succeeded}, changed={outcome.Changed}, message={outcome.Message}");
-                await SynchronizeModSelectionsAsync("mod updated for client");
-                var failed = outcomes.Where(outcome => !outcome.Succeeded).ToArray();
-                if (failed.Length == 0) _modsNeedingGameUpdate.Remove(row.Entry.ModId);
-                MessageBox.Show(this,
-                    string.Join("\n", outcomes.Select(outcome =>
-                        $"{(outcome.Succeeded ? "✓" : "✗")} {outcome.DisplayName}: {outcome.Message}")) +
-                    (failed.Length > 0
-                        ? "\n\nAssets that failed need the mod author (or you) to re-export and re-edit them for this game version, then save them into the mod."
-                        : "\n\nChoose Apply changes to rebuild and install the updated mod."),
-                    "Update for this game version", MessageBoxButton.OK,
-                    failed.Length > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
-                return failed.Length == 0
-                    ? $"{row.DisplayName} is set up for this game version."
-                    : $"{failed.Length:N0} asset(s) of {row.DisplayName} still need an update.";
-            }
-            finally
-            {
-                ModLibraryProgressBar.IsIndeterminate = false;
-            }
-        }, row.Entry.ModId);
+        var mods = SelectedModRows().Where(row => !row.Status.FileMissing).Select(row => row.Entry).ToArray();
+        if (!ModLibraryIdle || mods.Length == 0) return;
+        await RebaseModsAsync(mods, 0, "Update for this game version",
+            mods.Length == 1 ? $"Update '{mods[0].Manifest.Name}' for the installed Lost Ark version?"
+                             : $"Update {mods.Length:N0} mods for the installed Lost Ark version?",
+            "Arkive checks these mods against your current game files.");
     }
 
     private async void ModLibraryGoToPackageButton_Click(object sender, RoutedEventArgs e)
@@ -942,15 +969,12 @@ public partial class MainWindow : Window
             _lastModApplyPlan = plan;
             ModLibraryPlanGrid.ItemsSource = plan.Packages.Select(package => new ModPlanRow(package)).ToArray();
             ModLibraryPlanTab.IsSelected = true;
-            foreach (var package in plan.Packages)
-                foreach (var contributor in package.Contributors.Where(contributor => contributor.ModId is not null))
-                    if (package.Action == ArkiveModPackageAction.Blocked &&
-                        package.Reason.Contains("Update for this game version", StringComparison.Ordinal) &&
-                        package.Reason.Contains(contributor.ModName + ":", StringComparison.Ordinal) &&
-                        _arkiveModLibraryManifest.Find(contributor.ModId!) is { } mod)
-                        _modsNeedingGameUpdate[mod.ModId] = mod.FileSha256;
-                    else if (package.Action != ArkiveModPackageAction.Blocked)
-                        _modsNeedingGameUpdate.Remove(contributor.ModId!);
+            // A full plan names every enabled mod the game update changed; a one-mod preview speaks only for that mod.
+            if (previewModId is null) _modsNeedingGameUpdate.Clear();
+            else _modsNeedingGameUpdate.Remove(previewModId);
+            foreach (var modId in plan.ModsNeedingClientUpdate)
+                if (_arkiveModLibraryManifest.Find(modId) is { } mod)
+                    _modsNeedingGameUpdate[mod.ModId] = mod.FileSha256;
             await RefreshArkiveModsAsync("apply plan reviewed");
             Log($"Mod apply plan: canApply={plan.CanApply}, changes={plan.HasChanges}, packages={plan.Packages.Count}, " +
                 $"summary={plan.Summary}, problems={string.Join(" | ", plan.BlockingProblems)}, " +

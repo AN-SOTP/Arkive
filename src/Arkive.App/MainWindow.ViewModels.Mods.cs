@@ -32,6 +32,9 @@ public partial class MainWindow : Window
 
         public string Author => string.IsNullOrWhiteSpace(Entry.Manifest.Author) ? "—" : Entry.Manifest.Author!;
 
+        /// <summary>The author as typed, empty when there is none (the list shows a dash).</summary>
+        public string AuthorText => Entry.Manifest.Author ?? string.Empty;
+
         public string AssetSummary
         {
             get

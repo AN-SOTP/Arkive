@@ -135,17 +135,28 @@ public partial class MainWindow
             UpdateModLibraryActionState();
             return;
         }
+        await RebaseModsAsync(mods, projects, "Rebase mods", "Rebase for this game update?",
+            "These mods replace things the update changed.");
+    }
+
+    /// <summary>
+    /// Sets <paramref name="mods"/> up against the installed game files, with progress, and saves the ones whose assets
+    /// changed. <paramref name="projects"/> working files the check proved unchanged are moved onto the new files first.
+    /// </summary>
+    private async Task RebaseModsAsync(
+        IReadOnlyList<ArkiveModLibraryEntry> mods, int projects, string title, string question, string intro)
+    {
         if (MessageBox.Show(this,
-                "Rebase for this game update?\n\n" +
-                (mods.Length == 0 ? string.Empty :
-                    "These mods replace things the update changed. Arkive sets them up again against the updated game files, " +
+                question + "\n\n" +
+                (mods.Count == 0 ? string.Empty :
+                    intro + " Arkive sets them up again against the updated game files, " +
                     "and keeps each change only if it passes every safety check:\n" +
                     string.Join("\n", mods.Take(10).Select(mod => $"  • {mod.Manifest.Name}")) +
-                    (mods.Length > 10 ? $"\n  • and {mods.Length - 10:N0} more" : string.Empty) + "\n\n") +
+                    (mods.Count > 10 ? $"\n  • and {mods.Count - 10:N0} more" : string.Empty) + "\n\n") +
                 (projects == 0 ? string.Empty :
                     $"{projects:N0} working file(s) the update left unchanged move onto the updated game files.\n\n") +
                 "No game file changes until you choose Apply changes. Look over rebased mods in game afterwards.",
-                "Rebase mods", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+                title, MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
 
         var problems = new List<string>();
         var rebased = 0;
@@ -162,14 +173,14 @@ public partial class MainWindow
                         problems.Add("Working files: the rebase stopped and was undone. The session log says why.");
                     _safeRebaseOffered = false;
                 }
-                ModLibraryProgressBar.Maximum = Math.Max(1, mods.Length);
-                for (var index = 0; index < mods.Length; index++)
+                ModLibraryProgressBar.Maximum = Math.Max(1, mods.Count);
+                for (var index = 0; index < mods.Count; index++)
                 {
                     var mod = mods[index];
                     ModLibraryProgressBar.Value = index;
                     var number = index;
                     var assets = new Progress<(int Done, int Total)>(update => UpdateBusy($"Rebasing {mod.Manifest.Name}…",
-                        $"Mod {number + 1:N0} of {mods.Length:N0}, asset {Math.Min(update.Done + 1, update.Total):N0} of {update.Total:N0}. No game file is changed."));
+                        $"Mod {number + 1:N0} of {mods.Count:N0}, asset {Math.Min(update.Done + 1, update.Total):N0} of {update.Total:N0}. No game file is changed."));
                     try
                     {
                         var outcomes = await _arkiveModApply.UpdateModForCurrentClientAsync(mod.ModId, assets);
@@ -181,6 +192,7 @@ public partial class MainWindow
                         {
                             _modsNeedingGameUpdate.Remove(mod.ModId);
                             rebased++;
+                            if (await SaveRebasedModAsync(mod.ModId, outcomes) is { } note) problems.Add($"{mod.Manifest.Name}: {note}");
                         }
                         else
                             problems.Add($"{mod.Manifest.Name}: {failed[0].DisplayName}: {failed[0].Message}" +
@@ -192,7 +204,7 @@ public partial class MainWindow
                         problems.Add($"{mod.Manifest.Name}: {exception.Message}");
                     }
                 }
-                if (mods.Length > 0) await SynchronizeModSelectionsAsync("mods rebased for game update");
+                if (mods.Count > 0) await SynchronizeModSelectionsAsync("mods rebased for game update");
             }
             finally
             {
@@ -200,7 +212,7 @@ public partial class MainWindow
                 UpdateModLibraryActionState();
             }
         }
-        Log($"Rebase for game update: mods={mods.Length}, rebased={rebased}, projects={projects}, problems={problems.Count}.");
+        Log($"Rebase for game update: mods={mods.Count}, rebased={rebased}, projects={projects}, problems={problems.Count}.");
         MessageBox.Show(this,
             problems.Count == 0
                 ? "Rebased. Choose Apply changes to put your mods in the game."
@@ -208,10 +220,34 @@ public partial class MainWindow
                   "These could not be rebased; they need re-exporting and editing again for this game version, then saving into the mod:\n\n" +
                   string.Join("\n", problems.Take(12).Select(problem => $"  • {problem}")) +
                   "\n\nApply changes still puts every other enabled mod in the game.",
-            "Rebase mods", MessageBoxButton.OK,
+            title, MessageBoxButton.OK,
             problems.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
         // The Apply Plan shows what Apply changes will now do.
         await RunModApplyAsync(previewOnly: true);
+    }
+
+    /// <summary>
+    /// Saves a rebased mod's working copies into its .arkive file when the update changed any of its assets: an effect
+    /// tinted again on the game's changed effect has new values, which Apply changes would otherwise refuse as unsaved edits.
+    /// </summary>
+    /// <returns>Why the mod was left unsaved, or null.</returns>
+    private async Task<string?> SaveRebasedModAsync(string modId, IReadOnlyList<ArkiveModAssetUpdateOutcome> outcomes)
+    {
+        if (!outcomes.Any(outcome => outcome.Changed)) return null;
+        // An open draft may hold the user's own unsaved edits, which only they should choose to save.
+        if ((await _modAuthoringWorkspace.LoadAsync()).Any(draft => draft.ModId == modId))
+            return "it is open in Edit mods. Choose Save mod there to keep the rebased assets.";
+        try
+        {
+            var saved = await SaveLibraryModAsync(modId);
+            Log($"Rebased mod saved: mod={saved.ModId}, file={saved.FileName}, sha256={saved.FileSha256}.");
+            return null;
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            Log($"Rebased mod could not be saved: mod={modId}, error={exception}");
+            return $"the rebased assets could not be saved into the mod: {exception.Message}";
+        }
     }
 
     private void ModifiedUpksInnerTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
