@@ -167,10 +167,12 @@ public partial class MainWindow
                 {
                     var mod = mods[index];
                     ModLibraryProgressBar.Value = index;
-                    UpdateBusy($"Rebasing {mod.Manifest.Name}…", $"Mod {index + 1:N0} of {mods.Length:N0}. No game file is changed.");
+                    var number = index;
+                    var assets = new Progress<(int Done, int Total)>(update => UpdateBusy($"Rebasing {mod.Manifest.Name}…",
+                        $"Mod {number + 1:N0} of {mods.Length:N0}, asset {Math.Min(update.Done + 1, update.Total):N0} of {update.Total:N0}. No game file is changed."));
                     try
                     {
-                        var outcomes = await _arkiveModApply.UpdateModForCurrentClientAsync(mod.ModId);
+                        var outcomes = await _arkiveModApply.UpdateModForCurrentClientAsync(mod.ModId, assets);
                         foreach (var outcome in outcomes)
                             Log($"Mod asset update: mod={mod.ModId}, asset={outcome.DisplayName}, " +
                                 $"succeeded={outcome.Succeeded}, changed={outcome.Changed}, message={outcome.Message}");

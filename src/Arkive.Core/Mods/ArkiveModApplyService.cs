@@ -621,27 +621,38 @@ public sealed class ArkiveModApplyService
         }
 
         var setUp = 0;
-        foreach (var package in changing.Where(package => package.Setups.Count > 0 &&
-                                                          !outcomes.ContainsKey(package.PhysicalPackageName)))
+        var setUps = new SetUpBatch();
+        var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            foreach (var pending in package.Setups)
+            foreach (var package in changing.Where(package => package.Setups.Count > 0 &&
+                                                              !outcomes.ContainsKey(package.PhysicalPackageName)))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                Report(package.PhysicalPackageName, $"Setting up {pending.Asset.DisplayName} from {pending.ModName}...");
-                try
+                foreach (var pending in package.Setups)
                 {
-                    await SetUpAssetAsync(pending.ModId, pending.Asset, package.SourcePackagePath!,
-                        allowChangedSource: false, cancellationToken).ConfigureAwait(false);
-                    setUp++;
-                }
-                catch (Exception exception) when (IsOperational(exception))
-                {
-                    outcomes[package.PhysicalPackageName] = new ArkiveModPackageOutcome(
-                        package.PhysicalPackageName, package.Action, false,
-                        $"{pending.ModName}: {pending.Asset.DisplayName} could not be set up: {exception.Message}");
-                    break;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Report(package.PhysicalPackageName, $"Setting up {pending.Asset.DisplayName} from {pending.ModName}...");
+                    try
+                    {
+                        var mod = library.Find(pending.ModId) ??
+                                  throw new ArkiveModRefusalException("APL021", $"Mod {pending.ModId} is not in the library.");
+                        await SetUpAssetAsync(mod, pending.Asset, package.SourcePackagePath!,
+                            allowChangedSource: false, setUps, cancellationToken).ConfigureAwait(false);
+                        setUp++;
+                    }
+                    catch (Exception exception) when (IsOperational(exception))
+                    {
+                        outcomes[package.PhysicalPackageName] = new ArkiveModPackageOutcome(
+                            package.PhysicalPackageName, package.Action, false,
+                            $"{pending.ModName}: {pending.Asset.DisplayName} could not be set up: {exception.Message}");
+                        break;
+                    }
                 }
             }
+        }
+        finally
+        {
+            await SaveSetUpsAsync(setUps).ConfigureAwait(false);
         }
 
         Report("Mods", "Applying priorities to the package selections...");
@@ -787,22 +798,37 @@ public sealed class ArkiveModApplyService
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
         var mod = library.Find(modId) ?? throw new ArkiveModRefusalException("APL021", "The mod is missing from the library.");
         var snapshot = await ArkiveModEditSnapshot.LoadAsync(_context.Edits, cancellationToken).ConfigureAwait(false);
-        foreach (var asset in mod.Manifest.Assets)
+        var setUps = new SetUpBatch();
+        try
         {
-            var binding = mod.BindingFor(asset.AssetId);
-            if (binding is not null && snapshot.Find(binding.EditId) is not null) continue;
-            var packagePath = library.GamePackagesDirectory is { } gameDirectory
-                ? Path.Combine(gameDirectory, ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName))
-                : binding?.SourcePackagePath ?? throw new ArkiveModRefusalException("APL022", "Choose the Lost Ark game folder first.");
-            var clean = await ResolveCleanPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
-            await SetUpAssetAsync(modId, asset, clean, allowChangedSource: false, cancellationToken).ConfigureAwait(false);
+            foreach (var asset in mod.Manifest.Assets)
+            {
+                var binding = mod.BindingFor(asset.AssetId);
+                if (binding is not null && snapshot.Find(binding.EditId) is not null) continue;
+                var packagePath = library.GamePackagesDirectory is { } gameDirectory
+                    ? Path.Combine(gameDirectory, ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName))
+                    : binding?.SourcePackagePath ?? throw new ArkiveModRefusalException("APL022", "Choose the Lost Ark game folder first.");
+                var clean = await ResolveCleanPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
+                await SetUpAssetAsync(mod, asset, clean, allowChangedSource: false, setUps, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            await SaveSetUpsAsync(setUps).ConfigureAwait(false);
         }
         await ArkiveModSelectionService.SynchronizeAsync(_context.Library, _context.Edits, cancellationToken)
             .ConfigureAwait(false);
     }
 
+    public Task<IReadOnlyList<ArkiveModAssetUpdateOutcome>> UpdateModForCurrentClientAsync(
+        string modId,
+        CancellationToken cancellationToken = default) =>
+        UpdateModForCurrentClientAsync(modId, null, cancellationToken);
+
+    /// <param name="progress">Receives how many of the mod's assets are done, out of how many.</param>
     public async Task<IReadOnlyList<ArkiveModAssetUpdateOutcome>> UpdateModForCurrentClientAsync(
         string modId,
+        IProgress<(int Done, int Total)>? progress,
         CancellationToken cancellationToken = default)
     {
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
@@ -811,78 +837,124 @@ public sealed class ArkiveModApplyService
         var packages = await _context.Packages.LoadAsync(cancellationToken).ConfigureAwait(false);
         var installed = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var outcomes = new List<ArkiveModAssetUpdateOutcome>();
-        foreach (var asset in mod.Manifest.Assets)
+        var setUps = new SetUpBatch();
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            foreach (var asset in mod.Manifest.Assets)
             {
-                var physical = ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName);
-                var gameDirectory = library.GamePackagesDirectory;
-                var project = FindPackageProject(physical, gameDirectory, packages);
-                var binding = mod.BindingFor(asset.AssetId);
-                var packagePath = project?.Manifest.SourcePackagePath ??
-                                  (gameDirectory is null ? binding?.SourcePackagePath : Path.Combine(gameDirectory, physical)) ??
-                                  throw new ArkiveModRefusalException("APL022",
-                                      "Choose Lost Ark's EFGame\\ReleasePC\\Packages folder first.");
-                if (project is not null && !installed.ContainsKey(physical))
-                    installed[physical] = await _context.FindActiveDeploymentAsync(project, cancellationToken)
-                        .ConfigureAwait(false) is not null;
-                if (installed.GetValueOrDefault(physical))
-                    Refuse("APL023", $"{physical} has an installed Arkive package. Restore it before updating this mod.");
-                var local = binding is null ? null : snapshot.Find(binding.EditId);
-                var cleanHash = await ArkiveModEditSnapshot.HashFileCachedAsync(packagePath, cancellationToken)
-                    .ConfigureAwait(false);
-                if (local is not null &&
-                    (await ArkiveModEditSnapshot.GetSourcePackageSha256Async(local, cancellationToken)
-                        .ConfigureAwait(false))?.Equals(cleanHash, StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    outcomes.Add(new ArkiveModAssetUpdateOutcome(asset.AssetId, asset.DisplayName, true, false,
-                        "Already set up for this client."));
-                    continue;
-                }
-                if (local is not null && binding is not null &&
-                    await ArkiveModAuthoringService.IsModifiedAsync(local, binding, cancellationToken).ConfigureAwait(false))
-                    Refuse("APL024", "It has unsaved local changes. Save them to the .arkive file first.");
-                var check = await SetUpAssetAsync(mod.ModId, asset, packagePath, allowChangedSource: true, cancellationToken)
-                    .ConfigureAwait(false);
-                outcomes.Add(new ArkiveModAssetUpdateOutcome(asset.AssetId, asset.DisplayName, true,
-                    check == ArkiveModTargetState.Changed,
-                    check == ArkiveModTargetState.Changed
-                        ? "The game changed this asset; the mod passed every native check and was re-applied to the new version. Review it in UModel before playing."
-                        : "Set up for this client."));
-            }
-            catch (Exception exception) when (IsOperational(exception))
-            {
-                outcomes.Add(new ArkiveModAssetUpdateOutcome(asset.AssetId, asset.DisplayName, false, false,
-                    exception.Message));
+                cancellationToken.ThrowIfCancellationRequested();
+                progress?.Report((outcomes.Count, mod.Manifest.Assets.Count));
+                outcomes.Add(await UpdateAssetForCurrentClientAsync(
+                    library, mod, asset, snapshot, packages, installed, setUps, cancellationToken).ConfigureAwait(false));
             }
         }
+        finally
+        {
+            await SaveSetUpsAsync(setUps).ConfigureAwait(false);
+        }
+        progress?.Report((outcomes.Count, mod.Manifest.Assets.Count));
         await ArkiveModSelectionService.SynchronizeAsync(_context.Library, _context.Edits, cancellationToken)
             .ConfigureAwait(false);
         return outcomes;
     }
 
+    private async Task<ArkiveModAssetUpdateOutcome> UpdateAssetForCurrentClientAsync(
+        ArkiveModLibraryManifest library,
+        ArkiveModLibraryEntry mod,
+        ArkiveModFileAsset asset,
+        ArkiveModEditSnapshot snapshot,
+        IReadOnlyList<GuidedTexturePackageEntry> packages,
+        Dictionary<string, bool> installed,
+        SetUpBatch setUps,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var physical = ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName);
+            var gameDirectory = library.GamePackagesDirectory;
+            var project = FindPackageProject(physical, gameDirectory, packages);
+            var binding = mod.BindingFor(asset.AssetId);
+            var packagePath = project?.Manifest.SourcePackagePath ??
+                              (gameDirectory is null ? binding?.SourcePackagePath : Path.Combine(gameDirectory, physical)) ??
+                              throw new ArkiveModRefusalException("APL022",
+                                  "Choose Lost Ark's EFGame\\ReleasePC\\Packages folder first.");
+            if (project is not null && !installed.ContainsKey(physical))
+                installed[physical] = await _context.FindActiveDeploymentAsync(project, cancellationToken)
+                    .ConfigureAwait(false) is not null;
+            if (installed.GetValueOrDefault(physical))
+                Refuse("APL023", $"{physical} has an installed Arkive package. Restore it before updating this mod.");
+            var local = binding is null ? null : snapshot.Find(binding.EditId);
+            var cleanHash = await ArkiveModEditSnapshot.HashFileCachedAsync(packagePath, cancellationToken)
+                .ConfigureAwait(false);
+            if (local is not null &&
+                (await ArkiveModEditSnapshot.GetSourcePackageSha256Async(local, cancellationToken)
+                    .ConfigureAwait(false))?.Equals(cleanHash, StringComparison.OrdinalIgnoreCase) == true)
+                return new ArkiveModAssetUpdateOutcome(asset.AssetId, asset.DisplayName, true, false,
+                    "Already set up for this client.");
+            if (local is not null && binding is not null &&
+                await ArkiveModAuthoringService.IsModifiedAsync(local, binding, cancellationToken).ConfigureAwait(false))
+                Refuse("APL024", "It has unsaved local changes. Save them to the .arkive file first.");
+            var check = await SetUpAssetAsync(mod, asset, packagePath, allowChangedSource: true, setUps, cancellationToken)
+                .ConfigureAwait(false);
+            return new ArkiveModAssetUpdateOutcome(asset.AssetId, asset.DisplayName, true,
+                check == ArkiveModTargetState.Changed,
+                check == ArkiveModTargetState.Changed
+                    ? "The game changed this asset; the mod passed every native check and was re-applied to the new version. Review it in UModel before playing."
+                    : "Set up for this client.");
+        }
+        catch (Exception exception) when (IsOperational(exception))
+        {
+            return new ArkiveModAssetUpdateOutcome(asset.AssetId, asset.DisplayName, false, false, exception.Message);
+        }
+    }
+
     private async Task<ArkiveModTargetState> SetUpAssetAsync(
-        string modId,
+        ArkiveModLibraryEntry mod,
         ArkiveModFileAsset asset,
         string packagePath,
         bool allowChangedSource,
+        SetUpBatch setUps,
         CancellationToken cancellationToken)
     {
-        var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
-        var mod = library.Find(modId) ?? throw new ArkiveModRefusalException("APL021", $"Mod {modId} is not in the library.");
         var (binding, state) = await _materializer.MaterializeAsync(
             mod, asset, packagePath, allowChangedSource, cancellationToken).ConfigureAwait(false);
-        var previous = mod.BindingFor(asset.AssetId);
-        await _context.Library.UpdateBindingsAsync(modId, bindings => bindings
-                .Where(item => !item.AssetId.Equals(asset.AssetId, StringComparison.OrdinalIgnoreCase))
-                .Append(binding).ToArray(), cancellationToken)
-            .ConfigureAwait(false);
-        if (previous is not null && !previous.EditId.Equals(binding.EditId, StringComparison.OrdinalIgnoreCase))
-            await ArkiveModSelectionService.ReleaseAsync(_context.Edits,
-                [new ArkiveModReleasedEdit(previous.EditId, mod.Origin == ArkiveModOrigin.Imported)],
-                cancellationToken).ConfigureAwait(false);
+        setUps.Add(mod, asset, binding);
         return state;
+    }
+
+    /// <summary>
+    /// Assets set up by one operation, bound to their mods in one write at the end. The library file holds every
+    /// mod's manifest (tens of megabytes with large effect mods), so writing it for each asset made setting up a mod
+    /// of a few hundred effects take about ten minutes.
+    /// </summary>
+    private sealed class SetUpBatch
+    {
+        public Dictionary<string, Dictionary<string, ArkiveModAssetBinding>> Bindings { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        public List<ArkiveModReleasedEdit> Released { get; } = [];
+
+        public void Add(ArkiveModLibraryEntry mod, ArkiveModFileAsset asset, ArkiveModAssetBinding binding)
+        {
+            if (!Bindings.TryGetValue(mod.ModId, out var bindings))
+                Bindings[mod.ModId] = bindings = new Dictionary<string, ArkiveModAssetBinding>(StringComparer.OrdinalIgnoreCase);
+            var previous = bindings.GetValueOrDefault(asset.AssetId) ?? mod.BindingFor(asset.AssetId);
+            bindings[asset.AssetId] = binding;
+            if (previous is not null && !previous.EditId.Equals(binding.EditId, StringComparison.OrdinalIgnoreCase))
+                Released.Add(new ArkiveModReleasedEdit(previous.EditId, mod.Origin == ArkiveModOrigin.Imported));
+        }
+    }
+
+    // Runs after a failure or cancellation too, so the working copies already made stay bound to their mods.
+    private async Task SaveSetUpsAsync(SetUpBatch setUps)
+    {
+        foreach (var (modId, bindings) in setUps.Bindings)
+            await _context.Library.UpdateBindingsAsync(modId, current => current
+                    .Where(item => !bindings.ContainsKey(item.AssetId))
+                    .Concat(bindings.Values).ToArray(), CancellationToken.None)
+                .ConfigureAwait(false);
+        await ArkiveModSelectionService.ReleaseAsync(_context.Edits, setUps.Released, CancellationToken.None)
+            .ConfigureAwait(false);
     }
 
     private async Task<(GuidedTexturePackageEntry? Package, string? Error)> RebuildAsync(
