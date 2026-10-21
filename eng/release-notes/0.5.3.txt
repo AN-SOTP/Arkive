@@ -1,0 +1,5 @@
+Rebasing mods after a game update is much faster.
+
+- Rebase mods (and Update for this game version) used to rewrite Arkive's whole mod record for every asset. With large effect mods that record is tens of megabytes, so a mod with a few hundred effects took about ten minutes. It is now written once per mod. Apply changes is faster for the same reason when it sets up many assets again.
+- The wait card while rebasing now shows which asset of the mod Arkive is on, so a long rebase no longer looks frozen.
+- Includes everything in 0.5.2: the game-update buttons on the Mods page, the startup notice after a game update, and the Back to Mod Library bar.
