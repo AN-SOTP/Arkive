@@ -365,7 +365,7 @@ public sealed class ClientUpdateCompatibilityService
             FileShare.ReadWrite | FileShare.Delete, 64 * 1024,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
         return await JsonSerializer.DeserializeAsync<MaterialInstanceReconnaissanceReport>(
-                   stream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }, cancellationToken)
+                   stream, MaterialInstanceWorkspaceStore.SerializerOptions, cancellationToken)
                    .ConfigureAwait(false) ??
                throw new InvalidDataException("The material reconnaissance report was empty.");
     }

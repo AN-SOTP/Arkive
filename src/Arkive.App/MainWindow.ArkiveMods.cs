@@ -232,6 +232,7 @@ public partial class MainWindow : Window
         ModLibraryEditAssetButton.IsEnabled = idle && hasRow && assetCount == 1;
         ModLibraryPreviewButton.IsEnabled = idle;
         ModLibraryRestoreAllButton.IsEnabled = idle;
+        UpdateGameUpdateActions();
         ModLibraryRestoreOtherFolderButton.IsEnabled = idle;
         ModLibraryCleanUpWorkingFilesButton.IsEnabled = idle;
         ModLibraryImportButton.IsEnabled = idle;
@@ -926,6 +927,7 @@ public partial class MainWindow : Window
         if (!ModLibraryIdle) return;
         _modLibraryBusy = true;
         _guidedTextureModInProgress = true;
+        _lastModApplyPlan = null;
         UpdateGuidedTextureModActionState();
         var changedGame = false;
         try
@@ -937,6 +939,7 @@ public partial class MainWindow : Window
             if (!previewOnly) await SaveEnabledModChangesAsync();
             var plan = previewModId is null ? await _arkiveModApply.PlanAsync() : await _arkiveModApply.PreviewModAsync(previewModId);
             ModLibraryProgressBar.IsIndeterminate = false;
+            _lastModApplyPlan = plan;
             ModLibraryPlanGrid.ItemsSource = plan.Packages.Select(package => new ModPlanRow(package)).ToArray();
             ModLibraryPlanTab.IsSelected = true;
             foreach (var package in plan.Packages)

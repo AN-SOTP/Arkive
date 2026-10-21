@@ -176,14 +176,16 @@ public partial class MainWindow : Window
             _clientUpdateBulkRebaseService is not null &&
             _latestClientUpdateAudit?.Report.CanBulkRebase == true && safeIds.Count > 0 &&
             safeIds.IsSubsetOf(currentIds);
+        UpdateGameUpdateActions();
     }
 
     private async void ClientUpdateRunAllButton_Click(object sender, RoutedEventArgs e) =>
         await RunClientUpdateAuditAsync("user requested full check", showResult: true);
 
-    private async Task RunClientUpdateAuditAsync(string trigger, bool showResult)
+    private async Task<ClientUpdateAuditEntry?> RunClientUpdateAuditAsync(
+        string trigger, bool showResult, Action<int, int, string>? reportProgress = null)
     {
-        if (_clientUpdateAuditBusy) return;
+        if (_clientUpdateAuditBusy) return null;
         _clientUpdateAuditCancellation?.Dispose();
         _clientUpdateAuditCancellation = new CancellationTokenSource();
         var cancellationToken = _clientUpdateAuditCancellation.Token;
@@ -207,6 +209,7 @@ public partial class MainWindow : Window
                 ClientUpdateProgressText.Text = string.IsNullOrWhiteSpace(update.PackageName)
                     ? update.Message
                     : $"{update.PackageName}: {update.Message}";
+                reportProgress?.Invoke(update.CompletedPackages, update.TotalPackages, ClientUpdateProgressText.Text);
             });
             Log($"Client-wide update audit started: trigger={trigger}, " +
                 $"packageProjects={inputs.Count}, stateRoot={Path.Combine(_projectRoot, "backups", "installations")}, " +
@@ -238,6 +241,7 @@ public partial class MainWindow : Window
                         ClientUpdateAuditState.RebaseAvailable
                         ? MessageBoxImage.Information : MessageBoxImage.Warning);
             }
+            return entry;
         }
         catch (OperationCanceledException)
         {
@@ -259,19 +263,38 @@ public partial class MainWindow : Window
             ClientUpdateProgressBar.IsIndeterminate = false;
             UpdateClientUpdateActionState();
         }
+        return null;
     }
+
+    /// <summary>True when the latest full check found package projects it proved safe to rebase.</summary>
+    private bool CanRebaseSafeClientProjects =>
+        !_clientUpdateAuditBusy && _clientUpdateBulkRebaseService is not null &&
+        _latestClientUpdateAudit?.Report is { CanBulkRebase: true } report &&
+        report.Packages.Where(package => package.State == ClientPackageCompatibilityState.SafeAutomaticRebase)
+            .Select(package => package.PackageProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase) is { Count: > 0 } safeIds &&
+        safeIds.IsSubsetOf(_guidedPackageRows.Select(package => package.Entry.Manifest.PackageProjectId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase));
 
     private async void ClientUpdateRebaseSafeButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_clientUpdateAuditBusy || _clientUpdateBulkRebaseService is null ||
-            _latestClientUpdateAudit is not { } audit || !audit.Report.CanBulkRebase) return;
-        var count = audit.Report.SafeRebasePackageCount;
+        if (!CanRebaseSafeClientProjects) return;
+        var count = _latestClientUpdateAudit!.Report.SafeRebasePackageCount;
         if (MessageBox.Show(this,
                 $"Rebase {count:N0} package project(s) proven safe by the full audit?\n\n" +
                 "Arkive will refresh native source evidence while preserving editable PNG and GLB files. " +
                 "Existing project manifests are restored if any package fails. Game UPKs are never changed.",
                 "Rebase all safe projects", MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        await RebaseSafeClientProjectsAsync(showResult: true);
+    }
+
+    /// <summary>Rebases the package projects the latest full check proved safe, then checks again.</summary>
+    /// <returns>The number of package projects rebased, or null when the rebase failed or was cancelled.</returns>
+    private async Task<int?> RebaseSafeClientProjectsAsync(bool showResult)
+    {
+        if (!CanRebaseSafeClientProjects || _latestClientUpdateAudit is not { } audit) return 0;
+        var count = audit.Report.SafeRebasePackageCount;
+        int? rebased = null;
         _clientUpdateAuditCancellation?.Dispose();
         _clientUpdateAuditCancellation = new CancellationTokenSource();
         var cancellationToken = _clientUpdateAuditCancellation.Token;
@@ -290,7 +313,7 @@ public partial class MainWindow : Window
                 ClientUpdateProgressText.Text = $"{update.PackageName}: {update.Message}";
             });
             var inputs = await CreateClientUpdatePackageInputsAsync();
-            var result = await _clientUpdateBulkRebaseService.RebaseSafePackagesAsync(
+            var result = await _clientUpdateBulkRebaseService!.RebaseSafePackagesAsync(
                 audit.Report, inputs,
                 Path.Combine(_projectRoot, "staging", "client-update-rebase"),
                 progress, cancellationToken);
@@ -304,7 +327,8 @@ public partial class MainWindow : Window
             await RefreshMaterialProjectsAsync("client-wide safe rebase");
             await RefreshModSetsAsync("client-wide safe rebase");
             rerun = true;
-            MessageBox.Show(this,
+            rebased = result.Packages.Count;
+            if (showResult) MessageBox.Show(this,
                 $"Rebased {result.Packages.Count:N0} package project(s), " +
                 $"{result.TextureProjectCount:N0} texture project(s), and " +
                 $"{result.MaterialProjectCount:N0} material project(s), and {result.MeshProjectCount:N0} mesh project(s).\n\n" +
@@ -314,7 +338,7 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             Log("Client-wide safe rebase cancelled. Existing project manifests were restored by the transaction guard.");
-            MessageBox.Show(this,
+            if (showResult) MessageBox.Show(this,
                 "The bulk rebase was cancelled. Arkive restored the pre-operation project manifests and did not change game files.",
                 "Arkive game-update rebase", MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -333,6 +357,7 @@ public partial class MainWindow : Window
             UpdateClientUpdateActionState();
         }
         if (rerun) await RunClientUpdateAuditAsync("automatic post-rebase verification", showResult: false);
+        return rebased;
     }
 
     private async Task RebindRebasedModMeshesAsync(IReadOnlyList<ClientUpdateRebaseResult> results)

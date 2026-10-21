@@ -144,6 +144,7 @@ public partial class MainWindow : Window
             $"metadataLoaded={_gameMetadataIndex is not null}, tab={MainTabControl.SelectedIndex}.");
         _ = TrimPackageBuildsAsync("startup");
         _ = Task.Run(() => ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath));
+        _ = NoticeGameUpdateAsync();
         if (Application.Current is App { StartupModFiles.Count: > 0 } app)
             await ImportModFilesAsync(app.StartupModFiles);
     }

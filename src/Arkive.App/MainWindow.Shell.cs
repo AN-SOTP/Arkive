@@ -54,6 +54,8 @@ public partial class MainWindow : Window
     private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded || !ReferenceEquals(e.Source, MainTabControl)) return;
+        // The Mods tab opens on the mod list; the advanced menu picks its other pages after this.
+        if (MainTabControl.SelectedItem == ModifiedUpksTab) ModifiedUpksInnerTabControl.SelectedItem = ModLibraryTab;
         UpdateBannerContext();
         // The advanced views list the package workspace, which enabling mods leaves to be reloaded when needed.
         if (_packageWorkspaceStale && MainTabControl.SelectedItem is TabItem tab &&

@@ -233,7 +233,7 @@ Use **Mods → Import**, or open a `.arkive` file with Arkive. Import never inst
 There is no separate restore button for a mod: the **On** ticks say which mods should be in the game, and **Apply changes** makes the game match them.
 
 - **Restore one or more mods:** untick **On** for those mods and choose **Apply changes**. The plan marks the affected packages **Restore**: a package no enabled mod changes any more is put back from its verified backup, and a package another enabled mod still changes is rebuilt without the unticked ones. The mods stay in the library, so ticking them and applying again reinstalls them.
-- **Restore everything:** **More actions → Restore all game files** puts back every package Arkive installed and keeps your ticks, so a later **Apply changes** reinstalls the ticked mods. To turn everything off for good, untick every mod and apply instead.
+- **Restore everything:** **Restore all game files** puts back every package Arkive installed and keeps your ticks, so a later **Apply changes** reinstalls the ticked mods. To turn everything off for good, untick every mod and apply instead.
 - **Changes pending** and "0 fully in game" in the status line mean ticked mods are not in the game yet; nothing changes until you apply.
 - Removing a mod from the library or deleting its `.arkive` file does not restore the game. Restore first.
 - **Game file changed outside Arkive** in the Status column means a file your mods target is not the version they were made for, and this Arkive has no record of changing it: another Arkive data folder (for example an older install), another tool or a game patch changed it. Apply is held back so the changed bytes are never built on or backed up as the original. If an older Arkive installed mods, choose **More actions → Restore from another Arkive folder…** and pick that Arkive's data folder (the one holding its `backups` folder): each original is found and checked by its SHA-256, the file it replaces is kept under `backups
@@ -395,13 +395,13 @@ Enabled winners targeting one UPK are composed from a verified clean package, va
 ## Game updates and recovery
 
 1. **Before updating/reinstalling Lost Ark**, restore all active mods while backups and receipts match.
-2. Update the client, close its processes and run **Advanced → Game update safety → Check all after game update**.
-3. Review exact, safely rebaseable and review-required findings. Rebase only proven unchanged contracts. Rebuild against new clean source when supported; changed skeleton/layout/material contracts need investigation or reauthoring.
-4. Refresh index/metadata as needed, preview and apply the enabled selection again.
+2. Update the client, close its processes and choose **Check after game update** in the Mods tab. When Arkive starts after Steam has updated Lost Ark it offers this check itself, and names any fonts, language or login screen the update put back. The check changes no game file: it shows in the Apply Plan which mods are ready, and checks that Arkive can still read and change the updated game files.
+3. If the check finds mods whose assets the update changed, **Rebase mods** appears next to it. Rebasing sets those mods up against the updated game files, keeping each change only if it passes every native check, and moves working files the check proved unchanged onto the new files. Changed skeleton/layout/material contracts that fail need reauthoring. **Advanced → Game update safety** keeps the per-package evidence.
+4. Refresh index/metadata as needed, then choose **Apply changes**.
 
 Steam reinstall changes game bytes but does not clear Arkive's library. If a mod remains marked installed/outdated, inspect current hashes and receipts; do not delete recovery evidence to silence a warning. Unknown bytes require verified restore or client repair. Keep backups until clean state is confirmed. Steam repair restores stock files, not edit contracts.
 
-**Mods → More actions → Restore all game files** restores every verified active deployment (see [Restoring the original game files](#restoring-the-original-game-files)); **Restore all active** in advanced Package projects does the same for package projects. Deleting a library archive is not restoring the game.
+**Mods → Restore all game files** restores every verified active deployment (see [Restoring the original game files](#restoring-the-original-game-files)); **Restore all active** in advanced Package projects does the same for package projects. Deleting a library archive is not restoring the game.
 
 ## Reporting a problem
 

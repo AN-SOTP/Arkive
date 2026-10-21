@@ -10,7 +10,27 @@ internal static class ModWorkflowSmokeTests
         new("resolves only verified texture-to-model preview links", TestTextureModelPreviewResolver),
         new("audits exact mod conflicts and serialized dependencies", TestModConflictDependencies),
         new("recommends safe unified workshop steps", TestUnifiedGuidedWorkflow),
+        new("names the installed game build from Steam's record, or else the game executable", TestGameBuildStamp),
     ];
+
+    private static void TestGameBuildStamp()
+    {
+        var steamApps = Path.Combine(fixtureDirectory, "game-build", "steamapps");
+        var game = Path.Combine(steamApps, "common", "Lost Ark");
+        var packages = Path.Combine(game, "EFGame", "ReleasePC", "Packages");
+        Directory.CreateDirectory(packages);
+        Directory.CreateDirectory(Path.Combine(game, "Binaries", "Win64"));
+        var executable = Path.Combine(game, "Binaries", "Win64", "LOSTARK.exe");
+        File.WriteAllBytes(executable, [1, 2, 3]);
+        var record = Path.Combine(steamApps, $"appmanifest_{GameBuildStamp.SteamAppId}.acf");
+        File.Delete(record);
+        Assert(GameBuildStamp.Read(packages) is { } fromExecutable && fromExecutable.StartsWith("exe:3:", StringComparison.Ordinal),
+            "the game build did not fall back to the game executable without Steam's record");
+        File.WriteAllText(record, "\"AppState\"\n{\n\t\"appid\"\t\t\"1599340\"\n\t\"buildid\"\t\t\"26099855\"\n}\n");
+        Assert(GameBuildStamp.Read(packages) == "steam:26099855", "the game build was not read from Steam's record");
+        Assert(GameBuildStamp.Read(Path.Combine(fixtureDirectory, "game-build", "missing", "Packages")) is null &&
+               GameBuildStamp.Read(null) is null, "a missing game folder still gave a game build");
+    }
 
     private static void TestClientUpdateDeepFormatProtection()
     {

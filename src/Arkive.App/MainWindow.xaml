@@ -2775,7 +2775,18 @@
                     </DockPanel>
                 </TabItem>
                 <TabItem x:Name="ModifiedUpksTab" Header="Mods">
-                    <TabControl x:Name="ModifiedUpksInnerTabControl" SelectedIndex="0">
+                    <DockPanel>
+                    <Border x:Name="ModsAdvancedBar" DockPanel.Dock="Top" Visibility="Collapsed" Padding="9,5" Margin="6,6,6,0"
+                            Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                        <DockPanel>
+                            <Button x:Name="ModsAdvancedBackButton" DockPanel.Dock="Left" Content="‹ Back to Mod Library"
+                                    Padding="9,2" MinHeight="24" Click="ModsAdvancedBackButton_Click" />
+                            <TextBlock x:Name="ModsAdvancedBarText" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </DockPanel>
+                    </Border>
+                    <TabControl x:Name="ModifiedUpksInnerTabControl" SelectedIndex="0"
+                                SelectionChanged="ModifiedUpksInnerTabControl_SelectionChanged">
                         <TabControl.Template>
                             <ControlTemplate TargetType="{x:Type TabControl}">
                                 <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent"
@@ -2796,6 +2807,12 @@
                                         <Button x:Name="ModLibraryPreviewButton" Content="Preview changes" Click="ModLibraryPreviewButton_Click" />
                                         <Button x:Name="ModLibraryApplyButton" Content="Apply changes" Click="ModLibraryApplyButton_Click"
                                                 ToolTip="Save pending edits, review the plan, then rebuild and apply the enabled mods." />
+                                        <Button x:Name="ModLibraryRestoreAllButton" Content="Restore all game files" Click="ModLibraryRestoreAllButton_Click"
+                                                ToolTip="Put the game's original files back while keeping your enabled mod selection. Do this before a game update." />
+                                        <Button x:Name="ModLibraryCheckUpdateButton" Content="Check after game update" Click="ModLibraryCheckUpdateButton_Click"
+                                                ToolTip="After a game update, find out which mods are ready to apply and which need rebasing. No game file is changed." />
+                                        <Button x:Name="ModLibraryRebaseButton" Content="Rebase mods" Visibility="Collapsed" Click="ModLibraryRebaseButton_Click"
+                                                ToolTip="Set up the mods the game update changed against the updated game files. No game file is changed until you choose Apply changes." />
                                         <Button Content="More actions" Click="ModLibraryMoreButton_Click">
                                             <Button.ContextMenu>
                                                 <ContextMenu>
@@ -2809,8 +2826,6 @@
                                                     <MenuItem x:Name="ModLibraryGoToPackageButton" Header="Advanced package projects" Click="ModLibraryGoToPackageButton_Click" />
                                                     <MenuItem x:Name="ModLibraryRemoveButton" Header="Remove mod" Click="ModLibraryRemoveButton_Click" />
                                                     <Separator />
-                                                    <MenuItem x:Name="ModLibraryRestoreAllButton" Header="Restore all game files" Click="ModLibraryRestoreAllButton_Click"
-                                                              ToolTip="Restore originals while keeping your enabled mod selection." />
                                                     <MenuItem x:Name="ModLibraryRestoreOtherFolderButton" Header="Restore from another Arkive folder…"
                                                               Click="ModLibraryRestoreOtherFolderButton_Click"
                                                               ToolTip="Put back game files that an Arkive using a different data folder installed mods into, from that folder's verified backups." />
@@ -3804,6 +3819,7 @@
                             </DockPanel>
                         </TabItem>
                     </TabControl>
+                    </DockPanel>
                 </TabItem>
             </TabControl>
 
