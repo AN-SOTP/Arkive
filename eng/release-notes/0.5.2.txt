@@ -1,0 +1,7 @@
+Game updates are easier to handle in the Mods tab.
+
+- Restore all game files, Check after game update and Rebase mods are now buttons on the Mods page, next to Apply changes. Rebase mods only appears when the check finds mods that a game update changed.
+- Check after game update runs on the Mods page and shows in the Apply Plan which mods are ready and which need rebasing. It changes no game file.
+- When Arkive starts after Steam has updated Lost Ark, it says so and offers to check your mods. It also names any fonts, language or login screen the update put back to the game's own.
+- The advanced Mods pages (such as Game update safety) now have a Back to Mod Library bar. Before, opening one left no way back to the mod list.
+- The game update check no longer reports material edits as unreadable.
