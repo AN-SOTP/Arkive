@@ -1,0 +1,7 @@
+Choose several mods at once in the Mods list, and the game-update check finds every mod that needs rebasing.
+
+- Ctrl+click or Shift+click to choose several mods. Right-click them to enable or disable them all, update them all for this game version, or add them to a pack.
+- Right-click a mod and choose Change author to type a new author into the list. Rename (F2) works the same way for the mod's name.
+- Check after game update now finds every mod the update changed. Before, a mod that changes many outfits or packages could be missed, and Apply changes then refused it.
+- Rebasing an effect mod whose effects the game changed now saves the re-tinted effects into the mod. Before, Apply changes refused them as unsaved edits.
+- Update for this game version now shows progress and a short result, like Rebase mods.
