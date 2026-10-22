@@ -79,9 +79,6 @@ public static class OutfitSwapPictures
                     }
                 }
                 var maps = await ReadMapsAsync(scene, material, baked, cancellationToken).ConfigureAwait(false);
-                // See-through cloth shows as see-through as its shader draws it, which is often fainter than its picture.
-                if (material.Translucent && maps.Opacity is { } opacity)
-                    for (var i = 0; i < opacity.Length; i++) maps.Colour.Pixels[i * 4 + 3] = Math.Min(maps.Colour.Pixels[i * 4 + 3], opacity[i]);
                 if (material.Translucent && !holder.Translucent)
                 {
                     skinTone ??= await SkinToneAsync(targetMaterials, targetScenes, targetBakes, cancellationToken).ConfigureAwait(false);
@@ -94,7 +91,8 @@ public static class OutfitSwapPictures
                 tiles.Add((maps, canvas.Rect(piece, slot), material));
             }
             foreach (var role in new[] { OutfitSwapPlanner.Role.Colour, OutfitSwapPlanner.Role.Normal, OutfitSwapPlanner.Role.Mask,
-                         OutfitSwapPlanner.Role.Specular, OutfitSwapPlanner.Role.Orm, OutfitSwapPlanner.Role.Emissive })
+                         OutfitSwapPlanner.Role.Specular, OutfitSwapPlanner.Role.Orm, OutfitSwapPlanner.Role.Emissive,
+                         OutfitSwapPlanner.Role.Panning })
             {
                 var name = OutfitSwapPlanner.Texture(holder, role);
                 // Only the class's own pictures; the game's shared pictures (and other classes') are used elsewhere too.
@@ -167,6 +165,9 @@ public static class OutfitSwapPictures
             OutfitSwapPlanner.Role.Normal => Normal,
             OutfitSwapPlanner.Role.Mask => Mask,
             OutfitSwapPlanner.Role.Specular => Specular,
+            // The replaced outfit's moving pattern (lace, sparkle) follows its own layout; with another outfit painted in
+            // it would show as blotches, so it is cleared.
+            OutfitSwapPlanner.Role.Panning => Solid(Colour.Width, Colour.Height, 0, 0, 0, 0),
             OutfitSwapPlanner.Role.Orm => Orm,
             _ => Emissive,
         };

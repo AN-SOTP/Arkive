@@ -5,11 +5,12 @@ namespace Arkive.Core.Outfits;
 /// <summary>
 /// How much brighter or darker a repainted picture must be for the replaced outfit's shader to light it the way the donor's
 /// shader lit the original: one gain in linear light, from the median lit brightness the donor had against the median the
-/// first painting got. One gain for all three channels, so hues never shift, kept between 0.6 and 3.
+/// first painting got. One gain for all three channels, so hues never shift, kept between 1 and 3: a painting is never
+/// dulled, since lit bakes include the donor shader's sheen, which reads as brightness.
 /// </summary>
 public sealed class OutfitSwapColourCurve
 {
-    private const float Least = 0.6f;
+    private const float Least = 1f;
     private const float Most = 3f;
     private readonly byte[] _table = new byte[256];
 

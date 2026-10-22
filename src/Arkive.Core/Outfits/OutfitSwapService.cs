@@ -77,7 +77,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             // Feet and shoes keep the shape the donor's artists gave them and only follow the skeleton: a shoe is made
             // around its own foot, and bending either onto the new body's foot crumples soles and toes.
             var feet = OutfitSwapFitting.FootShares(mesh);
-            var movable = cloth.Select((value, v) => value && feet[v] < 0.5f).ToArray();
+            var movable = cloth.Select((value, v) => value && feet[v] < 0.1f).ToArray();
             if (field is not null)
             {
                 var all = Enumerable.Range(0, mesh.VertexCount).ToArray();
@@ -103,10 +103,20 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 moved = Expand(wrapped, ids);
             }
             if (targetBody is { Native: true })
-                moved = Expand(OutfitSwapClearance.SnapSkin(Average(moved, ids, weldedCount), weldedCloth,
-                    weldedFeet.Select(share => Math.Clamp((share - 0.1f) / 0.4f, 0, 1)).ToArray(), targetBody), ids);
+            {
+                // Skin in and just above the shoes stays with them (they keep the donor's shape), fading into the new
+                // body's shape up the calf, so the shoe's rim and the ankle meet without a kink.
+                var welded = Average(moved, ids, weldedCount);
+                var ankle = targetSkeleton.TryGet("bip001-l-foot", out var foot) ? foot.Y : 0.1f;
+                var hold = welded.Select((point, v) => Math.Max(Math.Clamp((weldedFeet[v] - 0.1f) / 0.4f, 0, 1),
+                    Math.Clamp((ankle + 0.14f - point.Y) / 0.12f, 0, 1))).ToArray();
+                moved = Expand(OutfitSwapClearance.SnapSkin(welded, weldedCloth, hold, targetBody), ids);
+            }
             if (seam is not null)
                 moved = Expand(OutfitSwapClearance.MeetHead(Average(moved, ids, weldedCount), weldedCloth, triangles, seam, neck, head), ids);
+            if (OutfitSwapClearance.ShoeSurface(mesh, mesh.Positions, feet) is { } donorShoes &&
+                OutfitSwapClearance.ShoeSurface(mesh, moved, feet) is { } shoes)
+                moved = OutfitSwapClearance.KeepInShoes(mesh.Positions, moved, cloth, donorShoes, shoes);
             // Cloth that lay over the outfit's own bare skin stays over it now the skin has moved.
             if (OutfitSwapClearance.SkinSurface(mesh, mesh.Positions) is { } donorSkin &&
                 OutfitSwapClearance.SkinSurface(mesh, moved) is { } movedSkin)

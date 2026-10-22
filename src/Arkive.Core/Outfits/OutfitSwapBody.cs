@@ -20,6 +20,8 @@ public sealed class OutfitSwapBody
     private readonly Vector3[] _cornerNormals;
     private readonly bool[] _lower;
     private readonly int[] _charts;
+    private readonly Dictionary<int, int> _chartSize;
+    private readonly int _largeChart;
     private readonly OutfitSwapKdTree _triangles;
 
     /// <param name="native">False for a body borrowed from another class and moved onto this skeleton: its shape is
@@ -105,6 +107,9 @@ public sealed class OutfitSwapBody
         _cornerNormals = cornerNormals.ToArray();
         _lower = lower.ToArray();
         _charts = charts.ToArray();
+        _chartSize = new Dictionary<int, int>();
+        foreach (var chart in _charts) _chartSize[chart] = _chartSize.GetValueOrDefault(chart) + 1;
+        _largeChart = _chartSize.Count == 0 ? 0 : _chartSize.Values.Max() / 4;
         // How many picture units one metre of skin covers, typically: a triangle stretched far beyond it straddles a seam.
         var ratios = Enumerable.Range(0, _lower.Length).Select(t =>
         {
@@ -120,6 +125,21 @@ public sealed class OutfitSwapBody
         _triangles = new OutfitSwapKdTree(Flatten(Enumerable.Range(0, _lower.Length)
             .Select(i => (_corners[i * 3] + _corners[i * 3 + 1] + _corners[i * 3 + 2]) / 3).ToArray()), 3);
     }
+
+    /// <summary>
+    /// The nearest point like <see cref="Closest"/>, but on the largest piece of the layout (a whole leg or the torso)
+    /// when that is nearly as close: small pieces (feet, hands) are drawn only where skin really lies on them.
+    /// </summary>
+    public SurfacePoint ClosestPreferringLarge(Vector3 point, bool? lower, float slack = 0.006f)
+    {
+        var best = Closest(point, lower);
+        if (best.Triangle < 0 || _chartSize[best.Chart] >= _largeChart) return best;
+        var large = Closest(point, lower, LargestChart(best.Lower));
+        return large.Triangle >= 0 && Vector3.Distance(large.Position, point) <= Vector3.Distance(best.Position, point) + slack ? large : best;
+    }
+
+    private int LargestChart(bool lower) =>
+        Enumerable.Range(0, _lower.Length).Where(t => _lower[t] == lower).GroupBy(t => _charts[t]).MaxBy(group => group.Count())?.Key ?? -1;
 
     /// <summary>Picture units per metre of skin on a typical triangle.</summary>
     public float PictureScale { get; }
@@ -354,9 +374,42 @@ public static class OutfitSwapClearance
     /// The outfit's own bare skin (sleeves and stockings often cover skin the outfit draws itself) as a surface, with its
     /// vertices at <paramref name="positions"/>; null when the outfit draws no skin.
     /// </summary>
-    public static OutfitSwapBody? SkinSurface(OutfitSwapMesh mesh, Vector3[] positions)
+    public static OutfitSwapBody? SkinSurface(OutfitSwapMesh mesh, Vector3[] positions) =>
+        Surface(mesh, positions, mesh.Sections.Where(section => OutfitSwapBodies.IsSkin(mesh.Materials[section.Material])).ToArray());
+
+    /// <summary>The outfit's shoes (cloth hanging from the feet) as a surface, with vertices at <paramref name="positions"/>.</summary>
+    public static OutfitSwapBody? ShoeSurface(OutfitSwapMesh mesh, Vector3[] positions, float[] feet) =>
+        Surface(mesh, positions, mesh.Sections.Where(section => !OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
+            .Select(section =>
+            {
+                var t = section.Triangles;
+                var kept = new List<int>();
+                for (var i = 0; i + 2 < t.Length; i += 3)
+                    if (feet[t[i]] >= 0.1f && feet[t[i + 1]] >= 0.1f && feet[t[i + 2]] >= 0.1f) kept.AddRange([t[i], t[i + 1], t[i + 2]]);
+                return new OutfitSwapSection(section.Material, kept.ToArray());
+            }).Where(section => section.Triangles.Length > 0).ToArray());
+
+    /// <summary>
+    /// Skin that was inside the outfit's shoes stays inside them, as deep as it was: where the leg above takes the new
+    /// body's shape, the skin at the shoe's rim would otherwise poke through it.
+    /// </summary>
+    public static Vector3[] KeepInShoes(Vector3[] donorPositions, Vector3[] fitted, bool[] cloth, OutfitSwapBody donorShoes, OutfitSwapBody shoes)
     {
-        var sections = mesh.Sections.Where(section => OutfitSwapBodies.IsSkin(mesh.Materials[section.Material])).ToArray();
+        var (before, nearBefore, _) = donorShoes.Measure(donorPositions);
+        var (now, _, outward) = shoes.Measure(fitted);
+        var result = (Vector3[])fitted.Clone();
+        for (var v = 0; v < fitted.Length; v++)
+            if (!cloth[v] && nearBefore[v] < 0.015f && before[v] < 0.004f)
+            {
+                // At least 2 mm in, so the rim's own thickness never lets it show.
+                var depth = Math.Min(before[v], -0.002f);
+                if (now[v] > depth) result[v] -= outward[v] * (now[v] - depth);
+            }
+        return result;
+    }
+
+    private static OutfitSwapBody? Surface(OutfitSwapMesh mesh, Vector3[] positions, OutfitSwapSection[] sections)
+    {
         if (sections.Length == 0) return null;
         var normals = new Vector3[positions.Length];
         foreach (var section in sections)
@@ -416,7 +469,7 @@ public static class OutfitSwapClearance
                 sum += movement[moved[index[n]]] * w;
                 total += w;
             }
-            if (total > 1e-6f) result[i] += sum / Math.Max(total, 1);
+            if (total > 1e-6f) result[i] += sum / Math.Max(total, 1) * (1 - hold[i]);
         }
         return result;
     }

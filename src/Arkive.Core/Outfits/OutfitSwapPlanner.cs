@@ -283,7 +283,7 @@ public static partial class OutfitSwapPlanner
         {
             var corners = new[] { triangles[t * 3], triangles[t * 3 + 1], triangles[t * 3 + 2] };
             var centre = (positions[corners[0]] + positions[corners[1]] + positions[corners[2]]) / 3;
-            var home = body.Closest(centre, both ? null : lower);
+            var home = body.ClosestPreferringLarge(centre, both ? null : lower);
             var kind = home.Triangle < 0 ? lower : home.Lower;
             slots[t] = skinSlot(kind) ?? skinSlot(lower)!.Value;
             var split = false;
@@ -386,7 +386,7 @@ public static partial class OutfitSwapPlanner
         };
     }
 
-    internal enum Role { Colour, Normal, Mask, Orm, Specular, Emissive }
+    internal enum Role { Colour, Normal, Mask, Orm, Specular, Emissive, Panning }
 
     internal static string? Texture(OutfitSwapMaterial material, Role role)
     {
@@ -397,6 +397,7 @@ public static partial class OutfitSwapPlanner
             Role.Mask => ["texture_color_fx_skin"],
             Role.Orm => ["texture_orm"],
             Role.Specular => ["texture_specular"],
+            Role.Panning => ["texture_fx_panning", "texutre_rimlight_panning", "texture_rimlight_panning"],
             _ => ["texture_emissive"],
         };
         foreach (var name in names)
