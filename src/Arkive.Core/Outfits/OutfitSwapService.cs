@@ -202,6 +202,24 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             fitted.Add(moved);
             shaded.Add(donor with { Mesh = finished });
         }
+        // Pieces were fitted one by one: cloth of one that lay under another's keeps lying under it.
+        for (var inner = 0; inner < donors.Count; inner++)
+            for (var outer = 0; outer < donors.Count; outer++)
+            {
+                if (inner == outer) continue;
+                var outerMesh = donors[outer].Mesh;
+                var outerCloth = outerMesh.Sections.Where(section => !OutfitSwapBodies.IsSkin(outerMesh.Materials[section.Material])).ToArray();
+                if (OutfitSwapClearance.Surface(outerMesh, outerMesh.Positions, outerCloth) is not { } before ||
+                    OutfitSwapClearance.Surface(outerMesh, fitted[outer][..outerMesh.VertexCount], outerCloth) is not { } after) continue;
+                var innerMesh = donors[inner].Mesh;
+                var count = innerMesh.VertexCount;
+                var innerCloth = new bool[count];
+                foreach (var section in innerMesh.Sections)
+                    if (!OutfitSwapBodies.IsSkin(innerMesh.Materials[section.Material]))
+                        foreach (var v in section.Triangles) innerCloth[v] = true;
+                var kept = OutfitSwapClearance.KeepUnder(innerMesh.Positions, fitted[inner][..count], innerCloth, before, after);
+                Array.Copy(kept, fitted[inner], count);
+            }
         progress?.Report("Placing the outfit in the new materials");
         var plan = OutfitSwapPlanner.Plan(shaded, fitted, targets, targetBody);
         notes.AddRange(plan.Notes);

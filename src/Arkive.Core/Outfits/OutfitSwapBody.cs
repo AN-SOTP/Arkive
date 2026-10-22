@@ -553,6 +553,26 @@ public static class OutfitSwapClearance
         return result;
     }
 
+    /// <summary>
+    /// Keeps one outfit piece's cloth under another's where it lay under it on the old body (a skirt's waistband under a
+    /// dress's back), since each piece is fitted on its own: points that were just under the other piece's cloth go back
+    /// at least 1 mm under it.
+    /// </summary>
+    public static Vector3[] KeepUnder(Vector3[] donorInner, Vector3[] fittedInner, bool[] innerCloth, OutfitSwapBody outerBefore,
+        OutfitSwapBody outerAfter, float reach = 0.015f)
+    {
+        var (before, near, _) = outerBefore.Measure(donorInner);
+        var (after, _, outward) = outerAfter.Measure(fittedInner);
+        var result = (Vector3[])fittedInner.Clone();
+        for (var v = 0; v < result.Length; v++)
+        {
+            if (!innerCloth[v] || near[v] >= reach || before[v] >= -0.0005f) continue;
+            var want = Math.Min(before[v], -0.001f);
+            if (after[v] > want) result[v] -= outward[v] * (after[v] - want);
+        }
+        return result;
+    }
+
     private static Vector3[] CarrySkin(Vector3[] before, Vector3[] after, bool[] cloth, float radius = 0.04f)
     {
         var clothPoints = Enumerable.Range(0, before.Length).Where(i => cloth[i]).ToArray();
