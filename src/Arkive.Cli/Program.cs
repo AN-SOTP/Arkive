@@ -195,6 +195,7 @@ static int Run(string[] arguments)
                 ReadTextOptions(arguments, "--texture"),
                 ReadTextOptions(arguments, "--mesh"),
                 ReadTextOptions(arguments, "--material"),
+                ReadTextOptions(arguments, "--particle"),
                 ReadTextOption(arguments, "--out"),
                 ReadTextOption(arguments, "--backup-root"),
                 ReadTextOption(arguments, "--name"),
@@ -1491,6 +1492,7 @@ static int PackageCompose(
     IReadOnlyList<string> textureManifestPaths,
     IReadOnlyList<string> meshManifestPaths,
     IReadOnlyList<string> materialManifestPaths,
+    IReadOnlyList<string> particleDocumentPaths,
     string? outputPath,
     string? backupRootPath,
     string? displayName,
@@ -1498,9 +1500,10 @@ static int PackageCompose(
     bool commit,
     bool json)
 {
-    if (textureManifestPaths.Count == 0 && meshManifestPaths.Count == 0 && materialManifestPaths.Count == 0)
+    if (textureManifestPaths.Count == 0 && meshManifestPaths.Count == 0 && materialManifestPaths.Count == 0 &&
+        particleDocumentPaths.Count == 0)
         throw new ArgumentException(
-            "package-compose requires at least one --texture, --material, or --mesh project manifest.");
+            "package-compose requires at least one --texture, --material, --particle, or --mesh project manifest.");
     var packageManifest = Path.GetFullPath(packageManifestPath);
     var package = new GuidedTexturePackageWorkspace(Path.GetDirectoryName(packageManifest)!)
         .LoadAsync().GetAwaiter().GetResult()
@@ -1525,6 +1528,12 @@ static int PackageCompose(
         var manifest = Path.GetFullPath(path);
         return new MaterialInstanceEditWorkspaceStore(Path.GetDirectoryName(manifest)!)
             .LoadEntryAsync(manifest).GetAwaiter().GetResult();
+    }).ToArray();
+    var particles = particleDocumentPaths.Select(path =>
+    {
+        var document = Path.GetFullPath(path);
+        return new Arkive.Core.Particles.ParticleEffectEditWorkspaceStore(Path.GetDirectoryName(Path.GetDirectoryName(document))!)
+            .LoadEntryAsync(document).GetAwaiter().GetResult();
     }).ToArray();
 
     var projectRoot = UmodelLocator.FindProjectRoot() ?? Environment.CurrentDirectory;
@@ -1558,6 +1567,7 @@ static int PackageCompose(
                     : displayName.Trim())
             {
                 MaterialEdits = materials,
+                ParticleEdits = particles,
                 ForcePreviewOnly = previewOnly,
             },
             progress)
@@ -3513,7 +3523,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive skeletal-mesh-build-staged-upk <arkive-skeletalmesh-native-encoding.json> [--out DIR] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-build-topology-upk <arkive-skeletalmesh-topology-compilation.json> [--out DIR] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-prepare-mod <arkive-skeletalmesh-staged-upk.json> [--name TEXT] [--out DIR] [--backup-root DIR] [--json]");
-    Console.WriteLine("  arkive package-compose <arkive-package-mod.json> [--texture arkive-texture-mod.json ...] [--material arkive-material-edit.json ...] [--mesh arkive-edited-skeletalmesh.json ...] [--name TEXT] [--out DIR] [--backup-root DIR] [--preview-only] [--commit] [--json]");
+    Console.WriteLine("  arkive package-compose <arkive-package-mod.json> [--texture arkive-texture-mod.json ...] [--material arkive-material-edit.json ...] [--particle arkive-particle-edit.json ...] [--mesh arkive-edited-skeletalmesh.json ...] [--name TEXT] [--out DIR] [--backup-root DIR] [--preview-only] [--commit] [--json]");
     Console.WriteLine("  arkive face-map-projects <package.upk> --prefix PLAYER_CODE [--alias NAME] --workspace DIR --exports DIR --recon DIR --baselines DIR [--json]");
     Console.WriteLine(
         "  arkive texture-import-candidate <arkive-native-texture.json> --edited FILE [--alpha preserve-original|use-edited|force-opaque] [--out DIR] [--json]");

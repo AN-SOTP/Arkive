@@ -338,7 +338,8 @@ public partial class MainWindow : Window
             _umodelBridge is not null && selected?.Edit is not null;
         AuthoringViewButton.IsEnabled = idle && _umodelBridge is not null &&
             AuthoringAssetsGrid.Items.OfType<AuthoringAssetRow>().Any(row =>
-                row.Edit?.Kind is UnifiedPackageAssetKind.SkeletalMesh or UnifiedPackageAssetKind.StaticMesh);
+                row.Edit?.Kind is UnifiedPackageAssetKind.SkeletalMesh or UnifiedPackageAssetKind.StaticMesh or
+                    UnifiedPackageAssetKind.Texture2D or UnifiedPackageAssetKind.MaterialInstanceConstant);
         AuthoringProportionsButton.Visibility = _authoringDraft?.ModId is not null &&
             BodyProportionModTags.Read(_authoringDraft.Metadata.Tags, _authoringDraft.Metadata.Description) is not null
                 ? Visibility.Visible : Visibility.Collapsed;
@@ -364,6 +365,17 @@ public partial class MainWindow : Window
     {
         if (_authoringDraft is null) throw new InvalidOperationException("Create or select a mod first.");
         session.CancellationToken.ThrowIfCancellationRequested();
+        // A same-named object already in the mod is kept under its path in the package. Find this row's own path, so
+        // adding the same export again reuses its copy (two copies of one asset cannot be saved) while a different
+        // export of that name is still added.
+        if (objectPath is null && session.Existing.Values.Any(edit => edit.ObjectPath is not null &&
+                edit.ObjectName.Equals(row.ObjectName, StringComparison.OrdinalIgnoreCase) &&
+                Path.GetFileName(edit.SourcePackagePath).Equals(Path.GetFileName(row.SourcePath), StringComparison.OrdinalIgnoreCase)))
+        {
+            var catalogue = await Task.Run(() => _catalogReader.Read(row.SourcePath), session.CancellationToken);
+            if (catalogue.Assets.FirstOrDefault(asset => asset.ExportIndex == row.ExportIndex) is { } export)
+                objectPath = ArkiveModObjectPath.IfAmbiguous(catalogue.Assets, export);
+        }
         var key = AuthoringAssetKey(row.SourcePath, objectPath ?? row.ObjectName);
         if (session.Existing.TryGetValue(key, out var duplicate))
         {

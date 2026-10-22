@@ -572,104 +572,126 @@ public sealed class UnifiedPackageComposerService
             }
         }
 
+        // Materials and particle effects keep their size, so every one of them goes into the package in a single
+        // pass: writing and re-checking the whole package once per effect made a 200-effect package take minutes.
+        // Each candidate is still proven against the bytes it was made from, and the one staged copy is checked
+        // export by export (unrelated bytes identical, blocks decode back, catalogue unchanged).
         var materialAssets = new List<GuidedMaterialPackageAssetRevision>(materialInputs.Count);
-        foreach (var (edit, report) in materialInputs.OrderBy(input => input.Report.NativeExportIndex))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var materialRoot = Path.Combine(root, $"i{materialAssets.Count + 1:00}-{edit.Document.EditId[..8]}");
-            Directory.CreateDirectory(materialRoot);
-            var inputPackageHash = await HashFileAsync(currentPackagePath, cancellationToken).ConfigureAwait(false);
-            var catalogue = _catalogReader.Read(currentPackagePath);
-            var nativeIndex = report.NativeExportIndex!.Value;
-            var asset = catalogue.Assets.SingleOrDefault(candidate => candidate.ExportIndex == nativeIndex) ??
-                        throw new NotSupportedException(
-                            $"Native export {nativeIndex} for {edit.Document.ObjectName} is missing from the cumulative UPK.");
-            if (!asset.ObjectName.Equals(edit.Document.ObjectName, StringComparison.OrdinalIgnoreCase) ||
-                !asset.ClassName.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase))
-                throw new NotSupportedException(
-                    $"Native export {nativeIndex} no longer identifies MaterialInstanceConstant {edit.Document.ObjectName}.");
-            var currentExportHash = await HashLogicalExportAsync(
-                catalogue.Summary, asset, cancellationToken).ConfigureAwait(false);
-            if (!currentExportHash.Equals(report.ExportPayloadSha256, StringComparison.OrdinalIgnoreCase))
-                throw new NotSupportedException(
-                    $"{edit.Document.ObjectName}'s source bytes changed before its material stage.");
-
-            Report(edit.Document.ObjectName, "Material candidate",
-                "Building the locked-byte-preserving value/reference candidate...");
-            var candidate = await _materialEditService.BuildCandidateAsync(
-                edit.DocumentPath, Path.Combine(materialRoot, "01-candidate"), cancellationToken)
-                .ConfigureAwait(false);
-            if (!candidate.Manifest.SameSize || !candidate.Manifest.LockedBytesPreserved ||
-                candidate.Manifest.ChangedByteCount <= 0)
-                throw new NotSupportedException(
-                    $"{edit.Document.ObjectName} has no verified parameter change to compose.");
-
-            Report(edit.Document.ObjectName, "Material package",
-                "Applying the verified same-size material export to the cumulative UPK...");
-            var staged = await _meshStaging.BuildSerializedExportAsync(
-                new SerializedExportStagedUpkRequest(
-                    currentPackagePath, inputPackageHash, Path.GetFileName(sourcePath),
-                    request.Package.Manifest.PackageAlias, nativeIndex, asset.ClassName,
-                    asset.ObjectName, asset.SerialOffset, asset.SerialSize, currentExportHash,
-                    candidate.CandidatePath, candidate.Manifest.CandidateExportSha256,
-                    candidate.ManifestPath, Path.Combine(materialRoot, "02-staged-upk")),
-                cancellationToken).ConfigureAwait(false);
-            currentPackagePath = staged.OutputUpkPath;
-            stages.Add(new UnifiedPackageCompositionStage(
-                stages.Count + 1, UnifiedPackageAssetKind.MaterialInstanceConstant,
-                edit.Document.ObjectName, nativeIndex, inputPackageHash,
-                staged.Manifest.OutputPackageSha256, staged.OutputUpkPath, staged.ManifestPath));
-            materialAssets.Add(new GuidedMaterialPackageAssetRevision(
-                edit.Document.EditId, edit.Document.DisplayName, edit.Document.ObjectName,
-                nativeIndex, edit.DocumentPath, candidate.ManifestPath,
-                candidate.Manifest.CandidateExportSha256, staged.ManifestPath,
-                staged.Manifest.SerialOffset, staged.Manifest.SerialSize));
-        }
-
         var particleAssets = new List<GuidedParticlePackageAssetRevision>(request.ParticleEdits.Count);
-        foreach (var particle in request.ParticleEdits.OrderBy(edit => edit.Document.SystemExportIndex))
+        if (materialInputs.Count > 0 || request.ParticleEdits.Count > 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var document = particle.Document;
-            Report(document.SystemObjectName, "Particle effect", "Writing the effect's new colour values into the package...");
-            var particleRoot = Path.Combine(root, $"p{particleAssets.Count + 1:00}-{document.EditId[..8]}");
+            var valuesRoot = Path.Combine(root, "v01-values");
+            Directory.CreateDirectory(valuesRoot);
             var inputPackageHash = await HashFileAsync(currentPackagePath, cancellationToken).ConfigureAwait(false);
             var catalogue = _catalogReader.Read(currentPackagePath);
             var replacements = new List<SerializedExportReplacement>();
+            var materialCandidates = new List<(MaterialInstanceEditEntry Edit, int NativeIndex, MaterialInstanceCandidateResult Candidate)>();
+            foreach (var (edit, report) in materialInputs.OrderBy(input => input.Report.NativeExportIndex))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var nativeIndex = report.NativeExportIndex!.Value;
+                var asset = catalogue.Assets.SingleOrDefault(candidate => candidate.ExportIndex == nativeIndex) ??
+                            throw new NotSupportedException(
+                                $"Native export {nativeIndex} for {edit.Document.ObjectName} is missing from the cumulative UPK.");
+                if (!asset.ObjectName.Equals(edit.Document.ObjectName, StringComparison.OrdinalIgnoreCase) ||
+                    !asset.ClassName.Equals("MaterialInstanceConstant", StringComparison.OrdinalIgnoreCase))
+                    throw new NotSupportedException(
+                        $"Native export {nativeIndex} no longer identifies MaterialInstanceConstant {edit.Document.ObjectName}.");
+                var currentExportHash = await HashLogicalExportAsync(
+                    catalogue.Summary, asset, cancellationToken).ConfigureAwait(false);
+                if (!currentExportHash.Equals(report.ExportPayloadSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new NotSupportedException(
+                        $"{edit.Document.ObjectName}'s source bytes changed before its material stage.");
+
+                Report(edit.Document.ObjectName, "Material candidate",
+                    "Building the locked-byte-preserving value/reference candidate...");
+                var candidate = await _materialEditService.BuildCandidateAsync(
+                    edit.DocumentPath, Path.Combine(valuesRoot, $"i{materialCandidates.Count + 1:00}-{edit.Document.EditId[..8]}"),
+                    cancellationToken).ConfigureAwait(false);
+                if (!candidate.Manifest.SameSize || !candidate.Manifest.LockedBytesPreserved ||
+                    candidate.Manifest.ChangedByteCount <= 0)
+                    throw new NotSupportedException(
+                        $"{edit.Document.ObjectName} has no verified parameter change to compose.");
+                var bytes = await File.ReadAllBytesAsync(candidate.CandidatePath, cancellationToken).ConfigureAwait(false);
+                if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(candidate.Manifest.CandidateExportSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new NotSupportedException($"{edit.Document.ObjectName}'s candidate changed after it was verified.");
+                replacements.Add(new SerializedExportReplacement(nativeIndex, asset.ClassName, asset.ObjectName,
+                    asset.SerialOffset, asset.SerialSize, currentExportHash, bytes));
+                materialCandidates.Add((edit, nativeIndex, candidate));
+                Report(edit.Document.ObjectName, "Material package", "Queued for the package's single values pass...");
+            }
+
+            var particleExports = new List<(Particles.ParticleEffectEditEntry Particle, int[] ExportIndices)>();
             using (var logical = new LogicalPackageStream(catalogue.Summary, _protectionProvider))
             {
-                foreach (var group in document.Patches.GroupBy(patch => patch.ExportIndex))
+                foreach (var particle in request.ParticleEdits.OrderBy(edit => edit.Document.SystemExportIndex))
                 {
-                    var first = group.First();
-                    var asset = catalogue.Assets.SingleOrDefault(candidate => candidate.ExportIndex == group.Key) ??
-                                throw new NotSupportedException($"{first.ObjectPath} is missing from the cumulative UPK.");
-                    if (!asset.ObjectPath.Equals(first.ObjectPath, StringComparison.OrdinalIgnoreCase) ||
-                        !asset.ClassName.Equals(first.ClassName, StringComparison.OrdinalIgnoreCase) ||
-                        asset.SerialSize != first.SerialSize)
-                        throw new NotSupportedException($"Native export {group.Key} no longer identifies {first.ObjectPath}.");
-                    var bytes = new byte[asset.SerialSize];
-                    logical.Position = asset.SerialOffset;
-                    logical.ReadExactly(bytes);
-                    if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(first.SourceExportSha256, StringComparison.OrdinalIgnoreCase))
-                        throw new NotSupportedException($"{first.ObjectPath}'s bytes changed during an earlier cumulative stage.");
-                    replacements.Add(new SerializedExportReplacement(asset.ExportIndex, asset.ClassName, asset.ObjectName,
-                        asset.SerialOffset, asset.SerialSize, first.SourceExportSha256,
-                        Particles.ParticleEffects.ApplyPatches(bytes, group)));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var document = particle.Document;
+                    Report(document.SystemObjectName, "Particle effect", "Writing the effect's new colour values into the package...");
+                    var indices = new List<int>();
+                    foreach (var group in document.Patches.GroupBy(patch => patch.ExportIndex))
+                    {
+                        var first = group.First();
+                        var asset = catalogue.Assets.SingleOrDefault(candidate => candidate.ExportIndex == group.Key) ??
+                                    throw new NotSupportedException($"{first.ObjectPath} is missing from the cumulative UPK.");
+                        if (!asset.ObjectPath.Equals(first.ObjectPath, StringComparison.OrdinalIgnoreCase) ||
+                            !asset.ClassName.Equals(first.ClassName, StringComparison.OrdinalIgnoreCase) ||
+                            asset.SerialSize != first.SerialSize)
+                            throw new NotSupportedException($"Native export {group.Key} no longer identifies {first.ObjectPath}.");
+                        var bytes = new byte[asset.SerialSize];
+                        logical.Position = asset.SerialOffset;
+                        logical.ReadExactly(bytes);
+                        if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(first.SourceExportSha256, StringComparison.OrdinalIgnoreCase))
+                            throw new NotSupportedException($"{first.ObjectPath}'s bytes changed during an earlier cumulative stage.");
+                        replacements.Add(new SerializedExportReplacement(asset.ExportIndex, asset.ClassName, asset.ObjectName,
+                            asset.SerialOffset, asset.SerialSize, first.SourceExportSha256,
+                            Particles.ParticleEffects.ApplyPatches(bytes, group)));
+                        indices.Add(asset.ExportIndex);
+                    }
+                    particleExports.Add((particle, [.. indices]));
                 }
             }
+
+            // The staged copy is bound to everything that went into it: each material candidate and each effect document.
+            var evidencePath = Path.Combine(valuesRoot, "arkive-values-pass.json");
+            await File.WriteAllTextAsync(evidencePath, JsonSerializer.Serialize(new
+            {
+                Materials = materialCandidates.Select(item => new { item.Edit.DocumentPath, item.Candidate.ManifestPath }),
+                ParticleEffects = particleExports.Select(item => new { item.Particle.DocumentPath, item.Particle.Document.ContentSha256 }),
+            }, JsonOptions), cancellationToken).ConfigureAwait(false);
             var staged = await _meshStaging.BuildSerializedExportsAsync(
                 new SerializedExportsStagedUpkRequest(
                     currentPackagePath, inputPackageHash, Path.GetFileName(sourcePath), request.Package.Manifest.PackageAlias,
-                    replacements, particle.DocumentPath, particleRoot),
+                    replacements, evidencePath, Path.Combine(valuesRoot, "staged-upk")),
                 cancellationToken).ConfigureAwait(false);
             currentPackagePath = staged.OutputUpkPath;
-            stages.Add(new UnifiedPackageCompositionStage(
-                stages.Count + 1, UnifiedPackageAssetKind.ParticleSystem, document.SystemObjectName,
-                document.SystemExportIndex, inputPackageHash, staged.Manifest.OutputPackageSha256,
-                staged.OutputUpkPath, staged.ManifestPath));
-            particleAssets.Add(new GuidedParticlePackageAssetRevision(
-                document.EditId, document.DisplayName, document.SystemObjectName, document.SystemExportIndex,
-                particle.DocumentPath, document.ContentSha256, staged.ManifestPath, staged.Manifest.Exports));
+            var stagedExports = staged.Manifest.Exports.ToDictionary(export => export.NativeExportIndex);
+            foreach (var (edit, nativeIndex, candidate) in materialCandidates)
+            {
+                var export = stagedExports[nativeIndex];
+                stages.Add(new UnifiedPackageCompositionStage(
+                    stages.Count + 1, UnifiedPackageAssetKind.MaterialInstanceConstant,
+                    edit.Document.ObjectName, nativeIndex, inputPackageHash,
+                    staged.Manifest.OutputPackageSha256, staged.OutputUpkPath, staged.ManifestPath));
+                materialAssets.Add(new GuidedMaterialPackageAssetRevision(
+                    edit.Document.EditId, edit.Document.DisplayName, edit.Document.ObjectName,
+                    nativeIndex, edit.DocumentPath, candidate.ManifestPath,
+                    candidate.Manifest.CandidateExportSha256, staged.ManifestPath,
+                    export.SerialOffset, export.SerialSize));
+            }
+            foreach (var (particle, indices) in particleExports)
+            {
+                var document = particle.Document;
+                stages.Add(new UnifiedPackageCompositionStage(
+                    stages.Count + 1, UnifiedPackageAssetKind.ParticleSystem, document.SystemObjectName,
+                    document.SystemExportIndex, inputPackageHash, staged.Manifest.OutputPackageSha256,
+                    staged.OutputUpkPath, staged.ManifestPath));
+                particleAssets.Add(new GuidedParticlePackageAssetRevision(
+                    document.EditId, document.DisplayName, document.SystemObjectName, document.SystemExportIndex,
+                    particle.DocumentPath, document.ContentSha256, staged.ManifestPath,
+                    indices.Select(index => stagedExports[index]).ToArray()));
+            }
         }
 
         var meshAssets = new List<GuidedMeshPackageAssetRevision>(meshInputs.Count);

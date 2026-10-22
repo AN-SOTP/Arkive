@@ -188,9 +188,10 @@ public sealed class SkillPreviewService(
     /// Everything the viewer needs to play one branch of a skill: the class's skill animations, each effect's
     /// particle model (from the game's current packages, so installed mods show) and their textures and meshes.
     /// </summary>
+    /// <param name="edits">The mod's working files the viewer shows, drawn on the look's parts and the effects too.</param>
     /// <param name="progress">What is being done and how far along (0-1).</param>
     public async Task<SkillPlayback> PrepareAsync(ModelViewerRequest request, string classFile, int skillId, int branchIndex,
-        Action<string, double?> progress, CancellationToken cancellationToken)
+        ModelViewerEdits? edits, Action<string, double?> progress, CancellationToken cancellationToken)
     {
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var timings = new List<string>();
@@ -273,13 +274,14 @@ public sealed class SkillPreviewService(
         // The character as the skill shows it: the class's weapon in its hand and, for half an outfit, the class's
         // default other half.
         progress("Preparing the class's weapon and outfit…", 0.4);
-        var (sceneJson, weapons) = await PrepareLookAsync(request, root, classFile, look, cancellationToken);
+        var (sceneJson, weapons) = await PrepareLookAsync(request, root, classFile, look, edits, cancellationToken);
         Mark("weapon");
 
         progress("Preparing the effects' textures, shaders and meshes…", 0.5);
         var emitters = systems.Values.SelectMany(model => model.Emitters).ToArray();
         var found = await assets.FindAsync(emitters, new Progress<double>(fraction =>
             progress($"Preparing the effects' textures, shaders and meshes ({fraction:P0})…", 0.5 + 0.45 * fraction)), cancellationToken);
+        found = await WithTextureEditsAsync(found, edits, cancellationToken);
         Mark("assets");
         progress("Starting the skill…", 0.95);
         var animationFolder = Path.GetRelativePath(sceneCacheRoot, set.Directory).Replace('\\', '/');
@@ -376,10 +378,82 @@ public sealed class SkillPreviewService(
         return _looks[key] = look;
     }
 
+    /// <summary>
+    /// The effects' textures with the mod's working images in place of the game's: a texture an effect draws with
+    /// (on a sprite or a mesh particle, or bound to one of its shaders) that has the same name as an edited texture
+    /// shows the edit. The images are written to a fresh folder beside the effect cache, and older ones are removed.
+    /// </summary>
+    private async Task<ParticleEditorAssets> WithTextureEditsAsync(ParticleEditorAssets found, ModelViewerEdits? edits,
+        CancellationToken cancellationToken)
+    {
+        if (edits is not { TextureImages.Count: > 0 }) return found;
+        var references = TextureNames(found).Where(edits.TextureImages.ContainsKey).ToArray();
+        if (references.Length == 0) return found;
+        var editsRoot = Path.Combine(assets.CacheRoot, "edits");
+        var folder = Path.Combine(editsRoot, $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}"[..26]);
+        Directory.CreateDirectory(folder);
+        foreach (var old in Directory.EnumerateDirectories(editsRoot).Where(path => !path.Equals(folder, StringComparison.OrdinalIgnoreCase)))
+        {
+            try { Directory.Delete(old, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        var swapped = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in references)
+        {
+            var target = Path.Combine(folder, name + ".png");
+            try
+            {
+                await ModelViewerSceneService.WriteEditedImageAsync(edits.TextureImages[name], target, cancellationToken);
+                swapped[name] = Path.GetRelativePath(assets.CacheRoot, target);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or
+                                                  UnauthorizedAccessException or FormatException)
+            {
+                log($"Skill preview: the edited {name} could not be shown on the effects: {exception.Message}");
+            }
+        }
+        log($"Skill preview effects drawn with {swapped.Count:N0} edited texture(s): {string.Join(", ", swapped.Keys)}.");
+        return WithTextures(found, swapped);
+    }
+
+    /// <summary>The names of the textures the effects draw with (their exported files are named after them).</summary>
+    internal static IEnumerable<string> TextureNames(ParticleEditorAssets found) =>
+        found.Textures.Values.Select(texture => texture.RelativePath)
+            .Concat(found.Textures.Values.SelectMany(texture => texture.Shader?.Shaders.Values.SelectMany(shader => shader.Samplers.Values) ?? []))
+            .OfType<string>().Where(reference => reference != ParticleShaderPlanner.SceneDepth)
+            .Select(Path.GetFileNameWithoutExtension).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The effects' textures with each texture named in <paramref name="swapped"/> pointing at its new file.</summary>
+    internal static ParticleEditorAssets WithTextures(ParticleEditorAssets found, IReadOnlyDictionary<string, string> swapped)
+    {
+        string? Swap(string? reference) =>
+            reference is not null && Path.GetFileNameWithoutExtension(reference) is { } name && swapped.TryGetValue(name, out var edited)
+                ? edited
+                : reference;
+        return found with
+        {
+            Textures = found.Textures.ToDictionary(pair => pair.Key, pair => pair.Value with
+            {
+                RelativePath = Swap(pair.Value.RelativePath),
+                Shader = pair.Value.Shader is not { } set ? null : set with
+                {
+                    Shaders = set.Shaders.ToDictionary(item => item.Key, item => item.Value with
+                    {
+                        Samplers = item.Value.Samplers.ToDictionary(sampler => sampler.Key,
+                            sampler => sampler.Value == ParticleShaderPlanner.SceneDepth ? sampler.Value : Swap(sampler.Value)!),
+                    }),
+                },
+            }, StringComparer.OrdinalIgnoreCase),
+        };
+    }
+
     private async Task<(string? SceneJson, object[] Weapons)> PrepareLookAsync(
-        ModelViewerRequest request, string root, string classFile, ClassLook? look, CancellationToken cancellationToken)
+        ModelViewerRequest request, string root, string classFile, ClassLook? look, ModelViewerEdits? edits,
+        CancellationToken cancellationToken)
     {
         if (look is null) return (null, []);
+        // The shown mesh keeps all of the mod's edits; the look's other parts and weapons show its texture and material edits.
+        var partEdits = edits is null ? null : edits with { MeshGlbPath = null };
         var name = request.ObjectName.ToLowerInvariant();
         var halves = new List<LookMesh>();
         if (IsPlayer(request))
@@ -389,10 +463,10 @@ public sealed class SkillPreviewService(
         }
         // A monster's extra parts (armour, a cape) share its skeleton and are drawn with it.
         else halves.AddRange(look.Parts.Values.Where(part => !part.Object.Equals(request.ObjectName, StringComparison.OrdinalIgnoreCase)));
-        var pieces = new List<ModelViewerSceneResult> { await Task.Run(() => scenes.PrepareAsync(request, null, cancellationToken), cancellationToken) };
+        var pieces = new List<ModelViewerSceneResult> { await Task.Run(() => scenes.PrepareAsync(request, edits, null, cancellationToken), cancellationToken) };
         foreach (var half in halves)
             if (await FindMeshAsync(root, half, cancellationToken) is { } halfRequest)
-                pieces.Add(await Task.Run(() => scenes.PrepareAsync(halfRequest, null, cancellationToken), cancellationToken));
+                pieces.Add(await Task.Run(() => scenes.PrepareAsync(halfRequest, partEdits, null, cancellationToken), cancellationToken));
         var weapons = new List<object>();
         // The class's skeleton mesh carries the sockets skills place effects at; outfit pieces often have none.
         if (look.DefaultMesh is { } skeleton && await FindMeshAsync(root, skeleton, cancellationToken) is { } skeletonRequest)
@@ -411,7 +485,7 @@ public sealed class SkillPreviewService(
         foreach (var weapon in look.Weapons.DistinctBy(weapon => weapon.Mesh.Object, StringComparer.OrdinalIgnoreCase))
         {
             if (await FindMeshAsync(root, weapon.Mesh, cancellationToken) is not { } weaponRequest) continue;
-            var scene = await Task.Run(() => scenes.PrepareAsync(weaponRequest, null, cancellationToken), cancellationToken);
+            var scene = await Task.Run(() => scenes.PrepareAsync(weaponRequest, partEdits, null, cancellationToken), cancellationToken);
             pieces.Add(scene);
             weapons.Add(new { part = scene.Scene.Object.ObjectName, socket = weapon.BattleSocket, sockets = scene.Scene.Sockets });
         }

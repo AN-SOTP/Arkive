@@ -1638,14 +1638,8 @@ public sealed class SkeletalMeshStagedUpkService
         var converged = false;
         for (var pass = 0; pass < 32; pass++)
         {
-            encoded = [];
-            foreach (var index in affected)
-            {
-                var chunk = chunks[index];
-                encoded[index] = EncodeChunk(summary, chunk, index, blockSizes[index],
-                    expected.AsSpan(checked((int)chunk.UncompressedOffset),
-                        checked((int)chunk.UncompressedSize)));
-            }
+            encoded = EncodeChunks(summary, chunks, affected, blockSizes, expected,
+                index => checked((int)chunks[index].UncompressedSize));
             planned = PlanChunks(chunks, encoded, firstPhysicalOffset);
             var next = desiredLogical.ToArray();
             ApplyChunkTable(next, summary, planned, null, firstLogicalOffset, logicalPrefixOnly: true);
@@ -1789,13 +1783,8 @@ public sealed class SkeletalMeshStagedUpkService
         var converged = false;
         for (var pass = 0; pass < 32; pass++)
         {
-            encoded = [];
-            foreach (var index in affected)
-            {
-                var chunk = chunks[index];
-                encoded[index] = EncodeChunk(summary, chunk, index, blockSizes[index],
-                    expected.AsSpan(checked((int)chunk.UncompressedOffset), outputLogicalSizes[index]));
-            }
+            encoded = EncodeChunks(summary, chunks, affected, blockSizes, expected,
+                index => outputLogicalSizes[index]);
             planned = PlanChunks(
                 chunks, encoded, outputLogicalSizes, firstPhysicalOffset);
             var next = desiredLogical.ToArray();
@@ -1897,6 +1886,40 @@ public sealed class SkeletalMeshStagedUpkService
             blockSize > MaximumBlockSize || rawBytes != chunk.UncompressedSize)
             Refuse("SMS044", $"Chunk {chunkIndex} has an unsupported compression envelope.");
         return blockSize;
+    }
+
+    /// <summary>
+    /// Encodes the affected chunks side by side: each chunk is compressed and checked on its own, so the result is
+    /// the same as encoding them one at a time, and a package built with many changed exports no longer waits on one core.
+    /// </summary>
+    private Dictionary<int, EncodedChunk> EncodeChunks(
+        PackageSummary summary,
+        IReadOnlyList<CompressedChunk> chunks,
+        IEnumerable<int> affected,
+        IReadOnlyDictionary<int, int?> blockSizes,
+        byte[] logical,
+        Func<int, int> logicalSize)
+    {
+        var indices = affected.ToArray();
+        var results = new EncodedChunk[indices.Length];
+        try
+        {
+            Parallel.For(0, indices.Length, position =>
+            {
+                var index = indices[position];
+                var chunk = chunks[index];
+                results[position] = EncodeChunk(summary, chunk, index, blockSizes[index],
+                    logical.AsSpan(checked((int)chunk.UncompressedOffset), logicalSize(index)));
+            });
+        }
+        catch (AggregateException exception) when (exception.InnerExceptions.Count > 0)
+        {
+            // Callers handle the refusal itself, as they did when chunks were encoded one at a time.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exception.InnerExceptions[0]).Throw();
+        }
+        var encoded = new Dictionary<int, EncodedChunk>(indices.Length);
+        for (var position = 0; position < indices.Length; position++) encoded[indices[position]] = results[position];
+        return encoded;
     }
 
     private EncodedChunk EncodeChunk(

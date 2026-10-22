@@ -92,6 +92,7 @@ internal static class Program
             "Edit mods does not offer the moddable asset types: " + string.Join(", ", kinds));
         Check(Control<Button>(window, "ModLibraryNewButton").IsVisible, "The initial mod library has no visible content.");
         GameUpdateChecks.Verify(window);
+        SkillPreviewEditChecks.Verify();
         // Without the game's EFGame folder the Login screen tab says what it needs instead of failing.
         tabs.SelectedItem = Control<TabItem>(window, "LoginScreenTab");
         await UntilAsync(() => Control<TextBlock>(window, "LoginScreenStatusText").Text.Contains("game folder", StringComparison.Ordinal),

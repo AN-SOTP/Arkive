@@ -31,7 +31,7 @@ Keep a named draft, edit its working assets and add individual assets or a mesh'
 
 ### Mod Library
 
-Enable mods, set priorities and review the effective asset selection before applying changes.
+Enable mods, set priorities and review the effective asset selection before applying changes. Ctrl or Shift click several mods to turn them on or off, update or pack them together. After a game update, **Check after game update** says which mods are ready, and **Rebase mods** sets up the ones the update changed.
 
 ![Arkive mod library with demonstration priorities and asset details](docs/screenshots/mod-library.png)
 
@@ -394,10 +394,10 @@ Enabled winners targeting one UPK are composed from a verified clean package, va
 
 ## Game updates and recovery
 
-1. **Before updating/reinstalling Lost Ark**, restore all active mods while backups and receipts match.
+1. **Before updating/reinstalling Lost Ark**, choose **Restore all game files** in the Mods tab while backups and receipts match. Your enabled mods stay ticked.
 2. Update the client, close its processes and choose **Check after game update** in the Mods tab. When Arkive starts after Steam has updated Lost Ark it offers this check itself, and names any fonts, language or login screen the update put back. The check changes no game file: it shows in the Apply Plan which mods are ready, and checks that Arkive can still read and change the updated game files.
 3. If the check finds mods whose assets the update changed, **Rebase mods** appears next to it. Rebasing sets those mods up against the updated game files, keeping each change only if it passes every native check, and moves working files the check proved unchanged onto the new files. Changed skeleton/layout/material contracts that fail need reauthoring. **Advanced → Game update safety** keeps the per-package evidence.
-4. Refresh index/metadata as needed, then choose **Apply changes**.
+4. Refresh index/metadata as needed, then choose **Apply changes**. A newer Arkive is offered when Arkive starts, before anything loads; install it first if the game update needs it.
 
 Steam reinstall changes game bytes but does not clear Arkive's library. If a mod remains marked installed/outdated, inspect current hashes and receipts; do not delete recovery evidence to silence a warning. Unknown bytes require verified restore or client repair. Keep backups until clean state is confirmed. Steam repair restores stock files, not edit contracts.
 

@@ -147,7 +147,7 @@ public partial class MainWindow
             : rows.FirstOrDefault(IsMesh);
         if (mesh?.Edit is not { } edit)
         {
-            AuthoringStatusText.Text = "Add a mesh to this mod to see it with your edits.";
+            await ViewAuthoringTexturesOnModelAsync(draft, rows);
             return;
         }
         try
@@ -163,6 +163,44 @@ public partial class MainWindow
             var draftId = draft.DraftId;
             if (OpenModelViewer(request, cancellationToken => AuthoringViewerEditsAsync(draftId, edit.EditId, cancellationToken)))
                 AuthoringStatusText.Text = $"Showing {edit.ObjectName} with this mod's edits. Saving a working file refreshes the view.";
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            AuthoringStatusText.Text = $"Preview failed: {exception.Message}";
+            Log($"Authoring model viewer failed: {exception}");
+        }
+    }
+
+    /// <summary>
+    /// A mod of textures and materials only (a boss recolour, say): shows the model they belong to, the main skeletal
+    /// mesh of the first of their packages that has one, with the mod's edits on it and on the skills it plays.
+    /// </summary>
+    private async Task ViewAuthoringTexturesOnModelAsync(ArkiveModAuthoringDraft draft, IReadOnlyList<AuthoringAssetRow> rows)
+    {
+        var edits = rows.Select(row => row.Edit).OfType<ArkiveModLocalEdit>()
+            .Where(edit => edit.Kind is UnifiedPackageAssetKind.Texture2D or UnifiedPackageAssetKind.MaterialInstanceConstant)
+            .ToArray();
+        try
+        {
+            foreach (var group in edits.GroupBy(edit => edit.SourcePackagePath, StringComparer.OrdinalIgnoreCase))
+            {
+                var clean = await _arkiveModApply.ResolveCleanPackageAsync(group.Key);
+                var catalogue = await Task.Run(() => _catalogReader.Read(clean));
+                var alias = rows.First(row => ReferenceEquals(row.Edit, group.First())).Package;
+                // The body is named after its package (mn_cnpe_00_sk); otherwise the largest mesh is the body.
+                var model = catalogue.Assets.Where(asset => asset.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(asset => asset.ObjectName.StartsWith(alias, StringComparison.OrdinalIgnoreCase))
+                    .ThenByDescending(asset => asset.SerialSize).FirstOrDefault();
+                if (model is null) continue;
+                var request = new ModelViewerRequest(clean, alias, _libraryRootPath ?? Path.GetDirectoryName(group.Key),
+                    model.ExportIndex, model.SerialOffset, model.SerialSize, model.ClassName, model.ObjectName);
+                var draftId = draft.DraftId;
+                var editId = group.First().EditId;
+                if (OpenModelViewer(request, cancellationToken => AuthoringViewerEditsAsync(draftId, editId, cancellationToken)))
+                    AuthoringStatusText.Text = $"Showing {model.ObjectName}, the model this mod's textures belong to, with its edits. Saving a working file refreshes the view.";
+                return;
+            }
+            AuthoringStatusText.Text = "Add a mesh to this mod, or a texture of a model, to see it with your edits.";
         }
         catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
         {

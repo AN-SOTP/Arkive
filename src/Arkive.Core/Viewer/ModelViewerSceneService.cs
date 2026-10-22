@@ -484,7 +484,8 @@ public sealed class ModelViewerSceneService
         return merged;
     }
 
-    private static async Task<(int Width, int Height, string Format)> WriteEditedImageAsync(
+    /// <summary>Writes a working texture image as the PNG the viewer pages load.</summary>
+    public static async Task<(int Width, int Height, string Format)> WriteEditedImageAsync(
         string source,
         string target,
         CancellationToken cancellationToken)

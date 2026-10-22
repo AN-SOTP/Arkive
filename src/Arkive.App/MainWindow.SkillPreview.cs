@@ -77,6 +77,6 @@ public partial class MainWindow
     }
 
     private Task<SkillPlayback> PrepareSkillPreviewAsync(Arkive.Core.Viewer.ModelViewerRequest request, string classFile, int skillId,
-        int branch, Action<string, double?> progress, CancellationToken cancellationToken) =>
-        SkillPreview().PrepareAsync(request, classFile, skillId, branch, progress, cancellationToken);
+        int branch, Arkive.Core.Viewer.ModelViewerEdits? edits, Action<string, double?> progress, CancellationToken cancellationToken) =>
+        SkillPreview().PrepareAsync(request, classFile, skillId, branch, edits, progress, cancellationToken);
 }

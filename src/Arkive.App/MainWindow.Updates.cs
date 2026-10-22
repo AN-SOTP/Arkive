@@ -49,7 +49,7 @@ public partial class MainWindow
     }
 
     // Never throws: every failure is explained to the user (interactive) or the session log (startup).
-    private async Task<string> CheckApplicationUpdatesAsync(bool interactive)
+    private async Task<string> CheckApplicationUpdatesAsync(bool interactive, TimeSpan? limit = null)
     {
         if (_applicationUpdateChecking) return "An update check is already running.";
         _applicationUpdateChecking = true;
@@ -57,7 +57,7 @@ public partial class MainWindow
         {
             using var client = CreateUpdateClient();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_applicationUpdateCancellation.Token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(20));
+            timeout.CancelAfter(limit ?? TimeSpan.FromSeconds(20));
             var release = await new GitHubUpdateService(client).CheckAsync(
                 ArkiveReleasePolicy.CurrentVersion, UpdateCredentialStore.Read(), timeout.Token);
             _availableApplicationUpdate = release;
@@ -98,10 +98,35 @@ public partial class MainWindow
             MessageBox.Show(this, failure.Text, "Arkive update failed", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
+    private static bool InstalledWithSetup => File.Exists(Path.Combine(AppContext.BaseDirectory, ArkiveRuntimePaths.InstallationMarker));
+
+    /// <summary>
+    /// At startup, before the mods and the game database load: when a newer Arkive is out, asks whether to install it
+    /// now. A slow or failed check never holds startup up for long, and No leaves the notice at the top for later.
+    /// </summary>
+    /// <returns>True when Arkive is closing to install the update.</returns>
+    private async Task<bool> OfferApplicationUpdateAtStartupAsync()
+    {
+        StatusText.Text = "Checking for a newer Arkive…";
+        Log($"Startup update check: {await CheckApplicationUpdatesAsync(interactive: false, TimeSpan.FromSeconds(8))}");
+        StatusText.Text = string.Empty;
+        if (_availableApplicationUpdate is not { } release || !InstalledWithSetup) return false;
+        if (MessageBox.Show(this,
+                $"Arkive {release.Version.ToString(3)} is available (you have {ArkiveReleasePolicy.CurrentVersion.ToString(3)}).\n\n" +
+                "Install it now? Arkive closes, installs the update and opens again. Your mods, drafts and backups are kept.\n\n" +
+                "Choose No to carry on with this version. You can install the update later from the notice at the top.",
+                "Arkive update available", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            Log($"Startup update declined: version={release.Version.ToString(3)}.");
+            return false;
+        }
+        return await InstallApplicationUpdateAsync(release);
+    }
+
     private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
     {
         if (_availableApplicationUpdate is not { } release || _applicationUpdateDownloading) return;
-        if (!File.Exists(Path.Combine(AppContext.BaseDirectory, ArkiveRuntimePaths.InstallationMarker)))
+        if (!InstalledWithSetup)
         {
             MessageBox.Show(this, $"Automatic updates work only in Arkive installed with Arkive-Setup. Source and portable builds are never overwritten; download the installer from {ArkiveUpdateFailure.ReleasesPage}.", "Application updates");
             return;
@@ -117,6 +142,13 @@ public partial class MainWindow
         }
         if (MessageBox.Show(this, $"Download and install Arkive {release.Version.ToString(3)}? Arkive will close and reopen. The installer is SHA-256 verified; this preview release is not code-signed.",
             "Install application update", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        await InstallApplicationUpdateAsync(release);
+    }
+
+    /// <summary>Downloads and verifies the installer, hands it to the update helper and closes Arkive.</summary>
+    /// <returns>True when Arkive is closing for the helper to install the update.</returns>
+    private async Task<bool> InstallApplicationUpdateAsync(ArkiveRelease release)
+    {
         _applicationUpdateDownloading = true;
         InstallUpdateButton.IsEnabled = false;
         CancelUpdateButton.Visibility = Visibility.Visible;
@@ -147,6 +179,7 @@ public partial class MainWindow
             _authoringCloseApproved = true;
             _applicationUpdateDownloading = false;
             Close();
+            return true;
         }
         catch (Exception exception)
         { ReportApplicationUpdateFailure(exception, userCancellation.IsCancellationRequested); }
@@ -158,5 +191,6 @@ public partial class MainWindow
             CancelUpdateButton.Visibility = Visibility.Collapsed;
             WorkspaceContent.IsEnabled = true;
         }
+        return false;
     }
 }

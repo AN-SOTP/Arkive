@@ -431,8 +431,15 @@ public sealed class ArkiveModAuthoringService
             }
             captured.Add(await CaptureAsync(local, cancellationToken: cancellationToken).ConfigureAwait(false));
         }
-        if (captured.Select(asset => ArkiveModTargetKey.From(asset.Descriptor)).Distinct().Count() != captured.Count)
-            Refuse("AUT092", "The mod contains multiple working copies of the same asset. Keep one copy per asset.");
+        // Two copies of one asset that make the same change (added twice) are kept once; copies that disagree are
+        // the user's to choose between.
+        captured = captured.GroupBy(asset => (ArkiveModTargetKey.From(asset.Descriptor), ArkiveModFileService.ComputeContentSha256(asset.Descriptor)))
+            .Select(group => group.First()).ToList();
+        if (captured.GroupBy(asset => ArkiveModTargetKey.From(asset.Descriptor)).Where(group => group.Count() > 1).ToArray() is { Length: > 0 } clashes)
+            Refuse("AUT092", "The mod has different working copies of the same asset: " +
+                             string.Join(", ", clashes.Take(5).Select(group => group.First().Descriptor.DisplayName)) +
+                             (clashes.Length > 5 ? $" and {clashes.Length - 5:N0} more" : string.Empty) +
+                             ". Remove all but one copy of each.");
         progress?.Report(new ArkiveModSaveProgress(ArkiveModSaveStage.Writing, 0, 0));
         return draft.ModId is null
             ? await CreateModAsync(draft.Metadata, captured, ArkiveModOrigin.Created, enabled: false,

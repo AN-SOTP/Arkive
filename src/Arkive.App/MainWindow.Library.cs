@@ -65,10 +65,10 @@ public partial class MainWindow : Window
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         var startup = Stopwatch.StartNew();
+        // A newer Arkive is offered before anything loads, so installing it does not wait for the mods and database.
+        if (_restoredSettings.CheckForUpdatesOnStartup && await OfferApplicationUpdateAtStartupAsync()) return;
         _ = ShowStartupWindowWhenSlowAsync();
         ArkiveModEditSnapshot.LoadHashCache(FileHashCachePath);
-        if (_restoredSettings.CheckForUpdatesOnStartup)
-            _ = CheckApplicationUpdatesAsync(interactive: false);
         _ = CleanUpUpdateDownloadsAsync();
         _ = CleanUpViewerCacheAsync();
         Log(

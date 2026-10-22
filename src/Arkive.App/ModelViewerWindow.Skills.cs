@@ -14,7 +14,8 @@ public partial class ModelViewerWindow
     public Func<ModelViewerRequest, CancellationToken, Task<SkillPreviewOffer?>>? SkillOffer { get; init; }
 
     /// <summary>Prepares one skill branch for the page (shown mesh, class file, skill id, branch, progress); set by Arkive's main window.</summary>
-    public Func<ModelViewerRequest, string, int, int, Action<string, double?>, CancellationToken, Task<SkillPlayback>>? SkillPlayback { get; init; }
+    /// <summary>Prepares a skill: the shown object, class, skill and branch, and the mod's working files the view shows.</summary>
+    public Func<ModelViewerRequest, string, int, int, ModelViewerEdits?, Action<string, double?>, CancellationToken, Task<SkillPlayback>>? SkillPlayback { get; init; }
 
     /// <summary>
     /// Adds a model's skill effects to the mod open in Edit mods (shown mesh, action file, one skill or null for all)
@@ -120,7 +121,8 @@ public partial class ModelViewerWindow
         var branch = root.TryGetProperty("branch", out var branchElement) ? branchElement.GetInt32() : 0;
         try
         {
-            var playback = await SkillPlayback(request, classFile, skill, branch,
+            var edits = _edits is null ? null : await _edits(loading.Token);
+            var playback = await SkillPlayback(request, classFile, skill, branch, edits,
                 (text, progress) => Dispatcher.InvokeAsync(() => PostSkill(new { type = "skillStatus", text, progress })), loading.Token);
             if (loading.IsCancellationRequested) return;
             // The character with its weapon (and any missing outfit half) replaces the shown mesh while skills play.
@@ -128,7 +130,7 @@ public partial class ModelViewerWindow
             {
                 if (_sceneLoaded.Task.IsCompleted) _sceneLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 Browser.CoreWebView2.PostWebMessageAsJson(
-                    $"{{\"type\":\"load\",\"theme\":\"{_theme}\",\"keepView\":true,\"skillScene\":true,\"hasEdits\":false," +
+                    $"{{\"type\":\"load\",\"theme\":\"{_theme}\",\"keepView\":true,\"skillScene\":true,\"hasEdits\":{(edits is { IsEmpty: false } ? "true" : "false")}," +
                     $"\"remember\":{(RememberViewSettings ? "true" : "false")}," +
                     $"\"baseUrl\":\"https://{SceneHost}/\",\"scene\":{sceneJson}}}");
                 await _sceneLoaded.Task.WaitAsync(TimeSpan.FromMinutes(5), loading.Token);
