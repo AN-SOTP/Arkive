@@ -70,6 +70,8 @@ public sealed class GameAssetMetadataIndex
     private readonly IReadOnlyList<GameEntityRecord> _entities;
     private readonly IReadOnlyDictionary<long, IReadOnlyList<CharacterCustomizationDefinition>>
         _customizations;
+    // A base body's class type with every class built on it: Female Warrior with Slayer and Valkyrie.
+    private readonly IReadOnlyDictionary<string, HashSet<string>> _archetypeFamilies;
 
     private GameAssetMetadataIndex(
         string sourcePath,
@@ -124,6 +126,36 @@ public sealed class GameAssetMetadataIndex
         _associations = document.Associations;
         _entities = entities;
         _customizations = customizations;
+        _archetypeFamilies = ArchetypeFamilies(document.Associations, entities);
+    }
+
+    /// <summary>
+    /// Whether gear of <paramref name="candidate"/>'s class type shows under the <paramref name="archetype"/> filter:
+    /// its own, or, for a base body (Female Warrior), any class built on that body (Slayer, Valkyrie).
+    /// </summary>
+    public bool MatchesArchetype(string? candidate, string archetype) =>
+        candidate is not null &&
+        (candidate.Equals(archetype, StringComparison.OrdinalIgnoreCase) ||
+         _archetypeFamilies.TryGetValue(archetype, out var family) && family.Contains(candidate));
+
+    private static IReadOnlyDictionary<string, HashSet<string>> ArchetypeFamilies(
+        IReadOnlyList<GameAssetAssociation> associations, IReadOnlyList<GameEntityRecord> entities)
+    {
+        // Each playable class's class type is on its look; the class records say which base body each is built on.
+        var labels = associations
+            .Where(item => item.EntityType.Equals("PC", StringComparison.OrdinalIgnoreCase) &&
+                           item.Field.Equals("LookInfo", StringComparison.OrdinalIgnoreCase) &&
+                           !string.IsNullOrWhiteSpace(item.Archetype))
+            .GroupBy(item => item.EntityId)
+            .ToDictionary(group => group.Key, group => group.First().Archetype!);
+        var bases = entities.Where(entity => entity.Kind == GameEntityKind.PlayableCharacter && entity.BaseEntityId is not null)
+            .GroupBy(entity => entity.EntityId)
+            .ToDictionary(group => group.Key, group => group.First().BaseEntityId!.Value);
+        return labels.GroupBy(pair => bases.GetValueOrDefault(pair.Key, pair.Key))
+            .Where(group => labels.ContainsKey(group.Key))
+            .ToDictionary(group => labels[group.Key],
+                group => group.Select(pair => pair.Value).ToHashSet(StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
     }
 
     public string SourcePath { get; }
@@ -561,11 +593,7 @@ public sealed class GameAssetMetadataIndex
         var objects = new HashSet<string>(StringComparer.Ordinal);
         foreach (var association in _associations)
         {
-            if (!string.IsNullOrWhiteSpace(archetype) &&
-                !string.Equals(
-                    association.Archetype,
-                    archetype,
-                    StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(archetype) && !MatchesArchetype(association.Archetype, archetype))
             {
                 continue;
             }

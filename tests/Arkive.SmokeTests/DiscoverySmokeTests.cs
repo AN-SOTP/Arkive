@@ -5,6 +5,7 @@ internal static class DiscoverySmokeTests
     internal static IReadOnlyList<SmokeTestCase> Cases { get; } =
     [
         new("matches multi-term asset searches", TestAssetSearch),
+        new("lets a base body's class filter take in the classes built on it", TestArchetypeFamilies),
         new("searches a persistent package index", TestPackageIndexSearch),
         new("audits playable-character texture families without NPC leakage", TestCharacterTextureCoverageAudit),
         new("limits indexed searches to selected fields", TestPackageIndexSearchScopes),
@@ -1223,4 +1224,26 @@ internal static class DiscoverySmokeTests
         Assert(loaded.UnreadableManifestCount == 0, "valid baseline manifests were unreadable");
     }
 
+
+    private static void TestArchetypeFamilies()
+    {
+        // Female Warrior (111) is the body Slayer (112) and Valkyrie (113) are built on; Destroyer (103) is not.
+        var path = Path.Combine(fixtureDirectory, "archetype-family-metadata.json");
+        GameAssetAssociation Look(string name, long id, string code) =>
+            new(name, name, "PC", id, "LookInfo", $"EFDLChar_{code}.{code}", $"EFDLChar_{code}", code);
+        var document = new GameAssetMetadataDocument(2, "English", "fixture", DateTimeOffset.UtcNow,
+            [Look("Warrior (Female)", 111, "PC_WR_F"), Look("Slayer", 112, "PC_WBK_F"), Look("Valkyrie", 113, "PC_WHK_F"), Look("Destroyer", 103, "PC_WDR")],
+            [
+                new GameEntityDefinition("Warrior (Female)", "Warrior_Female", "PC", 111, "Playable class", "base=111", 111, "EFDLChar_PC_WR_F.PC_WR_F"),
+                new GameEntityDefinition("Slayer", "Berserker_Female", "PC", 112, "Playable class", "base=111", 111, "EFDLChar_PC_WBK_F.PC_WBK_F"),
+                new GameEntityDefinition("Valkyrie", "HolyKnight_Female", "PC", 113, "Playable class", "base=111", 111, "EFDLChar_PC_WHK_F.PC_WHK_F"),
+                new GameEntityDefinition("Destroyer", "Destroyer", "PC", 103, "Playable class", "base=101", 101, "EFDLChar_PC_WDR.PC_WDR"),
+            ]);
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(document));
+        var index = GameAssetMetadataIndex.Load(path);
+        Assert(index.MatchesArchetype("Slayer", "Female Warrior") && index.MatchesArchetype("Valkyrie", "Female Warrior") &&
+               index.MatchesArchetype("Female Warrior", "Female Warrior") && !index.MatchesArchetype("Destroyer", "Female Warrior") &&
+               index.MatchesArchetype("Slayer", "Slayer") && !index.MatchesArchetype("Valkyrie", "Slayer") && !index.MatchesArchetype(null, "Slayer"),
+            "a base body's class filter did not take in exactly the classes built on it");
+    }
 }

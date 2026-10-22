@@ -51,7 +51,7 @@ public sealed class AssetDiscoveryService
 
         var normalizedQuery = query.Trim();
         var entitySuggestions = metadata.Entities
-            .Where(entity => MatchesArchetype(entity.Associations, archetype))
+            .Where(entity => MatchesArchetype(metadata, entity.Associations, archetype))
             .Where(entity => AssetSearch.MatchesDisplayNames(
                 normalizedQuery,
                 [entity.DisplayName, entity.Category, entity.Detail]))
@@ -66,8 +66,7 @@ public sealed class AssetDiscoveryService
 
         var associationSuggestions = metadata.Associations
             .Where(association => string.IsNullOrWhiteSpace(archetype) ||
-                                  string.Equals(association.Archetype, archetype,
-                                      StringComparison.OrdinalIgnoreCase))
+                                  metadata.MatchesArchetype(association.Archetype, archetype))
             .Where(association => AssetSearch.MatchesDisplayNames(
                 normalizedQuery,
                 [association.DisplayName]))
@@ -236,10 +235,10 @@ public sealed class AssetDiscoveryService
     }
 
     private static bool MatchesArchetype(
+        GameAssetMetadataIndex metadata,
         IReadOnlyList<GameAssetAssociation> associations,
         string? archetype) => string.IsNullOrWhiteSpace(archetype) ||
-                             associations.Any(item => string.Equals(
-                                 item.Archetype, archetype, StringComparison.OrdinalIgnoreCase));
+                             associations.Any(item => metadata.MatchesArchetype(item.Archetype, archetype));
 
     private static string? ResolveArchetype(IReadOnlyList<GameAssetAssociation> associations) =>
         associations.Select(item => item.Archetype)

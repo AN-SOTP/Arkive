@@ -928,11 +928,27 @@
                                     <TextBox x:Name="OutfitSwapWearSearchTextBox" Width="240" KeyDown="OutfitSwapWearSearchTextBox_KeyDown"
                                              ToolTip="An outfit's in-game name, or part of an object name, for example 4th Anniversary or pc_dl_av_217." />
                                     <Button Content="Search" Click="OutfitSwapWearSearchButton_Click" />
+                                    <ComboBox x:Name="OutfitSwapWearClassBox" Width="190" Margin="8,0,0,0"
+                                              SelectionChanged="OutfitSwapClassBox_SelectionChanged"
+                                              ToolTip="Show only outfits this class can wear: its own skins and the outfits of its body." />
                                 </WrapPanel>
                                 <DataGrid x:Name="OutfitSwapWearGrid" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
-                                          SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="OutfitSwapGrid_SelectionChanged">
+                                          SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="OutfitSwapGrid_SelectionChanged"
+                                          PreviewMouseRightButtonDown="OutfitSwapGrid_PreviewMouseRightButtonDown">
+                                    <DataGrid.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Preview in Asset Viewer" Click="OutfitSwapPreviewInViewer_Click" />
+                                        </ContextMenu>
+                                    </DataGrid.ContextMenu>
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Body" Binding="{Binding Body}" Width="170" />
+                                        <DataGridTemplateColumn Header="Body" Width="190" SortMemberPath="Body">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Body}" ToolTip="{Binding Body}" TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center" Padding="2,0" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                         <DataGridTextColumn Header="Pieces" Binding="{Binding Parts}" Width="100" />
                                         <DataGridTextColumn Header="In-game name" Binding="{Binding InGameNames}" Width="2*" MinWidth="140" />
                                         <DataGridTextColumn Header="Outfit" Binding="{Binding Stem}" Width="*" MinWidth="140" />
@@ -945,11 +961,27 @@
                                     <TextBox x:Name="OutfitSwapReplaceSearchTextBox" Width="240" KeyDown="OutfitSwapReplaceSearchTextBox_KeyDown"
                                              ToolTip="The outfit your character wears that should show the other outfit instead, for example Cold Fury or pc_wbk_f_hr." />
                                     <Button Content="Search" Click="OutfitSwapReplaceSearchButton_Click" />
+                                    <ComboBox x:Name="OutfitSwapReplaceClassBox" Width="190" Margin="8,0,0,0"
+                                              SelectionChanged="OutfitSwapClassBox_SelectionChanged"
+                                              ToolTip="Show only outfits this class can wear: its own skins and the outfits of its body." />
                                 </WrapPanel>
                                 <DataGrid x:Name="OutfitSwapReplaceGrid" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
-                                          SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="OutfitSwapGrid_SelectionChanged">
+                                          SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="OutfitSwapGrid_SelectionChanged"
+                                          PreviewMouseRightButtonDown="OutfitSwapGrid_PreviewMouseRightButtonDown">
+                                    <DataGrid.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Preview in Asset Viewer" Click="OutfitSwapPreviewInViewer_Click" />
+                                        </ContextMenu>
+                                    </DataGrid.ContextMenu>
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Body" Binding="{Binding Body}" Width="170" />
+                                        <DataGridTemplateColumn Header="Body" Width="190" SortMemberPath="Body">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Body}" ToolTip="{Binding Body}" TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center" Padding="2,0" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                         <DataGridTextColumn Header="Pieces" Binding="{Binding Parts}" Width="100" />
                                         <DataGridTextColumn Header="In-game name" Binding="{Binding InGameNames}" Width="2*" MinWidth="140" />
                                         <DataGridTextColumn Header="Outfit" Binding="{Binding Stem}" Width="*" MinWidth="140" />

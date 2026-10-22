@@ -627,6 +627,7 @@ public partial class MainWindow : Window
             _gameMetadataIndex = index;
             _gameMetadataPath = index.SourcePath;
             PopulateLibraryArchetypeFilter(index);
+            FillOutfitSwapClasses();
             GameMetadataText.Text =
                 $"Game DB mapping: {index.AssociationCount:N0} relationships | " +
                 $"verified {index.VerifiedDependencyCount:N0} | " +
