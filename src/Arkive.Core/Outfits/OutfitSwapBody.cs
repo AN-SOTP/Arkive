@@ -17,6 +17,7 @@ public sealed class OutfitSwapBody
     private readonly Dictionary<string, float>[] _vertexWeights;
     private readonly Vector3[] _corners;
     private readonly Vector2[] _cornerUvs;
+    private readonly Vector3[] _cornerNormals;
     private readonly bool[] _lower;
     private readonly int[] _charts;
     private readonly OutfitSwapKdTree _triangles;
@@ -28,6 +29,7 @@ public sealed class OutfitSwapBody
         Native = native;
         var corners = new List<Vector3>();
         var cornerUvs = new List<Vector2>();
+        var cornerNormals = new List<Vector3>();
         var lower = new List<bool>();
         var charts = new List<int>();
         var random = new Random(1);
@@ -61,6 +63,7 @@ public sealed class OutfitSwapBody
                     used.Add(a); used.Add(b); used.Add(c);
                     corners.AddRange([piece.Positions[a], piece.Positions[b], piece.Positions[c]]);
                     cornerUvs.AddRange([piece.Uv0[a], piece.Uv0[b], piece.Uv0[c]]);
+                    cornerNormals.AddRange([piece.Normals[a], piece.Normals[b], piece.Normals[c]]);
                     lower.Add(OutfitSwapBodies.IsLowerSkin(piece.Materials[section.Material]));
                     charts.Add(chartBase + Find(a));
                     for (var s = 0; s < SamplesPerTriangle; s++)
@@ -99,6 +102,7 @@ public sealed class OutfitSwapBody
         _vertices = new OutfitSwapKdTree(Flatten(_vertexPoints), 3);
         _corners = corners.ToArray();
         _cornerUvs = cornerUvs.ToArray();
+        _cornerNormals = cornerNormals.ToArray();
         _lower = lower.ToArray();
         _charts = charts.ToArray();
         _triangles = new OutfitSwapKdTree(Flatten(Enumerable.Range(0, _lower.Length)
@@ -136,15 +140,28 @@ public sealed class OutfitSwapBody
     /// <summary>The body's skin picture coordinates at a point, read off one triangle's plane (beyond its edges too).</summary>
     public Vector2 UvAt(int triangle, Vector3 point)
     {
+        var (u, v, w) = Barycentric(triangle, point);
+        return _cornerUvs[triangle * 3] * u + _cornerUvs[triangle * 3 + 1] * v + _cornerUvs[triangle * 3 + 2] * w;
+    }
+
+    /// <summary>The body's smooth surface direction at a point on one of its triangles.</summary>
+    public Vector3 NormalAt(int triangle, Vector3 point)
+    {
+        var (u, v, w) = Barycentric(triangle, point);
+        return Unit(_cornerNormals[triangle * 3] * u + _cornerNormals[triangle * 3 + 1] * v + _cornerNormals[triangle * 3 + 2] * w);
+    }
+
+    private (float U, float V, float W) Barycentric(int triangle, Vector3 point)
+    {
         Vector3 a = _corners[triangle * 3], b = _corners[triangle * 3 + 1], c = _corners[triangle * 3 + 2];
         Vector3 ab = b - a, ac = c - a, ap = point - a;
         float d00 = Vector3.Dot(ab, ab), d01 = Vector3.Dot(ab, ac), d11 = Vector3.Dot(ac, ac);
         float d20 = Vector3.Dot(ap, ab), d21 = Vector3.Dot(ap, ac);
         var denominator = d00 * d11 - d01 * d01;
-        if (MathF.Abs(denominator) < 1e-14f) return _cornerUvs[triangle * 3];
+        if (MathF.Abs(denominator) < 1e-14f) return (1, 0, 0);
         var v = (d11 * d20 - d01 * d21) / denominator;
         var w = (d00 * d21 - d01 * d20) / denominator;
-        return _cornerUvs[triangle * 3] * (1 - v - w) + _cornerUvs[triangle * 3 + 1] * v + _cornerUvs[triangle * 3 + 2] * w;
+        return (1 - v - w, v, w);
     }
 
     private static Vector3 ClosestOnTriangle(Vector3 p, Vector3 a, Vector3 b, Vector3 c)

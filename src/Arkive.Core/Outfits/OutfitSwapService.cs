@@ -52,13 +52,16 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         var targetBody = await BodyAsync(to, targets.Select(piece => piece.Mesh).ToArray(), gameBuild, cancellationToken).ConfigureAwait(false);
 
         var fitted = new List<Vector3[]>();
+        var shaded = new List<OutfitSwapPiece>();
         long judged = 0, clippedBefore = 0, clippedAfter = 0, stretched = 0, faces = 0;
         foreach (var donor in donors)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Fitting {donor.ObjectName}");
             var mesh = donor.Mesh;
-            var moved = OutfitSwapFitting.Retarget(mesh, OutfitSwapFitting.BoneMaps(mesh, targetSkeleton));
+            var maps = OutfitSwapFitting.BoneMaps(mesh, targetSkeleton);
+            var moved = OutfitSwapFitting.Retarget(mesh, maps);
+            var (normals, tangents) = OutfitSwapFitting.RetargetFrames(mesh, maps);
             var ids = OutfitSwapFitting.Weld(mesh.Positions, out var weldedCount);
             var triangles = mesh.Sections.SelectMany(section => section.Triangles).Select(v => ids[v]).ToArray();
             var cloth = new bool[mesh.VertexCount];
@@ -120,10 +123,20 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                     faces++;
                     if (Stretched(mesh.Positions, moved, section.Triangles[i], section.Triangles[i + 1], section.Triangles[i + 2])) stretched++;
                 }
+            // Bare skin lying on the new body shades like it.
+            if (targetBody is { Native: true })
+                for (var v = 0; v < moved.Length; v++)
+                {
+                    if (cloth[v] || feet[v] >= 0.5f) continue;
+                    var surface = targetBody.Closest(moved[v]);
+                    if (surface.Triangle >= 0 && Vector3.Distance(surface.Position, moved[v]) < 0.003f)
+                        normals[v] = targetBody.NormalAt(surface.Triangle, surface.Position);
+                }
             fitted.Add(moved);
+            shaded.Add(donor with { Mesh = mesh.WithFrames(normals, tangents) });
         }
         progress?.Report("Placing the outfit in the new materials");
-        var plan = OutfitSwapPlanner.Plan(donors, fitted, targets, targetBody);
+        var plan = OutfitSwapPlanner.Plan(shaded, fitted, targets, targetBody);
         notes.AddRange(plan.Notes);
         var report = new OutfitSwapReport(from.Profile, to.Profile, field?.CostumeCount ?? 0,
             judged == 0 ? 0 : 100.0 * clippedBefore / judged, judged == 0 ? 0 : 100.0 * clippedAfter / judged,

@@ -107,6 +107,35 @@ public static partial class OutfitSwapFitting
         return result;
     }
 
+    /// <summary>
+    /// The donor's normals and tangents turned the way the skeleton moved each vertex (blended over its skin weights),
+    /// so shading follows a limb that now points another way.
+    /// </summary>
+    public static (Vector3[] Normals, Vector4[] Tangents) RetargetFrames(OutfitSwapMesh donor, BoneMap[] maps)
+    {
+        var normals = new Vector3[donor.VertexCount];
+        var tangents = new Vector4[donor.VertexCount];
+        for (var v = 0; v < normals.Length; v++)
+        {
+            var sum = new Quaternion(0, 0, 0, 0);
+            Quaternion? first = null;
+            for (var k = 0; k < 4; k++)
+            {
+                var weight = donor.Weights[v * 4 + k];
+                if (weight <= 0) continue;
+                var turn = maps[donor.Joints[v * 4 + k]].Turn;
+                first ??= turn;
+                if (Quaternion.Dot(turn, first.Value) < 0) turn = Quaternion.Negate(turn);
+                sum += turn * weight;
+            }
+            var rotation = sum.LengthSquared() > 1e-12f ? Quaternion.Normalize(sum) : Quaternion.Identity;
+            normals[v] = Vector3.Normalize(Vector3.Transform(donor.Normals[v], rotation) + new Vector3(0, 0, 1e-9f));
+            var tangent = Vector3.Transform(new Vector3(donor.Tangents[v].X, donor.Tangents[v].Y, donor.Tangents[v].Z), rotation);
+            tangents[v] = new Vector4(tangent, donor.Tangents[v].W);
+        }
+        return (normals, tangents);
+    }
+
     // What a point hangs from, in broad groups, so a stocking on the thigh is matched with stockings and a skirt over the
     // same spot with skirts.
     private static readonly Regex[] Groups =

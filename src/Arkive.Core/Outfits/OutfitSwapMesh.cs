@@ -36,6 +36,14 @@ public sealed class OutfitSwapMesh
 
     public int VertexCount => Positions.Length;
 
+    /// <summary>The same mesh with other normals and tangents.</summary>
+    public OutfitSwapMesh WithFrames(Vector3[] normals, Vector4[] tangents) => new()
+    {
+        Positions = Positions, Normals = normals, Tangents = tangents, Uv0 = Uv0, Uv1 = Uv1, Colours = Colours, Joints = Joints,
+        Weights = Weights, Sections = Sections, Materials = Materials, BoneNames = BoneNames, BonePositions = BonePositions,
+        BoneParents = BoneParents,
+    };
+
     public bool HasBodySkeleton => Array.IndexOf(BoneNames, "bip001-pelvis") >= 0;
 
     /// <summary>The material's short name (pc_wr_f_av_002_dress_mi from MaterialInstanceConstant'mat.pc_wr_f_av_002_dress_mi').</summary>
