@@ -1,0 +1,254 @@
+using System.Numerics;
+using System.Text.RegularExpressions;
+
+namespace Arkive.Core.Outfits;
+
+/// <summary>
+/// Moving an outfit from one body to another: first with the skeleton (where each joint is on the new body), then by the
+/// body-shape difference the game's own shared costumes show, smoothed over the outfit so no face tears.
+/// </summary>
+public static partial class OutfitSwapFitting
+{
+    // Body bones that turn on their own: the limb and spine segments. Hands, feet, the head and twist helpers turn with
+    // their parent; outfit bones (skirts, capes, hair) follow their nearest body bone entirely, because they sit
+    // differently from one outfit to the next.
+    [GeneratedRegex(@"^bip001-(spine\d?|neck|[lr]-(clavicle|upperarm|forearm|thigh|calf))$")]
+    private static partial Regex TurnsOnItsOwn();
+
+    [GeneratedRegex(@"^bip001-([lr]-(hand|foot)|head)$")]
+    private static partial Regex LimbEnd();
+
+    [GeneratedRegex(@"^bip001|twist")]
+    private static partial Regex BodyBone();
+
+    /// <summary>How one donor bone carries its vertices onto the target body.</summary>
+    public readonly record struct BoneMap(Quaternion Turn, Vector3 From, Vector3 To)
+    {
+        public Vector3 Apply(Vector3 point) => To + Vector3.Transform(point - From, Turn);
+    }
+
+    public static BoneMap[] BoneMaps(OutfitSwapMesh donor, OutfitSwapSkeleton target)
+    {
+        var maps = new BoneMap?[donor.BoneNames.Length];
+        var children = new List<int>[donor.BoneNames.Length];
+        for (var i = 0; i < children.Length; i++) children[i] = [];
+        for (var i = 0; i < donor.BoneParents.Length; i++)
+            if (donor.BoneParents[i] >= 0) children[donor.BoneParents[i]].Add(i);
+
+        BoneMap Compute(int bone)
+        {
+            if (maps[bone] is { } known) return known;
+            var name = donor.BoneNames[bone];
+            var parent = donor.BoneParents[bone];
+            if (!BodyBone().IsMatch(name) || !target.TryGet(name, out var targetHead))
+            {
+                var inherited = parent >= 0 ? Compute(parent) : new BoneMap(Quaternion.Identity, Vector3.Zero, Vector3.Zero);
+                maps[bone] = inherited;
+                return inherited;
+            }
+            var head = donor.BonePositions[bone];
+            Quaternion? turn = null;
+            if (TurnsOnItsOwn().IsMatch(name))
+            {
+                var aim = children[bone]
+                    .Where(child => (TurnsOnItsOwn().IsMatch(donor.BoneNames[child]) || LimbEnd().IsMatch(donor.BoneNames[child])) &&
+                                    target.TryGet(donor.BoneNames[child], out _) &&
+                                    Vector3.Distance(donor.BonePositions[child], head) > 0.02f)
+                    .OrderByDescending(child => Vector3.Distance(donor.BonePositions[child], head))
+                    .Cast<int?>().FirstOrDefault();
+                if (aim is { } child && target.TryGet(donor.BoneNames[child], out var targetChild))
+                    turn = Between(donor.BonePositions[child] - head, targetChild - targetHead);
+            }
+            turn ??= parent >= 0 ? Compute(parent).Turn : Quaternion.Identity;
+            var map = new BoneMap(turn.Value, head, targetHead);
+            maps[bone] = map;
+            return map;
+        }
+
+        var result = new BoneMap[maps.Length];
+        for (var i = 0; i < maps.Length; i++) result[i] = Compute(i);
+        return result;
+    }
+
+    private static Quaternion Between(Vector3 from, Vector3 to)
+    {
+        from = Vector3.Normalize(from);
+        to = Vector3.Normalize(to);
+        var dot = Vector3.Dot(from, to);
+        if (dot > 0.99999f) return Quaternion.Identity;
+        if (dot < -0.99999f)
+        {
+            var axis = Vector3.Cross(from, Vector3.UnitX);
+            if (axis.LengthSquared() < 1e-6f) axis = Vector3.Cross(from, Vector3.UnitY);
+            return Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), MathF.PI);
+        }
+        var cross = Vector3.Cross(from, to);
+        return Quaternion.Normalize(new Quaternion(cross, 1 + dot));
+    }
+
+    /// <summary>Where each vertex goes when the skeleton moves to the target's: blended over its skin weights.</summary>
+    public static Vector3[] Retarget(OutfitSwapMesh donor, BoneMap[] maps)
+    {
+        var result = new Vector3[donor.VertexCount];
+        for (var v = 0; v < result.Length; v++)
+        {
+            var sum = Vector3.Zero;
+            var total = 0f;
+            for (var k = 0; k < 4; k++)
+            {
+                var weight = donor.Weights[v * 4 + k];
+                if (weight <= 0) continue;
+                sum += maps[donor.Joints[v * 4 + k]].Apply(donor.Positions[v]) * weight;
+                total += weight;
+            }
+            result[v] = total > 0 ? sum / total : donor.Positions[v];
+        }
+        return result;
+    }
+
+    // What a point hangs from, in broad groups, so a stocking on the thigh is matched with stockings and a skirt over the
+    // same spot with skirts.
+    private static readonly Regex[] Groups =
+    [
+        new(@"pelvis$|^bip001$|spine$"), new(@"spine1|spine2"), new(@"neck|head"),
+        new(@"l-clavicle|l-upperarm|upperarmtwist_l"), new(@"r-clavicle|r-upperarm|upperarmtwist_r"),
+        new(@"l-forearm|forearmtwist_l"), new(@"r-forearm|forearmtwist_r"), new(@"l-hand|l-finger"), new(@"r-hand|r-finger"),
+        new(@"l-thigh|thightwist_l|hip_l"), new(@"r-thigh|thightwist_r|hip_r"),
+        new(@"l-calf|l-foot|l-toe|calftwist_l"), new(@"r-calf|r-foot|r-toe|calftwist_r"),
+    ];
+
+    public const int FeatureCount = 14;
+
+    public static int[] BoneGroups(IReadOnlyList<string> names) =>
+        names.Select(name => Array.FindIndex(Groups, group => group.IsMatch(name)) is var g and >= 0 ? g : Groups.Length).ToArray();
+
+    /// <summary>For each vertex, how much of its weight hangs from each group.</summary>
+    public static float[] Features(OutfitSwapMesh mesh, IReadOnlyList<int> vertices)
+    {
+        var groups = BoneGroups(mesh.BoneNames);
+        var features = new float[vertices.Count * FeatureCount];
+        for (var i = 0; i < vertices.Count; i++)
+            for (var k = 0; k < 4; k++)
+                features[i * FeatureCount + groups[mesh.Joints[vertices[i] * 4 + k]]] += mesh.Weights[vertices[i] * 4 + k];
+        return features;
+    }
+
+    /// <summary>Vertices at the same place share one number, so a seam in the UV layout never tears when smoothed.</summary>
+    public static int[] Weld(Vector3[] positions, out int count)
+    {
+        var ids = new int[positions.Length];
+        var seen = new Dictionary<(long, long, long), int>();
+        for (var i = 0; i < positions.Length; i++)
+        {
+            var key = ((long)MathF.Round(positions[i].X * 1e5f), (long)MathF.Round(positions[i].Y * 1e5f), (long)MathF.Round(positions[i].Z * 1e5f));
+            if (!seen.TryGetValue(key, out var id)) seen[key] = id = seen.Count;
+            ids[i] = id;
+        }
+        count = seen.Count;
+        return ids;
+    }
+
+    /// <summary>Evens out a per-point movement over the mesh's edges, so neighbouring points move together.</summary>
+    public static Vector3[] SmoothOnMesh(Vector3[] movement, IReadOnlyList<int> triangles, int rounds = 6)
+    {
+        var count = movement.Length;
+        var degree = new int[count];
+        for (var t = 0; t < triangles.Count; t++) degree[triangles[t]] += 2;
+        var current = (Vector3[])movement.Clone();
+        var sum = new Vector3[count];
+        for (var round = 0; round < rounds; round++)
+        {
+            Array.Clear(sum);
+            for (var t = 0; t + 2 < triangles.Count; t += 3)
+            {
+                int a = triangles[t], b = triangles[t + 1], c = triangles[t + 2];
+                sum[a] += current[b] + current[c];
+                sum[b] += current[a] + current[c];
+                sum[c] += current[a] + current[b];
+            }
+            for (var i = 0; i < count; i++)
+                if (degree[i] > 0) current[i] = 0.5f * current[i] + 0.5f * sum[i] / degree[i];
+        }
+        return current;
+    }
+}
+
+/// <summary>A target skeleton's rest joint positions by bone name (all target pieces of one body together).</summary>
+public sealed class OutfitSwapSkeleton
+{
+    private readonly Dictionary<string, Vector3> _joints = new(StringComparer.Ordinal);
+
+    public OutfitSwapSkeleton(IEnumerable<OutfitSwapMesh> pieces)
+    {
+        foreach (var piece in pieces)
+            for (var i = 0; i < piece.BoneNames.Length; i++)
+                _joints.TryAdd(piece.BoneNames[i], piece.BonePositions[i]);
+    }
+
+    public bool TryGet(string name, out Vector3 position) => _joints.TryGetValue(name, out position);
+}
+
+/// <summary>
+/// The body-shape difference between two bodies, learned from the game's own shared costumes: for points of those
+/// costumes after the skeleton has moved them, how much further the game's version for the other body sits.
+/// </summary>
+public sealed class OutfitSwapShapeField
+{
+    private const float FeatureScale = 0.06f;
+    private const int Neighbours = 24;
+    private const float Sigma = 0.02f;
+    private readonly OutfitSwapKdTree _tree;
+    private readonly Vector3[] _corrections;
+
+    public int SampleCount => _corrections.Length;
+    public int CostumeCount { get; }
+
+    public OutfitSwapShapeField(Vector3[] moved, float[] features, Vector3[] corrections, int costumes)
+    {
+        const int dimensions = 3 + OutfitSwapFitting.FeatureCount;
+        var points = new float[moved.Length * dimensions];
+        for (var i = 0; i < moved.Length; i++)
+        {
+            points[i * dimensions] = moved[i].X;
+            points[i * dimensions + 1] = moved[i].Y;
+            points[i * dimensions + 2] = moved[i].Z;
+            for (var f = 0; f < OutfitSwapFitting.FeatureCount; f++)
+                points[i * dimensions + 3 + f] = features[i * OutfitSwapFitting.FeatureCount + f] * FeatureScale;
+        }
+        _tree = new OutfitSwapKdTree(points, dimensions);
+        _corrections = corrections;
+        CostumeCount = costumes;
+    }
+
+    /// <summary>
+    /// The correction at each point: full where training cloth was within <paramref name="near"/>, fading to nothing by
+    /// <paramref name="far"/>, and never more than <paramref name="limit"/> (after the skeleton, body shapes differ by a few
+    /// centimetres at most).
+    /// </summary>
+    public Vector3[] Correct(Vector3[] points, float[] features, float near = 0.04f, float far = 0.10f, float limit = 0.04f)
+    {
+        var result = new Vector3[points.Length];
+        Parallel.For(0, points.Length, () => (Query: new float[3 + OutfitSwapFitting.FeatureCount], Index: new int[Neighbours], Distance: new float[Neighbours]),
+            (i, _, buffers) =>
+            {
+                var query = buffers.Query;
+                query[0] = points[i].X; query[1] = points[i].Y; query[2] = points[i].Z;
+                for (var f = 0; f < OutfitSwapFitting.FeatureCount; f++) query[3 + f] = features[i * OutfitSwapFitting.FeatureCount + f] * FeatureScale;
+                var found = _tree.Nearest(query, Neighbours, buffers.Index, buffers.Distance);
+                if (found == 0) return buffers;
+                var sum = Vector3.Zero;
+                var total = 0f;
+                for (var n = 0; n < found; n++)
+                {
+                    var weight = MathF.Exp(-MathF.Pow(buffers.Distance[n] / Sigma, 2)) + 1e-12f;
+                    sum += _corrections[buffers.Index[n]] * weight;
+                    total += weight;
+                }
+                var correction = sum / total * Math.Clamp((far - buffers.Distance[0]) / (far - near), 0, 1);
+                var length = correction.Length();
+                result[i] = length > limit ? correction * (limit / length) : correction;
+                return buffers;
+            }, _ => { });
+        return result;
+    }
+}

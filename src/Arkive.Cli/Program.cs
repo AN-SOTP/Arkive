@@ -11,6 +11,7 @@ using Arkive.Core.External;
 using Arkive.Core.Exports;
 using Arkive.Core.Inspection;
 using Arkive.Core.Mods;
+using Arkive.Core.Outfits;
 using Arkive.Core.Meshes;
 using Arkive.Core.Materials;
 using Arkive.Core.Packages;
@@ -81,6 +82,7 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--object"),
                 ReadTextOption(arguments, "--alias"),
                 ReadTextOption(arguments, "--cache"),
+                ReadTextOption(arguments, "--edits"),
                 json),
             "skeletal-mesh-recon" => SkeletalMeshRecon(
                 target,
@@ -134,6 +136,15 @@ static int Run(string[] arguments)
             "skeletal-mesh-export-editable" => SkeletalMeshExportEditable(
                 target,
                 ReadTextOption(arguments, "--out"),
+                json),
+            "outfit-swap" => OutfitSwap(
+                target,
+                ReadTextOption(arguments, "--index"),
+                ReadTextOption(arguments, "--wear"),
+                ReadTextOption(arguments, "--replace"),
+                ReadTextOption(arguments, "--out"),
+                ReadTextOption(arguments, "--cache"),
+                ReadTextOption(arguments, "--bakes"),
                 json),
             "body-proportions" => BodyProportions(
                 target,
@@ -643,10 +654,15 @@ static int ModelViewerScene(
     string? objectName,
     string? packageAlias,
     string? cachePath,
+    string? editsPath,
     bool json)
 {
     if (string.IsNullOrWhiteSpace(objectName))
         throw new ArgumentException("model-viewer-scene requires --object NAME.");
+    var edits = string.IsNullOrWhiteSpace(editsPath)
+        ? null
+        : JsonSerializer.Deserialize<ModelViewerEdits>(File.ReadAllText(editsPath), new JsonSerializerOptions(JsonSerializerDefaults.Web))
+          ?? throw new InvalidDataException($"{editsPath} holds no edits.");
     var package = Path.GetFullPath(packagePath);
     var provider = ChunkProtectionProviderFactory.CreateWesternGlobal();
     var catalog = new AssetCatalogReader(protectionProvider: provider).Read(package);
@@ -665,7 +681,7 @@ static int ModelViewerScene(
         package,
         string.IsNullOrWhiteSpace(packageAlias) ? Path.GetFileNameWithoutExtension(package) : packageAlias.Trim(),
         Path.GetDirectoryName(package),
-        asset.ExportIndex, asset.SerialOffset, asset.SerialSize, asset.ClassName, asset.ObjectName))
+        asset.ExportIndex, asset.SerialOffset, asset.SerialSize, asset.ClassName, asset.ObjectName), edits)
         .GetAwaiter().GetResult();
     if (json) WriteJson(result.Scene);
     else
@@ -1044,6 +1060,100 @@ static int SkeletalMeshExportEditable(string reconPath, string? outputPath, bool
         Console.WriteLine($"  Manifest:            {result.ManifestPath}");
     }
     return result.Manifest.GlbInspectionErrors == 0 ? 0 : 1;
+}
+
+/// <summary>
+/// Swaps one player outfit onto another body's outfit, headless: writes each replaced piece's new GLB, its repainted
+/// pictures and a viewer edits file (for model-viewer-scene --edits), and prints how well it fitted. Colours come from
+/// baked PNGs in --bakes (piece number/slot.png, from the viewer's bake) when given, otherwise from the stored pictures.
+/// </summary>
+static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, string? replace, string? outPath, string? cachePath,
+    string? bakesPath, bool json)
+{
+    if (string.IsNullOrWhiteSpace(indexCache) || string.IsNullOrWhiteSpace(wear) || string.IsNullOrWhiteSpace(replace) ||
+        string.IsNullOrWhiteSpace(outPath))
+        throw new ArgumentException("outfit-swap requires --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR.");
+    var root = Path.GetFullPath(packagesRoot);
+    var output = Path.GetFullPath(outPath);
+    var cache = Path.GetFullPath(cachePath ?? Path.Combine(output, "cache"));
+    Directory.CreateDirectory(output);
+    var provider = ChunkProtectionProviderFactory.CreateWesternGlobal();
+    var reader = new UpkPackageReader();
+    var executable = UmodelLocator.FindExecutable() ?? throw new InvalidOperationException("Outfit swaps need the Lost Ark UModel backend.");
+    var bridge = new UmodelBridge(executable);
+    var library = new OutfitSwapPackageLibrary(new PackageIndexStore(Path.GetFullPath(indexCache)), root, reader, provider,
+        new SkeletalMeshReconnaissanceService(reader, provider, bridge),
+        new SkeletalMeshReconnaissanceWorkspaceStore(Path.Combine(cache, "reconnaissance")),
+        new SkeletalMeshEditableExportService(reader, provider), Path.Combine(cache, "pieces"));
+    var scenes = new ModelViewerSceneService(bridge, new ModelViewerCache(Path.Combine(cache, "model-viewer")), protectionProvider: provider);
+    var token = CancellationToken.None;
+
+    async Task<(OutfitSwapPiece Piece, OutfitSwapScene Scene, string Glb)> Load(string name)
+    {
+        var source = await library.LocateAsync(name, token) ?? throw new InvalidOperationException($"{name} is not in the library index.");
+        var glb = await library.EditableGlbAsync(name, token) ?? throw new InvalidOperationException($"Arkive cannot rebuild {name}.");
+        var mesh = OutfitSwapMesh.Read(await File.ReadAllBytesAsync(glb, token));
+        var prepared = await scenes.PrepareAsync(source.ViewerRequest, null, token);
+        var scene = new OutfitSwapScene(prepared.Directory, prepared.Scene);
+        return (new OutfitSwapPiece(name, mesh, scene.Materials), scene, glb);
+    }
+
+    var progress = new Progress<string>(text => { if (!json) Console.WriteLine($"  {text}"); });
+    var donors = wear.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(name => Load(name).GetAwaiter().GetResult()).ToArray();
+    var targets = replace.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(name => Load(name).GetAwaiter().GetResult()).ToArray();
+    var service = new OutfitSwapService(library, Path.Combine(cache, "outfit-swap"));
+    var fit = service.FitAsync(donors.Select(item => item.Piece).ToArray(), targets.Select(item => item.Piece).ToArray(),
+        "cli", progress, token).GetAwaiter().GetResult();
+    var baked = donors.Select((_, index) =>
+    {
+        var folder = bakesPath is null ? null : Path.Combine(Path.GetFullPath(bakesPath), index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return (IReadOnlyDictionary<int, string>)(folder is null || !Directory.Exists(folder)
+            ? new Dictionary<int, string>()
+            : Directory.EnumerateFiles(folder, "*.png").ToDictionary(
+                path => int.Parse(new string(Path.GetFileNameWithoutExtension(path).TakeWhile(char.IsDigit).ToArray()), System.Globalization.CultureInfo.InvariantCulture),
+                path => path));
+    }).ToArray();
+    var pictures = OutfitSwapPictures.PaintAsync(fit.Plan, donors.Select(item => item.Piece).ToArray(), donors.Select(item => item.Scene).ToArray(),
+        baked, targets.Select(item => item.Scene).ToArray(), Path.Combine(output, "pictures"), token).GetAwaiter().GetResult();
+    var results = new List<object>();
+    for (var i = 0; i < targets.Length; i++)
+    {
+        var piece = fit.Plan.Pieces[i];
+        var glbPath = Path.Combine(output, piece.ObjectName + ".glb");
+        File.WriteAllBytes(glbPath, OutfitSwapMesh.WriteInto(File.ReadAllBytes(targets[i].Glb), piece.Mesh));
+        var textureNames = targets[i].Scene.Scene.Textures.Select(texture => texture.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var materialNames = targets[i].Scene.Scene.Materials.Select(material => material.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var edits = new ModelViewerEdits("Outfit swap", glbPath,
+            pictures.Pictures.Where(pair => textureNames.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value),
+            pictures.Materials.Where(pair => materialNames.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value), []);
+        var editsPath = Path.Combine(output, piece.ObjectName + ".edits.json");
+        File.WriteAllText(editsPath, JsonSerializer.Serialize(edits, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        results.Add(new
+        {
+            piece = piece.ObjectName, hidden = piece.Hidden, glb = glbPath, edits = editsPath, vertices = piece.Mesh.VertexCount,
+            triangles = piece.Mesh.Sections.Sum(section => section.Triangles.Length) / 3,
+        });
+    }
+    var report = fit.Report;
+    if (json)
+        WriteJson(new
+        {
+            from = report.From.Id, to = report.To.Id, report.LearnedCostumes, report.ClippingBeforePercent, report.ClippingPercent,
+            report.StretchedPercent, report.Notes, canvases = fit.Plan.Canvases.Select(canvas => new { canvas.Key, tiles = canvas.Tiles.Count }),
+            pieces = results,
+        });
+    else
+    {
+        Console.WriteLine($"{report.From.DisplayName} -> {report.To.DisplayName}: learned from {report.LearnedCostumes} shared costume(s)");
+        Console.WriteLine($"  Clipping: {report.ClippingBeforePercent:N2}% before push-out, {report.ClippingPercent:N2}% after; stretched faces {report.StretchedPercent:N2}%");
+        foreach (var canvas in fit.Plan.Canvases) Console.WriteLine($"  Picture {canvas.Key}: {canvas.Tiles.Count} material(s)");
+        foreach (var note in report.Notes) Console.WriteLine($"  Note: {note}");
+        foreach (var piece in fit.Plan.Pieces) Console.WriteLine($"  {piece.ObjectName}: {(piece.Hidden ? "hidden" : $"{piece.Mesh.VertexCount:N0} vertices")}");
+        Console.WriteLine($"  Output: {output}");
+    }
+    return 0;
 }
 
 static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string> settings, BodyProportionFollow follow, bool json)
@@ -3500,7 +3610,8 @@ static void PrintUsage()
     Console.WriteLine("  arkive dds-rgb-view <dxt5.dds> [--out FILE] [--json]");
     Console.WriteLine("  arkive texture-export-native <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive texture-project-create <arkive-native-texture.json> --edited FILE --workspace DIR [--name TEXT] [--alpha preserve-original|use-edited|force-opaque] [--json]");
-    Console.WriteLine("  arkive model-viewer-scene <package.upk> --object NAME [--alias NAME] [--cache DIR] [--json]");
+    Console.WriteLine("  arkive outfit-swap <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR [--cache DIR] [--bakes DIR] [--json]");
+    Console.WriteLine("  arkive model-viewer-scene <package.upk> --object NAME [--alias NAME] [--cache DIR] [--edits EDITS.json] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive static-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive static-mesh-export-editable <arkive-staticmesh-recon.json> [--out DIR] [--json]");
