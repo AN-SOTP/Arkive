@@ -58,6 +58,14 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             seam = targetBody.HeadSeam(neck, head);
         else
             (neck, head) = (Vector3.Zero, Vector3.Zero);
+        // The new body's own bare feet, to put in place of the outfit's.
+        var targetFeet = new List<OutfitSwapMesh>();
+        if (targetBody is { Native: true })
+            foreach (var name in to.BaseBody)
+                if (await library.LoadAsync(name, cancellationToken).ConfigureAwait(false) is { } part) targetFeet.Add(part);
+        var targetFootPoints = targetFeet.SelectMany(part => part.Sections.Where(section => OutfitSwapBodies.IsSkin(part.Materials[section.Material]))
+            .SelectMany(section => section.Triangles).Distinct().Select(v => part.Positions[v])).ToArray();
+        var targetFootAnkle = targetSkeleton.TryGet("bip001-l-foot", out var targetFootJoint) ? targetFootJoint.Y : 0.1f;
         var fitted = new List<Vector3[]>();
         var shaded = new List<OutfitSwapPiece>();
         long judged = 0, clippedBefore = 0, clippedAfter = 0, stretched = 0, faces = 0;
@@ -98,6 +106,23 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 weldedCloth[ids[v]] |= cloth[v];
                 weldedFeet[ids[v]] = Math.Max(weldedFeet[ids[v]], feet[v]);
             }
+            // Shoes and socks are reshaped around the new body's own feet, which replace the outfit's (see the end).
+            var ankleJoint = DonorAnkle(mesh);
+            var newFeet = targetFeet.Count > 0 && ankleJoint is not null;
+            OutfitSwapFeet.Stance? stance = null;
+            if (newFeet && feet.Any(share => share >= 0.1f))
+            {
+                var ownFoot = mesh.Sections.Where(section => OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
+                    .SelectMany(section => section.Triangles).Distinct().Select(v => mesh.Positions[v]).ToArray();
+                // The outfit's own bare foot, which its shoes were made around, when it has the whole foot; otherwise the
+                // old body's (an outfit's own skin often holds only the part its shoe shows).
+                var bodyFoot = donorBody?.SkinPoints.Count(p => p.Y < ankleJoint) ?? 0;
+                var donorFoot = donorBody is null || ownFoot.Count(p => p.Y < ankleJoint) >= bodyFoot * 0.6f ? ownFoot : donorBody.SkinPoints.ToArray();
+                stance = new OutfitSwapFeet.Stance(donorFoot, ankleJoint!.Value, targetFootPoints, targetFootAnkle,
+                    targetSkeleton.TryGet("bip001-l-foot", out var leftFoot) ? leftFoot : Vector3.Zero,
+                    targetSkeleton.TryGet("bip001-r-foot", out var rightFoot) ? rightFoot : Vector3.Zero);
+                moved = OutfitSwapFeet.FitShoes(mesh.Positions, moved, feet, cloth, donorFoot, ankleJoint.Value, targetFootPoints, targetFootAnkle, stance);
+            }
             if (from.Female != to.Female && donorBody is not null && targetBody is not null)
             {
                 var wrapped = OutfitSwapClearance.Conform(Average(mesh.Positions, ids, weldedCount), Average(moved, ids, weldedCount),
@@ -117,8 +142,12 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 for (var v = 0; v < ids.Length; v++)
                     hands[ids[v]] = Math.Max(hands[ids[v]], handFeatures[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
                                                           handFeatures[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand]);
-                var hold = welded.Select((point, v) => Math.Max(Math.Max(Math.Clamp((weldedFeet[v] - 0.1f) / 0.4f, 0, 1),
-                    Math.Clamp((ankle + 0.06f - point.Y) / 0.05f, 0, 1)), Math.Clamp(hands[v] / 0.3f, 0, 1))).ToArray();
+                // With the new body's own feet coming in, all the leg's skin lies on the body down to them.
+                // Shoes already sit on the new feet, so the skin's move does not carry them along.
+                var hold = welded.Select((point, v) => Math.Max(newFeet
+                    ? weldedCloth[v] ? Math.Clamp((weldedFeet[v] - 0.05f) / 0.2f, 0, 1) : 0
+                    : Math.Max(Math.Clamp((weldedFeet[v] - 0.1f) / 0.4f, 0, 1), Math.Clamp((ankle + 0.06f - point.Y) / 0.05f, 0, 1)),
+                    Math.Clamp(hands[v] / 0.3f, 0, 1))).ToArray();
                 moved = Expand(OutfitSwapClearance.SnapSkin(welded, weldedCloth, hold, targetBody), ids);
             }
             if (seam is not null)
@@ -157,14 +186,22 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             if (targetBody is { Native: true })
                 for (var v = 0; v < moved.Length; v++)
                 {
-                    if (cloth[v] || feet[v] >= 0.5f || handShares[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
+                    if (cloth[v] || (!newFeet && feet[v] >= 0.5f) || handShares[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
                         handShares[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand] > 0.1f) continue;
                     var surface = targetBody.Closest(moved[v]);
                     if (surface.Triangle >= 0 && Vector3.Distance(surface.Position, moved[v]) < 0.003f)
                         normals[v] = targetBody.NormalAt(surface.Triangle, surface.Position);
                 }
+            var finished = mesh.WithFrames(normals, tangents);
+            if (newFeet)
+            {
+                (finished, moved, var shownFoot) = OutfitSwapFeet.WithBodyFeet(finished, moved, targetFeet, targetFootAnkle, stance);
+                if (donorBody is not null)
+                    (finished, moved) = OutfitSwapFeet.Finish(finished, moved, mesh.VertexCount, mesh.Positions,
+                        cloth.Select((value, v) => value && feet[v] >= 0.05f).ToArray(), donorBody, shownFoot);
+            }
             fitted.Add(moved);
-            shaded.Add(donor with { Mesh = mesh.WithFrames(normals, tangents) });
+            shaded.Add(donor with { Mesh = finished });
         }
         progress?.Report("Placing the outfit in the new materials");
         var plan = OutfitSwapPlanner.Plan(shaded, fitted, targets, targetBody, ownMaterials);
@@ -218,6 +255,10 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         }
         return moved.Count > 0 ? new OutfitSwapBody(moved, native: false) : null;
     }
+
+    /// <summary>The height of the outfit's ankle joint (its foot bone), or null when it has none.</summary>
+    private static float? DonorAnkle(OutfitSwapMesh mesh) =>
+        Array.IndexOf(mesh.BoneNames, "bip001-l-foot") is var foot and >= 0 ? mesh.BonePositions[foot].Y : null;
 
     private static Vector3[] Add(Vector3[] a, Vector3[] b) => a.Select((value, i) => value + b[i]).ToArray();
 

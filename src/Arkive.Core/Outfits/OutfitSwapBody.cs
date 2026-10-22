@@ -144,6 +144,9 @@ public sealed class OutfitSwapBody
     /// <summary>Picture units per metre of skin on a typical triangle.</summary>
     public float PictureScale { get; }
 
+    /// <summary>The body's skin vertices.</summary>
+    public IReadOnlyList<Vector3> SkinPoints => _vertexPoints;
+
     /// <summary>Whether the body is the class's own (its skin picture layout is the one the class's outfits use).</summary>
     public bool Native { get; }
 
@@ -302,7 +305,7 @@ public static class OutfitSwapClearance
     /// </summary>
     public static Vector3[] PushOut(Vector3[] donorPositions, Vector3[] fitted, OutfitSwapBody donorBody, OutfitSwapBody targetBody,
         bool[] cloth, float margin = 0.0008f, float radius = 0.015f, int rounds = 8, float keep = 0.004f, float most = 0.02f,
-        float reach = 0.08f)
+        float reach = 0.08f, bool all = false)
     {
         var (donorGap, donorNear, _) = donorBody.Measure(donorPositions);
         var judged = new bool[fitted.Length];
@@ -311,7 +314,9 @@ public static class OutfitSwapClearance
         var inside = donorBody.Native ? -0.001f : -0.01f;
         for (var i = 0; i < fitted.Length; i++)
         {
-            judged[i] = cloth[i] && donorNear[i] < reach && donorGap[i] > inside;
+            // all: every given cloth point is kept outside, even where it lay in the old body (shoes made around an
+            // outfit's own feet rather than the base body's).
+            judged[i] = cloth[i] && (all || donorNear[i] < reach && donorGap[i] > inside);
             want[i] = Math.Clamp(donorGap[i], margin, keep);
         }
         var result = (Vector3[])fitted.Clone();
@@ -408,7 +413,7 @@ public static class OutfitSwapClearance
         return result;
     }
 
-    private static OutfitSwapBody? Surface(OutfitSwapMesh mesh, Vector3[] positions, OutfitSwapSection[] sections)
+    internal static OutfitSwapBody? Surface(OutfitSwapMesh mesh, Vector3[] positions, OutfitSwapSection[] sections)
     {
         if (sections.Length == 0) return null;
         var normals = new Vector3[positions.Length];

@@ -81,7 +81,7 @@ public static partial class OutfitSwapFitting
         return result;
     }
 
-    private static Quaternion Between(Vector3 from, Vector3 to)
+    internal static Quaternion Between(Vector3 from, Vector3 to)
     {
         from = Vector3.Normalize(from);
         to = Vector3.Normalize(to);
