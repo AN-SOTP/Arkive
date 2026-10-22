@@ -8,6 +8,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     ViewerSmokeTests.Cases,
     ProportionSmokeTests.Cases,
     OutfitSwapSmokeTests.Cases,
+    MaterialReferenceSmokeTests.Cases,
     WorkingFileSmokeTests.Cases,
     TextureSmokeTests.Cases,
     MaterialSmokeTests.Cases,

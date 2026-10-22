@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Text.Json.Nodes;
+using Arkive.Core.Meshes;
 using Arkive.Core.Proportions;
 
 namespace Arkive.Core.Outfits;
@@ -34,6 +35,10 @@ public sealed class OutfitSwapMesh
     public required Vector3[] BonePositions { get; init; }
     public required int[] BoneParents { get; init; }
 
+    /// <summary>Materials (by index in <see cref="Materials"/>) that are another package's material, drawn as it is there.</summary>
+    public IReadOnlyDictionary<int, SkeletalMeshMaterialReference> MaterialReferences { get; init; } =
+        new Dictionary<int, SkeletalMeshMaterialReference>();
+
     public int VertexCount => Positions.Length;
 
     /// <summary>The same mesh with other normals and tangents.</summary>
@@ -41,7 +46,7 @@ public sealed class OutfitSwapMesh
     {
         Positions = Positions, Normals = normals, Tangents = tangents, Uv0 = Uv0, Uv1 = Uv1, Colours = Colours, Joints = Joints,
         Weights = Weights, Sections = Sections, Materials = Materials, BoneNames = BoneNames, BonePositions = BonePositions,
-        BoneParents = BoneParents,
+        BoneParents = BoneParents, MaterialReferences = MaterialReferences,
     };
 
     public bool HasBodySkeleton => Array.IndexOf(BoneNames, "bip001-pelvis") >= 0;
@@ -263,6 +268,16 @@ public sealed class OutfitSwapMesh
                 ["material"] = section.Material,
                 ["mode"] = 4,
             });
+        }
+        // Materials of other packages follow the target's own, each naming the material it draws with.
+        if (mesh.Materials.Count > 0 || mesh.MaterialReferences.Count > 0)
+        {
+            if (json["materials"] is not JsonArray materials) json["materials"] = materials = [];
+            for (var index = materials.Count; index < mesh.Materials.Count; index++)
+                materials.Add(new JsonObject { ["name"] = mesh.Materials[index] });
+            foreach (var (index, reference) in mesh.MaterialReferences)
+                if (materials[index] is JsonObject material)
+                    material["extras"] = new JsonObject { [SkeletalMeshMaterialReferences.ExtrasKey] = SkeletalMeshMaterialReferences.ToJson(reference) };
         }
         foreach (var item in json["meshes"]!.AsArray())
         {

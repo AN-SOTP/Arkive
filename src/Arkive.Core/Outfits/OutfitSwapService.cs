@@ -32,7 +32,8 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         IReadOnlyList<OutfitSwapPiece> targets,
         string gameBuild,
         IProgress<string>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        OutfitSwapMaterialSources? ownMaterials = null)
     {
         if (donors.Count == 0 || targets.Count == 0) throw new ArgumentException("Choose the outfit to wear and the outfit to replace.");
         foreach (var piece in donors.Concat(targets))
@@ -166,7 +167,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             shaded.Add(donor with { Mesh = mesh.WithFrames(normals, tangents) });
         }
         progress?.Report("Placing the outfit in the new materials");
-        var plan = OutfitSwapPlanner.Plan(shaded, fitted, targets, targetBody);
+        var plan = OutfitSwapPlanner.Plan(shaded, fitted, targets, targetBody, ownMaterials);
         notes.AddRange(plan.Notes);
         var report = new OutfitSwapReport(from.Profile, to.Profile, field?.CostumeCount ?? 0,
             judged == 0 ? 0 : 100.0 * clippedBefore / judged, judged == 0 ? 0 : 100.0 * clippedAfter / judged,

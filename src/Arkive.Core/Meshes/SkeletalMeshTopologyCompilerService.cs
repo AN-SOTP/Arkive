@@ -143,25 +143,48 @@ public sealed class SkeletalMeshTopologyCompilerService
             Refuse("SMC020", "The topology candidate has no compiled LOD0.");
         candidate = FitCandidateToSource(candidate, layout, sourceBytes);
         var materialNames = BuildMaterialNames(recon, layout);
-        var materialSlots = materialNames
-            .Select((name, index) => (name, index))
-            .ToDictionary(pair => pair.name, pair => pair.index, StringComparer.OrdinalIgnoreCase);
+        var usedReferences = candidateDocument.MaterialReferences.Where(pair => candidate.UsedMaterials.Contains(pair.Key))
+            .ToDictionary(StringComparer.OrdinalIgnoreCase);
+        (IReadOnlyDictionary<string, int> Slots, IReadOnlyList<SkeletalMeshMaterialReference?> Added,
+            IReadOnlyDictionary<int, SkeletalMeshMaterialReference> Replaced) materialPlan;
+        try
+        {
+            materialPlan = SkeletalMeshMaterialReferences.Plan(materialNames,
+                candidateDocument.MaterialNames.Where(usedReferences.ContainsKey).ToArray(), usedReferences);
+        }
+        catch (InvalidDataException exception)
+        {
+            throw new SkeletalMeshTopologyCompilationRefusalException("SMC024", exception.Message);
+        }
+        var materialSlots = materialPlan.Slots;
         var tangentFrames = BuildTangentFrames(candidate);
 
         var lodCountRange = layout.Ranges.SingleOrDefault(range => range.Name == "LOD array count") ??
                             throw new SkeletalMeshTopologyCompilationRefusalException(
                                 "SMC021", "The parsed source layout has no LOD array boundary.");
-        var prefixBytes = checked((int)lodCountRange.RelativeOffset);
+        var boundsRange = layout.Ranges.SingleOrDefault(range => range.Name == "Bounds") ??
+                          throw new SkeletalMeshTopologyCompilationRefusalException(
+                              "SMC022", "The parsed source layout has no native bounds range.");
+        if (boundsRange.Size != 28)
+            Refuse("SMC022", $"The source bounds range is {boundsRange.Size} bytes, not the proven 28 bytes.");
+        // The compiled mesh is appended at the end of this package; its LOD offsets are written for that place.
+        var plannedSerialOffset = AlignUp(catalog.Summary.CompressedChunks.Count > 0
+            ? (long)catalog.Summary.CompressedChunks[^1].UncompressedEnd
+            : catalog.Summary.PhysicalFileSize, 4);
+        var prefix = PlanPrefix(sourceBytes, recon, layout, catalog, materialPlan.Added, materialPlan.Replaced, lodCountRange);
         using var compiledStream = new MemoryStream();
-        compiledStream.Write(sourceBytes, 0, prefixBytes);
+        compiledStream.Write(prefix.Bytes);
         using (var writer = new BinaryWriter(compiledStream, System.Text.Encoding.UTF8, leaveOpen: true))
         {
             writer.Write(layout.Lods.Count);
             var plans = new List<CompiledLodPlan>(layout.Lods.Count);
+            var lodStarts = new List<long>(layout.Lods.Count);
             foreach (var sourceLod in layout.Lods.OrderBy(item => item.LodIndex))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var plan = BuildLodPlan(candidate, tangentFrames, sourceLod, layout, materialSlots, recon);
+                writer.Flush();
+                lodStarts.Add(compiledStream.Position);
                 WriteLod(writer, sourceBytes, sourceLod, plan);
                 plans.Add(plan);
             }
@@ -170,23 +193,30 @@ public sealed class SkeletalMeshTopologyCompilerService
             writer.Write(sourceBytes, trailingOffset, sourceBytes.Length - trailingOffset);
             writer.Flush();
             var compiledBytes = compiledStream.ToArray();
-            var boundsRange = layout.Ranges.SingleOrDefault(range => range.Name == "Bounds") ??
-                              throw new SkeletalMeshTopologyCompilationRefusalException(
-                                  "SMC022", "The parsed source layout has no native bounds range.");
-            if (boundsRange.Size != 28)
-                Refuse("SMC022", $"The source bounds range is {boundsRange.Size} bytes, not the proven 28 bytes.");
-            WriteBounds(compiledBytes, checked((int)boundsRange.RelativeOffset),
+            var compiledBoundsOffset = checked((int)boundsRange.RelativeOffset + prefix.PropertyGrowth);
+            WriteBounds(compiledBytes, compiledBoundsOffset,
                 candidate.Vertices.Values.Select(vertex => vertex.Position).ToArray());
+            var lodOffsetsRewritten = prefix.ExtensionValuesOffset is not null;
+            if (lodOffsetsRewritten)
+                for (var index = 0; index < lodStarts.Count; index++)
+                    BinaryPrimitives.WriteInt32LittleEndian(compiledBytes.AsSpan(prefix.ExtensionValuesOffset!.Value + index * 4),
+                        checked((int)(plannedSerialOffset + lodStarts[index])));
 
             var hasVertexColours = layout.Lods[0].VertexColorBuffer is not null;
+            var compiledNativeOffset = checked((int)layout.NativeDataRelativeOffset + prefix.PropertyGrowth);
             if (!new SkeletalMeshNativeLayoutParser().TryParse(
-                    compiledBytes, recon.SerialOffset, checked((int)layout.NativeDataRelativeOffset),
+                    compiledBytes, plannedSerialOffset, compiledNativeOffset,
                     catalog.Names, hasVertexColours, out var compiledLayout, out var parseRefusal) ||
                 compiledLayout is null)
                 Refuse("SMC030", "The compiler output did not parse as a supported native SkeletalMesh: " + parseRefusal);
             if (compiledLayout.ParserProfile != layout.ParserProfile ||
                 compiledLayout.Lods.Count != layout.Lods.Count)
                 Refuse("SMC031", "Decode-back changed the native parser profile or LOD-slot count.");
+            if (!compiledLayout.MaterialReferences.SequenceEqual(prefix.Materials))
+                Refuse("SMC034", "Decode-back did not find the planned material list.");
+            if (lodOffsetsRewritten && !compiledLayout.LostArkExtensionValues.SequenceEqual(
+                    compiledLayout.Lods.Select(lod => checked((int)(plannedSerialOffset + lod.RelativeOffset)))))
+                Refuse("SMC035", "Decode-back did not find each LOD where the mesh's LOD offsets point.");
 
             var decoded = new SkeletalMeshSemanticDecoder().Decode(compiledBytes, compiledLayout);
             var lodEvidence = new List<SkeletalMeshTopologyCompiledLodEvidence>(plans.Count);
@@ -199,19 +229,25 @@ public sealed class SkeletalMeshTopologyCompilerService
             var trailingPreserved = sourceTrailing.SequenceEqual(compiledTrailing);
             if (!trailingPreserved)
                 Refuse("SMC032", "Opaque trailing native bytes were not preserved exactly.");
+            // The prefix is the source's, except the bounds and the planned material list, cloth list and LOD offsets.
+            var expectedPrefix = prefix.Bytes.ToArray();
+            if (lodOffsetsRewritten)
+                compiledBytes.AsSpan(prefix.ExtensionValuesOffset!.Value, lodStarts.Count * 4)
+                    .CopyTo(expectedPrefix.AsSpan(prefix.ExtensionValuesOffset.Value));
             var prefixPreserved = PrefixEqualsExceptBounds(
-                sourceBytes.AsSpan(0, prefixBytes), compiledBytes.AsSpan(0, prefixBytes),
-                checked((int)boundsRange.RelativeOffset), checked((int)boundsRange.Size));
+                expectedPrefix, compiledBytes.AsSpan(0, expectedPrefix.Length), compiledBoundsOffset, checked((int)boundsRange.Size));
             if (!prefixPreserved)
-                Refuse("SMC033", "The native prefix changed outside the explicit 28-byte bounds field.");
+                Refuse("SMC033", "The native prefix changed outside the bounds and the planned material and LOD offset fields.");
+            var prefixBytes = expectedPrefix.Length;
 
             var compiledHash = Sha(compiledBytes);
             var updatedRecon = recon with
             {
                 SerialSize = compiledBytes.Length,
                 ExportPayloadSha256 = compiledHash,
-                NativeDataSize = compiledBytes.Length - layout.NativeDataRelativeOffset,
-                NativeDataSha256 = Sha(compiledBytes.AsSpan(checked((int)layout.NativeDataRelativeOffset))),
+                NativeDataRelativeOffset = compiledNativeOffset,
+                NativeDataSize = compiledBytes.Length - compiledNativeOffset,
+                NativeDataSha256 = Sha(compiledBytes.AsSpan(compiledNativeOffset)),
                 NativeLayout = compiledLayout,
             };
             var proofBuild = new ArkiveSkeletalMeshGlbWriter().Build(updatedRecon, decoded);
@@ -226,8 +262,8 @@ public sealed class SkeletalMeshTopologyCompilerService
             WriteBytesAtomic(proofPath, proofBuild.Bytes);
             watch.Stop();
 
-            var lockedPrefix = sourceBytes.AsSpan(0, prefixBytes).ToArray();
-            Array.Clear(lockedPrefix, checked((int)boundsRange.RelativeOffset), checked((int)boundsRange.Size));
+            var lockedPrefix = expectedPrefix.ToArray();
+            Array.Clear(lockedPrefix, compiledBoundsOffset, checked((int)boundsRange.Size));
             var manifest = new SkeletalMeshTopologyCompilationManifest(
                 CurrentSchemaVersion, Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow,
                 edit.Manifest.EditId, edit.Manifest.DisplayName, Path.GetFullPath(edit.ManifestPath),
@@ -239,7 +275,17 @@ public sealed class SkeletalMeshTopologyCompilerService
                 Sha(proofBuild.Bytes), Path.GetFileName(proofPath), compiledLayout.ParserProfile,
                 Sha(lockedPrefix), Sha(sourceTrailing), prefixBytes, sourceTrailing.Length,
                 true, prefixPreserved, trailingPreserved, true, true,
-                lodEvidence, preflight, watch.Elapsed.TotalSeconds);
+                lodEvidence, preflight, watch.Elapsed.TotalSeconds)
+            {
+                PlannedSerialOffset = plannedSerialOffset,
+                LodOffsetsRewritten = lodOffsetsRewritten,
+                MaterialSlots = materialPlan.Replaced.Select(pair => new SkeletalMeshCompiledMaterialSlot(
+                        pair.Key, pair.Value.Material.Path, prefix.Materials[pair.Key], false))
+                    .Concat(materialPlan.Added.Select((reference, index) => new SkeletalMeshCompiledMaterialSlot(
+                        layout.MaterialReferenceCount + index, reference!.Material.Path,
+                        prefix.Materials[layout.MaterialReferenceCount + index], true)))
+                    .OrderBy(slot => slot.Slot).ToArray(),
+            };
             WriteJsonAtomic(manifestPath, manifest);
             return new SkeletalMeshTopologyCompilationResult(
                 outputDirectory, compiledPath, proofPath, manifestPath, manifest, watch.Elapsed);
@@ -911,6 +957,68 @@ public sealed class SkeletalMeshTopologyCompilerService
         if (c < a && c < b) return new SkeletalMeshGlbTriangle(c, a, b, material);
         return new SkeletalMeshGlbTriangle(a, b, c, material);
     }
+
+    private sealed record PlannedPrefix(byte[] Bytes, int PropertyGrowth, int[] Materials, int? ExtensionValuesOffset);
+
+    /// <summary>
+    /// The export up to its LOD array as the compiled mesh starts: the source's bytes, with slots taken by other packages'
+    /// materials pointing at their imports, added slots appended to the material list (and to the per-material cloth list
+    /// before it), and, when the mesh's LOD offsets are proven to be absolute LOD positions, a note of where they sit.
+    /// </summary>
+    private static PlannedPrefix PlanPrefix(
+        byte[] source,
+        SkeletalMeshReconnaissanceReport recon,
+        SkeletalMeshNativeLayoutEvidence layout,
+        AssetCatalog catalog,
+        IReadOnlyList<SkeletalMeshMaterialReference?> added,
+        IReadOnlyDictionary<int, SkeletalMeshMaterialReference> replaced,
+        SkeletalMeshNativeRangeEvidence lodCountRange)
+    {
+        var bytes = new List<byte>(source.AsSpan(0, checked((int)lodCountRange.RelativeOffset)).ToArray());
+        int Import(SkeletalMeshMaterialReference reference) => reference.Material.FindImport(catalog) ??
+            throw new SkeletalMeshTopologyCompilationRefusalException("SMC036",
+                $"The package does not import {reference.Material.Path} yet; Arkive adds the imports when it builds the mod.");
+        var materials = layout.MaterialReferences.ToArray();
+        foreach (var (slot, reference) in replaced) materials[slot] = Import(reference);
+        var appended = added.Select(reference => Import(reference!)).ToArray();
+        void Write(int at, int value) => BinaryPrimitives.WriteInt32LittleEndian(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes)[at..], value);
+        int Read(int at) => BinaryPrimitives.ReadInt32LittleEndian(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes)[at..]);
+
+        var growth = 0;
+        if (appended.Length > 0 && recon.Properties.SingleOrDefault(property =>
+                property.Name.Equals("clothingassets", StringComparison.OrdinalIgnoreCase)) is { } cloth)
+        {
+            // One cloth entry per material slot; added slots have none.
+            var valueAt = checked((int)cloth.ValueRelativeOffset);
+            var count = Read(valueAt);
+            if (!cloth.Type.Equals("arrayproperty", StringComparison.OrdinalIgnoreCase) || count != materials.Length ||
+                cloth.Size != 4 + 4 * count)
+                Refuse("SMC037", "The mesh's cloth list does not follow its material list, so Arkive cannot add material slots to it.");
+            bytes.InsertRange(valueAt + 4 + 4 * count, new byte[appended.Length * 4]);
+            Write(checked((int)cloth.RelativeOffset) + 16, cloth.Size + appended.Length * 4);
+            Write(valueAt, count + appended.Length);
+            growth = appended.Length * 4;
+        }
+        var materialsRange = layout.Ranges.Single(range => range.Name == "Material references");
+        var countAt = checked((int)materialsRange.RelativeOffset) + growth;
+        if (Read(countAt) != materials.Length) Refuse("SMC038", "The material list is not where the layout says.");
+        for (var slot = 0; slot < materials.Length; slot++) Write(countAt + 4 + slot * 4, materials[slot]);
+        if (appended.Length > 0)
+        {
+            Write(countAt, materials.Length + appended.Length);
+            bytes.InsertRange(countAt + 4 + materials.Length * 4, appended.SelectMany(BitConverter.GetBytes));
+        }
+
+        // Lost Ark meshes store each LOD's absolute position in the package; written once the LODs are laid out.
+        int? extensionValues = null;
+        var extension = layout.Ranges.SingleOrDefault(range => range.Name == "Lost Ark mesh extension");
+        if (extension is not null && layout.LostArkExtensionValues.Count == layout.Lods.Count &&
+            layout.LostArkExtensionValues.Select((value, index) => value == recon.SerialOffset + layout.Lods[index].RelativeOffset).All(value => value))
+            extensionValues = checked((int)extension.RelativeOffset) + growth + appended.Length * 4 + 8;
+        return new PlannedPrefix(bytes.ToArray(), growth, materials.Concat(appended).ToArray(), extensionValues);
+    }
+
+    private static long AlignUp(long value, int alignment) => (value + alignment - 1) / alignment * alignment;
 
     private static bool PrefixEqualsExceptBounds(
         ReadOnlySpan<byte> source,

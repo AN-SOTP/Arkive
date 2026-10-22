@@ -59,6 +59,10 @@ internal sealed record SkeletalMeshGlbSemanticDocument(
     public bool MeshNodeTransformsIdentity { get; init; } = true;
     public IReadOnlyList<string> MaterialNames { get; init; } = [];
 
+    /// <summary>Material slots drawn with another package's material, by slot name.</summary>
+    public IReadOnlyDictionary<string, SkeletalMeshMaterialReference> MaterialReferences { get; init; } =
+        new Dictionary<string, SkeletalMeshMaterialReference>();
+
     /// <summary>Written by an outfit swap: another outfit drawn with this mesh's skeleton, so it hangs from other bones.</summary>
     public bool OutfitSwap { get; init; }
 }
@@ -222,6 +226,7 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         {
             MeshNodeTransformsIdentity = meshNodeTransformsIdentity,
             MaterialNames = _materialNames,
+            MaterialReferences = ReadMaterialReferences(),
             OutfitSwap = _root.TryGetProperty("asset", out var asset) && asset.TryGetProperty("extras", out var extras) &&
                          extras.ValueKind == JsonValueKind.Object && extras.TryGetProperty("arkiveOutfitSwap", out var swap) &&
                          swap.ValueKind == JsonValueKind.True,
@@ -481,6 +486,12 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         Math.Max(left.MaximumX, right.MaximumX),
         Math.Max(left.MaximumY, right.MaximumY),
         Math.Max(left.MaximumZ, right.MaximumZ));
+
+    private IReadOnlyDictionary<string, SkeletalMeshMaterialReference> ReadMaterialReferences()
+    {
+        try { return SkeletalMeshMaterialReferences.ReadAll(_materials, _materialNames); }
+        catch (InvalidDataException exception) { throw Error("SMI120", exception.Message); }
+    }
 
     private IReadOnlyList<string> ReadMaterialNames()
     {

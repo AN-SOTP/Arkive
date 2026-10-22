@@ -25,6 +25,12 @@ public sealed record ArkivePackageModBundleRequest(
     public int VariableSizeMeshCount { get; init; }
 
     public bool VariableSizeDeploymentGatePassed { get; init; }
+
+    /// <summary>Names the composition added to the package's name table (after all of its own).</summary>
+    public int AddedNames { get; init; }
+
+    /// <summary>Imports the composition added to the package's import table (after all of its own).</summary>
+    public int AddedImports { get; init; }
 }
 
 public sealed class ArkivePackageModBundleRefusalException : NotSupportedException
@@ -129,12 +135,22 @@ public sealed class ArkivePackageModBundleService
                               sourceSummary.LicenseeVersion == payloadSummary.LicenseeVersion &&
                               sourceSummary.EngineVersion == payloadSummary.EngineVersion &&
                               sourceSummary.CookerVersion == payloadSummary.CookerVersion &&
-                              sourceSummary.NameCount == payloadSummary.NameCount &&
-                              sourceSummary.ImportCount == payloadSummary.ImportCount &&
+                              sourceSummary.NameCount + request.AddedNames == payloadSummary.NameCount &&
+                              sourceSummary.ImportCount + request.AddedImports == payloadSummary.ImportCount &&
                               sourceSummary.ExportCount == payloadSummary.ExportCount &&
                               sourceSummary.CompressedChunks.Count == payloadSummary.CompressedChunks.Count;
         if (!summaryIdentity)
             Refuse("CPB011", "The combined payload did not retain package identity and catalogue shape.");
+        if (request.AddedNames > 0 || request.AddedImports > 0)
+        {
+            // Added entries only ever follow the package's own, which keep their places.
+            var reader = new AssetCatalogReader(_reader, _protectionProvider);
+            var sourceCatalogue = reader.Read(sourceSummary);
+            var payloadCatalogue = reader.Read(payloadSummary);
+            if (!payloadCatalogue.Names.Take(sourceCatalogue.Names.Count).SequenceEqual(sourceCatalogue.Names) ||
+                !payloadCatalogue.Imports.Take(sourceCatalogue.Imports.Count).SequenceEqual(sourceCatalogue.Imports))
+                Refuse("CPB011", "The combined payload moved or changed one of the package's own names or imports.");
+        }
         var structural = PackageValidator.Validate(payloadSummary)
             .All(issue => issue.Severity != ValidationSeverity.Error);
         if (!structural)

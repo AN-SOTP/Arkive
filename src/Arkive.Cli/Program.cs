@@ -151,6 +151,16 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--surface-bakes"),
                 ReadTextOption(arguments, "--target-surface-bakes"),
                 json),
+            "outfit-swap-mod" => OutfitSwapMod(
+                target,
+                ReadTextOption(arguments, "--index"),
+                ReadTextOption(arguments, "--wear"),
+                ReadTextOption(arguments, "--replace"),
+                ReadTextOption(arguments, "--root"),
+                ReadTextOption(arguments, "--name"),
+                ReadTextOption(arguments, "--cache"),
+                ReadTextOption(arguments, "--game"),
+                json),
             "body-proportions" => BodyProportions(
                 target,
                 ReadTextOption(arguments, "--out"),
@@ -1181,6 +1191,104 @@ static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, str
         foreach (var note in report.Notes) Console.WriteLine($"  Note: {note}");
         foreach (var piece in fit.Plan.Pieces) Console.WriteLine($"  {piece.ObjectName}: {(piece.Hidden ? "hidden" : $"{piece.Mesh.VertexCount:N0} vertices")}");
         Console.WriteLine($"  Output: {output}");
+    }
+    return 0;
+}
+
+/// <summary>
+/// Swaps one player outfit onto another body's outfit with the outfit's own materials (the replaced pieces draw each
+/// donor material from its own package, nothing is repainted) and saves it as a mod in an Arkive project root, headless.
+/// </summary>
+/// <param name="gamePath">The Packages folder the mod is made for (a scratch copy for tests); the library folder by default.</param>
+static int OutfitSwapMod(string packagesRoot, string? indexCache, string? wear, string? replace, string? projectRoot, string? name,
+    string? cachePath, string? gamePath, bool json)
+{
+    if (string.IsNullOrWhiteSpace(indexCache) || string.IsNullOrWhiteSpace(wear) || string.IsNullOrWhiteSpace(replace) ||
+        string.IsNullOrWhiteSpace(projectRoot) || string.IsNullOrWhiteSpace(name))
+        throw new ArgumentException("outfit-swap-mod requires --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --root DIR --name TEXT.");
+    var root = Path.GetFullPath(packagesRoot);
+    var projectDirectory = Path.GetFullPath(projectRoot);
+    Directory.CreateDirectory(projectDirectory);
+    var cache = Path.GetFullPath(cachePath ?? Path.Combine(projectDirectory, "cache"));
+    var environment = CreateModEnvironment(projectDirectory);
+    var game = Path.GetFullPath(gamePath ?? root);
+    environment.Context.Library.SetGamePackagesDirectoryAsync(game).GetAwaiter().GetResult();
+    var provider = ChunkProtectionProviderFactory.CreateWesternGlobal();
+    var reader = new UpkPackageReader();
+    var catalogReader = new AssetCatalogReader(reader, provider);
+    var executable = UmodelLocator.FindExecutable() ?? throw new InvalidOperationException("Outfit swaps need the Lost Ark UModel backend.");
+    var bridge = new UmodelBridge(executable);
+    var token = CancellationToken.None;
+    var library = new OutfitSwapPackageLibrary(new PackageIndexStore(Path.GetFullPath(indexCache)), root, reader, provider,
+        new SkeletalMeshReconnaissanceService(reader, provider, bridge),
+        new SkeletalMeshReconnaissanceWorkspaceStore(Path.Combine(cache, "reconnaissance")),
+        new SkeletalMeshEditableExportService(reader, provider), Path.Combine(cache, "pieces"),
+        // Pieces whose package the game folder holds are read from there (the clean copies a test folder carries).
+        (path, cancellationToken) => File.Exists(Path.Combine(game, Path.GetFileName(path)))
+            ? Task.FromResult(Path.Combine(game, Path.GetFileName(path)))
+            : environment.Apply.ResolveCleanPackageAsync(path, cancellationToken));
+
+    OutfitSwapPiece Load(string piece)
+    {
+        var glb = library.EditableGlbAsync(piece, token).GetAwaiter().GetResult() ??
+                  throw new InvalidOperationException($"Arkive cannot rebuild {piece}.");
+        return new OutfitSwapPiece(piece, OutfitSwapMesh.Read(File.ReadAllBytes(glb)), []);
+    }
+    var progress = new Progress<string>(text => { if (!json) Console.WriteLine($"  {text}"); });
+    var donors = wear.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Load).ToArray();
+    var targets = replace.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Load).ToArray();
+    var targetBody = targets.Select(piece => OutfitSwapBodies.Detect(piece.Mesh, piece.ObjectName)).FirstOrDefault(profile => profile is not null);
+    var sources = OutfitSwapMaterialSources.ReadAsync(library, catalogReader, donors,
+        targetBody is null ? null : OutfitSwapBodies.For(targetBody), token).GetAwaiter().GetResult();
+    var service = new OutfitSwapService(library, Path.Combine(cache, "outfit-swap"));
+    var fit = service.FitAsync(donors, targets, "cli", progress, token, sources).GetAwaiter().GetResult();
+
+    var report = fit.Report;
+    var description = $"Outfit swap: {string.Join(", ", donors.Select(piece => piece.ObjectName))} ({report.From.DisplayName}) worn in place of " +
+                      $"{string.Join(", ", targets.Select(piece => piece.ObjectName))} ({report.To.DisplayName}), with the outfit's own materials.";
+    var workspace = new ArkiveModAuthoringWorkspace(Path.Combine(environment.Context.Library.StateDirectory, "authoring"));
+    var draft = workspace.CreateAsync(new ArkiveModMetadata(name, "1.0.0", "", description,
+        Tags: ["outfit-swap", "outfit-swap:own-materials", $"outfit-swap:from={report.From.Id}", $"outfit-swap:to={report.To.Id}"]), token)
+        .GetAwaiter().GetResult();
+    var writer = new OutfitSwapModWriter(environment.Context.Edits, provider, Path.Combine(projectDirectory, "staging", "material-candidates"));
+    for (var i = 0; i < targets.Length; i++)
+    {
+        var piece = fit.Plan.Pieces[i];
+        var source = library.LocateAsync(piece.ObjectName, token).GetAwaiter().GetResult()!;
+        var clean = environment.Apply.ResolveCleanPackageAsync(Path.Combine(game, Path.GetFileName(source.CleanPackagePath)), token)
+            .GetAwaiter().GetResult();
+        var catalogue = catalogReader.Read(clean);
+        var export = catalogue.Assets.First(asset => asset.ObjectName.Equals(piece.ObjectName, StringComparison.OrdinalIgnoreCase) &&
+                                                     asset.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase));
+        if (!json) Console.WriteLine($"  Adding {piece.ObjectName}");
+        var edit = environment.Materializer.CreateEditableAsync(new ArkiveModAssetSelection(clean, catalogue.Summary.FolderName,
+            export.ClassName, export.ObjectName, null, export.SerialOffset, export.ExportIndex), token, null).GetAwaiter().GetResult();
+        draft = workspace.SaveAsync(draft with { EditIds = draft.EditIds.Append(edit.EditId).ToArray() }, token).GetAwaiter().GetResult();
+        writer.WriteMeshAsync(edit, piece.Mesh, null, token).GetAwaiter().GetResult();
+    }
+    if (!json) Console.WriteLine("  Checking the meshes and saving the mod");
+    var saved = environment.Authoring.SaveDraftAsync(draft, token).GetAwaiter().GetResult();
+    var file = Path.Combine(environment.Context.Library.ModsDirectory, saved.FileName);
+    if (json)
+        WriteJson(new
+        {
+            mod = saved.ModId, file, from = report.From.Id, to = report.To.Id, report.ClippingPercent, report.Notes,
+            pieces = fit.Plan.Pieces.Select(piece => new
+            {
+                piece = piece.ObjectName, piece.Hidden, materials = piece.Mesh.MaterialReferences.Values.Select(reference => new
+                {
+                    material = reference.Material.Path, reference.Replaces,
+                }),
+            }),
+        });
+    else
+    {
+        Console.WriteLine($"{report.From.DisplayName} -> {report.To.DisplayName}: clipping {report.ClippingPercent:N2}%");
+        foreach (var piece in fit.Plan.Pieces)
+            foreach (var reference in piece.Mesh.MaterialReferences.Values)
+                Console.WriteLine($"  {piece.ObjectName}: {reference.Material.Path}" + (reference.Replaces is null ? " (added slot)" : $" in place of {reference.Replaces}"));
+        foreach (var note in report.Notes) Console.WriteLine($"  Note: {note}");
+        Console.WriteLine($"  Saved: {file}");
     }
     return 0;
 }
@@ -2770,7 +2878,13 @@ static CliModEnvironment CreateModEnvironment(string projectRoot)
     else
         composer = CreateComposer(reader, provider, bridge, crunchPath, nativeTextures, materialEdit);
     var apply = new ArkiveModApplyService(context, materializer, composer);
-    return new CliModEnvironment(context, new ArkiveModAuthoringService(library, edits), apply, limitations);
+    return new CliModEnvironment(context, new ArkiveModAuthoringService(library, edits)
+    {
+        CleanPackageResolver = (path, token) => apply.ResolveCleanPackageAsync(path, token),
+    }, apply, limitations)
+    {
+        Materializer = materializer,
+    };
 }
 
 static UnifiedPackageComposerService CreateComposer(
@@ -3684,6 +3798,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive dds-rgb-view <dxt5.dds> [--out FILE] [--json]");
     Console.WriteLine("  arkive texture-export-native <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive texture-project-create <arkive-native-texture.json> --edited FILE --workspace DIR [--name TEXT] [--alpha preserve-original|use-edited|force-opaque] [--json]");
+    Console.WriteLine("  arkive outfit-swap-mod <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --root Arkive-project-root --name TEXT [--game PACKAGES_DIR] [--cache DIR] [--json]");
     Console.WriteLine("  arkive outfit-swap <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR [--cache DIR] [--bakes DIR] [--lit-bakes DIR] [--surface-bakes DIR] [--target-bakes DIR] [--target-surface-bakes DIR] [--json]");
     Console.WriteLine("  arkive model-viewer-scene <package.upk> --object NAME [--alias NAME] [--cache DIR] [--edits EDITS.json] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
@@ -3784,7 +3899,10 @@ sealed record CliModEnvironment(
     ArkiveModApplyContext Context,
     ArkiveModAuthoringService Authoring,
     ArkiveModApplyService Apply,
-    IReadOnlyList<string> Limitations);
+    IReadOnlyList<string> Limitations)
+{
+    public required ArkiveModMaterializationService Materializer { get; init; }
+}
 
 sealed class InlineProgress<T>(Action<T> handler) : IProgress<T>
 {

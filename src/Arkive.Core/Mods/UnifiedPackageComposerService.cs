@@ -530,7 +530,15 @@ public sealed class UnifiedPackageComposerService
             throw new NotSupportedException(
                 $"More than one selected project targets native export {duplicate.Key}; Arkive cannot choose which edit wins.");
 
-        var totalSteps = checked(request.TextureProjects.Count * 9 +
+        // Meshes drawn with other packages' materials need the package to import those materials first.
+        var materialReferences = new List<PackageObjectReference>();
+        foreach (var (edit, _) in meshInputs)
+            foreach (var reference in SkeletalMeshMaterialReferences.ReadUsed(
+                         await File.ReadAllBytesAsync(edit.EditedGlbPath, cancellationToken).ConfigureAwait(false)))
+                if (materialReferences.All(item => !item.Path.Equals(reference.Material.Path, StringComparison.OrdinalIgnoreCase)))
+                    materialReferences.Add(reference.Material);
+
+        var totalSteps = checked((materialReferences.Count > 0 ? 1 : 0) + request.TextureProjects.Count * 9 +
                                  request.MaterialEdits.Count * MaterialSteps +
                                  request.MeshEdits.Count * MeshSteps +
                                  request.StaticMeshEdits.Count * MeshSteps +
@@ -691,6 +699,32 @@ public sealed class UnifiedPackageComposerService
                     document.EditId, document.DisplayName, document.SystemObjectName, document.SystemExportIndex,
                     particle.DocumentPath, document.ContentSha256, staged.ManifestPath,
                     indices.Select(index => stagedExports[index]).ToArray()));
+            }
+        }
+
+        // The imports go in before the meshes are compiled against the package. Every original name, import and export
+        // keeps its index and bytes, so the stages before and after still find what they were proven against.
+        PackageImportsStagedUpkResult? importStage = null;
+        if (materialReferences.Count > 0)
+        {
+            Report("Package", "Material imports",
+                $"Letting the package use {materialReferences.Count:N0} material(s) from other packages...");
+            var inputPackageHash = await HashFileAsync(currentPackagePath, cancellationToken).ConfigureAwait(false);
+            importStage = await _meshStaging.BuildImportsAsync(new PackageImportsStagedUpkRequest(
+                    currentPackagePath, inputPackageHash, Path.GetFileName(sourcePath), request.Package.Manifest.PackageAlias,
+                    materialReferences, Path.Combine(root, "i01-imports")), cancellationToken)
+                .ConfigureAwait(false);
+            if (importStage is not null)
+            {
+                if (!importStage.Manifest.OriginalTablesRetained || !importStage.Manifest.ExportsRetained ||
+                    !importStage.Manifest.AllUnplannedSourceBytesIdentical || !importStage.Manifest.AllEncodedBlocksDecodeBack ||
+                    !importStage.Manifest.StructuralValidationPassed)
+                    throw new NotSupportedException("The package's added imports did not keep every proof gate.");
+                currentPackagePath = importStage.OutputUpkPath;
+                stages.Add(new UnifiedPackageCompositionStage(
+                    // Recorded with the meshes it is for: the stage only adds what they reference.
+                    stages.Count + 1, UnifiedPackageAssetKind.SkeletalMesh, "Material imports", 0, inputPackageHash,
+                    importStage.Manifest.OutputPackageSha256, importStage.OutputUpkPath, importStage.ManifestPath));
             }
         }
 
@@ -1224,6 +1258,8 @@ public sealed class UnifiedPackageComposerService
                 PreviewOnly = variableSizeMeshCount > 0,
                 VariableSizeMeshCount = variableSizeMeshCount,
                 VariableSizeDeploymentGatePassed = false,
+                AddedNames = importStage?.Manifest.AddedNames ?? 0,
+                AddedImports = importStage?.Manifest.AddedImports ?? 0,
             },
             cancellationToken).ConfigureAwait(false);
 

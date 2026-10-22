@@ -1,5 +1,7 @@
 using System.Numerics;
 using System.Text.RegularExpressions;
+using Arkive.Core.Packages;
+using Arkive.Core.Meshes;
 
 namespace Arkive.Core.Outfits;
 
@@ -52,11 +54,14 @@ public static partial class OutfitSwapPlanner
 
     private sealed record Slot(int Piece, OutfitSwapMaterial Material, string Key, bool Skin, bool LowerSkin, bool Own);
 
+    /// <param name="ownMaterials">When given, the outfit keeps its own materials: each donor material is drawn as the game draws
+    /// it (the replaced pieces take its place in one of their slots, or gain a slot), and nothing is repainted.</param>
     public static OutfitSwapPlan Plan(
         IReadOnlyList<OutfitSwapPiece> donors,
         IReadOnlyList<Vector3[]> fitted,
         IReadOnlyList<OutfitSwapPiece> targets,
-        OutfitSwapBody? targetBody)
+        OutfitSwapBody? targetBody,
+        OutfitSwapMaterialSources? ownMaterials = null)
     {
         var notes = new List<string>();
         // Which target piece draws which donor triangles.
@@ -76,6 +81,8 @@ public static partial class OutfitSwapPlanner
                 }
             }
         }
+
+        if (ownMaterials is not null) return PlanOwnMaterials(donors, fitted, targets, targetBody, assign, ownMaterials, notes);
 
         var slots = new List<Slot>();
         for (var t = 0; t < targets.Count; t++)
@@ -150,6 +157,85 @@ public static partial class OutfitSwapPlanner
             results.Add(new OutfitSwapPieceResult(targets[t].ObjectName, mesh, hidden[t] || assign[t].Count == 0));
         }
         return new OutfitSwapPlan(results, finished, notes);
+    }
+
+    /// <summary>
+    /// Each replaced piece draws the donor's cloth with the donor's own materials: a material takes the place of one of the
+    /// piece's cloth slots while it has one free, and is added after them when it has none. Bare skin stays on the piece's
+    /// skin slots, or on the replaced body's base body skin material when the piece has none, laid out like that body.
+    /// </summary>
+    private static OutfitSwapPlan PlanOwnMaterials(
+        IReadOnlyList<OutfitSwapPiece> donors,
+        IReadOnlyList<Vector3[]> fitted,
+        IReadOnlyList<OutfitSwapPiece> targets,
+        OutfitSwapBody? targetBody,
+        IReadOnlyList<(int Piece, int Section, int[] Triangles)>[] assign,
+        OutfitSwapMaterialSources sources,
+        List<string> notes)
+    {
+        var results = new List<OutfitSwapPieceResult>();
+        for (var t = 0; t < targets.Count; t++)
+        {
+            var target = targets[t].Mesh;
+            if (assign[t].Count == 0)
+            {
+                results.Add(new OutfitSwapPieceResult(targets[t].ObjectName, HiddenMesh(target), true));
+                continue;
+            }
+            var materials = target.Materials.ToList();
+            var references = new Dictionary<int, SkeletalMeshMaterialReference>();
+            var free = new Queue<int>(Enumerable.Range(0, materials.Count).Where(slot => !OutfitSwapBodies.IsSkin(materials[slot])));
+            var byPath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            int SlotFor(PackageObjectReference material)
+            {
+                if (byPath.TryGetValue(material.Path, out var at)) return at;
+                var replaces = free.Count > 0 ? target.Materials[free.Dequeue()] : null;
+                materials.Add($"{material.ClassName}'{material.Path}'");
+                at = materials.Count - 1;
+                references[at] = new SkeletalMeshMaterialReference(material, replaces);
+                byPath[material.Path] = at;
+                return at;
+            }
+            // A piece without any skin slot gets the body's own skin material for the skin it shows (only that kind, so the
+            // skin is laid out as on a piece with one skin slot).
+            (bool Lower, int Slot)? added = null;
+            int? SkinSlot(bool lower)
+            {
+                var any = false;
+                for (var slot = 0; slot < target.Materials.Count; slot++)
+                {
+                    if (!OutfitSwapBodies.IsSkin(target.Materials[slot])) continue;
+                    if (OutfitSwapBodies.IsLowerSkin(target.Materials[slot]) == lower) return slot;
+                    any = true;
+                }
+                if (added is { } skin) return skin.Lower == lower ? skin.Slot : null;
+                if (any || (lower ? sources.LowerSkin : sources.UpperSkin) is not { } material) return null;
+                added = (lower, SlotFor(material));
+                return added.Value.Slot;
+            }
+            var mesh = Build(donors, fitted, target, assign[t], (piece, material) =>
+            {
+                var name = donors[piece].Mesh.Materials[material];
+                if (OutfitSwapBodies.IsSkin(name) && SkinSlot(OutfitSwapBodies.IsLowerSkin(name)) is { } skin)
+                    return (skin, null, OutfitSwapBodies.IsLowerSkin(name));
+                var reference = material < sources.Donors[piece].Count ? sources.Donors[piece][material] : null;
+                if (reference is null)
+                    throw new InvalidDataException($"Arkive cannot tell which game material {donors[piece].ObjectName} draws {name} with.");
+                return (SlotFor(reference), null, null);
+            }, SkinSlot, targetBody);
+            var replaced = references.Values.Count(reference => reference.Replaces is not null);
+            if (references.Count > replaced)
+                notes.Add($"{targets[t].ObjectName} gains {references.Count - replaced} material slot(s) for the outfit's own materials.");
+            results.Add(new OutfitSwapPieceResult(targets[t].ObjectName, new OutfitSwapMesh
+            {
+                Positions = mesh.Positions, Normals = mesh.Normals, Tangents = mesh.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1,
+                Colours = mesh.Colours, Joints = mesh.Joints, Weights = mesh.Weights, Sections = mesh.Sections, Materials = materials,
+                BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents,
+                MaterialReferences = references,
+            }, false));
+        }
+        notes.Add("The outfit keeps its own materials, so nothing is repainted.");
+        return new OutfitSwapPlan(results, [], notes);
     }
 
     /// <summary>Splits a section into connected pieces of cloth; a piece mostly hanging from the legs and hips goes to the lower half.</summary>

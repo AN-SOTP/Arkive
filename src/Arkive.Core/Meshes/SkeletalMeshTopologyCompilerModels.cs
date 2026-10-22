@@ -69,7 +69,19 @@ public sealed record SkeletalMeshTopologyCompilationManifest(
     bool PackageIntegrationEnabled,
     IReadOnlyList<SkeletalMeshTopologyCompiledLodEvidence> Lods,
     SkeletalMeshEditPreflightReport Preflight,
-    double DurationSeconds);
+    double DurationSeconds)
+{
+    /// <summary>Where the compiled export must be appended: its LOD offsets were written for this place.</summary>
+    public long? PlannedSerialOffset { get; init; }
+
+    /// <summary>The mesh's Lost Ark LOD offsets were rewritten to the compiled LODs at <see cref="PlannedSerialOffset"/>.</summary>
+    public bool LodOffsetsRewritten { get; init; }
+
+    /// <summary>Material slots drawn with other packages' materials, and the import each one points at.</summary>
+    public IReadOnlyList<SkeletalMeshCompiledMaterialSlot> MaterialSlots { get; init; } = [];
+}
+
+public sealed record SkeletalMeshCompiledMaterialSlot(int Slot, string MaterialPath, int PackageIndex, bool Added);
 
 public sealed record SkeletalMeshTopologyCompilationResult(
     string OutputDirectory,
