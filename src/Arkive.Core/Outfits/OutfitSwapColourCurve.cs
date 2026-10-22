@@ -17,7 +17,13 @@ public sealed class OutfitSwapColourCurve
     private OutfitSwapColourCurve(float gain)
     {
         Gain = gain;
-        for (var v = 0; v < 256; v++) _table[v] = Encode(Math.Min(1, Linear((byte)v) * gain));
+        // Brightens dark and middle tones by the gain and eases into white, so light cloth keeps its folds and pattern
+        // instead of flattening into white patches.
+        for (var v = 0; v < 256; v++)
+        {
+            var x = Linear((byte)v);
+            _table[v] = Encode(x * gain / (1 + x * (gain - 1)));
+        }
     }
 
     public float Gain { get; }

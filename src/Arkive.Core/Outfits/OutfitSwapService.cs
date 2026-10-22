@@ -109,7 +109,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 var welded = Average(moved, ids, weldedCount);
                 var ankle = targetSkeleton.TryGet("bip001-l-foot", out var foot) ? foot.Y : 0.1f;
                 var hold = welded.Select((point, v) => Math.Max(Math.Clamp((weldedFeet[v] - 0.1f) / 0.4f, 0, 1),
-                    Math.Clamp((ankle + 0.14f - point.Y) / 0.12f, 0, 1))).ToArray();
+                    Math.Clamp((ankle + 0.06f - point.Y) / 0.05f, 0, 1))).ToArray();
                 moved = Expand(OutfitSwapClearance.SnapSkin(welded, weldedCloth, hold, targetBody), ids);
             }
             if (seam is not null)
