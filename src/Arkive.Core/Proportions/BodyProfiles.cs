@@ -60,6 +60,7 @@ public static partial class BodyProfiles
         yield return Zone("Hips and buttocks", "buttocks", "Buttocks size", "Overall size of the buttocks.", -50, 100);
         yield return Zone("Hips and buttocks", "buttocksWidth", "Buttocks width", "Wider or narrower, side to side.", -50, 80);
         yield return Zone("Hips and buttocks", "buttocksProjection", "Buttocks projection", "How far they stand out from the body.", -50, 80);
+        yield return Zone("Hips and buttocks", "buttocksHeight", "Buttocks height", "Taller or shorter, top to bottom.", -50, 80);
         yield return Zone("Hips and buttocks", "buttocksLift", "Buttocks lift", "Moves them up (positive) or down (negative).", -60, 60);
         yield return Zone("Hips and buttocks", "buttocksSag", "Buttocks sag", "Lets them hang lower (positive) or makes them rounder and higher (negative).", -60, 80);
         yield return Zone("Legs", "thighs", "Thighs", "Thickness of the thighs.");
