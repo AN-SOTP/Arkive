@@ -216,8 +216,11 @@ public static partial class OutfitSwapPlanner
             var mesh = Build(donors, fitted, target, assign[t], (piece, material) =>
             {
                 var name = donors[piece].Mesh.Materials[material];
-                if (OutfitSwapBodies.IsSkin(name) && SkinSlot(OutfitSwapBodies.IsLowerSkin(name)) is { } skin)
-                    return (skin, null, OutfitSwapBodies.IsLowerSkin(name));
+                // Skin (including the body's own feet a donor piece gained) goes on the piece's skin, of the other kind
+                // when the piece only has that.
+                var lower = OutfitSwapBodies.IsLowerSkin(name);
+                if (OutfitSwapBodies.IsSkin(name) && SkinSlot(lower) is { } skin) return (skin, null, lower);
+                if (OutfitSwapBodies.IsSkin(name) && SkinSlot(!lower) is { } other) return (other, null, !lower);
                 var reference = material < sources.Donors[piece].Count ? sources.Donors[piece][material] : null;
                 if (reference is null)
                     throw new InvalidDataException($"Arkive cannot tell which game material {donors[piece].ObjectName} draws {name} with.");

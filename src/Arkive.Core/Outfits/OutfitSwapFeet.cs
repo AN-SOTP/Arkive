@@ -144,6 +144,7 @@ public static class OutfitSwapFeet
             Positions = result, Normals = mesh.Normals, Tangents = mesh.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1, Colours = mesh.Colours,
             Joints = mesh.Joints, Weights = mesh.Weights, Sections = sections, Materials = mesh.Materials,
             BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents,
+            MaterialReferences = mesh.MaterialReferences,
         }, result);
     }
 
@@ -362,6 +363,7 @@ public static class OutfitSwapFeet
             Positions = positions.ToArray(), Normals = normals.ToArray(), Tangents = tangents.ToArray(), Uv0 = uv0.ToArray(), Uv1 = uv1.ToArray(),
             Colours = colours.ToArray(), Joints = joints.ToArray(), Weights = weights.ToArray(), Sections = sections, Materials = materials,
             BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents,
+            MaterialReferences = mesh.MaterialReferences,
         };
         // The outfit's skin was laid on the new body standing as it does unturned; turned with the feet, it marks where
         // the turned feet show.
