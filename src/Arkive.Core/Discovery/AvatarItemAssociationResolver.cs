@@ -169,7 +169,7 @@ internal static partial class AvatarItemAssociationResolver
             value.AsSpan(1).ToString().ToLowerInvariant());
 
     [GeneratedRegex(
-        @"^EFDLITEM_(?<family>(?<class>PC_.+?)_AV_[A-Z0-9-]+)_(?<slot>HEAD|UPPER|LOWER|DRESS|FACE1|FACE2)$",
+        @"^EFDLITEM_(?<family>(?<class>PC_.+?)_(?:AV|HR)_[A-Z0-9-]+)_(?<slot>HEAD|HELMET|UPPER|LOWER|DRESS|FACE1|FACE2)$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AvatarItemPackageRegex();
 
@@ -197,7 +197,7 @@ internal static partial class AvatarItemAssociationResolver
     private static partial Regex VariantSuffixRegex();
 
     [GeneratedRegex(
-        @"(?<class>PC_[A-Z]+(?:_[A-Z]+)?)_AV_",
+        @"(?<class>PC_[A-Z]+(?:_[A-Z]+)?)_(?:AV|HR)_",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AvatarClassReferenceRegex();
 

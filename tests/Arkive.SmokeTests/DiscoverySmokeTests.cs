@@ -5,7 +5,7 @@ internal static class DiscoverySmokeTests
     internal static IReadOnlyList<SmokeTestCase> Cases { get; } =
     [
         new("matches multi-term asset searches", TestAssetSearch),
-        new("lets a base body's class filter take in the classes built on it", TestArchetypeFamilies),
+        new("lets a base body's class filter take in the classes built on it, and finds launch class skins", TestArchetypeFamilies),
         new("searches a persistent package index", TestPackageIndexSearch),
         new("audits playable-character texture families without NPC leakage", TestCharacterTextureCoverageAudit),
         new("limits indexed searches to selected fields", TestPackageIndexSearchScopes),
@@ -1245,5 +1245,19 @@ internal static class DiscoverySmokeTests
                index.MatchesArchetype("Female Warrior", "Female Warrior") && !index.MatchesArchetype("Destroyer", "Female Warrior") &&
                index.MatchesArchetype("Slayer", "Slayer") && !index.MatchesArchetype("Valkyrie", "Slayer") && !index.MatchesArchetype(null, "Slayer"),
             "a base body's class filter did not take in exactly the classes built on it");
+
+        // A launch class skin (an HR item, not an AV one) is found by its in-game name on the meshes it shows.
+        var skinPath = Path.Combine(fixtureDirectory, "class-skin-metadata.json");
+        File.WriteAllText(skinPath, System.Text.Json.JsonSerializer.Serialize(new GameAssetMetadataDocument(2, "English", "fixture",
+            DateTimeOffset.UtcNow,
+            [
+                Look("Slayer", 112, "PC_WBK_F"),
+                new GameAssetAssociation("Cold Fury Chestpiece", "item.cold_fury", "Item", 1, "Model",
+                    "EFDLItem_PC_WBK_F_HR_00_Upper.PC_WBK_F_HR_00_Upper", "EFDLItem_PC_WBK_F_HR_00_Upper", "PC_WBK_F_HR_00_Upper"),
+            ],
+            [new GameEntityDefinition("Slayer", "Berserker_Female", "PC", 112, "Playable class", "base=111", 111, "EFDLChar_PC_WBK_F.PC_WBK_F")])));
+        var skins = GameAssetMetadataIndex.Load(skinPath).Find("pc_wbk_f_hr_00", "pc_wbk_f_hr_00.upk", "pc_wbk_f_hr_00_upper_sk");
+        Assert(skins.Any(item => item.DisplayName == "Cold Fury (Slayer)" && item.Archetype == "Slayer"),
+            "a launch class skin was not linked to its mesh: " + string.Join(", ", skins.Select(item => item.DisplayName)));
     }
 }
