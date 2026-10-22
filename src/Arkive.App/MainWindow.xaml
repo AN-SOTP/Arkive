@@ -900,6 +900,65 @@
                         </DataGrid>
                     </DockPanel>
                 </TabItem>
+                <TabItem x:Name="OutfitSwapTab" Header="Outfit Swap">
+                    <DockPanel Margin="8">
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <TextBlock Text="Outfit swap" FontSize="20" Margin="0,0,0,6" />
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                       Text="Wear any player outfit in place of another, on any body: Arkive fits the outfit to the other body's skeleton and shape (learned from the costumes the game makes for both), keeps it off the skin, and paints it into the replaced outfit's own pictures and materials. Find the outfit to wear on the left and the outfit it replaces on the right, then preview the swap and save it as a mod." />
+                            <WrapPanel>
+                                <Button x:Name="OutfitSwapPreviewButton" Content="Preview swap…" IsEnabled="False"
+                                        Style="{StaticResource PrimaryButtonStyle}" Click="OutfitSwapPreviewButton_Click"
+                                        ToolTip="Fit the chosen outfit onto the other one and show it in the viewer, with animations. Nothing is saved until you choose Save as mod there." />
+                                <TextBlock x:Name="OutfitSwapChoiceText" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"
+                                           Text="Choose an outfit to wear on the left and the outfit it replaces on the right." />
+                            </WrapPanel>
+                            <TextBlock x:Name="OutfitSwapStatusText" Margin="0,6,0,0" TextWrapping="Wrap"
+                                       Text="Search for outfits by their in-game name or object name." />
+                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="Outfit to wear" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                    <TextBox x:Name="OutfitSwapWearSearchTextBox" Width="240" KeyDown="OutfitSwapWearSearchTextBox_KeyDown"
+                                             ToolTip="An outfit's in-game name, or part of an object name, for example 4th Anniversary or pc_dl_av_217." />
+                                    <Button Content="Search" Click="OutfitSwapWearSearchButton_Click" />
+                                </WrapPanel>
+                                <DataGrid x:Name="OutfitSwapWearGrid" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
+                                          SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="OutfitSwapGrid_SelectionChanged">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Body" Binding="{Binding Body}" Width="170" />
+                                        <DataGridTextColumn Header="Pieces" Binding="{Binding Parts}" Width="100" />
+                                        <DataGridTextColumn Header="In-game name" Binding="{Binding InGameNames}" Width="2*" MinWidth="140" />
+                                        <DataGridTextColumn Header="Outfit" Binding="{Binding Stem}" Width="*" MinWidth="140" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                            <DockPanel Grid.Column="2">
+                                <TextBlock DockPanel.Dock="Top" Text="Outfit to replace" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                    <TextBox x:Name="OutfitSwapReplaceSearchTextBox" Width="240" KeyDown="OutfitSwapReplaceSearchTextBox_KeyDown"
+                                             ToolTip="The outfit your character wears that should show the other outfit instead, for example Cold Fury or pc_wbk_f_hr." />
+                                    <Button Content="Search" Click="OutfitSwapReplaceSearchButton_Click" />
+                                </WrapPanel>
+                                <DataGrid x:Name="OutfitSwapReplaceGrid" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
+                                          SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="OutfitSwapGrid_SelectionChanged">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Body" Binding="{Binding Body}" Width="170" />
+                                        <DataGridTextColumn Header="Pieces" Binding="{Binding Parts}" Width="100" />
+                                        <DataGridTextColumn Header="In-game name" Binding="{Binding InGameNames}" Width="2*" MinWidth="140" />
+                                        <DataGridTextColumn Header="Outfit" Binding="{Binding Stem}" Width="*" MinWidth="140" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Grid>
+                    </DockPanel>
+                </TabItem>
                 <TabItem x:Name="SoundsTab" Header="Sounds">
                     <DockPanel Margin="8">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">

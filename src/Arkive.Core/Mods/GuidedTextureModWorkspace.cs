@@ -375,6 +375,18 @@ public sealed class GuidedTextureModWorkspace
         return entry with { Manifest = updated };
     }
 
+    /// <summary>Whether a rebuilt picture keeps the game's alpha or takes the working image's (a cut-out mask that changed).</summary>
+    public async Task<GuidedTextureModProjectEntry> SetAlphaPolicyAsync(
+        string manifestPath,
+        TextureImportAlphaPolicy alphaPolicy,
+        CancellationToken cancellationToken = default)
+    {
+        var entry = await LoadProjectAsync(manifestPath, cancellationToken).ConfigureAwait(false);
+        var updated = entry.Manifest with { UpdatedAt = DateTimeOffset.UtcNow, AlphaPolicy = alphaPolicy };
+        await SaveAtomicAsync(entry.ManifestPath, updated, cancellationToken).ConfigureAwait(false);
+        return entry with { Manifest = updated };
+    }
+
     public async Task<GuidedTextureModProjectEntry> TouchAsync(
         string manifestPath,
         CancellationToken cancellationToken = default)

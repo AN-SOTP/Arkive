@@ -1,0 +1,331 @@
+using System.Numerics;
+using System.Text.RegularExpressions;
+
+namespace Arkive.Core.Outfits;
+
+/// <summary>A material as the viewer read it: which pictures and values it uses and how it is drawn.</summary>
+public sealed record OutfitSwapMaterial(
+    int Slot,
+    string Name,
+    bool Translucent,
+    IReadOnlyDictionary<string, string> Textures,
+    IReadOnlyDictionary<string, float[]> Vectors,
+    IReadOnlyDictionary<string, float> Scalars);
+
+/// <summary>An outfit piece taking part in a swap.</summary>
+public sealed record OutfitSwapPiece(string ObjectName, OutfitSwapMesh Mesh, IReadOnlyList<OutfitSwapMaterial> Materials);
+
+/// <summary>Donor pictures that share one target picture, each in its own square of it.</summary>
+public sealed record OutfitSwapCanvas(string Key, IReadOnlyList<(int Piece, int Material)> Tiles)
+{
+    public int Grid => Tiles.Count == 1 ? 1 : Tiles.Count <= 4 ? 2 : 4;
+
+    /// <summary>Where a tile sits in the picture, as a UV rectangle (u0, v0, u1, v1); null for a picture of its own.</summary>
+    public Vector4? Rect(int piece, int material)
+    {
+        if (Tiles.Count == 1) return null;
+        var index = Tiles.ToList().IndexOf((piece, material));
+        var n = Grid;
+        return new Vector4((index % n) / (float)n, (index / n) / (float)n, (index % n + 1) / (float)n, (index / n + 1) / (float)n);
+    }
+}
+
+/// <summary>A target piece's new geometry and what it says about the swap.</summary>
+public sealed record OutfitSwapPieceResult(string ObjectName, OutfitSwapMesh Mesh, bool Hidden);
+
+public sealed record OutfitSwapPlan(
+    IReadOnlyList<OutfitSwapPieceResult> Pieces,
+    IReadOnlyList<OutfitSwapCanvas> Canvases,
+    IReadOnlyList<string> Notes);
+
+/// <summary>
+/// Decides which target piece and material slot draws each part of the donor outfit, and builds the target pieces' new
+/// geometry. Only the target's existing materials and skeleton are used; nothing new is added to the game files.
+/// </summary>
+public static partial class OutfitSwapPlanner
+{
+    [GeneratedRegex(@"thigh|calf|foot|toe|skirt|hip|knee|leg", RegexOptions.IgnoreCase)]
+    private static partial Regex LegBone();
+
+    [GeneratedRegex(@"^(.*)_(\d+)$")]
+    private static partial Regex ChainLink();
+
+    private sealed record Slot(int Piece, OutfitSwapMaterial Material, string Key, bool Skin, bool LowerSkin, bool Own);
+
+    public static OutfitSwapPlan Plan(
+        IReadOnlyList<OutfitSwapPiece> donors,
+        IReadOnlyList<Vector3[]> fitted,
+        IReadOnlyList<OutfitSwapPiece> targets,
+        OutfitSwapBody? targetBody)
+    {
+        var notes = new List<string>();
+        // Which target piece draws which donor triangles.
+        var assign = targets.Select(_ => new List<(int Piece, int Section, int[] Triangles)>()).ToArray();
+        var sameParts = donors.Count == targets.Count && donors.Zip(targets).All(pair =>
+            OutfitSwapBodies.Part(pair.First.ObjectName) == OutfitSwapBodies.Part(pair.Second.ObjectName));
+        for (var k = 0; k < donors.Count; k++)
+        {
+            var mesh = donors[k].Mesh;
+            for (var s = 0; s < mesh.Sections.Count; s++)
+            {
+                if (sameParts || targets.Count == 1) { assign[sameParts ? k : 0].Add((k, s, mesh.Sections[s].Triangles)); continue; }
+                foreach (var (lower, triangles) in SplitByLegs(mesh, mesh.Sections[s]))
+                {
+                    var target = Enumerable.Range(0, targets.Count).FirstOrDefault(t => (OutfitSwapBodies.Part(targets[t].ObjectName) == "lower") == lower);
+                    assign[target].Add((k, s, triangles));
+                }
+            }
+        }
+
+        var slots = new List<Slot>();
+        for (var t = 0; t < targets.Count; t++)
+            foreach (var material in targets[t].Materials)
+            {
+                var colour = Texture(material, Role.Colour);
+                slots.Add(new Slot(t, material, (colour ?? material.Name).ToLowerInvariant(), OutfitSwapBodies.IsSkin(material.Name),
+                    OutfitSwapBodies.IsLowerSkin(material.Name), colour is not null && colour.StartsWith("pc_", StringComparison.OrdinalIgnoreCase)));
+            }
+
+        // A piece with no picture of its own to repaint hands its part to one that has, and is hidden.
+        var usable = Enumerable.Range(0, targets.Count).Where(t => slots.Any(slot => slot.Piece == t && !slot.Skin && slot.Own)).ToArray();
+        if (usable.Length == 0)
+            throw new InvalidDataException("None of the outfit you are replacing has pictures of its own that Arkive can repaint.");
+        var hidden = new bool[targets.Count];
+        for (var t = 0; t < targets.Count; t++)
+        {
+            if (usable.Contains(t)) continue;
+            hidden[t] = true;
+            assign[usable[0]].AddRange(assign[t]);
+            assign[t].Clear();
+            notes.Add($"{targets[t].ObjectName} only uses pictures shared with the whole game, so its part moves to {targets[usable[0]].ObjectName} and it is hidden.");
+        }
+
+        // Pictures: each donor material gets a square of a target picture; biggest first, so they get pictures of their own.
+        var canvases = new Dictionary<string, List<(int Piece, int Material)>>(StringComparer.Ordinal);
+        var where = new Dictionary<(int Target, int Piece, int Material), (Slot Slot, string? Canvas)>();
+        var sizes = new Dictionary<(int Target, int Piece, int Material), int>();
+        for (var t = 0; t < targets.Count; t++)
+            foreach (var (piece, section, triangles) in assign[t])
+            {
+                var key = (t, piece, donors[piece].Mesh.Sections[section].Material);
+                sizes[key] = sizes.GetValueOrDefault(key) + triangles.Length;
+            }
+        foreach (var ((t, piece, material), _) in sizes.OrderByDescending(pair => pair.Value))
+        {
+            var donorMaterial = donors[piece].Mesh.Materials[material];
+            if (OutfitSwapBodies.IsSkin(donorMaterial))
+            {
+                var skin = slots.FirstOrDefault(slot => slot.Piece == t && slot.Skin && slot.LowerSkin == OutfitSwapBodies.IsLowerSkin(donorMaterial));
+                if (skin is not null) { where[(t, piece, material)] = (skin, null); continue; }
+            }
+            var translucent = donors[piece].Materials.FirstOrDefault(m => m.Slot == material)?.Translucent ?? false;
+            var options = slots.Where(slot => slot.Piece == t && !slot.Skin && slot.Own).Select(slot => slot.Key).Distinct().ToArray();
+            var tile = (piece, material);
+            var canvas = options.FirstOrDefault(option => canvases.TryGetValue(option, out var tiles) && tiles.Contains(tile));
+            if (canvas is null)
+            {
+                // A see-through slot for see-through cloth and a solid one for solid cloth, then the emptiest picture.
+                canvas = options.OrderBy(option => !slots.Any(slot => slot.Piece == t && slot.Key == option && slot.Material.Translucent == translucent))
+                    .ThenBy(option => canvases.TryGetValue(option, out var tiles) ? tiles.Count : 0).First();
+                if (!canvases.TryGetValue(canvas, out var list)) canvases[canvas] = list = [];
+                if (list.Count >= 16) throw new InvalidDataException("The outfit has too many materials to fit into the one it replaces.");
+                list.Add(tile);
+            }
+            var candidates = slots.Where(slot => slot.Piece == t && slot.Key == canvas && !slot.Skin && slot.Own).ToArray();
+            where[(t, piece, material)] = (candidates.FirstOrDefault(slot => slot.Material.Translucent == translucent) ?? candidates[0], canvas);
+        }
+        var finished = canvases.Select(pair => new OutfitSwapCanvas(pair.Key, pair.Value)).ToArray();
+        var byKey = finished.ToDictionary(canvas => canvas.Key, StringComparer.Ordinal);
+
+        var results = new List<OutfitSwapPieceResult>();
+        for (var t = 0; t < targets.Count; t++)
+        {
+            var mesh = hidden[t] || assign[t].Count == 0
+                ? HiddenMesh(targets[t].Mesh)
+                : Build(donors, fitted, targets[t].Mesh, assign[t], (piece, material) =>
+                {
+                    var (slot, canvas) = where[(t, piece, material)];
+                    return (slot.Material.Slot, canvas is null ? null : byKey[canvas].Rect(piece, material));
+                }, targetBody);
+            results.Add(new OutfitSwapPieceResult(targets[t].ObjectName, mesh, hidden[t] || assign[t].Count == 0));
+        }
+        return new OutfitSwapPlan(results, finished, notes);
+    }
+
+    /// <summary>Splits a section into connected pieces of cloth; a piece mostly hanging from the legs and hips goes to the lower half.</summary>
+    private static IEnumerable<(bool Lower, int[] Triangles)> SplitByLegs(OutfitSwapMesh mesh, OutfitSwapSection section)
+    {
+        if (OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
+        {
+            yield return (OutfitSwapBodies.IsLowerSkin(mesh.Materials[section.Material]), section.Triangles);
+            yield break;
+        }
+        var parent = Enumerable.Range(0, mesh.VertexCount).ToArray();
+        int Find(int x)
+        {
+            while (parent[x] != x) x = parent[x] = parent[parent[x]];
+            return x;
+        }
+        void Join(int a, int b)
+        {
+            a = Find(a);
+            b = Find(b);
+            if (a != b) parent[a] = b;
+        }
+        var t = section.Triangles;
+        for (var i = 0; i + 2 < t.Length; i += 3)
+        {
+            Join(t[i], t[i + 1]);
+            Join(t[i + 1], t[i + 2]);
+        }
+        var leg = mesh.BoneNames.Select(name => LegBone().IsMatch(name)).ToArray();
+        foreach (var group in Enumerable.Range(0, t.Length / 3).GroupBy(triangle => Find(t[triangle * 3])))
+        {
+            var vertices = group.SelectMany(triangle => new[] { t[triangle * 3], t[triangle * 3 + 1], t[triangle * 3 + 2] }).Distinct().ToArray();
+            var share = vertices.Average(v => Enumerable.Range(0, 4).Sum(k => leg[mesh.Joints[v * 4 + k]] ? mesh.Weights[v * 4 + k] : 0));
+            yield return (share > 0.5, group.SelectMany(triangle => new[] { t[triangle * 3], t[triangle * 3 + 1], t[triangle * 3 + 2] }).ToArray());
+        }
+    }
+
+    private static OutfitSwapMesh Build(
+        IReadOnlyList<OutfitSwapPiece> donors,
+        IReadOnlyList<Vector3[]> fitted,
+        OutfitSwapMesh target,
+        IReadOnlyList<(int Piece, int Section, int[] Triangles)> parts,
+        Func<int, int, (int Slot, Vector4? Rect)> placement,
+        OutfitSwapBody? targetBody)
+    {
+        var index = new Dictionary<(int Piece, int Vertex, Vector4? Rect), int>();
+        var positions = new List<Vector3>();
+        var normals = new List<Vector3>();
+        var tangents = new List<Vector4>();
+        var uv0 = new List<Vector2>();
+        var uv1 = new List<Vector2>();
+        var colours = new List<byte>();
+        var joints = new List<int>();
+        var weights = new List<float>();
+        var sections = new Dictionary<int, List<int>>();
+        var targetBones = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < target.BoneNames.Length; i++) targetBones.TryAdd(target.BoneNames[i], i);
+        var chains = target.BoneNames.Select((name, i) => (Match: ChainLink().Match(name), i)).Where(item => item.Match.Success)
+            .GroupBy(item => item.Match.Groups[1].Value).ToDictionary(group => group.Key, group => group.Select(item => item.i).ToArray(), StringComparer.Ordinal);
+        var firstChild = new Dictionary<int, int>();
+        for (var i = 0; i < target.BoneParents.Length; i++) if (target.BoneParents[i] >= 0) firstChild.TryAdd(target.BoneParents[i], i);
+
+        foreach (var (piece, section, triangles) in parts)
+        {
+            var donor = donors[piece].Mesh;
+            var (slot, rect) = placement(piece, donor.Sections[section].Material);
+            if (!sections.TryGetValue(slot, out var list)) sections[slot] = list = [];
+            foreach (var vertex in triangles)
+            {
+                if (!index.TryGetValue((piece, vertex, rect), out var at))
+                {
+                    at = positions.Count;
+                    index[(piece, vertex, rect)] = at;
+                    var position = fitted[piece][vertex];
+                    positions.Add(position);
+                    normals.Add(donor.Normals[vertex]);
+                    tangents.Add(donor.Tangents[vertex]);
+                    var uv = donor.Uv0[vertex];
+                    if (rect is { } r) uv = new Vector2(r.X + uv.X * (r.Z - r.X), r.Y + uv.Y * (r.W - r.Y));
+                    uv0.Add(uv);
+                    uv1.Add(donor.Uv1[vertex]);
+                    for (var c = 0; c < 4; c++) colours.Add(donor.Colours[vertex * 4 + c]);
+                    var skin = RemapWeights(donor, vertex, position, target, targetBones, chains, firstChild, targetBody);
+                    joints.AddRange(skin.Select(item => item.Bone));
+                    weights.AddRange(skin.Select(item => item.Weight));
+                }
+                list.Add(at);
+            }
+        }
+        return new OutfitSwapMesh
+        {
+            Positions = positions.ToArray(), Normals = normals.ToArray(), Tangents = tangents.ToArray(),
+            Uv0 = uv0.ToArray(), Uv1 = uv1.ToArray(), Colours = colours.ToArray(), Joints = joints.ToArray(), Weights = weights.ToArray(),
+            Sections = sections.OrderBy(pair => pair.Key).Select(pair => new OutfitSwapSection(pair.Key, pair.Value.ToArray())).ToArray(),
+            Materials = target.Materials, BoneNames = target.BoneNames, BonePositions = target.BonePositions, BoneParents = target.BoneParents,
+        };
+    }
+
+    /// <summary>
+    /// A donor vertex's skin on the target skeleton: the same bones by name; links of a chain (skirt, cape) pick the
+    /// target's link nearest the point, since chains differ in length; bones the target lacks take the target body's own
+    /// skin weights at that spot. At most four bones, normalised.
+    /// </summary>
+    private static (int Bone, float Weight)[] RemapWeights(OutfitSwapMesh donor, int vertex, Vector3 position, OutfitSwapMesh target,
+        Dictionary<string, int> targetBones, Dictionary<string, int[]> chains, Dictionary<int, int> firstChild, OutfitSwapBody? body)
+    {
+        var sum = new Dictionary<int, float>();
+        for (var k = 0; k < 4; k++)
+        {
+            var weight = donor.Weights[vertex * 4 + k];
+            if (weight <= 0) continue;
+            var name = donor.BoneNames[donor.Joints[vertex * 4 + k]];
+            if (!targetBones.TryGetValue(name, out var bone))
+            {
+                if (body is null) continue;
+                foreach (var (bodyBone, share) in body.WeightsAt(position, targetBones.ContainsKey))
+                    sum[targetBones[bodyBone]] = sum.GetValueOrDefault(targetBones[bodyBone]) + weight * share;
+                continue;
+            }
+            if (ChainLink().Match(name) is { Success: true } link && chains.TryGetValue(link.Groups[1].Value, out var chain) && chain.Length > 1)
+                bone = chain.MinBy(candidate => SegmentDistance(position, target.BonePositions[candidate],
+                    target.BonePositions[firstChild.GetValueOrDefault(candidate, candidate)]));
+            sum[bone] = sum.GetValueOrDefault(bone) + weight;
+        }
+        var best = sum.OrderByDescending(pair => pair.Value).Take(4).ToArray();
+        var total = best.Sum(pair => pair.Value);
+        if (total <= 0)
+        {
+            var root = Math.Max(0, Array.IndexOf(target.BoneNames, "bip001-pelvis"));
+            return [(root, 1), (0, 0), (0, 0), (0, 0)];
+        }
+        var result = new (int, float)[4];
+        for (var i = 0; i < 4; i++) result[i] = i < best.Length ? (best[i].Key, best[i].Value / total) : (0, 0);
+        return result;
+    }
+
+    private static float SegmentDistance(Vector3 point, Vector3 a, Vector3 b)
+    {
+        var ab = b - a;
+        var s = ab.LengthSquared() < 1e-12f ? 0 : Math.Clamp(Vector3.Dot(point - a, ab) / ab.LengthSquared(), 0, 1);
+        return Vector3.Distance(point, a + ab * s);
+    }
+
+    /// <summary>A piece left with nothing to show: one tiny triangle tucked inside the pelvis.</summary>
+    private static OutfitSwapMesh HiddenMesh(OutfitSwapMesh target)
+    {
+        var pelvis = Math.Max(0, Array.IndexOf(target.BoneNames, "bip001-pelvis"));
+        var at = target.BonePositions[pelvis];
+        Vector3[] positions = [at, at + new Vector3(0.001f, 0, 0), at + new Vector3(0, 0.001f, 0)];
+        return new OutfitSwapMesh
+        {
+            Positions = positions, Normals = [Vector3.UnitZ, Vector3.UnitZ, Vector3.UnitZ],
+            Tangents = [new(1, 0, 0, 1), new(1, 0, 0, 1), new(1, 0, 0, 1)], Uv0 = new Vector2[3], Uv1 = new Vector2[3],
+            Colours = Enumerable.Repeat((byte)255, 12).ToArray(), Joints = [pelvis, 0, 0, 0, pelvis, 0, 0, 0, pelvis, 0, 0, 0],
+            Weights = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], Sections = [new OutfitSwapSection(0, [0, 1, 2])],
+            Materials = target.Materials, BoneNames = target.BoneNames, BonePositions = target.BonePositions, BoneParents = target.BoneParents,
+        };
+    }
+
+    internal enum Role { Colour, Normal, Mask, Orm, Specular, Emissive }
+
+    internal static string? Texture(OutfitSwapMaterial material, Role role)
+    {
+        string[] names = role switch
+        {
+            Role.Colour => ["texture_basecolor", "texture_diffuse"],
+            Role.Normal => ["texture_normal"],
+            Role.Mask => ["texture_color_fx_skin"],
+            Role.Orm => ["texture_orm"],
+            Role.Specular => ["texture_specular"],
+            _ => ["texture_emissive"],
+        };
+        foreach (var name in names)
+            if (material.Textures.TryGetValue(name, out var texture) && !string.IsNullOrWhiteSpace(texture) &&
+                !texture.Equals("null", StringComparison.OrdinalIgnoreCase))
+                return texture;
+        return null;
+    }
+}
