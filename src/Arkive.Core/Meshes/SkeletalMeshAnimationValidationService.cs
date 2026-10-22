@@ -74,7 +74,10 @@ internal static class SkeletalMeshAnimationValidationService
                 $"Bind-pose CPU skinning did not reconstruct the exported geometry " +
                 $"(source={sourceBindError:G6} m, candidate={candidateBindError:G6} m).");
 
-        if (distributionDistance > 0.55d)
+        // An outfit swap draws another outfit with this skeleton: it hangs from other bones by design (a dress where
+        // there were trousers), so differing bone use is only worth a look.
+        var outfitSwap = candidate.OutfitSwap;
+        if (distributionDistance > 0.55d && !outfitSwap)
             Error("SMA010",
                 $"Candidate bone-weight distribution diverges catastrophically from the source " +
                 $"(distance={distributionDistance:P2}). This commonly indicates an incompatible skeleton retarget.");
@@ -83,7 +86,7 @@ internal static class SkeletalMeshAnimationValidationService
                 $"Candidate bone-weight distribution differs substantially from the source " +
                 $"(distance={distributionDistance:P2}); inspect animated poses carefully.");
 
-        if (missingMass > 0.45d)
+        if (missingMass > 0.45d && !outfitSwap)
             Error("SMA011",
                 $"Candidate effectively omits {missingSignificant.Length:N0} significant source bone(s), " +
                 $"representing {missingMass:P2} of sampled source influence.");

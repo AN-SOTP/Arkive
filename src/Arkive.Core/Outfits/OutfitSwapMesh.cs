@@ -193,6 +193,8 @@ public sealed class OutfitSwapMesh
     {
         var container = GlbContainer.Parse(target);
         var json = container.Json;
+        // Tells Arkive's mesh checks that this mesh is another outfit on the same skeleton (its bone use differs by design).
+        if (json["asset"] is JsonObject asset) asset["extras"] = new JsonObject { ["arkiveOutfitSwap"] = true };
         var bin = new List<byte>(container.Bin);
         var views = json["bufferViews"]!.AsArray();
         var accessors = json["accessors"]!.AsArray();

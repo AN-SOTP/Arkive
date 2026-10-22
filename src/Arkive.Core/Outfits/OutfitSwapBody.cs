@@ -516,7 +516,9 @@ public static class OutfitSwapClearance
             var before = samples[(at - 1 + samples.Count) % samples.Count];
             var after = samples[at % samples.Count];
             static float Gap(float a, float b) { var d = MathF.Abs(a - b); return MathF.Min(d, 2 * MathF.PI - d); }
-            var best = Gap(before.Angle, angle) <= Gap(after.Angle, angle) ? before.Point : after.Point;
+            // Between the two seam points at either side of its angle, so neighbouring ring vertices never meet.
+            var span = Gap(before.Angle, angle) + Gap(after.Angle, angle);
+            var best = span < 1e-6f ? before.Point : Vector3.Lerp(before.Point, after.Point, Gap(before.Angle, angle) / span);
             // A little past the seam and in, tucked under the face, so no sliver shows between them.
             var inward = new Vector3(head.X - best.X, 0, head.Z - best.Z);
             best += new Vector3(0, overlap, 0) + (inward.LengthSquared() > 1e-8f ? Vector3.Normalize(inward) * (overlap / 4) : Vector3.Zero);

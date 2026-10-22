@@ -87,7 +87,8 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 for (var v = 0; v < correction.Length; v++)
                     correction[v] *= Math.Clamp(1 - feet[v] - features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand]
                                                   - features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand], 0, 1);
-                moved = Add(moved, Expand(OutfitSwapFitting.SmoothOnMesh(Average(correction, ids, weldedCount), triangles), ids));
+                // Smoothed widely: neighbouring small details (lace, hems) given different corrections would fold over.
+                moved = Add(moved, Expand(OutfitSwapFitting.SmoothOnMesh(Average(correction, ids, weldedCount), triangles, 64), ids));
             }
             var weldedCloth = new bool[weldedCount];
             var weldedFeet = new float[weldedCount];
@@ -108,8 +109,15 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 // body's shape up the calf, so the shoe's rim and the ankle meet without a kink.
                 var welded = Average(moved, ids, weldedCount);
                 var ankle = targetSkeleton.TryGet("bip001-l-foot", out var foot) ? foot.Y : 0.1f;
-                var hold = welded.Select((point, v) => Math.Max(Math.Clamp((weldedFeet[v] - 0.1f) / 0.4f, 0, 1),
-                    Math.Clamp((ankle + 0.06f - point.Y) / 0.05f, 0, 1))).ToArray();
+                // Hands too: base bodies' hands rest elsewhere (or are missing), and hands hanging by the hips would be
+                // laid onto the thighs.
+                var handFeatures = OutfitSwapFitting.Features(mesh, Enumerable.Range(0, mesh.VertexCount).ToArray());
+                var hands = new float[weldedCount];
+                for (var v = 0; v < ids.Length; v++)
+                    hands[ids[v]] = Math.Max(hands[ids[v]], handFeatures[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
+                                                          handFeatures[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand]);
+                var hold = welded.Select((point, v) => Math.Max(Math.Max(Math.Clamp((weldedFeet[v] - 0.1f) / 0.4f, 0, 1),
+                    Math.Clamp((ankle + 0.06f - point.Y) / 0.05f, 0, 1)), Math.Clamp(hands[v] / 0.3f, 0, 1))).ToArray();
                 moved = Expand(OutfitSwapClearance.SnapSkin(welded, weldedCloth, hold, targetBody), ids);
             }
             if (seam is not null)
@@ -141,11 +149,15 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                     faces++;
                     if (Stretched(mesh.Positions, moved, section.Triangles[i], section.Triangles[i + 1], section.Triangles[i + 2])) stretched++;
                 }
+            // Small folds the moves pressed inside out (lace edges, hems) are smoothed back the right way round.
+            moved = Expand(OutfitSwapFitting.Untangle(Average(moved, ids, weldedCount), Average(normals, ids, weldedCount), triangles), ids);
             // Bare skin lying on the new body shades like it.
+            var handShares = OutfitSwapFitting.Features(mesh, Enumerable.Range(0, mesh.VertexCount).ToArray());
             if (targetBody is { Native: true })
                 for (var v = 0; v < moved.Length; v++)
                 {
-                    if (cloth[v] || feet[v] >= 0.5f) continue;
+                    if (cloth[v] || feet[v] >= 0.5f || handShares[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
+                        handShares[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand] > 0.1f) continue;
                     var surface = targetBody.Closest(moved[v]);
                     if (surface.Triangle >= 0 && Vector3.Distance(surface.Position, moved[v]) < 0.003f)
                         normals[v] = targetBody.NormalAt(surface.Triangle, surface.Position);

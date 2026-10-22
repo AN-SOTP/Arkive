@@ -58,6 +58,9 @@ internal sealed record SkeletalMeshGlbSemanticDocument(
 {
     public bool MeshNodeTransformsIdentity { get; init; } = true;
     public IReadOnlyList<string> MaterialNames { get; init; } = [];
+
+    /// <summary>Written by an outfit swap: another outfit drawn with this mesh's skeleton, so it hangs from other bones.</summary>
+    public bool OutfitSwap { get; init; }
 }
 
 internal enum SkeletalMeshGlbReadProfile
@@ -219,6 +222,9 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         {
             MeshNodeTransformsIdentity = meshNodeTransformsIdentity,
             MaterialNames = _materialNames,
+            OutfitSwap = _root.TryGetProperty("asset", out var asset) && asset.TryGetProperty("extras", out var extras) &&
+                         extras.ValueKind == JsonValueKind.Object && extras.TryGetProperty("arkiveOutfitSwap", out var swap) &&
+                         swap.ValueKind == JsonValueKind.True,
         };
     }
 

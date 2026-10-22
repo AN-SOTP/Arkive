@@ -189,6 +189,47 @@ public static partial class OutfitSwapFitting
         return features;
     }
 
+    /// <summary>
+    /// Moves the corners of triangles that face against their vertices' normals towards their neighbours, a few times,
+    /// until they face the right way (the game draws such faces dark or not at all).
+    /// </summary>
+    public static Vector3[] Untangle(Vector3[] positions, Vector3[] normals, IReadOnlyList<int> triangles, int rounds = 8)
+    {
+        var result = (Vector3[])positions.Clone();
+        var neighbours = new List<int>[positions.Length];
+        for (var v = 0; v < neighbours.Length; v++) neighbours[v] = [];
+        for (var i = 0; i + 2 < triangles.Count; i += 3)
+            for (var e = 0; e < 3; e++)
+            {
+                neighbours[triangles[i + e]].Add(triangles[i + (e + 1) % 3]);
+                neighbours[triangles[i + e]].Add(triangles[i + (e + 2) % 3]);
+            }
+        for (var round = 0; round < rounds; round++)
+        {
+            var flipped = new HashSet<int>();
+            for (var i = 0; i + 2 < triangles.Count; i += 3)
+            {
+                int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+                var face = Vector3.Cross(result[b] - result[a], result[c] - result[a]);
+                if (face.LengthSquared() > 1e-16f && Vector3.Dot(face, normals[a] + normals[b] + normals[c]) < 0)
+                {
+                    flipped.Add(a); flipped.Add(b); flipped.Add(c);
+                }
+            }
+            if (flipped.Count == 0) break;
+            var next = (Vector3[])result.Clone();
+            foreach (var v in flipped)
+            {
+                if (neighbours[v].Count == 0) continue;
+                var sum = Vector3.Zero;
+                foreach (var n in neighbours[v]) sum += result[n];
+                next[v] = Vector3.Lerp(result[v], sum / neighbours[v].Count, 0.5f);
+            }
+            result = next;
+        }
+        return result;
+    }
+
     /// <summary>Vertices at the same place share one number, so a seam in the UV layout never tears when smoothed.</summary>
     public static int[] Weld(Vector3[] positions, out int count)
     {

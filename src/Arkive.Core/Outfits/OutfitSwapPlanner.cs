@@ -259,7 +259,7 @@ public static partial class OutfitSwapPlanner
         {
             Positions = positions.ToArray(), Normals = normals.ToArray(), Tangents = tangents.ToArray(),
             Uv0 = uv0.ToArray(), Uv1 = uv1.ToArray(), Colours = colours.ToArray(), Joints = joints.ToArray(), Weights = weights.ToArray(),
-            Sections = sections.OrderBy(pair => pair.Key).Select(pair => new OutfitSwapSection(pair.Key, pair.Value.ToArray())).ToArray(),
+            Sections = sections.OrderBy(pair => pair.Key).Select(pair => new OutfitSwapSection(pair.Key, WithArea(pair.Value, positions))).ToArray(),
             Materials = target.Materials, BoneNames = target.BoneNames, BonePositions = target.BonePositions, BoneParents = target.BoneParents,
         };
     }
@@ -368,6 +368,18 @@ public static partial class OutfitSwapPlanner
         var ab = b - a;
         var s = ab.LengthSquared() < 1e-12f ? 0 : Math.Clamp(Vector3.Dot(point - a, ab) / ab.LengthSquared(), 0, 1);
         return Vector3.Distance(point, a + ab * s);
+    }
+
+    /// <summary>The triangles that have an area: ones squeezed to a line or a point by the fit draw nothing and are dropped.</summary>
+    private static int[] WithArea(List<int> triangles, List<Vector3> positions)
+    {
+        var kept = new List<int>(triangles.Count);
+        for (var i = 0; i + 2 < triangles.Count; i += 3)
+        {
+            var face = Vector3.Cross(positions[triangles[i + 1]] - positions[triangles[i]], positions[triangles[i + 2]] - positions[triangles[i]]);
+            if (face.LengthSquared() > 1e-14f) kept.AddRange([triangles[i], triangles[i + 1], triangles[i + 2]]);
+        }
+        return kept.ToArray();
     }
 
     /// <summary>A piece left with nothing to show: one tiny triangle tucked inside the pelvis.</summary>
