@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Arkive.Core.GameData;
 using Arkive.Core.Materials;
 using Arkive.Core.Particles;
 using Arkive.Core.Textures;
@@ -9,7 +10,9 @@ public static class ArkiveModFileFormat
 {
     public const string Extension = ".arkive";
     public const string FormatId = "arkive.mod";
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
+    // Version 2 added game table edits (GameData); mods without them are still written as version 1.
+    public const int GameDataFormatVersion = 2;
     public const string ManifestEntryName = "arkive.json";
     public const string AssetDirectory = "assets";
     public const string ImageRole = "image";
@@ -96,6 +99,9 @@ public sealed record ArkiveModFileAsset(
 /// </summary>
 public sealed record ArkiveModParticleData(ParticleEffectRecipe Recipe, IReadOnlyList<ParticleEffectPatch> Patches);
 
+/// <summary>A mod's changes to the game's tables (see <see cref="GameDataArchive"/>), each one table cell.</summary>
+public sealed record ArkiveModGameData(IReadOnlyList<GameDataCellEdit> Edits);
+
 public sealed record ArkiveModFileManifest(
     string Format,
     int FormatVersion,
@@ -112,6 +118,10 @@ public sealed record ArkiveModFileManifest(
     string CreatedWith,
     IReadOnlyList<ArkiveModFileAsset> Assets)
 {
+    /// <summary>Changes to the game's tables in data2.lpk, or null for a mod that only changes packages.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ArkiveModGameData? GameData { get; init; }
+
     [JsonIgnore]
     public IReadOnlyList<string> PhysicalPackageNames => Assets
         .Select(asset => asset.Target.PhysicalPackageName)

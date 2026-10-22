@@ -1,0 +1,71 @@
+<Window x:Class="Arkive.App.GameDataWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Game tables" Width="1100" Height="760"
+        Icon="Assets/Arkive.ico"
+        MinWidth="760" MinHeight="520"
+        Background="{DynamicResource AppBackgroundBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                       Text="Change cells of the game's tables in data2.lpk: which model an item shows, which NPCs get name tags, camera blur and more. Changes go into a mod and reach the game when you apply mods. Arkive keeps the game's own tables and puts them back when the mod is turned off." />
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Mod name" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBox x:Name="NameTextBox" Grid.Column="1" />
+            </Grid>
+            <WrapPanel Margin="0,10,0,0">
+                <TextBlock Text="Database" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <ComboBox x:Name="DatabaseBox" Width="250" IsEditable="True" IsTextSearchEnabled="True"
+                          SelectionChanged="DatabaseBox_SelectionChanged" />
+                <TextBlock Text="Table" VerticalAlignment="Center" Margin="12,0,6,0" />
+                <ComboBox x:Name="TableBox" Width="180" SelectionChanged="TableBox_SelectionChanged" />
+                <TextBlock Text="Find" VerticalAlignment="Center" Margin="12,0,6,0" />
+                <TextBox x:Name="SearchTextBox" Width="230" KeyDown="SearchTextBox_KeyDown"
+                         ToolTip="Shows rows where any cell contains this text, such as an item number or model name." />
+                <Button x:Name="SearchButton" Content="Find rows" Click="SearchButton_Click" />
+            </WrapPanel>
+        </StackPanel>
+
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <StackPanel DockPanel.Dock="Bottom">
+                <TextBlock x:Name="StatusText" Margin="0,8,0,0" TextWrapping="Wrap" />
+                <DockPanel Margin="0,10,0,0" LastChildFill="False">
+                    <Button x:Name="ImportButton" DockPanel.Dock="Left" Content="Import .sql patch…" Click="ImportButton_Click"
+                            ToolTip="Read a LostArkPatcher-style patch (--File:EFTable_Name.db lines, then UPDATE statements) into this mod's changes." />
+                    <Button x:Name="RemoveButton" DockPanel.Dock="Left" Content="Remove selected changes" IsEnabled="False"
+                            Click="RemoveButton_Click" />
+                    <Button DockPanel.Dock="Right" Content="Cancel" MinWidth="80" Margin="0" IsCancel="True" />
+                    <Button x:Name="SaveButton" DockPanel.Dock="Right" Content="Save mod" MinWidth="110"
+                            Style="{StaticResource PrimaryButtonStyle}" Click="SaveButton_Click" />
+                </DockPanel>
+            </StackPanel>
+            <TextBlock DockPanel.Dock="Top" x:Name="ChangesTitle" Text="Changes in this mod" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <DataGrid x:Name="ChangesGrid" Height="170" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
+                      SelectionMode="Extended" SelectionUnit="FullRow" HeadersVisibility="Column"
+                      SelectionChanged="ChangesGrid_SelectionChanged" MouseDoubleClick="ChangesGrid_MouseDoubleClick">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Database" Binding="{Binding Database}" Width="170" />
+                    <DataGridTextColumn Header="Table" Binding="{Binding Table}" Width="120" />
+                    <DataGridTextColumn Header="Row" Binding="{Binding Row}" Width="170" />
+                    <DataGridTextColumn Header="Column" Binding="{Binding Column}" Width="150" />
+                    <DataGridTextColumn Header="Game's value" Binding="{Binding Original}" Width="*" />
+                    <DataGridTextColumn Header="New value" Binding="{Binding Value}" Width="*" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+
+        <DataGrid x:Name="RowsGrid" AutoGenerateColumns="True" CanUserAddRows="False" CanUserDeleteRows="False"
+                  CanUserSortColumns="False" CanUserReorderColumns="False" SelectionUnit="Cell" SelectionMode="Single"
+                  HeadersVisibility="Column" EnableColumnVirtualization="True" EnableRowVirtualization="True"
+                  AutoGeneratingColumn="RowsGrid_AutoGeneratingColumn" CellEditEnding="RowsGrid_CellEditEnding"
+                  ToolTip="Double-click a cell to change it. The key columns name the row and cannot be changed." />
+    </DockPanel>
+</Window>

@@ -2801,6 +2801,8 @@
                                         <Button x:Name="ModLibraryImportButton" Content="Import…" Click="ModLibraryImportButton_Click" />
                                         <Button x:Name="ModLibraryNewPackButton" Content="New pack…" Click="ModLibraryNewPackButton_Click"
                                                 ToolTip="Group several mods into a pack that turns on and off with one switch." />
+                                        <Button x:Name="ModLibraryGameTablesButton" Content="Game tables…" Click="ModLibraryGameTablesButton_Click"
+                                                ToolTip="Make a Game Data mod: change cells of the game's tables (item models, NPC name tags, camera blur) or import a .sql patch." />
                                         <Button x:Name="ModLibraryEditButton" Content="Edit mod" Click="ModLibraryEditButton_Click" />
                                         <Button x:Name="ModLibrarySaveButton" Content="Save mod" Click="ModLibrarySaveButton_Click" />
                                         <Button x:Name="ModLibraryExportButton" Content="Share…" Click="ModLibraryExportButton_Click" />
@@ -2822,6 +2824,8 @@
                                                     <MenuItem x:Name="ModLibraryPriorityDownButton" Header="Decrease priority" Click="ModLibraryPriorityDownButton_Click" />
                                                     <Separator />
                                                     <MenuItem x:Name="ModLibraryPrepareButton" Header="Prepare for editing" Click="ModLibraryPrepareButton_Click" />
+                                                    <MenuItem x:Name="ModLibraryEditTablesButton" Header="Edit table changes…" Click="ModLibraryEditTablesButton_Click"
+                                                              ToolTip="Add, change or remove the game table cells this mod changes." />
                                                     <MenuItem x:Name="ModLibraryUpdateButton" Header="Update for this game version" Click="ModLibraryUpdateButton_Click" />
                                                     <MenuItem x:Name="ModLibraryGoToPackageButton" Header="Advanced package projects" Click="ModLibraryGoToPackageButton_Click" />
                                                     <MenuItem x:Name="ModLibraryRemoveButton" Header="Remove mod" Click="ModLibraryRemoveButton_Click" />

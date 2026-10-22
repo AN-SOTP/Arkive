@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Arkive.Core.GameData;
 using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
@@ -21,7 +22,7 @@ public sealed record ArkiveModPackageContributor(
     string ModName,
     int Priority,
     string AssetName,
-    UnifiedPackageAssetKind Kind,
+    UnifiedPackageAssetKind? Kind,
     string ObjectName,
     bool IsDraft);
 
@@ -48,6 +49,8 @@ public sealed record ArkiveModPackagePlan(
 
     public string Describe => Action switch
     {
+        ArkiveModPackageAction.Rebuild when PhysicalPackageName == ArkiveModApplyService.GameDataPackageName => "Write the table changes",
+        ArkiveModPackageAction.Restore when PhysicalPackageName == ArkiveModApplyService.GameDataPackageName => "Put back the game's tables",
         ArkiveModPackageAction.None => "Up to date",
         ArkiveModPackageAction.Install => "Install existing verified build",
         ArkiveModPackageAction.Rebuild => RestoreFirst ? "Restore, rebuild, and reinstall" : "Rebuild and install",
@@ -144,11 +147,14 @@ public sealed record ArkiveModStatus(
     bool FileMissing,
     IReadOnlyList<ArkiveModAssetStatus> Assets)
 {
-    public int WinningCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Winning);
+    /// <summary>How the mod's game table changes stand, for a mod that has them.</summary>
+    public ArkiveModGameDataStatus? GameData { get; init; }
 
-    public int OverriddenCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Overridden);
+    public int WinningCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Winning) + (GameData?.Winning ?? 0);
 
-    public int TiedCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Tied);
+    public int OverriddenCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Overridden) + (GameData?.Overridden ?? 0);
+
+    public int TiedCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Tied) + (GameData?.Tied ?? 0);
 
     public bool ModifiedLocally => Assets.Any(asset => asset.ModifiedLocally);
 
@@ -159,7 +165,8 @@ public sealed record ArkiveModStatus(
         Assets.Where(asset => asset.Outcome == ArkiveModAssetOutcome.Winning);
 
     public bool InGame => !FileMissing && Mod.Enabled && TiedCount == 0 && WinningCount > 0 &&
-                          Winners.All(asset => asset.Setup == ArkiveModSetupState.Ready && asset.InGame == true);
+                          Winners.All(asset => asset.Setup == ArkiveModSetupState.Ready && asset.InGame == true) &&
+                          (GameData is not { Winning: > 0 } data || data.InGame);
 
     public string State
     {
@@ -194,6 +201,21 @@ public sealed record ArkiveModApplyContext(
     string BackupRootDirectory,
     string InstallationStateRoot)
 {
+    /// <summary>Arkive's data folder. With it, Game Data mods are applied to the data2.lpk of the library's game folder.</summary>
+    public string? GameDataRoot { get; init; }
+
+    public IModDeploymentProcessGuard GameProcessGuard { get; init; } = new LostArkProcessGuard();
+
+    /// <summary>Game Data mods for the game whose Packages folder the library names; null until that folder is known.</summary>
+    public GameDataModService? GameDataFor(ArkiveModLibraryManifest library)
+    {
+        if (GameDataRoot is null || library.GamePackagesDirectory is not { } packages) return null;
+        var efGame = Path.GetFullPath(Path.Combine(packages, "..", ".."));
+        return File.Exists(Path.Combine(efGame, "data2.lpk"))
+            ? new GameDataModService(new GameDataArchive(efGame, GameDataRoot, GameProcessGuard))
+            : null;
+    }
+
     public ArkiveModDeploymentRequest DeploymentRequest(string bundleManifestPath) => new(
         bundleManifestPath, Path.GetFullPath(BackupRootDirectory), Path.GetFullPath(InstallationStateRoot));
 
@@ -267,12 +289,14 @@ public sealed class ArkiveModApplyService
         ArkiveModEditSnapshot snapshot,
         IReadOnlyDictionary<string, GuidedTexturePackageRevision?>? activeRevisionsByPhysicalName = null,
         CancellationToken cancellationToken = default,
-        IReadOnlyCollection<string>? outsideChangedPackages = null)
+        IReadOnlyCollection<string>? outsideChangedPackages = null,
+        GameDataTarget? installedGameData = null)
     {
         ArgumentNullException.ThrowIfNull(library);
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(snapshot);
         var resolution = ArkiveModConflictResolver.Resolve(manifest.Mods);
+        var gameData = GameDataResolution.Resolve(manifest.Mods);
         var statuses = new List<ArkiveModStatus>(manifest.Mods.Count);
         foreach (var mod in manifest.Mods)
         {
@@ -310,6 +334,8 @@ public sealed class ArkiveModApplyService
                 OutsideChange = outsideChangedPackages is not null && mod.Manifest.Assets.Any(asset =>
                     outsideChangedPackages.Contains(ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName),
                         StringComparer.OrdinalIgnoreCase)),
+                GameData = mod.Manifest.GameData is null ? null
+                    : gameData.StatusFor(mod.ModId, installedGameData ?? GameDataTarget.GameOwn),
             });
         }
         return statuses;
@@ -577,9 +603,57 @@ public sealed class ArkiveModApplyService
 
         if (plans.Any(plan => plan.Action == ArkiveModPackageAction.Rebuild) && _composer is null)
             problems.Add(_rebuildUnavailable);
+        if (await PlanGameDataAsync(library, problems, needClientUpdate, cancellationToken).ConfigureAwait(false) is { } tables)
+            plans.Add(tables);
         return new ArkiveModApplyPlan(resolution, plans, problems.Distinct().ToArray(), warnings)
         {
             ModsNeedingClientUpdate = needClientUpdate,
+        };
+    }
+
+    /// <summary>The name the plan gives the game's table archive, beside the packages it changes.</summary>
+    public const string GameDataPackageName = "data2.lpk";
+
+    // data2.lpk joins the plan as one more "package" whenever a mod changes game tables or Arkive's changes are installed.
+    private async Task<ArkiveModPackagePlan?> PlanGameDataAsync(
+        ArkiveModLibraryManifest library, List<string> problems, HashSet<string> needClientUpdate, CancellationToken cancellationToken)
+    {
+        var wanted = library.Mods.Any(mod => mod.Enabled && mod.Manifest.GameData is not null);
+        if (_context.GameDataFor(library) is not { } service)
+        {
+            if (!wanted) return null;
+            const string message = "Mods change game tables, but Lost Ark's EFGame folder (the one holding data2.lpk) is not known yet. Choose the game's Packages folder.";
+            problems.Add(message);
+            return new ArkiveModPackagePlan(GameDataPackageName, "Game tables", null, null, ArkiveModPackageAction.Blocked, false, null, [], [], message);
+        }
+        if (!wanted && service.Archive.Current().Edits.Count == 0) return null;
+        var plan = await service.PlanAsync(library.Mods, cancellationToken).ConfigureAwait(false);
+        problems.AddRange(plan.Problems);
+        needClientUpdate.UnionWith(plan.ModsNeedingUpdate);
+        var contributors = plan.Resolution.Cells
+            .GroupBy(cell => cell.Winner.Mod.ModId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new ArkiveModPackageContributor(group.First().Winner.Mod.ModId, group.First().Winner.Mod.Manifest.Name,
+                group.First().Winner.Mod.Priority, "Game tables", null,
+                group.Count() == 1 ? $"{group.First().Winner.Edit.Table}.{group.First().Winner.Edit.Column}" : $"{group.Count():N0} table cells",
+                false))
+            .ToArray();
+        var action = plan.Problems.Count > 0 ? ArkiveModPackageAction.Blocked
+            : !plan.Changes ? ArkiveModPackageAction.None
+            : plan.Restores ? ArkiveModPackageAction.Restore
+            : ArkiveModPackageAction.Rebuild;
+        var reason = action switch
+        {
+            ArkiveModPackageAction.Blocked => plan.Problems[0],
+            ArkiveModPackageAction.None => plan.Target.Edits.Count == 0
+                ? "No enabled mod changes game tables."
+                : "data2.lpk already holds exactly these table changes.",
+            ArkiveModPackageAction.Restore => "No enabled mod changes game tables any more; the game's own tables will be put back.",
+            _ => $"{plan.Target.Edits.Count:N0} table cell(s) will be written into data2.lpk from the game's own tables.",
+        };
+        return new ArkiveModPackagePlan(GameDataPackageName, "Game tables", service.Archive.ArchivePath, null, action, false, null,
+            contributors, [], reason)
+        {
+            ContentFingerprint = string.Join(",", plan.Target.Edits.Select(edit => edit.CellKey + "=" + GameDataValues.Describe(edit.Value))),
         };
     }
 
@@ -595,11 +669,13 @@ public sealed class ArkiveModApplyService
             Refuse("APL001", "The mod library or game files changed since the plan was reviewed. Review it again.");
         if (!plan.CanApply) Refuse("APL002", plan.Summary);
         var outcomes = new Dictionary<string, ArkiveModPackageOutcome>(StringComparer.OrdinalIgnoreCase);
-        var changing = plan.Packages.Where(package => package.Action != ArkiveModPackageAction.None).ToArray();
+        var tables = plan.Packages.FirstOrDefault(package => package.PhysicalPackageName == GameDataPackageName &&
+                                                             package.Action != ArkiveModPackageAction.None);
+        var changing = plan.Packages.Where(package => package.Action != ArkiveModPackageAction.None && package != tables).ToArray();
         var totalSteps = Math.Max(1,
             changing.Count(package => package.RestoreFirst || package.Action == ArkiveModPackageAction.Restore) +
             changing.Sum(package => package.Setups.Count) +
-            changing.Count(package => package.Action == ArkiveModPackageAction.Rebuild) + 3);
+            changing.Count(package => package.Action == ArkiveModPackageAction.Rebuild) + (tables is null ? 0 : 1) + 3);
         var step = 0;
         void Report(string package, string message) =>
             progress?.Report(new ArkiveModApplyProgress(Interlocked.Increment(ref step), totalSteps, package, message));
@@ -762,6 +838,29 @@ public sealed class ArkiveModApplyService
                 };
             }
         }
+        if (tables is not null)
+        {
+            Report(GameDataPackageName, tables.Action == ArkiveModPackageAction.Restore
+                ? "Putting back the game's own tables..."
+                : "Writing the table changes into data2.lpk...");
+            try
+            {
+                var service = _context.GameDataFor(library) ?? throw new ArkiveModRefusalException("APL030", "The game's data2.lpk is not known.");
+                var current = await service.PlanAsync(library.Mods, cancellationToken).ConfigureAwait(false);
+                if (current.Problems.Count > 0) Refuse("APL032", current.Problems[0]);
+                var written = await service.ApplyAsync(current, cancellationToken).ConfigureAwait(false);
+                outcomes[GameDataPackageName] = new ArkiveModPackageOutcome(GameDataPackageName, tables.Action, true,
+                    tables.Action == ArkiveModPackageAction.Restore
+                        ? "The game's own tables were put back."
+                        : $"{written.Cells:N0} table cell(s) written and read back.");
+                if (tables.Action == ArkiveModPackageAction.Restore) restored++;
+            }
+            catch (Exception exception) when (IsOperational(exception))
+            {
+                outcomes[GameDataPackageName] = new ArkiveModPackageOutcome(GameDataPackageName, tables.Action, false,
+                    $"data2.lpk was left as it was: {exception.Message}");
+            }
+        }
         // Priorities, install and finish are the three fixed steps; install is skipped when nothing was rebuilt.
         step = totalSteps - 1;
         Report("Mods", "Apply finished.");
@@ -780,7 +879,7 @@ public sealed class ArkiveModApplyService
         }
         return new ArkiveModApplyResult(
             plan,
-            changing.Select(package => outcomes.GetValueOrDefault(package.PhysicalPackageName) ??
+            changing.Concat(tables is null ? [] : [tables]).Select(package => outcomes.GetValueOrDefault(package.PhysicalPackageName) ??
                                        new ArkiveModPackageOutcome(package.PhysicalPackageName, package.Action, true,
                                            "Completed.")).ToArray(),
             setUp, rebuilt, installed, restored, watch.Elapsed);
@@ -863,9 +962,42 @@ public sealed class ArkiveModApplyService
             await SaveSetUpsAsync(setUps).ConfigureAwait(false);
         }
         progress?.Report((outcomes.Count, mod.Manifest.Assets.Count));
+        if (mod.Manifest.GameData is not null)
+            outcomes.Add(await UpdateGameDataForCurrentClientAsync(modId, cancellationToken).ConfigureAwait(false));
         await ArkiveModSelectionService.SynchronizeAsync(_context.Library, _context.Edits, cancellationToken)
             .ConfigureAwait(false);
         return outcomes;
+    }
+
+    // Table changes need no working copy: the .arkive file itself takes the game's new values as its originals.
+    private async Task<ArkiveModAssetUpdateOutcome> UpdateGameDataForCurrentClientAsync(string modId, CancellationToken cancellationToken)
+    {
+        const string assetId = "game-data";
+        const string name = "Game tables";
+        try
+        {
+            var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
+            var service = _context.GameDataFor(library) ?? throw new ArkiveModRefusalException("APL030",
+                "Lost Ark's EFGame folder (the one holding data2.lpk) is not known yet.");
+            var mod = library.Find(modId) ?? throw new ArkiveModRefusalException("APL021", $"Mod {modId} is not in the library.");
+            var rebased = await service.RebaseAsync(mod, cancellationToken).ConfigureAwait(false);
+            if (rebased.Updated + rebased.Removed == 0)
+                return new ArkiveModAssetUpdateOutcome(assetId, name, true, false, "Every table change still matches this game version.");
+            if (rebased.GameData is null && mod.Manifest.Assets.Count == 0)
+                Refuse("APL031", "This game version no longer has any of the rows the mod changes, so there is nothing left to keep.");
+            var written = await ArkiveModFileService.RewriteManifestAsync(_context.Library.GetModFilePath(mod),
+                mod.Manifest with { GameData = rebased.GameData, UpdatedAt = DateTimeOffset.UtcNow }, cancellationToken).ConfigureAwait(false);
+            await _context.Library.RegisterWrittenFileAsync(written, mod.Origin, mod.Enabled, mod.Priority, mod.Bindings,
+                mod.AuthoredForPackageProjectId, cancellationToken).ConfigureAwait(false);
+            return new ArkiveModAssetUpdateOutcome(assetId, name, true, true,
+                $"{rebased.Updated:N0} cell(s) updated for this game version" +
+                (rebased.Removed > 0 ? $", {rebased.Removed:N0} removed because the game no longer has them" : string.Empty) +
+                ". " + string.Join(" ", rebased.Messages.Take(5)));
+        }
+        catch (Exception exception) when (IsOperational(exception))
+        {
+            return new ArkiveModAssetUpdateOutcome(assetId, name, false, false, exception.Message);
+        }
     }
 
     private async Task<ArkiveModAssetUpdateOutcome> UpdateAssetForCurrentClientAsync(
@@ -1201,7 +1333,8 @@ public sealed class ArkiveModApplyService
 
     public static bool IsOperational(Exception exception) =>
         exception is IOException or UnauthorizedAccessException or NotSupportedException or
-            ArgumentException or InvalidDataException or JsonException or InvalidOperationException;
+            ArgumentException or InvalidDataException or JsonException or InvalidOperationException or
+            Microsoft.Data.Sqlite.SqliteException;
 
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     private static void Refuse(string code, string message) =>

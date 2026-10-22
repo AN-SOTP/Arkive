@@ -1,9 +1,6 @@
-using System.Buffers.Binary;
-using System.IO.Compression;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Arkive.Core.Databases;
+using Arkive.Core.GameData;
 using Arkive.Core.Mods;
 using Microsoft.Data.Sqlite;
 
@@ -20,10 +17,8 @@ public sealed record GameLanguage(string Name, string Title, int Translated, int
     public double Coverage => Lines == 0 ? 0 : Math.Min(1, (double)Translated / Lines);
 }
 
-/// <summary>What Arkive has changed: the game's English text in <paramref name="ArchivePath"/> now holds <paramref name="Language"/>.</summary>
-public sealed record GameLanguageState(
-    int Version, string Language, string ArchivePath, string OriginalSha256, DateTime OriginalWriteTimeUtc, string AppliedSha256,
-    long AppliedLength, DateTime AppliedWriteTimeUtc, string BackupPath, int Lines, DateTimeOffset AppliedAt);
+/// <summary>The language Arkive last wrote over the game's English text.</summary>
+public sealed record GameLanguageState(string Language, int Lines, DateTimeOffset AppliedAt);
 
 /// <summary>
 /// The language of the game's text. Every line the game shows is in one database in data2.lpk
@@ -31,14 +26,14 @@ public sealed record GameLanguageState(
 /// same names. The game shows its English table (the other languages are being withdrawn), so Arkive writes the chosen
 /// language's lines over the English ones; lines without a translation stay English. Translations are copied to
 /// Arkive's data folder whenever the game's files change, so a language the game later drops can still be used.
-/// The game's database is kept as a backup, and going back writes it in place again, giving the game's file exactly.
+/// data2.lpk is written by <see cref="GameDataArchive"/>, which keeps Game Data mods' edits alongside the language.
 /// </summary>
 public sealed class GameLanguageService
 {
     public const string English = "English";
-    public const string TextEntry = "EFGame_Extra/ClientData/TableData/EFTable_GameMsg.db";
+    public const string TextDatabase = "EFTable_GameMsg.db";
+    public const string TextEntry = GameDataValues.TableFolder + TextDatabase;
 
-    private const int StateVersion = 1;
     private const int CatalogVersion = 1;
     private const string TablePrefix = "GameMsg_";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -52,27 +47,22 @@ public sealed class GameLanguageService
     ];
 
     private readonly string _directory;
-    private readonly string _statePath;
     private readonly string _catalogPath;
     private readonly string _savedPath;
-    private readonly string _backupDirectory;
-    private readonly IModDeploymentProcessGuard _processGuard;
+    private readonly GameDataArchive _archive;
 
     /// <param name="efGameDirectory">The game's EFGame folder (the one holding data2.lpk).</param>
     /// <param name="dataRoot">Arkive's data folder, for the saved translations, the backup and the record of what was changed.</param>
     public GameLanguageService(string efGameDirectory, string dataRoot, IModDeploymentProcessGuard processGuard)
     {
-        ArchivePath = Path.Combine(Path.GetFullPath(efGameDirectory), "data2.lpk");
+        _archive = new GameDataArchive(efGameDirectory, dataRoot, processGuard);
         _directory = Path.Combine(dataRoot, "languages");
-        _statePath = Path.Combine(_directory, "state.json");
         _catalogPath = Path.Combine(_directory, "saved-text.json");
         _savedPath = Path.Combine(_directory, "saved-text.db.gz");
-        _backupDirectory = Path.Combine(dataRoot, "backups", "languages");
-        _processGuard = processGuard;
     }
 
     /// <summary>The game's data2.lpk.</summary>
-    public string ArchivePath { get; }
+    public string ArchivePath => _archive.ArchivePath;
 
     public static string Title(string language) =>
         Known.FirstOrDefault(item => item.Name.Equals(language, StringComparison.OrdinalIgnoreCase)).Title ?? language;
@@ -108,10 +98,14 @@ public sealed class GameLanguageService
     public bool NeedsSaving()
     {
         if (!File.Exists(ArchivePath)) return false;
-        var (length, written) = Stamp(ArchivePath);
-        if (LoadState() is { } state && state.AppliedLength == length && state.AppliedWriteTimeUtc == written) return false;
         var catalog = LoadCatalog();
-        return catalog?["ArchiveLength"]?.GetValue<long>() != length || catalog["ArchiveWriteTimeUtc"]?.GetValue<DateTime>() != written;
+        if (catalog is null) return true;
+        if (catalog["GameVersion"]?.GetValue<string>() is { } version) return version != _archive.GameVersion();
+        // Catalogs saved before Game Data mods name the game's own file by its size and date.
+        var (length, written) = _archive.LoadState() is { } state
+            ? (state.OriginalLength, state.OriginalWriteTimeUtc)
+            : GameDataArchive.Stamp(ArchivePath);
+        return catalog["ArchiveLength"]?.GetValue<long>() != length || catalog["ArchiveWriteTimeUtc"]?.GetValue<DateTime>() != written;
     }
 
     /// <summary>
@@ -121,14 +115,12 @@ public sealed class GameLanguageService
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
         if (!File.Exists(ArchivePath)) throw new FileNotFoundException("The game's data2.lpk was not found.", ArchivePath);
-        if (LoadState() is { } applied && !GameUpdated(applied))
-            throw new InvalidOperationException("Put the game's own text back before saving its translations.");
-        var stamp = Stamp(ArchivePath);
-        using var work = new WorkFolder(_directory);
+        var version = _archive.GameVersion();
+        using var work = new GameDataArchive.WorkFolder(_directory);
         var game = work.File("game.db");
         var saved = work.File("saved.db");
-        LostArkDatabaseArchive.Extract(ArchivePath, TextEntry, game, cancellationToken);
-        if (File.Exists(_savedPath)) await DecompressAsync(_savedPath, saved, cancellationToken).ConfigureAwait(false);
+        await _archive.ExtractGameDatabaseAsync(TextDatabase, game, cancellationToken).ConfigureAwait(false);
+        if (File.Exists(_savedPath)) await GameDataArchive.DecompressAsync(_savedPath, saved, cancellationToken).ConfigureAwait(false);
 
         var lines = 0;
         var catalog = new JsonArray();
@@ -159,152 +151,83 @@ public sealed class GameLanguageService
             Execute(connection, "DETACH DATABASE game");
         }
         cancellationToken.ThrowIfCancellationRequested();
-        await CompressAsync(saved, _savedPath, cancellationToken).ConfigureAwait(false);
+        await GameDataArchive.CompressAsync(saved, _savedPath, cancellationToken).ConfigureAwait(false);
         WriteJson(_catalogPath, new JsonObject
         {
             ["Version"] = CatalogVersion,
-            ["ArchiveLength"] = stamp.Length,
-            ["ArchiveWriteTimeUtc"] = stamp.WrittenUtc,
+            ["GameVersion"] = version,
             ["SavedAt"] = DateTimeOffset.UtcNow,
             ["Lines"] = lines,
             ["Languages"] = catalog,
         });
     }
 
-    public GameLanguageState? LoadState()
-    {
-        if (!File.Exists(_statePath)) return null;
-        try
-        {
-            var node = JsonNode.Parse(File.ReadAllText(_statePath));
-            return node?["Version"]?.GetValue<int>() == StateVersion ? node.Deserialize<GameLanguageState>(JsonOptions) : null;
-        }
-        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
-        {
-            return null;
-        }
-    }
+    /// <summary>The language Arkive last chose for the game's text, even when a game update has since replaced it.</summary>
+    public GameLanguageState? LoadState() =>
+        _archive.LastWrite() is { Language: { } language } state ? new GameLanguageState(language, state.LanguageLines, state.AppliedAt) : null;
 
     /// <summary>True when the game has replaced Arkive's text since it was written (an update or a file check).</summary>
-    public bool GameUpdated() => LoadState() is { } state && GameUpdated(state);
-
-    private bool GameUpdated(GameLanguageState state)
-    {
-        if (!File.Exists(ArchivePath)) return true;
-        var (length, written) = Stamp(ArchivePath);
-        return length != state.AppliedLength || written != state.AppliedWriteTimeUtc;
-    }
+    public bool GameUpdated() => LoadState() is not null && _archive.GameUpdated();
 
     /// <summary>The language the game will show: Arkive's choice while it is installed, else English.</summary>
-    public string CurrentLanguage() => LoadState() is { } state && !GameUpdated(state) ? state.Language : English;
+    public string CurrentLanguage() => _archive.LoadState()?.Language ?? English;
 
-    /// <summary>Writes <paramref name="language"/>'s lines over the game's English text.</summary>
+    /// <summary>Writes <paramref name="language"/>'s lines over the game's English text, keeping Game Data mods' edits.</summary>
     /// <returns>How many lines are now in <paramref name="language"/>.</returns>
     public async Task<int> ApplyAsync(string language, CancellationToken cancellationToken = default)
     {
-        RefuseWhileRunning();
-        await RestoreAsync(cancellationToken).ConfigureAwait(false);
-        if (language.Equals(English, StringComparison.OrdinalIgnoreCase)) return 0;
+        _archive.RefuseWhileRunning();
+        if (language.Equals(English, StringComparison.OrdinalIgnoreCase))
+        {
+            await RestoreAsync(cancellationToken).ConfigureAwait(false);
+            return 0;
+        }
         if (NeedsSaving()) await SaveAsync(cancellationToken).ConfigureAwait(false);
         var chosen = Languages().FirstOrDefault(item => item.Name.Equals(language, StringComparison.OrdinalIgnoreCase))
                      ?? throw new InvalidOperationException($"Arkive has no {Title(language)} text.");
+        var result = await _archive.WriteAsync(_archive.Current() with { Language = chosen.Name }, cancellationToken).ConfigureAwait(false);
+        return result.LanguageLines;
+    }
 
-        using var work = new WorkFolder(_directory);
-        var text = work.File("text.db");
-        var saved = work.File("saved.db");
-        LostArkDatabaseArchive.Extract(ArchivePath, TextEntry, text, cancellationToken);
-        var pattern = PageMarker(text);
+    /// <summary>Puts the game's own text back, keeping Game Data mods' edits.</summary>
+    public async Task RestoreAsync(CancellationToken cancellationToken = default)
+    {
+        _archive.RefuseWhileRunning();
+        var current = _archive.Current();
+        if (current.Language is null) return;
+        await _archive.WriteAsync(current with { Language = null }, cancellationToken).ConfigureAwait(false);
+    }
 
-        // The game's database is kept first, so the change can always be undone.
-        var original = await HashAsync(ArchivePath, cancellationToken).ConfigureAwait(false);
-        var originalWritten = Stamp(ArchivePath).WrittenUtc;
-        Directory.CreateDirectory(_backupDirectory);
-        var backup = Path.Combine(_backupDirectory, $"GameMsg-{original[..16]}.db.gz");
-        if (!File.Exists(backup)) await CompressAsync(text, backup, cancellationToken).ConfigureAwait(false);
-
-        await DecompressAsync(_savedPath, saved, cancellationToken).ConfigureAwait(false);
-        int lines;
-        using (var connection = Open(text, readOnly: false))
+    /// <summary>
+    /// Writes <paramref name="language"/>'s saved lines over the English table of the game text database at
+    /// <paramref name="database"/>, leaving lines without a translation as they are.
+    /// </summary>
+    /// <returns>How many lines changed language.</returns>
+    internal static async Task<int> WriteTextAsync(string savedTextPath, string database, string language, CancellationToken cancellationToken)
+    {
+        var saved = database + ".saved-text";
+        try
         {
+            await GameDataArchive.DecompressAsync(savedTextPath, saved, cancellationToken).ConfigureAwait(false);
+            using var connection = Open(database, readOnly: false);
             Execute(connection, $"ATTACH DATABASE {Quote(saved)} AS saved");
+            if (!Tables(connection, "saved", prefix: string.Empty).Contains(language))
+                throw new InvalidOperationException($"Arkive has no {Title(language)} text.");
+            int lines;
             using (var transaction = connection.BeginTransaction())
             {
                 lines = Execute(connection,
-                    $"UPDATE {TablePrefix}{English} SET MSG = t.MSG FROM saved.[{chosen.Name}] t " +
+                    $"UPDATE {TablePrefix}{English} SET MSG = t.MSG FROM saved.[{language}] t " +
                     $"WHERE t.KEY = {TablePrefix}{English}.KEY AND {TablePrefix}{English}.MSG <> ''", transaction);
                 transaction.Commit();
             }
             Execute(connection, "DETACH DATABASE saved");
-        }
-        MarkPages(text, pattern);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var staged = ArchivePath + ".arkive-new";
-        File.Delete(staged);
-        try
-        {
-            LostArkDatabaseArchive.Replace(ArchivePath, TextEntry, text, staged, cancellationToken);
-            var check = work.File("check.db");
-            LostArkDatabaseArchive.Extract(staged, TextEntry, check, cancellationToken);
-            if (!(await HashAsync(check, cancellationToken).ConfigureAwait(false))
-                    .Equals(await HashAsync(text, cancellationToken).ConfigureAwait(false), StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("The rewritten game text did not read back the same.");
-            var applied = await HashAsync(staged, cancellationToken).ConfigureAwait(false);
-            RefuseWhileRunning();
-            File.Move(staged, ArchivePath, overwrite: true);
-            var (length, written) = Stamp(ArchivePath);
-            WriteJson(_statePath, JsonSerializer.SerializeToNode(new GameLanguageState(StateVersion, chosen.Name, ArchivePath, original, originalWritten, applied,
-                length, written, backup, lines, DateTimeOffset.UtcNow), JsonOptions)!);
+            return lines;
         }
         finally
         {
-            File.Delete(staged);
+            File.Delete(saved);
         }
-        return lines;
-    }
-
-    /// <summary>Puts the game's own text back (only while Arkive's change is still installed).</summary>
-    public async Task RestoreAsync(CancellationToken cancellationToken = default)
-    {
-        RefuseWhileRunning();
-        if (LoadState() is not { } state)
-        {
-            if (File.Exists(_statePath)) File.Delete(_statePath);
-            return;
-        }
-        if (!GameUpdated(state) &&
-            (await HashAsync(ArchivePath, cancellationToken).ConfigureAwait(false)).Equals(state.AppliedSha256, StringComparison.OrdinalIgnoreCase))
-        {
-            if (!File.Exists(state.BackupPath))
-                throw new InvalidDataException("Arkive's copy of the game's text is missing. Verify the game files in Steam to put the original back.");
-            using var work = new WorkFolder(_directory);
-            var text = work.File("text.db");
-            await DecompressAsync(state.BackupPath, text, cancellationToken).ConfigureAwait(false);
-            var restoring = ArchivePath + ".arkive-restore";
-            File.Delete(restoring);
-            try
-            {
-                LostArkDatabaseArchive.Replace(ArchivePath, TextEntry, text, restoring, cancellationToken);
-                if (!(await HashAsync(restoring, cancellationToken).ConfigureAwait(false)).Equals(state.OriginalSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("Arkive could not rebuild the game's own data2.lpk exactly. Verify the game files in Steam to put the original back.");
-                RefuseWhileRunning();
-                File.Move(restoring, ArchivePath, overwrite: true);
-                // The game's own date too, so the file is just as it was and its translations need no saving again.
-                File.SetLastWriteTimeUtc(ArchivePath, state.OriginalWriteTimeUtc);
-            }
-            finally
-            {
-                File.Delete(restoring);
-            }
-        }
-        File.Delete(_statePath);
-    }
-
-    private void RefuseWhileRunning()
-    {
-        var running = _processGuard.FindBlockingProcesses();
-        if (running.Count > 0)
-            throw new InvalidOperationException($"Close Lost Ark first: {string.Join(", ", running)} is running.");
     }
 
     private JsonNode? LoadCatalog()
@@ -326,12 +249,6 @@ public sealed class GameLanguageService
         var temporary = path + ".tmp";
         File.WriteAllText(temporary, node.ToJsonString(JsonOptions));
         File.Move(temporary, path, overwrite: true);
-    }
-
-    private static (long Length, DateTime WrittenUtc) Stamp(string path)
-    {
-        var info = new FileInfo(path);
-        return (info.Length, info.LastWriteTimeUtc);
     }
 
     private static SqliteConnection Open(string path, bool readOnly)
@@ -379,92 +296,5 @@ public sealed class GameLanguageService
         return names;
     }
 
-    /// <summary>
-    /// The bytes the game's databases end every page with: SQLite's reserved space, filled the way a padded AES block
-    /// is (16 bytes of 0x10). The game rejects a page that ends otherwise, and SQLite leaves new and rebuilt pages'
-    /// reserved space empty, so it is filled again after every change (<see cref="MarkPages"/>).
-    /// </summary>
-    private static byte[] PageMarker(string database)
-    {
-        using var stream = File.OpenRead(database);
-        var header = new byte[100];
-        stream.ReadExactly(header);
-        var pageSize = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(16)) is var size && size == 1 ? 65536 : size;
-        int reserved = header[20];
-        if (reserved == 0) return [];
-        var marker = new byte[reserved];
-        stream.Position = pageSize - reserved;
-        stream.ReadExactly(marker);
-        if (marker.Any(value => value != reserved))
-            throw new InvalidDataException("The game's text is stored in a way Arkive does not know, so it was not changed.");
-        return marker;
-    }
-
-    private static void MarkPages(string database, byte[] marker)
-    {
-        if (marker.Length == 0) return;
-        using var stream = new FileStream(database, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        var header = new byte[100];
-        stream.ReadExactly(header);
-        var pageSize = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(16)) is var size && size == 1 ? 65536 : size;
-        if (header[20] != marker.Length || stream.Length % pageSize != 0)
-            throw new InvalidDataException("The changed game text has an unexpected layout, so it was not written.");
-        for (long end = pageSize; end <= stream.Length; end += pageSize)
-        {
-            stream.Position = end - marker.Length;
-            stream.Write(marker);
-        }
-    }
-
     private static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
-
-    private static async Task CompressAsync(string source, string destination, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        var temporary = destination + ".tmp";
-        await using (var input = File.OpenRead(source))
-        await using (var output = File.Create(temporary))
-        await using (var gzip = new GZipStream(output, CompressionLevel.Fastest))
-            await input.CopyToAsync(gzip, cancellationToken).ConfigureAwait(false);
-        File.Move(temporary, destination, overwrite: true);
-    }
-
-    private static async Task DecompressAsync(string source, string destination, CancellationToken cancellationToken)
-    {
-        await using var input = File.OpenRead(source);
-        await using var gzip = new GZipStream(input, CompressionMode.Decompress);
-        await using var output = File.Create(destination);
-        await gzip.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task<string> HashAsync(string path, CancellationToken cancellationToken)
-    {
-        await using var stream = File.OpenRead(path);
-        return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
-    }
-
-    /// <summary>A folder for the databases being worked on, deleted afterwards.</summary>
-    private sealed class WorkFolder : IDisposable
-    {
-        private readonly string _path;
-
-        public WorkFolder(string parent)
-        {
-            _path = Path.Combine(parent, "work-" + Guid.NewGuid().ToString("N")[..8]);
-            Directory.CreateDirectory(_path);
-        }
-
-        public string File(string name) => Path.Combine(_path, name);
-
-        public void Dispose()
-        {
-            try
-            {
-                Directory.Delete(_path, recursive: true);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-            }
-        }
-    }
 }

@@ -29,6 +29,12 @@ public partial class MainWindow : Window
     private async void ModLibraryEditButton_Click(object sender, RoutedEventArgs e)
     {
         if (ModLibraryGrid.SelectedItem is not ModLibraryRow row) return;
+        // A mod that only changes game tables is edited in the Game tables window.
+        if (row.Entry.Manifest is { GameData: not null, Assets.Count: 0 })
+        {
+            await OpenGameTablesAsync(row.Entry);
+            return;
+        }
         await RunAuthoringOperationAsync(() => OpenModForAuthoringAsync(row.Entry.ModId, prepare: true));
     }
 

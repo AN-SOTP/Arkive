@@ -396,7 +396,10 @@ public partial class MainWindow : Window
         _arkiveModContext = new ArkiveModApplyContext(
             _arkiveModLibrary, _arkiveModEdits, _guidedTexturePackageWorkspace, _modSetWorkspace,
             _modDeploymentService, Path.Combine(_projectRoot, "backups", "packages"),
-            Path.Combine(_projectRoot, "backups", "installations"));
+            Path.Combine(_projectRoot, "backups", "installations"))
+        {
+            GameDataRoot = _projectRoot,
+        };
         _arkiveModAuthoring = new ArkiveModAuthoringService(_arkiveModLibrary, _arkiveModEdits)
         {
             CleanPackageResolver = (path, token) => _arkiveModApply!.ResolveCleanPackageAsync(path, token),

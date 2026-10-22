@@ -133,15 +133,32 @@ internal static class LostArkDatabaseArchive
     /// Writes a copy of <paramref name="archivePath"/> to <paramref name="outputPath"/> with the database at
     /// <paramref name="entryPath"/> replaced by <paramref name="databasePath"/>, encrypted the way the game stores it.
     /// </summary>
-    internal static void Replace(string archivePath, string entryPath, string databasePath, string outputPath, CancellationToken cancellation)
+    internal static void Replace(string archivePath, string entryPath, string databasePath, string outputPath, CancellationToken cancellation) =>
+        Replace(archivePath, new Dictionary<string, string> { [entryPath] = databasePath }, outputPath, cancellation);
+
+    /// <summary>
+    /// Writes a copy of <paramref name="archivePath"/> to <paramref name="outputPath"/> with each database in
+    /// <paramref name="replacements"/> (entry path, such as EFGame_Extra/ClientData/TableData/EFTable_Item.db, to the
+    /// database file to store there) encrypted the way the game stores it. Every other entry is copied byte for byte.
+    /// </summary>
+    internal static void Replace(string archivePath, IReadOnlyDictionary<string, string> replacements, string outputPath, CancellationToken cancellation)
     {
         using var source = File.OpenRead(archivePath);
-        var target = Find(source, entryPath, cancellation);
-        if (target.CompressedSize != 0) throw new InvalidDataException($"{entryPath} is not a database entry.");
-        var size = new FileInfo(databasePath).Length;
-        if (size < 16 || size > MaximumDatabaseSize) throw new InvalidDataException($"{Path.GetFileName(databasePath)} is not a usable database.");
+        var entries = LostArkDataArchive.ReadEntries(source, cancellation);
+        var targets = new List<(LostArkDataEntry Entry, string Database, long Size)>();
+        foreach (var (entryPath, databasePath) in replacements)
+        {
+            var normalised = "/" + entryPath.Replace('\\', '/').TrimStart('/');
+            var target = entries.FirstOrDefault(entry => entry.Path.Equals(normalised, StringComparison.OrdinalIgnoreCase))
+                         ?? throw new InvalidDataException($"{entryPath} is not in the game's data archive.");
+            if (target.CompressedSize != 0) throw new InvalidDataException($"{entryPath} is not a database entry.");
+            var size = new FileInfo(databasePath).Length;
+            if (size < 16 || size > MaximumDatabaseSize) throw new InvalidDataException($"{Path.GetFileName(databasePath)} is not a usable database.");
+            targets.Add((target, databasePath, size));
+        }
+        targets.Sort((left, right) => left.Entry.Offset.CompareTo(right.Entry.Offset));
 
-        // The index with the entry's sizes changed; every other entry is copied byte for byte.
+        // The index with the entries' sizes changed; every other entry is copied byte for byte.
         source.Position = 0;
         var header = new byte[8];
         source.ReadExactly(header.AsSpan(0, 4));
@@ -149,25 +166,32 @@ internal static class LostArkDatabaseArchive
         var table = new byte[count * EntrySize];
         source.ReadExactly(table);
         CryptIndex(table, encrypt: false);
-        var index = Enumerable.Range(0, count).First(item =>
+        foreach (var target in targets)
         {
-            var record = table.AsSpan(item * EntrySize, EntrySize);
-            var name = Encoding.UTF8.GetString(record.Slice(4, BinaryPrimitives.ReadInt32LittleEndian(record))).TrimEnd('\0');
-            return name.Replace('\\', '/').Equals(target.Path, StringComparison.OrdinalIgnoreCase);
-        });
-        var entry = table.AsSpan(index * EntrySize, EntrySize);
-        BinaryPrimitives.WriteInt32LittleEndian(entry[^12..], (int)size);
-        BinaryPrimitives.WriteInt32LittleEndian(entry[^8..], (int)((size + 15) / 16 * 16));
+            var index = Enumerable.Range(0, count).First(item =>
+            {
+                var record = table.AsSpan(item * EntrySize, EntrySize);
+                var name = Encoding.UTF8.GetString(record.Slice(4, BinaryPrimitives.ReadInt32LittleEndian(record))).TrimEnd('\0');
+                return name.Replace('\\', '/').Equals(target.Entry.Path, StringComparison.OrdinalIgnoreCase);
+            });
+            var entry = table.AsSpan(index * EntrySize, EntrySize);
+            BinaryPrimitives.WriteInt32LittleEndian(entry[^12..], (int)target.Size);
+            BinaryPrimitives.WriteInt32LittleEndian(entry[^8..], (int)((target.Size + 15) / 16 * 16));
+        }
         CryptIndex(table, encrypt: true);
 
         using var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20);
         output.Write(header.AsSpan(0, 4));
         output.Write(table);
         output.Write(header.AsSpan(4, 4));
-        CopyRange(source, output, 8 + table.Length, target.Offset - 8 - table.Length, cancellation);
-        Encrypt(target.Path.Split('/')[^1], databasePath, output, cancellation);
-        var after = target.Offset + target.EncryptedSize;
-        CopyRange(source, output, after, source.Length - after, cancellation);
+        long position = 8 + table.Length;
+        foreach (var target in targets)
+        {
+            CopyRange(source, output, position, target.Entry.Offset - position, cancellation);
+            Encrypt(target.Entry.Path.Split('/')[^1], target.Database, output, cancellation);
+            position = target.Entry.Offset + target.Entry.EncryptedSize;
+        }
+        CopyRange(source, output, position, source.Length - position, cancellation);
     }
 
     // The LPK cipher: Blowfish with each word stored little-endian.

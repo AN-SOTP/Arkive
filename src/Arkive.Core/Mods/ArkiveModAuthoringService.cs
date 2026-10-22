@@ -346,13 +346,16 @@ public sealed class ArkiveModAuthoringService
                         file.Role, files[file.Role], Path.GetFileName(file.Path))).ToArray()));
             }
             packAssets.AddRange(incoming);
-            if (packAssets.Count + carried.Count == 0)
+            if (packAssets.Count + carried.Count == 0 && current.Manifest.GameData is null)
                 Refuse("AUT062", "A mod must keep at least one asset. Remove the mod instead.");
 
             var name = metadata ?? new ArkiveModMetadata(
                 current.Manifest.Name, current.Manifest.Version, current.Manifest.Author,
                 current.Manifest.Description, current.Manifest.Website, current.Manifest.Tags);
-            var manifest = CreateManifest(current.Manifest.ModId, name, current.Manifest.CreatedAt, DateTimeOffset.UtcNow);
+            var manifest = CreateManifest(current.Manifest.ModId, name, current.Manifest.CreatedAt, DateTimeOffset.UtcNow) with
+            {
+                GameData = current.Manifest.GameData,
+            };
             var written = await ArkiveModFileService.WriteAsync(
                     modPath, manifest,
                     packAssets.Select(asset => new ArkiveModPackAsset(asset.Descriptor, asset.Files))

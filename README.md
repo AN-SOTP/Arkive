@@ -216,6 +216,10 @@ The model changes as you move them. **Save as mod** creates a new mod with a wor
 
 **Language** shows the game's text in another language, including languages the game has removed. All of the game's text is in one database in `data2.lpk`, which still holds English, Spanish, French and German. The game shows the English text, so Arkive writes the chosen language's lines in place of the English ones; a line without a translation stays in English. French and German stopped receiving translations when the game removed them, so newer lines stay in English. Each tile shows how much of the game is translated. Arkive copies every translation to its data folder the first time the tab opens and after each game update, so a language the game later drops can still be used. Voices are not changed. **Back to English** puts the game's own `data2.lpk` back byte for byte. It shows the next time Lost Ark starts, and the game must be closed. A game update replaces the file; the tab then says so and you choose again.
 
+### Game tables
+
+**Mods → Game tables…** makes a Game Data mod: changes to the game's own tables in `data2.lpk`, such as which model an item shows (an outfit swap), which NPCs show a name tag and health bar, or the camera's blur and zoom. Pick a database and table, find rows by any value, and double-click a cell to change it; key columns, which name the row, stay as they are. **Import .sql patch…** reads a LostArkPatcher-style patch (a `--File:EFTable_Name.db` line, then `UPDATE` statements): Arkive runs it on a copy of the game's table and keeps each cell it changes, and refuses any other kind of statement. The mod lists each changed cell with the game's value at the time, and goes through the same Apply Plan, priorities, **Restore all game files** and game-update check as other mods: when an update changes a cell a mod was made against, the check marks the mod, and **Rebase mods** (or **Update for this game version**) keeps the mod's value against the new game. Two mods changing one cell follow priority. Game Data mods and the Language tab share one write of `data2.lpk`, so neither undoes the other, and turning every Game Data mod off puts back the game's own tables byte for byte. **More actions → Edit table changes…** adds table changes to any mod.
+
 ### Import, priorities and deployment
 
 Use **Mods → Import**, or open a `.arkive` file with Arkive. Import never installs automatically. Review, enable, set priority, preview the plan, then confirm **Apply changes**.
@@ -299,6 +303,13 @@ Use IDs from `arkive-list` when names collide. Import supports `--enable`, `--pr
 & $cli client-update-check-all $data --json
 & $cli arkive-update $data --mod 'Example' --json
 & $cli arkive-plan $data
+```
+
+Game Data mods can be made from a `.sql` patch, and `game-data-mod` without `--sql` lists the table changes in `data2.lpk` (or in one mod with `--mod`):
+
+```powershell
+& $cli game-data-mod $data --sql 'E:\Downloads\outfit-swap.sql' --name 'Outfit swap'
+& $cli game-data-mod $data
 ```
 
 ### Lower-level authoring
@@ -486,6 +497,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 - The Zone Viewer's 3D map is a very early, extremely rough preview: Lost Ark's layered materials are only roughly reproduced, so many areas look different from the game, the arenas and camera angle are guesses, and some detail drops out when zoomed in. Pieces whose material lives in a package the map does not reference are drawn plain grey. Map lights and height fog colours are level settings Arkive cannot change yet.
 - Recolour changes colours the game exposes (pixels, material colour settings, effect colour tables). Colour that comes from shared textures or base materials changes everything that uses them, and material edits are newer and less tested in game than texture edits.
 - Login Screen edits game files outside the packages: one video in `EFGame\Movies` and two small sound banks in `WwiseAudioPackage`. Pictures need the game's own `bink2w64.dll` in `Binaries\Win64`.
+- Game Data mods change the game's own tables, which are not looks-only: a change the game's server disagrees with may show wrongly or be ignored, and no change has been confirmed in game yet. They rewrite `data2.lpk` too and keep a compressed copy of each table they change. Only changes to existing rows are supported.
 - Language rewrites `EFGame\data2.lpk` (about 1.4 GB) and keeps a compressed copy of the game's text (about 130 MB) plus the saved translations (about 85 MB) in Arkive's data folder. Grammar markers in translations (such as Spanish gender forms) are shown by the game's English text engine and are not yet confirmed in game.
 - CLI authoring requires explicit manifest chaining; the GUI is the recommended named-mod editor.
 - The installer/updater is an unsigned preview; uninstall preserves data and does not restore the game.

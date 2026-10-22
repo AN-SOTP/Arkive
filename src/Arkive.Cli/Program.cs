@@ -4,6 +4,7 @@ using Arkive.Core.Archives;
 using Arkive.Core.Assets;
 using Arkive.Core.Baselines;
 using Arkive.Core.Interface;
+using Arkive.Core.GameData;
 using Arkive.Core.Languages;
 using Arkive.Core.Discovery;
 using Arkive.Core.Databases;
@@ -325,6 +326,8 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--filter"), json),
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
+            "game-data-mod" => GameDataMod(target, ReadTextOption(arguments, "--sql"), ReadTextOption(arguments, "--name"),
+                ReadTextOption(arguments, "--mod"), json),
             "language" => Language(target, ReadTextOption(arguments, "--data"), ReadTextOption(arguments, "--use"),
                 arguments.Contains("--restore", StringComparer.OrdinalIgnoreCase), json),
             "metadata-resolve" => MetadataResolve(
@@ -2593,7 +2596,10 @@ static CliModEnvironment CreateModEnvironment(string projectRoot)
     var context = new ArkiveModApplyContext(
         library, edits, new GuidedTexturePackageWorkspace(Path.Combine(staging, "texture-mods", "_packages")),
         new ArkiveModSetWorkspace(Path.Combine(staging, "mod-sets")), deployment,
-        Path.Combine(root, "backups", "packages"), Path.Combine(root, "backups", "installations"));
+        Path.Combine(root, "backups", "packages"), Path.Combine(root, "backups", "installations"))
+    {
+        GameDataRoot = root,
+    };
     NativeTextureExportService? nativeTextures = null;
     try
     {
@@ -2844,6 +2850,48 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
         if (!string.IsNullOrWhiteSpace(filter))
             foreach (var zone in zones.Take(200))
                 Console.WriteLine($"  {zone.Id} {zone.Name}: {string.Join(", ", zone.Levels)}");
+    }
+    return 0;
+}
+
+// Makes a Game Data mod from a LostArkPatcher-style .sql patch, or lists the table changes of one mod or of data2.lpk.
+static int GameDataMod(string projectRoot, string? sqlPath, string? name, string? modReference, bool json)
+{
+    var environment = CreateModEnvironment(projectRoot);
+    var library = environment.Context.Library;
+    var manifest = library.LoadAsync().GetAwaiter().GetResult();
+    var service = environment.Context.GameDataFor(manifest) ??
+                  throw new ArgumentException("The library's game folder is not set or has no data2.lpk; set it with the Mods tab's Game folder.");
+    if (!string.IsNullOrWhiteSpace(sqlPath))
+    {
+        var import = GameDataAuthoring.ImportSqlAsync(service.Archive, File.ReadAllText(sqlPath)).GetAwaiter().GetResult();
+        var target = modReference is null ? null : ResolveModReference(manifest, modReference);
+        var entry = GameDataAuthoring.SaveModAsync(library, target?.ModId,
+            target is null ? new ArkiveModMetadata(name ?? Path.GetFileNameWithoutExtension(sqlPath), "1.0.0") : null,
+            import.Edits).GetAwaiter().GetResult();
+        if (json) WriteJson(new { entry.ModId, entry.Manifest.Name, entry.FileName, Edits = import.Edits, import.Notes });
+        else
+        {
+            Console.WriteLine($"{entry.Manifest.Name}: {import.Edits.Count:N0} table cell(s) ({entry.FileName}, {entry.ModId[..8]})");
+            foreach (var edit in import.Edits.Take(50))
+                Console.WriteLine($"  {edit.Database} {edit.Table}.{edit.Column} [{edit.RowLabel}]: {GameDataValues.Describe(edit.Original)} -> {GameDataValues.Describe(edit.Value)}");
+            if (import.Edits.Count > 50) Console.WriteLine($"  ...and {import.Edits.Count - 50:N0} more");
+            foreach (var note in import.Notes) Console.WriteLine($"note: {note}");
+            Console.WriteLine("  Enable it with arkive-set --enable, then arkive-plan and arkive-apply --confirm.");
+        }
+        return 0;
+    }
+    var edits = modReference is null
+        ? service.Archive.Current().Edits
+        : ResolveModReference(manifest, modReference).Manifest.GameData?.Edits ?? [];
+    if (json) WriteJson(new { service.Archive.ArchivePath, Current = service.Archive.Current(), Edits = edits });
+    else
+    {
+        Console.WriteLine(modReference is null ? $"In {service.Archive.ArchivePath}:" : "The mod changes:");
+        if (modReference is null) Console.WriteLine($"  Language: {service.Archive.Current().Language ?? "the game's own"}");
+        foreach (var edit in edits)
+            Console.WriteLine($"  {edit.Database} {edit.Table}.{edit.Column} [{edit.RowLabel}] = {GameDataValues.Describe(edit.Value)}");
+        if (edits.Count == 0) Console.WriteLine("  No table changes.");
     }
     return 0;
 }
@@ -3557,6 +3605,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
+    Console.WriteLine("  arkive game-data-mod <Arkive-project-root> [--sql PATCH.sql [--name NAME | --mod ID|NAME]] [--mod ID|NAME] [--json]");
     Console.WriteLine("  arkive language <EFGAME_DIR> --data DIR [--use LANGUAGE | --restore] [--json]");
     Console.WriteLine("  arkive umodel-list <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine(

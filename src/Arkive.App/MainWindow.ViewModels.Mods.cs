@@ -42,6 +42,8 @@ public partial class MainWindow : Window
                 var counts = Entry.Manifest.Assets.GroupBy(asset => asset.Kind)
                     .OrderBy(group => group.Key)
                     .Select(group => $"{group.Count():N0} {KindLabel(group.Key, group.Count())}");
+                if (Entry.Manifest.GameData is { } data)
+                    counts = counts.Append($"{data.Edits.Count:N0} table {(data.Edits.Count == 1 ? "cell" : "cells")}");
                 return string.Join(", ", counts);
             }
         }
@@ -49,7 +51,8 @@ public partial class MainWindow : Window
         public string Packages => string.Join(", ", Entry.Manifest.Assets
             .Select(asset => asset.Target.PackageAlias)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(alias => alias, StringComparer.OrdinalIgnoreCase));
+            .OrderBy(alias => alias, StringComparer.OrdinalIgnoreCase)
+            .Concat(Entry.Manifest.GameData is null ? [] : ["Game tables (data2.lpk)"]));
 
         public bool AuthoringPending { get; init; }
         public bool NeedsGameUpdate { get; init; }
@@ -68,7 +71,7 @@ public partial class MainWindow : Window
             _ => "Imported",
         };
 
-        public bool HasActiveAssets => Status.Assets.Any(asset => asset.InGame == true);
+        public bool HasActiveAssets => Status.Assets.Any(asset => asset.InGame == true) || Status.GameData?.InGame == true;
 
         /// <summary>The pack this mod is listed under, or the run of mods outside packs it sits in.</summary>
         public ModListGroup Group { get; set; } = null!;

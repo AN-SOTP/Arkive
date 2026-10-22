@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Arkive.Core.Assets;
+using Arkive.Core.GameData;
 
 namespace Arkive.Core.Mods;
 
@@ -141,7 +142,8 @@ public static class ArkiveModFileService
         var finalManifest = manifest with
         {
             Format = ArkiveModFileFormat.FormatId,
-            FormatVersion = ArkiveModFileFormat.CurrentFormatVersion,
+            // Older Arkive versions read version 1, so only mods that need version 2 are written as it.
+            FormatVersion = manifest.GameData is null ? 1 : ArkiveModFileFormat.GameDataFormatVersion,
             Assets = packedAssets,
         };
         ValidateManifest(finalManifest);
@@ -197,6 +199,63 @@ public static class ArkiveModFileService
         }
     }
 
+    /// <summary>
+    /// Rewrites the .arkive file at <paramref name="path"/> with <paramref name="manifest"/>, keeping its asset files
+    /// as they are; the manifest must list the same asset files.
+    /// </summary>
+    public static async Task<ArkiveModFileReadResult> RewriteManifestAsync(
+        string path,
+        ArkiveModFileManifest manifest,
+        CancellationToken cancellationToken = default)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var finalManifest = manifest with
+        {
+            FormatVersion = manifest.GameData is null ? 1 : ArkiveModFileFormat.GameDataFormatVersion,
+        };
+        ValidateManifest(finalManifest);
+        var temporary = Path.Combine(
+            Path.GetDirectoryName(fullPath)!, $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await using (var stream = new FileStream(
+                             temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                             BufferBytes, FileOptions.Asynchronous))
+            {
+                using (var source = ZipFile.OpenRead(fullPath))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+                {
+                    var manifestEntry = archive.CreateEntry(ArkiveModFileFormat.ManifestEntryName, CompressionLevel.Optimal);
+                    manifestEntry.LastWriteTime = finalManifest.UpdatedAt;
+                    await using (var manifestStream = manifestEntry.Open())
+                        await JsonSerializer.SerializeAsync(manifestStream, finalManifest, JsonOptions, cancellationToken)
+                            .ConfigureAwait(false);
+                    foreach (var entry in source.Entries.Where(entry =>
+                                 !entry.FullName.Equals(ArkiveModFileFormat.ManifestEntryName, StringComparison.Ordinal)))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var copy = archive.CreateEntry(entry.FullName, entry.FullName.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                            ? CompressionLevel.NoCompression
+                            : CompressionLevel.Optimal);
+                        copy.LastWriteTime = finalManifest.UpdatedAt;
+                        await using var input = entry.Open();
+                        await using var output = copy.Open();
+                        await input.CopyToAsync(output, BufferBytes, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+            var verified = await ReadAsync(temporary, verifyFiles: true, cancellationToken).ConfigureAwait(false);
+            File.Move(temporary, fullPath, overwrite: true);
+            return verified with { Path = fullPath };
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
     public static async Task<IReadOnlyDictionary<string, string>> ExtractAssetFilesAsync(
         string arkivePath,
         ArkiveModFileAsset asset,
@@ -244,6 +303,34 @@ public static class ArkiveModFileService
             extracted[file.Role] = destination;
         }
         return extracted;
+    }
+
+    public const int MaximumGameDataEdits = 200_000;
+
+    private static void ValidateGameData(ArkiveModGameData gameData)
+    {
+        if (gameData.Edits is null || gameData.Edits.Count is 0 or > MaximumGameDataEdits)
+            Refuse("ARK046", $"Game table changes must list between 1 and {MaximumGameDataEdits:N0} cells.");
+        var cells = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var edit in gameData.Edits)
+        {
+            if (edit is null || !GameDataValues.IsDatabaseName(edit.Database) || !GameDataValues.IsIdentifier(edit.Table) ||
+                !GameDataValues.IsIdentifier(edit.Column) || edit.Row is null || edit.Row.Count is 0 or > 8 ||
+                edit.Row.Keys.Any(column => !GameDataValues.IsIdentifier(column)))
+                Refuse("ARK046", "A game table change names an invalid database, table, row or column.");
+            try
+            {
+                foreach (var value in edit.Row.Values.Append(edit.Value).Append(edit.Original))
+                    if (GameDataValues.ToSql(value) is string text && text.Length > 1_000_000)
+                        Refuse("ARK046", $"A value for {edit.Table}.{edit.Column} is too long.");
+            }
+            catch (NotSupportedException)
+            {
+                Refuse("ARK046", $"{edit.Table}.{edit.Column} has a value that is not text, a number or empty.");
+            }
+            if (!cells.Add(edit.CellKey))
+                Refuse("ARK046", $"{edit.Table}.{edit.Column} for {edit.RowLabel} is changed twice.");
+        }
     }
 
     public static string ComputeContentSha256(ArkiveModFileAsset asset)
@@ -324,10 +411,16 @@ public static class ArkiveModFileService
                 $"This mod targets game profile '{manifest.GameProfile}'. Arkive supports {ArkiveModBundleService.WesternGlobalProfile}.");
         if (manifest.UpdatedAt < manifest.CreatedAt)
             Refuse("ARK029", "The mod's update time precedes its creation time.");
-        if (manifest.Assets is null || manifest.Assets.Count == 0 ||
+        if (manifest.Assets is null || manifest.Assets.Count == 0 && manifest.GameData is null ||
             manifest.Assets.Count > ArkiveModFileFormat.MaximumAssets)
             Refuse("ARK030",
                 $"A mod must contain between 1 and {ArkiveModFileFormat.MaximumAssets:N0} assets.");
+        if (manifest.GameData is not null)
+        {
+            if (manifest.FormatVersion < ArkiveModFileFormat.GameDataFormatVersion)
+                Refuse("ARK046", $"Game table changes need format version {ArkiveModFileFormat.GameDataFormatVersion}.");
+            ValidateGameData(manifest.GameData);
+        }
 
         var assetIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var targets = new HashSet<ArkiveModTargetKey>();

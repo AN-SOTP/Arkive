@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Arkive.Core.GameData;
 using Arkive.Core.Mods;
 using Microsoft.Win32;
 
@@ -88,9 +89,11 @@ public partial class MainWindow : Window
                     $"sha256={change.GameSha256}, changed objects={string.Join(", ", change.ChangedObjects)}.");
             _outsideChanges = outside;
             Lap("game files");
+            var installedTables = _arkiveModContext.GameDataFor(library)?.Archive.Current();
             var statuses = await ArkiveModApplyService.DescribeAsync(
                 _arkiveModLibrary, library, snapshot, ActiveRevisionsByPhysicalName(),
-                outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray());
+                outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray(),
+                installedGameData: installedTables);
             Lap("status"); 
             var previous = selectModId ?? (ModLibraryGrid.SelectedItem as ModLibraryRow)?.Entry.ModId;
             // Mods chosen together stay chosen when the list is rebuilt after acting on them.
@@ -233,6 +236,8 @@ public partial class MainWindow : Window
         ModLibraryNewPackButton.IsEnabled = idle && ModLibraryGrid.Items.Count > 1;
         ModLibraryEditButton.IsEnabled = idle && hasRow;
         ModLibraryPrepareButton.IsEnabled = idle && hasRow;
+        ModLibraryGameTablesButton.IsEnabled = idle;
+        ModLibraryEditTablesButton.IsEnabled = idle && hasRow;
         var assetCount = ModLibraryAssetsGrid.SelectedItems.OfType<ModAssetRow>().Count();
         ModLibraryEditAssetButton.IsEnabled = idle && hasRow && assetCount == 1;
         ModLibraryPreviewButton.IsEnabled = idle;
@@ -253,7 +258,8 @@ public partial class MainWindow : Window
         ModLibraryPriorityUpButton.IsEnabled = idle && row is not null;
         ModLibraryPriorityDownButton.IsEnabled = idle && row is not null;
         ModLibraryMakeWinnerButton.IsEnabled = idle && row is not null &&
-                                               row.Status.Assets.Any(asset => asset.Competitor is not null);
+                                               (row.Status.Assets.Any(asset => asset.Competitor is not null) ||
+                                                row.Status.GameData is { Overridden: > 0 } or { Tied: > 0 });
         ModLibrarySaveButton.IsEnabled = idle && hasRow && (row!.Status.ModifiedLocally || row.AuthoringPending);
         ModLibraryUpdateButton.IsEnabled = idle && hasRow;
         ModLibraryGoToPackageButton.IsEnabled = idle && row is not null;
@@ -568,8 +574,9 @@ public partial class MainWindow : Window
     private async void ModLibraryMakeWinnerButton_Click(object sender, RoutedEventArgs e)
     {
         if (ModLibraryGrid.SelectedItem is not ModLibraryRow row) return;
-        var priority = ArkiveModConflictResolver.Resolve(_arkiveModLibraryManifest.Mods)
-            .PriorityToWinAll(row.Entry.ModId);
+        var priority = Math.Max(
+            ArkiveModConflictResolver.Resolve(_arkiveModLibraryManifest.Mods).PriorityToWinAll(row.Entry.ModId),
+            GameDataResolution.PriorityToWinAll(_arkiveModLibraryManifest.Mods, row.Entry.ModId));
         if (priority <= row.Priority)
         {
             ModLibraryStatusText.Text = $"{row.DisplayName} already wins every conflict with an enabled mod.";
@@ -945,8 +952,43 @@ public partial class MainWindow : Window
 
     private async void ModLibraryRestoreAllButton_Click(object sender, RoutedEventArgs e)
     {
-        await RunGuidedQuickDeploymentAsync(restoreAll: true);
+        var tables = _arkiveModContext.GameDataFor(_arkiveModLibraryManifest);
+        var tableCells = tables is null ? 0 : await Task.Run(() => tables.Archive.Current().Edits.Count);
+        if (tableCells == 0 || _guidedPackageRows.Any(HasActiveGuidedDeployment))
+            await RunGuidedQuickDeploymentAsync(restoreAll: true);
+        if (tableCells > 0) await RestoreGameTablesAsync(tables!, tableCells);
         await RefreshArkiveModsAsync("restore all requested");
+    }
+
+    // Takes the Game Data mods' cells out of data2.lpk; the Language tab's choice stays.
+    private async Task RestoreGameTablesAsync(GameDataModService tables, int cells)
+    {
+        if (_guidedTextureModInProgress || _modSetBusy) return;
+        if (MessageBox.Show(this,
+                $"Put back the game's own tables in data2.lpk? This removes {cells:N0} table cell change(s) made by Game Data mods. " +
+                "A language chosen in the Language tab stays.\n\nClose Lost Ark before continuing.",
+                "Restore game tables", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        _guidedTextureModInProgress = true;
+        UpdateGuidedTextureModActionState();
+        try
+        {
+            using var busy = ShowBusy("Restoring the game's tables…",
+                "Arkive is writing the game's own tables back into data2.lpk (about 1.4 GB). Please wait until it finishes.");
+            await Task.Run(() => tables.RestoreAsync());
+            StatusText.Text = "The game's own tables are back in data2.lpk.";
+            Log($"Game tables restored: {cells} cell(s) removed from {tables.Archive.ArchivePath}.");
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            Log($"Restoring the game tables failed: {exception}");
+            MessageBox.Show(this, exception.Message, "Restore game tables", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _guidedTextureModInProgress = false;
+            UpdateGuidedTextureModActionState();
+        }
     }
 
     private async Task RunModApplyAsync(bool previewOnly, string? previewModId = null)
