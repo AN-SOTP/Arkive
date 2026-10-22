@@ -41,7 +41,6 @@ public sealed record OutfitSwapMaterialSources(
     /// </summary>
     public static async Task<OutfitSwapMaterialSources> ReadAsync(
         OutfitSwapPackageLibrary library,
-        AssetCatalogReader reader,
         IReadOnlyList<OutfitSwapPiece> donors,
         OutfitSwapBodyInfo? targetBody,
         CancellationToken cancellationToken)
@@ -67,7 +66,7 @@ public sealed record OutfitSwapMaterialSources(
         {
             var source = await library.LocateAsync(objectName, cancellationToken).ConfigureAwait(false) ??
                          throw new InvalidDataException($"{objectName} is not in the library.");
-            var catalog = await Task.Run(() => reader.Read(source.CleanPackagePath), cancellationToken).ConfigureAwait(false);
+            var catalog = await Task.Run(() => library.Catalog(source.CleanPackagePath), cancellationToken).ConfigureAwait(false);
             return mesh.Materials.Select(slot => Resolve(catalog, source.PackageAlias, slot)).ToArray();
         }
     }

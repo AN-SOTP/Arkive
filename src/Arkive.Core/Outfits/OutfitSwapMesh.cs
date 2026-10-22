@@ -132,6 +132,14 @@ public sealed class OutfitSwapMesh
             }
 
         var materials = (json["materials"]?.AsArray() ?? []).Select(item => (string?)item?["name"] ?? "").ToArray();
+        var references = new Dictionary<int, SkeletalMeshMaterialReference>();
+        var materialIndex = 0;
+        foreach (var item in json["materials"]?.AsArray() ?? [])
+        {
+            if (item is not null && SkeletalMeshMaterialReferences.Read(System.Text.Json.JsonSerializer.SerializeToElement(item)) is { } reference)
+                references[materialIndex] = reference;
+            materialIndex++;
+        }
         var sections = new List<OutfitSwapSection>();
         foreach (var primitive in primitives)
         {
@@ -157,6 +165,7 @@ public sealed class OutfitSwapMesh
             BoneNames = names,
             BonePositions = positions,
             BoneParents = parents,
+            MaterialReferences = references,
         };
     }
 

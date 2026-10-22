@@ -57,6 +57,9 @@ public sealed class OutfitSwapPackageLibrary(
         new ModelViewerRequest(match.SourcePath, match.PackageAlias, packagesRoot, match.ExportIndex, match.SerialOffset, match.SerialSize,
             match.ClassName, match.ObjectName));
 
+    /// <summary>A package's catalogue (names, imports and exports), read the way the library reads its pieces.</summary>
+    public AssetCatalog Catalog(string packagePath) => _catalogReader.Read(packagePath);
+
     /// <summary>The piece's editable GLB exported from its clean package, or null when Arkive cannot rebuild the piece.</summary>
     public Task<string?> EditableGlbAsync(string objectName, CancellationToken cancellationToken) =>
         _exports.GetOrAdd(objectName, name => ExportAsync(name, cancellationToken));

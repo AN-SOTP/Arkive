@@ -154,6 +154,7 @@ public partial class MainWindow
             {
                 Animations = FindViewerAnimationsAsync,
                 Environments = FindViewerEnvironmentsAsync,
+                OwnMaterials = OutfitSwapOwnMaterialsCheckBox.IsChecked == true,
                 Owner = this,
             };
             window.Show();
@@ -219,9 +220,12 @@ public partial class MainWindow
         var report = request.Report;
         var description = $"Outfit swap: {string.Join(", ", request.Donors)} ({report.From.DisplayName}) worn in place of " +
                           $"{string.Join(", ", request.Targets.Select(target => target.ObjectName))} ({report.To.DisplayName})" +
-                          (request.Upscale.Settings is null ? "." : $", shaped by {request.Upscale.Label}.");
+                          (request.Upscale.Settings is null ? "" : $", shaped by {request.Upscale.Label}") +
+                          (request.OwnMaterials ? ", with the outfit's own materials." : ".");
         _authoringDraft = await _modAuthoringWorkspace.CreateAsync(new ArkiveModMetadata(request.ModName, "1.0.0", "", description,
-            Tags: ["outfit-swap", $"outfit-swap:from={report.From.Id}", $"outfit-swap:to={report.To.Id}"]));
+            Tags: request.OwnMaterials
+                ? ["outfit-swap", "outfit-swap:own-materials", $"outfit-swap:from={report.From.Id}", $"outfit-swap:to={report.To.Id}"]
+                : ["outfit-swap", $"outfit-swap:from={report.From.Id}", $"outfit-swap:to={report.To.Id}"]));
         LoadAuthoringMetadata();
 
         // Every asset the swap changes: the replaced pieces, their repainted pictures and their materials.

@@ -25,6 +25,9 @@ public sealed record OutfitSwapSaveRequest(
 {
     /// <summary>Where saving reports its steps (the window's status line).</summary>
     public IProgress<string>? Progress { get; init; }
+
+    /// <summary>The outfit keeps its own materials (nothing is repainted).</summary>
+    public bool OwnMaterials { get; init; }
 }
 
 /// <summary>
@@ -61,6 +64,7 @@ public partial class OutfitSwapWindow : Window
     private OutfitSwapFit? _fit;
     private OutfitSwapPictureResult? _pictures;
     private IReadOnlyList<OutfitSwapMesh> _shown = [];
+    private IReadOnlyList<ModelViewerSceneResult> _donorScenes = [];
     private bool _shownOnce;
     private bool _busy;
 
@@ -120,6 +124,12 @@ public partial class OutfitSwapWindow : Window
     /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
     public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationOffer?>>? Animations { get; init; }
 
+    /// <summary>
+    /// The outfit keeps its own materials: the replaced pieces draw it with the donor's game materials (added to their
+    /// package when the mod is built) instead of repainting their own pictures. Experimental.
+    /// </summary>
+    public bool OwnMaterials { get; init; }
+
     private string SceneCacheRoot => _scenes.Cache.RootDirectory;
 
     private void Status(string text) => StatusText.Text = text;
@@ -154,6 +164,18 @@ public partial class OutfitSwapWindow : Window
             _targetGlbs = glbs;
 
             var progress = new Progress<string>(Status);
+            if (OwnMaterials)
+            {
+                Status("Finding the outfit's own materials…");
+                var body = OutfitSwapBodies.Detect(_targets[0].Mesh, _targets[0].ObjectName) is { } profile ? OutfitSwapBodies.For(profile) : null;
+                var materials = await OutfitSwapMaterialSources.ReadAsync(_library, donors.Select(item => item.Piece).ToArray(), body, token);
+                _fit = await Task.Run(() => _service.FitAsync(donors.Select(item => item.Piece).ToArray(), _targets, _gameBuild, progress, token,
+                    materials), token);
+                _pictures = new OutfitSwapPictureResult(new Dictionary<string, string>(), new Dictionary<string, ModelViewerMaterialEdit>());
+                _donorScenes = donors.Select(item => item.Result).ToArray();
+                await FinishAsync(token);
+                return;
+            }
             _fit = await Task.Run(() => _service.FitAsync(donors.Select(item => item.Piece).ToArray(), _targets, _gameBuild, progress, token), token);
 
             // The donor as the game's shaders draw it: its colours, its lit colours and its roughness and metalness.
@@ -185,20 +207,7 @@ public partial class OutfitSwapWindow : Window
             _pictures = await Task.Run(() => OutfitSwapPictures.PaintAsync(_fit.Plan, donors.Select(item => item.Piece).ToArray(),
                 donors.Select(item => item.Scene).ToArray(), bakedByPiece, _targetScenes, Path.Combine(_workDirectory, "pictures"), token,
                 paintedLit, calibration, surfaceByPiece), token);
-
-            var heads = new List<ModelViewerRequest>();
-            if (OutfitSwapBodies.For(_fit.Report.To) is { } body)
-                foreach (var name in body.Head)
-                    if (await _library.LocateAsync(name, token) is { } head) heads.Add(head.ViewerRequest);
-            _heads = heads;
-            await ShowResultAsync(token);
-            _ = OfferAnimationsAsync(_targetSources[0].ViewerRequest, token);
-            UpscaleComboBox.IsEnabled = true;
-            SaveButton.IsEnabled = true;
-            Status(Describe(_fit.Report));
-            _log($"Outfit swap ready: {string.Join(", ", _donorNames)} onto {string.Join(", ", _targetNames)}; {_fit.Report.From.Id} -> {_fit.Report.To.Id}, " +
-                 $"costumes={_fit.Report.LearnedCostumes}, clipping={_fit.Report.ClippingBeforePercent:N2}%->{_fit.Report.ClippingPercent:N2}%, " +
-                 $"stretched={_fit.Report.StretchedPercent:N2}%, notes={string.Join(" | ", _fit.Report.Notes)}.");
+            await FinishAsync(token);
         }
         catch (OperationCanceledException) when (_closing.IsCancellationRequested)
         {
@@ -208,6 +217,26 @@ public partial class OutfitSwapWindow : Window
             Status($"Could not swap the outfits: {exception.Message}");
             _log($"Outfit swap failed: {exception}");
         }
+    }
+
+    /// <summary>Shows the fitted swap with the new body's face and hair, and lets it be reshaped and saved.</summary>
+    private async Task FinishAsync(CancellationToken token)
+    {
+        var fit = _fit!;
+        var heads = new List<ModelViewerRequest>();
+        if (OutfitSwapBodies.For(fit.Report.To) is { } body)
+            foreach (var name in body.Head)
+                if (await _library.LocateAsync(name, token) is { } head) heads.Add(head.ViewerRequest);
+        _heads = heads;
+        await ShowResultAsync(token);
+        _ = OfferAnimationsAsync(_targetSources[0].ViewerRequest, token);
+        UpscaleComboBox.IsEnabled = true;
+        SaveButton.IsEnabled = true;
+        Status(Describe(fit.Report));
+        _log($"Outfit swap ready{(OwnMaterials ? " (own materials)" : "")}: {string.Join(", ", _donorNames)} onto {string.Join(", ", _targetNames)}; " +
+             $"{fit.Report.From.Id} -> {fit.Report.To.Id}, costumes={fit.Report.LearnedCostumes}, " +
+             $"clipping={fit.Report.ClippingBeforePercent:N2}%->{fit.Report.ClippingPercent:N2}%, " +
+             $"stretched={fit.Report.StretchedPercent:N2}%, notes={string.Join(" | ", fit.Report.Notes)}.");
     }
 
     private static string Describe(OutfitSwapReport report)
@@ -267,7 +296,8 @@ public partial class OutfitSwapWindow : Window
         var edits = new ModelViewerEdits("Outfit swap", glb,
             _pictures!.Pictures.Where(pair => textures.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value),
             _pictures.Materials.Where(pair => materials.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value), []);
-        return await Task.Run(() => _scenes.PrepareAsync(_targetSources[i].ViewerRequest, edits, null, token), token);
+        var scene = await Task.Run(() => _scenes.PrepareAsync(_targetSources[i].ViewerRequest, edits, null, token), token);
+        return OutfitSwapPreview.WithDonorMaterials(scene, mesh, _donorScenes);
     }
 
     private async Task LoadSceneAsync(string sceneJson, bool keepView, CancellationToken token)
@@ -341,7 +371,11 @@ public partial class OutfitSwapWindow : Window
         try
         {
             Status(await _save(new OutfitSwapSaveRequest(name, _donorNames, _targetSources, _shown, _pictures, _targetScenes, _fit.Report,
-                (OutfitSwapUpscaleChoice)UpscaleComboBox.SelectedItem) { Progress = new Progress<string>(text => Status(text + "…")) }));
+                (OutfitSwapUpscaleChoice)UpscaleComboBox.SelectedItem)
+            {
+                Progress = new Progress<string>(text => Status(text + "…")),
+                OwnMaterials = OwnMaterials,
+            }));
         }
         catch (Exception exception)
         {

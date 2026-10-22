@@ -1238,7 +1238,7 @@ static int OutfitSwapMod(string packagesRoot, string? indexCache, string? wear, 
     var donors = wear.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Load).ToArray();
     var targets = replace.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Load).ToArray();
     var targetBody = targets.Select(piece => OutfitSwapBodies.Detect(piece.Mesh, piece.ObjectName)).FirstOrDefault(profile => profile is not null);
-    var sources = OutfitSwapMaterialSources.ReadAsync(library, catalogReader, donors,
+    var sources = OutfitSwapMaterialSources.ReadAsync(library, donors,
         targetBody is null ? null : OutfitSwapBodies.For(targetBody), token).GetAwaiter().GetResult();
     var service = new OutfitSwapService(library, Path.Combine(cache, "outfit-swap"));
     var fit = service.FitAsync(donors, targets, "cli", progress, token, sources).GetAwaiter().GetResult();
