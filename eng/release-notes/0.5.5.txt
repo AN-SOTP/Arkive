@@ -1,0 +1,8 @@
+Apply changes is much faster with effect and material mods, and a few rough edges from the 0.5 game-update work are smoothed out.
+
+- Apply changes now writes all of a package's effect and material changes in one pass. Before, it rewrote and re-checked the whole package once per effect: a package with 249 effects took about 4 minutes and now takes about 8 seconds. Changed parts of a package are also compressed side by side.
+- Mods can hold materials that share a name in one package (such as mat and mat_p2 versions in a zone). Adding the same one twice now reuses its copy instead of making a second one that could not be saved.
+- The skill preview draws your mod's texture edits on a boss's other parts and on the skill's effects, including mesh effects. Before, only the mesh you opened showed them. Preview with edits in Edit Mods also works for mods of textures and materials only, such as a boss recolour: it opens the model they belong to.
+- When Arkive starts and a newer version is out, it asks whether to install it before loading your mods and the game database.
+- After rebasing, Arkive saves only the mods whose rebased assets changed, and no longer lists mods open in Edit mods as "could not be rebased".
+- The README's game-update steps and Mod Library screenshot show the new buttons.
