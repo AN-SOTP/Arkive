@@ -29,6 +29,7 @@ public partial class MainWindow : Window
 {
     /// <summary>Hashes of working files and game packages, kept between sessions (see <see cref="ArkiveModEditSnapshot.LoadHashCache"/>).</summary>
     private string FileHashCachePath => Path.Combine(_projectRoot, "cache", "file-hashes.json");
+    private string OutsideChangeCachePath => Path.Combine(_projectRoot, "cache", "outside-changes.json");
 
     private StartupProgressWindow? _startupWindow;
     private (string Text, bool Done) _startupMods = ("Loading your working files…", false);
@@ -69,6 +70,7 @@ public partial class MainWindow : Window
         if (_restoredSettings.CheckForUpdatesOnStartup && await OfferApplicationUpdateAtStartupAsync()) return;
         _ = ShowStartupWindowWhenSlowAsync();
         ArkiveModEditSnapshot.LoadHashCache(FileHashCachePath);
+        ArkiveModApplyService.LoadOutsideChangeCache(OutsideChangeCachePath);
         _ = CleanUpUpdateDownloadsAsync();
         _ = CleanUpViewerCacheAsync();
         Log(
@@ -143,7 +145,11 @@ public partial class MainWindow : Window
             $"Workspace restoration completed: root={_libraryRootPath ?? "none"}, " +
             $"metadataLoaded={_gameMetadataIndex is not null}, tab={MainTabControl.SelectedIndex}.");
         _ = TrimPackageBuildsAsync("startup");
-        _ = Task.Run(() => ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath));
+        _ = Task.Run(() =>
+        {
+            ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath);
+            ArkiveModApplyService.SaveOutsideChangeCache(OutsideChangeCachePath);
+        });
         _ = NoticeGameUpdateAsync();
         if (Application.Current is App { StartupModFiles.Count: > 0 } app)
             await ImportModFilesAsync(app.StartupModFiles);

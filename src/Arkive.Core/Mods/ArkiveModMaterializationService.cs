@@ -86,6 +86,54 @@ public sealed class ArkiveModMaterializationService
         var packageHash = knownPackageSha256 ??
                           await ArkiveModEditSnapshot.HashFileCachedAsync(path, cancellationToken).ConfigureAwait(false);
         var catalogue = _catalogReader.Read(path);
+        var logical = new Lazy<LogicalPackageStream>(() => new LogicalPackageStream(catalogue.Summary, _services.ProtectionProvider));
+        try
+        {
+            return CheckTarget(asset, path, packageHash, catalogue, logical, cancellationToken);
+        }
+        finally
+        {
+            if (logical.IsValueCreated) logical.Value.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// <see cref="CheckTargetAsync"/> for several assets of one package: its catalogue is read and its bytes decoded
+    /// once, instead of once per asset (a changed effect package holds hundreds of a mod's effects).
+    /// </summary>
+    public async Task<IReadOnlyList<ArkiveModTargetCheck>> CheckTargetsAsync(
+        IReadOnlyList<ArkiveModFileAsset> assets,
+        string packagePath,
+        string? knownPackageSha256 = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(assets);
+        var path = Path.GetFullPath(packagePath);
+        if (!File.Exists(path) || assets.Count == 0)
+            return await Task.WhenAll(assets.Select(asset => CheckTargetAsync(asset, path, knownPackageSha256, cancellationToken)))
+                .ConfigureAwait(false);
+        var packageHash = knownPackageSha256 ??
+                          await ArkiveModEditSnapshot.HashFileCachedAsync(path, cancellationToken).ConfigureAwait(false);
+        var catalogue = _catalogReader.Read(path);
+        var logical = new Lazy<LogicalPackageStream>(() => new LogicalPackageStream(catalogue.Summary, _services.ProtectionProvider));
+        try
+        {
+            return assets.Select(asset => CheckTarget(asset, path, packageHash, catalogue, logical, cancellationToken)).ToArray();
+        }
+        finally
+        {
+            if (logical.IsValueCreated) logical.Value.Dispose();
+        }
+    }
+
+    private static ArkiveModTargetCheck CheckTarget(
+        ArkiveModFileAsset asset,
+        string path,
+        string packageHash,
+        AssetCatalog catalogue,
+        Lazy<LogicalPackageStream> logical,
+        CancellationToken cancellationToken)
+    {
         var matches = catalogue.Assets.Where(entry =>
                 entry.ObjectName.Equals(asset.Target.ObjectName, StringComparison.OrdinalIgnoreCase) &&
                 ArkiveModFileService.KindMatches(asset.Kind, entry.ClassName))
@@ -96,8 +144,7 @@ public sealed class ArkiveModMaterializationService
             return new ArkiveModTargetCheck(ArkiveModTargetState.Missing, path, packageHash, null,
                 $"{asset.Target.ObjectName} no longer exists in {asset.Target.PhysicalPackageName}.");
         // Export indices move between client versions, so same-named exports are told apart by content.
-        using var logical = new LogicalPackageStream(catalogue.Summary, _services.ProtectionProvider);
-        var identical = matches.Where(entry => logical.HashRangeSha256(entry.SerialOffset, entry.SerialSize, cancellationToken)
+        var identical = matches.Where(entry => logical.Value.HashRangeSha256(entry.SerialOffset, entry.SerialSize, cancellationToken)
             .Equals(asset.Target.SourceExportSha256, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (identical.Length > 1 || (identical.Length == 0 && matches.Length > 1))
             return new ArkiveModTargetCheck(ArkiveModTargetState.Ambiguous, path, packageHash, null,
