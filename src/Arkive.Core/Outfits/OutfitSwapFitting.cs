@@ -9,13 +9,14 @@ namespace Arkive.Core.Outfits;
 /// </summary>
 public static partial class OutfitSwapFitting
 {
-    // Body bones that turn on their own: the limb and spine segments. Hands, feet, the head and twist helpers turn with
-    // their parent; outfit bones (skirts, capes, hair) follow their nearest body bone entirely, because they sit
-    // differently from one outfit to the next.
-    [GeneratedRegex(@"^bip001-(spine\d?|neck|[lr]-(clavicle|upperarm|forearm|thigh|calf))$")]
+    // Body bones that turn on their own: the limb and spine segments, hands and fingers (each class rests its fingers
+    // differently), and feet (aimed at the toes, so shoes follow the new body's heel height). The head and twist helpers
+    // turn with their parent; outfit bones (skirts, capes, hair)
+    // follow their nearest body bone entirely, because they sit differently from one outfit to the next.
+    [GeneratedRegex(@"^bip001-(spine\d?|neck|[lr]-(clavicle|upperarm|forearm|thigh|calf|foot|hand|finger\d+))$")]
     private static partial Regex TurnsOnItsOwn();
 
-    [GeneratedRegex(@"^bip001-([lr]-(hand|foot)|head)$")]
+    [GeneratedRegex(@"^bip001-([lr]-(hand|foot|toe0)|head)$")]
     private static partial Regex LimbEnd();
 
     [GeneratedRegex(@"^bip001|twist")]
@@ -118,9 +119,25 @@ public static partial class OutfitSwapFitting
     ];
 
     public const int FeatureCount = 14;
+    public const int LeftHand = 7;
+    public const int RightHand = 8;
 
     public static int[] BoneGroups(IReadOnlyList<string> names) =>
         names.Select(name => Array.FindIndex(Groups, group => group.IsMatch(name)) is var g and >= 0 ? g : Groups.Length).ToArray();
+
+    [GeneratedRegex(@"^bip001-[lr]-(foot|toe\d*)$")]
+    private static partial Regex FootBone();
+
+    /// <summary>For each vertex, how much of its weight hangs from the feet and toes.</summary>
+    public static float[] FootShares(OutfitSwapMesh mesh)
+    {
+        var foot = mesh.BoneNames.Select(name => FootBone().IsMatch(name)).ToArray();
+        var shares = new float[mesh.VertexCount];
+        for (var v = 0; v < shares.Length; v++)
+            for (var k = 0; k < 4; k++)
+                if (foot[mesh.Joints[v * 4 + k]]) shares[v] += mesh.Weights[v * 4 + k];
+        return shares;
+    }
 
     /// <summary>For each vertex, how much of its weight hangs from each group.</summary>
     public static float[] Features(OutfitSwapMesh mesh, IReadOnlyList<int> vertices)
@@ -203,8 +220,25 @@ public sealed class OutfitSwapShapeField
     public int SampleCount => _corrections.Length;
     public int CostumeCount { get; }
 
+    // Feature groups of the left side and their right-side twins (see OutfitSwapFitting.Groups).
+    private static readonly int[] MirrorGroup = [0, 1, 2, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 13];
+
+    /// <summary>
+    /// Every sample also counts mirrored to the other side (bodies are symmetric, Z is left to right), so a costume
+    /// that one side of the training pair fits oddly cannot bend only one arm or leg.
+    /// </summary>
     public OutfitSwapShapeField(Vector3[] moved, float[] features, Vector3[] corrections, int costumes)
     {
+        var count = moved.Length;
+        var mirroredFeatures = new float[features.Length * 2];
+        features.CopyTo(mirroredFeatures, 0);
+        for (var i = 0; i < count; i++)
+            for (var f = 0; f < OutfitSwapFitting.FeatureCount; f++)
+                mirroredFeatures[(count + i) * OutfitSwapFitting.FeatureCount + MirrorGroup[f]] = features[i * OutfitSwapFitting.FeatureCount + f];
+        static Vector3 Mirror(Vector3 value) => new(value.X, value.Y, -value.Z);
+        moved = [.. moved, .. moved.Select(Mirror)];
+        corrections = [.. corrections, .. corrections.Select(Mirror)];
+        features = mirroredFeatures;
         const int dimensions = 3 + OutfitSwapFitting.FeatureCount;
         var points = new float[moved.Length * dimensions];
         for (var i = 0; i < moved.Length; i++)

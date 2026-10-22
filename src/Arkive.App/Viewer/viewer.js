@@ -170,6 +170,10 @@ const isTranslucent = (info) => /Translucent|Additive|Modulate/i.test(info?.blen
 /// translated pixel shader when `game` is given (its roughness and metalness too, when it writes them).
 /// Translucent materials are drawn like the game's auto-sorting: an `opaque` part (nearly opaque pixels,
 /// writing depth) and a `blend` part (the rest, blended over it), so hair and layered cloth sort correctly.
+// Texture-space bakes render once per UV tile; the shift is shared by every bake material.
+const bakeTile = { value: new THREE.Vector2() };
+const bakePosition = 'gl_Position = vec4((uv.x + ark_bakeTile.x) * 2.0 - 1.0, 1.0 - (uv.y + ark_bakeTile.y) * 2.0, 0.0, 1.0);';
+
 function recipeMaterial(info, plan, game, bake = false, part = null) {
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 });
   material.name = info.name;
@@ -244,9 +248,12 @@ function recipeMaterial(info, plan, game, bake = false, part = null) {
         .replace('#include <uv_vertex>', '#include <uv_vertex>\nark_vUv1 = uv1;');
     }
     if (bake) {
-      // Rasterise in texture space: each triangle lands where its UV set 0 coordinates are.
-      shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>',
-        '#include <project_vertex>\ngl_Position = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);');
+      // Rasterise in texture space: each triangle lands where its UV set 0 coordinates are (shifted by whole tiles,
+      // so islands laid out beyond 0..1 on a repeating texture land on the texels they use).
+      shader.uniforms.ark_bakeTile = bakeTile;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform vec2 ark_bakeTile;')
+        .replace('#include <project_vertex>', `#include <project_vertex>\n${bakePosition}`);
     }
     let fs = shader.fragmentShader.replace('#include <common>', `#include <common>\n${secondUv}\n${game ? '' : state.scene.glslPrelude}\n${declarations}`);
     fs = fs.replace('#include <map_fragment>', baseColour);
@@ -1771,7 +1778,8 @@ post({ type: 'ready' });
 
 // Baking: renders each material's colour in texture space (UV set 0) into PNGs for exports.
 const coverageMaterial = new THREE.ShaderMaterial({
-  vertexShader: '#include <common>\n#include <skinning_pars_vertex>\nvoid main() { gl_Position = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0); }',
+  uniforms: { ark_bakeTile: bakeTile },
+  vertexShader: `#include <common>\n#include <skinning_pars_vertex>\nuniform vec2 ark_bakeTile;\nvoid main() { ${bakePosition} }`,
   fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }',
   side: THREE.DoubleSide,
   depthTest: false,
@@ -1802,7 +1810,17 @@ function renderBake(meshes, material, size) {
   renderer.setRenderTarget(target);
   renderer.setClearColor(0x000000, 0);
   renderer.clear();
-  renderer.render(bakeScene, camera);
+  const previousAutoClear = renderer.autoClear;
+  renderer.autoClear = false;
+  // One pass per UV tile around 0..1; triangles of the other tiles fall outside the target.
+  for (const x of [0, -1, 1]) {
+    for (const y of [0, -1, 1]) {
+      bakeTile.value.set(x, y);
+      renderer.render(bakeScene, camera);
+    }
+  }
+  bakeTile.value.set(0, 0);
+  renderer.autoClear = previousAutoClear;
   const pixels = new Uint8Array(size * size * 4);
   renderer.readRenderTargetPixels(target, 0, 0, size, size, pixels);
   renderer.setRenderTarget(previousTarget);

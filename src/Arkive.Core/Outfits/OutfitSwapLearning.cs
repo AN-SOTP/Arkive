@@ -20,7 +20,7 @@ public interface IOutfitSwapLibrary
 /// </summary>
 public sealed class OutfitSwapLearning(IOutfitSwapLibrary library, string cacheDirectory)
 {
-    private const int CacheVersion = 1;
+    private const int CacheVersion = 2;
     private const int CostumeLimit = 20;
 
     public async Task<OutfitSwapShapeField?> LearnAsync(OutfitSwapBodyInfo from, OutfitSwapBodyInfo to, string gameBuild,

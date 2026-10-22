@@ -22,6 +22,9 @@ internal static class OutfitSwapSmokeTests
     {
         Assert(OutfitSwapBodies.StripLocale("pc_mbd_hr_00a_upper_sk_loc_int") == "pc_mbd_hr_00a_upper_sk", "the region suffix is dropped");
         Assert(OutfitSwapBodies.Part("pc_mbd_hr_00a_upper_sk_loc_int") == "upper", "a worn class skin's part is found under its suffix");
+        Assert(OutfitSwapBodies.OwnsPicture("pc_wbk_f_av_137_upper_sk", "pc_wbk_f_av_137_upper_d") &&
+               !OutfitSwapBodies.OwnsPicture("pc_wbk_f_av_137_upper_sk", "pc_sdm_av_137_gem_d") &&
+               !OutfitSwapBodies.OwnsPicture("pc_wbk_f_av_137_upper_sk", "flat_black"), "only the piece's own class's pictures are repainted");
         Assert(OutfitSwapBodies.Part("pc_wbk_f_hr_02_dress_sk") == "dress" && OutfitSwapBodies.Part("pc_wr_f_av_226a_head_sk") is null,
             "dresses are swapped, headwear is not");
         Assert(OutfitSwapBodies.OutfitStem("pc_dl_av_217a_upper_sk") == OutfitSwapBodies.OutfitStem("pc_dl_av_217a_lower_sk"),
@@ -61,6 +64,9 @@ internal static class OutfitSwapSmokeTests
         var big = new OutfitSwapShapeField([new(0, 1, 0)], new float[OutfitSwapFitting.FeatureCount], [new(0.2f, 0, 0)], 1);
         Assert(Math.Abs(big.Correct([new(0, 1, 0)], new float[OutfitSwapFitting.FeatureCount])[0].X - 0.04f) < 1e-5f,
             "a correction is limited to 4 cm");
+        var oneSided = new OutfitSwapShapeField([new(0, 1, -0.3f)], new float[OutfitSwapFitting.FeatureCount], [new(0, 0, -0.01f)], 1);
+        var mirrored = oneSided.Correct([new(0, 1, 0.3f)], new float[OutfitSwapFitting.FeatureCount]);
+        Assert(Math.Abs(mirrored[0].Z - 0.01f) < 1e-4f, "what was learned on one side applies mirrored to the other");
     }
 
     private static void TestPushOut()
@@ -76,6 +82,15 @@ internal static class OutfitSwapSmokeTests
         Assert(result[0].Y > 1.0015f && result[0].Y < 1.0035f, $"the cloth is back 2 mm above the skin ({result[0].Y:N4})");
         var (signed, _, _) = body.Measure([new(0, 0.99f, 0), new(0, 1.01f, 0)]);
         Assert(signed[0] < -0.009f && signed[1] > 0.009f, "inside and outside are told apart");
+        // Bare skin 1 cm above the patch lands on it and the cloth next to it moves along; held skin stays.
+        var snapped = OutfitSwapClearance.SnapSkin([new(0, 1.01f, 0), new(0.01f, 1.013f, 0), new(-0.01f, 1.01f, 0)], [false, true, false],
+            [0, 0, 1], body);
+        Assert(Math.Abs(snapped[0].Y - 1) < 1e-4f, $"the skin lies on the body ({snapped[0].Y:N4})");
+        Assert(snapped[1].Y < 1.012f && snapped[1].Y > 1.0025f, $"the cloth beside it follows part of the way ({snapped[1].Y:N4})");
+        Assert(Math.Abs(snapped[2].Y - 1.01f) < 1e-5f, "held skin (feet) keeps its place");
+        var surface = body.Closest(new(0.02f, 1.05f, 0.01f));
+        Assert(surface.Triangle >= 0 && Math.Abs(surface.Position.Y - 1) < 1e-5f && Math.Abs(surface.Position.X - 0.02f) < 1e-5f,
+            "the closest point on the body is straight below");
     }
 
     private static void TestPlanner()
@@ -83,23 +98,23 @@ internal static class OutfitSwapSmokeTests
         var bones = new (string, Vector3, int)[] { ("bip001-pelvis", new(0, 1, 0), -1) };
         var donor = Mesh(bones, [(new(0, 1, 0.1f), 0), (new(0.1f, 1, 0), 0), (new(0, 1.1f, 0), 0), (new(0, 1, -0.1f), 0)],
             sections: [new(0, [0, 1, 2]), new(1, [1, 2, 3]), new(2, [0, 2, 3]), new(3, [0, 1, 3])],
-            materials: ["mat.pc_x_a_mi", "mat.pc_x_b_mi", "mat.pc_x_c_mi", "mat.pc_x_base_upper_mi"]);
-        var donorMaterials = Enumerable.Range(0, 4).Select(slot => Material(slot, donor.Materials[slot], $"pc_x_{slot}_d")).ToArray();
+            materials: ["mat.pc_xx_a_mi", "mat.pc_xx_b_mi", "mat.pc_xx_c_mi", "mat.pc_xx_base_upper_mi"]);
+        var donorMaterials = Enumerable.Range(0, 4).Select(slot => Material(slot, donor.Materials[slot], $"pc_xx_{slot}_d")).ToArray();
         var target = Mesh(bones, [(new(0, 1, 0), 0), (new(0.1f, 1, 0), 0), (new(0, 1.1f, 0), 0)], sections: [new(0, [0, 1, 2])],
-            materials: ["mat.pc_y_a_mi", "mat.pc_y_b_mi", "mat.pc_y_base_upper_mi"]);
-        var targetMaterials = new[] { Material(0, "pc_y_a_mi", "pc_y_a_d"), Material(1, "pc_y_b_mi", "pc_y_b_d"), Material(2, "pc_y_base_upper_mi", "pc_y_body_d") };
-        var engine = Mesh(bones, [(new(0, 1, 0), 0), (new(0.1f, 1, 0), 0), (new(0, 1.1f, 0), 0)], sections: [new(0, [0, 1, 2])], materials: ["mat.pc_z_mi"]);
+            materials: ["mat.pc_yy_a_mi", "mat.pc_yy_b_mi", "mat.pc_yy_base_upper_mi"]);
+        var targetMaterials = new[] { Material(0, "pc_yy_a_mi", "pc_yy_a_d"), Material(1, "pc_yy_b_mi", "pc_yy_b_d"), Material(2, "pc_yy_base_upper_mi", "pc_yy_body_d") };
+        var engine = Mesh(bones, [(new(0, 1, 0), 0), (new(0.1f, 1, 0), 0), (new(0, 1.1f, 0), 0)], sections: [new(0, [0, 1, 2])], materials: ["mat.pc_zz_mi"]);
         var plan = OutfitSwapPlanner.Plan(
-            [new OutfitSwapPiece("pc_x_av_1_dress_sk", donor, donorMaterials)], [donor.Positions],
-            [new OutfitSwapPiece("pc_y_av_1_upper_sk", target, targetMaterials),
-             new OutfitSwapPiece("pc_y_av_1_lower_sk", engine, [Material(0, "pc_z_mi", "diffuse")])], null);
+            [new OutfitSwapPiece("pc_xx_av_1_dress_sk", donor, donorMaterials)], [donor.Positions],
+            [new OutfitSwapPiece("pc_yy_av_1_upper_sk", target, targetMaterials),
+             new OutfitSwapPiece("pc_yy_av_1_lower_sk", engine, [Material(0, "pc_zz_mi", "pc_zz_av_1_d")])], null);
         Assert(plan.Canvases.Count == 2 && plan.Canvases.Sum(canvas => canvas.Tiles.Count) == 3,
             "three cloth materials share the two pictures of their own");
         Assert(plan.Canvases.Any(canvas => canvas.Grid == 2), "two materials share one picture in a grid");
         var upper = plan.Pieces[0].Mesh;
         Assert(upper.Sections.Any(section => section.Material == 2), "the skin section uses the target's own skin slot");
         Assert(plan.Pieces[1].Hidden && plan.Pieces[1].Mesh.Sections.Single().Triangles.Length == 3,
-            "a piece drawn only with the game's shared pictures is hidden with one tiny triangle");
+            "a piece drawn only with pictures it does not own (another class's) is hidden with one tiny triangle");
         var packed = plan.Canvases.Single(canvas => canvas.Grid == 2);
         var rect = packed.Rect(packed.Tiles[1].Piece, packed.Tiles[1].Material)!.Value;
         Assert(rect == new Vector4(0.5f, 0, 1, 0.5f), "the second tile takes the top right square");

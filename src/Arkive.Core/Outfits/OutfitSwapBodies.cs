@@ -52,6 +52,17 @@ public static partial class OutfitSwapBodies
     /// <summary>Lower-body skin (legs) or upper-body skin (chest, arms).</summary>
     public static bool IsLowerSkin(string material) => OutfitSwapMesh.ShortMaterialName(material).Contains("lower", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Whether a picture belongs to the piece's own class (pc_wbk_f_… for a Slayer piece), so repainting it changes nothing
+    /// of another class's outfits that happen to share it. Pictures shared with the whole game do not start with pc_.
+    /// </summary>
+    public static bool OwnsPicture(string objectName, string texture) =>
+        ClassPrefix().Match(StripLocale(objectName)) is { Success: true } match &&
+        texture.StartsWith(match.Value, StringComparison.OrdinalIgnoreCase);
+
+    [GeneratedRegex(@"^pc_[a-z]{2,3}(_[mf])?_", RegexOptions.IgnoreCase)]
+    private static partial Regex ClassPrefix();
+
     /// <summary>The pieces of one outfit by their part (upper, lower, dress…), from object names.</summary>
     public static string? OutfitStem(string objectName) => BodyProfiles.OutfitStem(StripLocale(objectName));
 

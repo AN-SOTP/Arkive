@@ -65,29 +65,50 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             foreach (var section in mesh.Sections)
                 if (!OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
                     foreach (var v in section.Triangles) cloth[v] = true;
+            // Feet and shoes keep the shape the donor's artists gave them and only follow the skeleton: a shoe is made
+            // around its own foot, and bending either onto the new body's foot crumples soles and toes.
+            var feet = OutfitSwapFitting.FootShares(mesh);
+            var movable = cloth.Select((value, v) => value && feet[v] < 0.5f).ToArray();
             if (field is not null)
             {
                 var all = Enumerable.Range(0, mesh.VertexCount).ToArray();
-                var correction = field.Correct(moved, OutfitSwapFitting.Features(mesh, all));
+                var features = OutfitSwapFitting.Features(mesh, all);
+                var correction = field.Correct(moved, features);
+                // Hands follow the skeleton alone too: costumes rarely cover them, so what the field says there is guesswork.
+                for (var v = 0; v < correction.Length; v++)
+                    correction[v] *= Math.Clamp(1 - feet[v] - features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand]
+                                                  - features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand], 0, 1);
                 moved = Add(moved, Expand(OutfitSwapFitting.SmoothOnMesh(Average(correction, ids, weldedCount), triangles), ids));
+            }
+            var weldedCloth = new bool[weldedCount];
+            var weldedFeet = new float[weldedCount];
+            for (var v = 0; v < ids.Length; v++)
+            {
+                weldedCloth[ids[v]] |= cloth[v];
+                weldedFeet[ids[v]] = Math.Max(weldedFeet[ids[v]], feet[v]);
             }
             if (from.Female != to.Female && donorBody is not null && targetBody is not null)
             {
-                var weldedCloth = new bool[weldedCount];
-                for (var v = 0; v < ids.Length; v++) weldedCloth[ids[v]] |= cloth[v];
                 var wrapped = OutfitSwapClearance.Conform(Average(mesh.Positions, ids, weldedCount), Average(moved, ids, weldedCount),
                     donorBody, targetBody, weldedCloth, triangles);
                 moved = Expand(wrapped, ids);
             }
+            if (targetBody is { Native: true })
+                moved = Expand(OutfitSwapClearance.SnapSkin(Average(moved, ids, weldedCount), weldedCloth,
+                    weldedFeet.Select(share => Math.Clamp((share - 0.1f) / 0.4f, 0, 1)).ToArray(), targetBody), ids);
+            // Cloth that lay over the outfit's own bare skin stays over it now the skin has moved.
+            if (OutfitSwapClearance.SkinSurface(mesh, mesh.Positions) is { } donorSkin &&
+                OutfitSwapClearance.SkinSurface(mesh, moved) is { } movedSkin)
+                moved = OutfitSwapClearance.PushOut(mesh.Positions, moved, donorSkin, movedSkin, movable, reach: 0.015f);
             if (donorBody is not null && targetBody is not null)
             {
                 var (donorGap, donorNear, _) = donorBody.Measure(mesh.Positions);
                 var before = targetBody.Measure(moved).Signed;
-                moved = OutfitSwapClearance.PushOut(mesh.Positions, moved, donorBody, targetBody, cloth);
+                moved = OutfitSwapClearance.PushOut(mesh.Positions, moved, donorBody, targetBody, movable);
                 var after = targetBody.Measure(moved).Signed;
                 for (var v = 0; v < moved.Length; v++)
                 {
-                    if (!cloth[v] || donorNear[v] >= 0.08f || donorGap[v] <= -0.001f) continue;
+                    if (!movable[v] || donorNear[v] >= 0.08f || donorGap[v] <= (donorBody.Native ? -0.001f : -0.01f)) continue;
                     judged++;
                     if (before[v] < -0.002f) clippedBefore++;
                     if (after[v] < -0.002f) clippedAfter++;
@@ -151,7 +172,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents,
             });
         }
-        return moved.Count > 0 ? new OutfitSwapBody(moved) : null;
+        return moved.Count > 0 ? new OutfitSwapBody(moved, native: false) : null;
     }
 
     private static Vector3[] Add(Vector3[] a, Vector3[] b) => a.Select((value, i) => value + b[i]).ToArray();

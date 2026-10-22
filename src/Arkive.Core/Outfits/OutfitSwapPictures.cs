@@ -46,6 +46,7 @@ public static class OutfitSwapPictures
         var pictures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var materials = new Dictionary<string, ModelViewerMaterialEdit>(StringComparer.OrdinalIgnoreCase);
         var targetMaterials = targetScenes.SelectMany((scene, piece) => scene.Materials.Select(material => (Scene: scene, Material: material))).ToArray();
+        byte[]? skinTone = null;
         foreach (var canvas in plan.Canvases)
         {
             var holders = targetMaterials.Where(item =>
@@ -73,15 +74,20 @@ public static class OutfitSwapPictures
                         baked = null;
                     }
                 }
-                tiles.Add((await ReadMapsAsync(scene, material, baked, cancellationToken).ConfigureAwait(false),
-                    canvas.Rect(piece, slot), material));
+                var maps = await ReadMapsAsync(scene, material, baked, cancellationToken).ConfigureAwait(false);
+                if (material.Translucent && !holder.Translucent)
+                {
+                    skinTone ??= await SkinToneAsync(targetMaterials, cancellationToken).ConfigureAwait(false);
+                    Flatten(maps.Colour, skinTone);
+                }
+                tiles.Add((maps, canvas.Rect(piece, slot), material));
             }
             foreach (var role in new[] { OutfitSwapPlanner.Role.Colour, OutfitSwapPlanner.Role.Normal, OutfitSwapPlanner.Role.Mask,
                          OutfitSwapPlanner.Role.Specular, OutfitSwapPlanner.Role.Orm, OutfitSwapPlanner.Role.Emissive })
             {
                 var name = OutfitSwapPlanner.Texture(holder, role);
-                // Only the outfit's own pictures; the game's shared pictures are used by everything.
-                if (name is null || !name.StartsWith("pc_", StringComparison.OrdinalIgnoreCase)) continue;
+                // Only the class's own pictures; the game's shared pictures (and other classes') are used elsewhere too.
+                if (name is null || !OutfitSwapBodies.OwnsPicture(holderScene.Scene.Object.ObjectName, name)) continue;
                 var size = holderScene.PictureSize(name) ?? (1024, 1024);
                 RgbaImage image;
                 if (canvas.Grid == 1)
@@ -202,6 +208,45 @@ public static class OutfitSwapPictures
         {
             Colour = colour, Normal = normal, Mask = Solid(w, h, 0, 0, 0, 255), Specular = specular, Orm = orm, Emissive = emissive,
         };
+    }
+
+    /// <summary>
+    /// See-through cloth (sheer sleeves, stockings) drawn by a solid or cut-out material: what showed through it is
+    /// painted in instead (bare skin, as most sheer cloth lies on it), so it neither turns solid grey nor full of holes.
+    /// Fully clear parts stay cut out.
+    /// </summary>
+    private static void Flatten(RgbaImage colour, byte[] under)
+    {
+        var pixels = colour.Pixels;
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            var alpha = pixels[i + 3] / 255f;
+            if (alpha < 0.02f) { pixels[i + 3] = 0; continue; }
+            for (var c = 0; c < 3; c++) pixels[i + c] = (byte)Math.Clamp(MathF.Round(pixels[i + c] * alpha + under[c] * (1 - alpha)), 0, 255);
+            pixels[i + 3] = 255;
+        }
+    }
+
+    /// <summary>The average colour of the new body's skin picture (a light skin tone when it has none Arkive can read).</summary>
+    private static async Task<byte[]> SkinToneAsync(IEnumerable<(OutfitSwapScene Scene, OutfitSwapMaterial Material)> materials, CancellationToken token)
+    {
+        foreach (var (scene, material) in materials)
+        {
+            if (!OutfitSwapBodies.IsSkin(material.Name) || OutfitSwapPlanner.Texture(material, OutfitSwapPlanner.Role.Colour) is not { } name ||
+                scene.PicturePath(name) is not { } path || !File.Exists(path)) continue;
+            var image = await PngRgbaCodec.ReadAsync(path, token).ConfigureAwait(false);
+            // The median of each channel, so tattoos and the empty space around the layout do not shift it.
+            var tone = new byte[3];
+            for (var c = 0; c < 3; c++)
+            {
+                var values = new List<byte>();
+                for (var i = 0; i < image.Pixels.Length; i += 4 * 7) values.Add(image.Pixels[i + c]);
+                values.Sort();
+                tone[c] = values[values.Count / 2];
+            }
+            return tone;
+        }
+        return [222, 190, 180];
     }
 
     private static RgbaImage Solid(int w, int h, byte r, byte g, byte b, byte a)

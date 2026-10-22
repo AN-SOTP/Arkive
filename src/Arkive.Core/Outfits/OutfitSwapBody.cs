@@ -15,9 +15,21 @@ public sealed class OutfitSwapBody
     private readonly OutfitSwapKdTree _vertices;
     private readonly Vector3[] _vertexPoints;
     private readonly Dictionary<string, float>[] _vertexWeights;
+    private readonly Vector3[] _corners;
+    private readonly Vector2[] _cornerUvs;
+    private readonly bool[] _lower;
+    private readonly int[] _charts;
+    private readonly OutfitSwapKdTree _triangles;
 
-    public OutfitSwapBody(IEnumerable<OutfitSwapMesh> pieces)
+    /// <param name="native">False for a body borrowed from another class and moved onto this skeleton: its shape is
+    /// close, but its skin picture layout is not this body's.</param>
+    public OutfitSwapBody(IEnumerable<OutfitSwapMesh> pieces, bool native = true)
     {
+        Native = native;
+        var corners = new List<Vector3>();
+        var cornerUvs = new List<Vector2>();
+        var lower = new List<bool>();
+        var charts = new List<int>();
         var random = new Random(1);
         var points = new List<Vector3>();
         var normals = new List<Vector3>();
@@ -26,6 +38,20 @@ public sealed class OutfitSwapBody
         foreach (var piece in pieces)
         {
             var used = new HashSet<int>();
+            // Triangles sharing a vertex share its picture coordinates: connected triangles are one piece (chart) of the layout.
+            var parent = Enumerable.Range(0, piece.VertexCount).ToArray();
+            int Find(int x)
+            {
+                while (parent[x] != x) x = parent[x] = parent[parent[x]];
+                return x;
+            }
+            foreach (var section in piece.Sections)
+                for (var i = 0; i + 2 < section.Triangles.Length; i += 3)
+                {
+                    parent[Find(section.Triangles[i])] = Find(section.Triangles[i + 1]);
+                    parent[Find(section.Triangles[i + 1])] = Find(section.Triangles[i + 2]);
+                }
+            var chartBase = charts.Count == 0 ? 0 : charts.Max() + 1;
             foreach (var section in piece.Sections)
             {
                 var t = section.Triangles;
@@ -33,6 +59,10 @@ public sealed class OutfitSwapBody
                 {
                     int a = t[i], b = t[i + 1], c = t[i + 2];
                     used.Add(a); used.Add(b); used.Add(c);
+                    corners.AddRange([piece.Positions[a], piece.Positions[b], piece.Positions[c]]);
+                    cornerUvs.AddRange([piece.Uv0[a], piece.Uv0[b], piece.Uv0[c]]);
+                    lower.Add(OutfitSwapBodies.IsLowerSkin(piece.Materials[section.Material]));
+                    charts.Add(chartBase + Find(a));
                     for (var s = 0; s < SamplesPerTriangle; s++)
                     {
                         var u = (float)random.NextDouble();
@@ -67,6 +97,75 @@ public sealed class OutfitSwapBody
         _vertexPoints = vertexPoints.ToArray();
         _vertexWeights = vertexWeights.ToArray();
         _vertices = new OutfitSwapKdTree(Flatten(_vertexPoints), 3);
+        _corners = corners.ToArray();
+        _cornerUvs = cornerUvs.ToArray();
+        _lower = lower.ToArray();
+        _charts = charts.ToArray();
+        _triangles = new OutfitSwapKdTree(Flatten(Enumerable.Range(0, _lower.Length)
+            .Select(i => (_corners[i * 3] + _corners[i * 3 + 1] + _corners[i * 3 + 2]) / 3).ToArray()), 3);
+    }
+
+    /// <summary>Whether the body is the class's own (its skin picture layout is the one the class's outfits use).</summary>
+    public bool Native { get; }
+
+    /// <summary>A point on the body's surface: which triangle, where on it, whether it is lower-body skin, and which
+    /// connected piece of the skin picture layout it lies in.</summary>
+    public readonly record struct SurfacePoint(int Triangle, Vector3 Position, bool Lower, int Chart);
+
+    /// <summary>The nearest point on the body's surface, optionally only on upper or lower skin, or on one piece of the layout.</summary>
+    public SurfacePoint Closest(Vector3 point, bool? lower = null, int? chart = null)
+    {
+        var count = chart is not null ? 128 : lower is null ? 16 : 64;
+        Span<int> index = stackalloc int[count];
+        Span<float> distance = stackalloc float[count];
+        var found = _triangles.Nearest([point.X, point.Y, point.Z], count, index, distance);
+        var best = new SurfacePoint(-1, point, false, -1);
+        var bestDistance = float.MaxValue;
+        for (var n = 0; n < found; n++)
+        {
+            var triangle = index[n];
+            if (lower is { } wanted && _lower[triangle] != wanted) continue;
+            if (chart is { } piece && _charts[triangle] != piece) continue;
+            var at = ClosestOnTriangle(point, _corners[triangle * 3], _corners[triangle * 3 + 1], _corners[triangle * 3 + 2]);
+            var d = Vector3.DistanceSquared(point, at);
+            if (d < bestDistance) { bestDistance = d; best = new SurfacePoint(triangle, at, _lower[triangle], _charts[triangle]); }
+        }
+        return best;
+    }
+
+    /// <summary>The body's skin picture coordinates at a point, read off one triangle's plane (beyond its edges too).</summary>
+    public Vector2 UvAt(int triangle, Vector3 point)
+    {
+        Vector3 a = _corners[triangle * 3], b = _corners[triangle * 3 + 1], c = _corners[triangle * 3 + 2];
+        Vector3 ab = b - a, ac = c - a, ap = point - a;
+        float d00 = Vector3.Dot(ab, ab), d01 = Vector3.Dot(ab, ac), d11 = Vector3.Dot(ac, ac);
+        float d20 = Vector3.Dot(ap, ab), d21 = Vector3.Dot(ap, ac);
+        var denominator = d00 * d11 - d01 * d01;
+        if (MathF.Abs(denominator) < 1e-14f) return _cornerUvs[triangle * 3];
+        var v = (d11 * d20 - d01 * d21) / denominator;
+        var w = (d00 * d21 - d01 * d20) / denominator;
+        return _cornerUvs[triangle * 3] * (1 - v - w) + _cornerUvs[triangle * 3 + 1] * v + _cornerUvs[triangle * 3 + 2] * w;
+    }
+
+    private static Vector3 ClosestOnTriangle(Vector3 p, Vector3 a, Vector3 b, Vector3 c)
+    {
+        Vector3 ab = b - a, ac = c - a, ap = p - a;
+        float d1 = Vector3.Dot(ab, ap), d2 = Vector3.Dot(ac, ap);
+        if (d1 <= 0 && d2 <= 0) return a;
+        var bp = p - b;
+        float d3 = Vector3.Dot(ab, bp), d4 = Vector3.Dot(ac, bp);
+        if (d3 >= 0 && d4 <= d3) return b;
+        var vc = d1 * d4 - d3 * d2;
+        if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+        var cp = p - c;
+        float d5 = Vector3.Dot(ab, cp), d6 = Vector3.Dot(ac, cp);
+        if (d6 >= 0 && d5 <= d6) return c;
+        var vb = d5 * d2 - d1 * d6;
+        if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+        var va = d3 * d6 - d5 * d4;
+        if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return b + (c - b) * ((d4 - d3) / (d4 - d3 + (d5 - d6)));
+        var denominator = 1 / (va + vb + vc);
+        return a + ab * (vb * denominator) + ac * (vc * denominator);
     }
 
     private static Vector3 Unit(Vector3 value) => value.LengthSquared() > 1e-12f ? Vector3.Normalize(value) : Vector3.UnitY;
@@ -122,14 +221,17 @@ public static class OutfitSwapClearance
     /// carries the correction to nearby cloth so layers stay in order.
     /// </summary>
     public static Vector3[] PushOut(Vector3[] donorPositions, Vector3[] fitted, OutfitSwapBody donorBody, OutfitSwapBody targetBody,
-        bool[] cloth, float margin = 0.0008f, float radius = 0.015f, int rounds = 8, float keep = 0.004f, float most = 0.02f)
+        bool[] cloth, float margin = 0.0008f, float radius = 0.015f, int rounds = 8, float keep = 0.004f, float most = 0.02f,
+        float reach = 0.08f)
     {
         var (donorGap, donorNear, _) = donorBody.Measure(donorPositions);
         var judged = new bool[fitted.Length];
         var want = new float[fitted.Length];
+        // A borrowed body only roughly matches the donor's, so tight cloth may seem to sink into it a little.
+        var inside = donorBody.Native ? -0.001f : -0.01f;
         for (var i = 0; i < fitted.Length; i++)
         {
-            judged[i] = cloth[i] && donorNear[i] < 0.08f && donorGap[i] > -0.001f;
+            judged[i] = cloth[i] && donorNear[i] < reach && donorGap[i] > inside;
             want[i] = Math.Clamp(donorGap[i], margin, keep);
         }
         var result = (Vector3[])fitted.Clone();
@@ -149,6 +251,8 @@ public static class OutfitSwapClearance
                 tree.Within([fitted[i].X, fitted[i].Y, fitted[i].Z], radius, near);
                 foreach (var j in near)
                 {
+                    // Bare skin stays on the body; only cloth moves.
+                    if (!cloth[j]) continue;
                     var w = MathF.Exp(-MathF.Pow(Vector3.Distance(fitted[j], fitted[i]) / (radius / 2), 2));
                     movement[j] += push * w;
                     weight[j] += w;
@@ -184,6 +288,77 @@ public static class OutfitSwapClearance
             for (var i = 0; i < result.Length; i++) result[i] += movement[i];
         }
         return CarrySkin(fitted, result, cloth);
+    }
+
+    /// <summary>
+    /// The outfit's own bare skin (sleeves and stockings often cover skin the outfit draws itself) as a surface, with its
+    /// vertices at <paramref name="positions"/>; null when the outfit draws no skin.
+    /// </summary>
+    public static OutfitSwapBody? SkinSurface(OutfitSwapMesh mesh, Vector3[] positions)
+    {
+        var sections = mesh.Sections.Where(section => OutfitSwapBodies.IsSkin(mesh.Materials[section.Material])).ToArray();
+        if (sections.Length == 0) return null;
+        var normals = new Vector3[positions.Length];
+        foreach (var section in sections)
+            for (var i = 0; i + 2 < section.Triangles.Length; i += 3)
+            {
+                int a = section.Triangles[i], b = section.Triangles[i + 1], c = section.Triangles[i + 2];
+                var normal = Vector3.Cross(positions[b] - positions[a], positions[c] - positions[a]);
+                normals[a] += normal; normals[b] += normal; normals[c] += normal;
+            }
+        // Faces point the way the outfit's own normals do (outward), whatever their winding.
+        for (var v = 0; v < normals.Length; v++)
+            if (Vector3.Dot(normals[v], mesh.Normals[v]) < 0) normals[v] = -normals[v];
+        return new OutfitSwapBody([new OutfitSwapMesh
+        {
+            Positions = positions, Normals = normals, Tangents = mesh.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1, Colours = mesh.Colours,
+            Joints = mesh.Joints, Weights = mesh.Weights, Sections = sections, Materials = mesh.Materials,
+            BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents,
+        }]);
+    }
+
+    /// <summary>
+    /// Lays the outfit's bare skin onto the new body's own skin, so arms, legs, feet and neck take its exact shape (and
+    /// meet its head), and carries the move to the cloth around it. Skin far from the body (a hand the base body lacks)
+    /// stays where the fit put it, and so does skin as far as <paramref name="hold"/> says (0 moves fully, 1 stays).
+    /// </summary>
+    public static Vector3[] SnapSkin(Vector3[] fitted, bool[] cloth, float[] hold, OutfitSwapBody body, float near = 0.03f,
+        float far = 0.06f, float radius = 0.03f)
+    {
+        var result = (Vector3[])fitted.Clone();
+        var moved = new List<int>();
+        var movement = new Vector3[fitted.Length];
+        for (var i = 0; i < fitted.Length; i++)
+        {
+            if (cloth[i]) continue;
+            var surface = body.Closest(fitted[i]);
+            if (surface.Triangle < 0) continue;
+            var share = Math.Clamp((far - Vector3.Distance(surface.Position, fitted[i])) / (far - near), 0, 1) * (1 - hold[i]);
+            if (share <= 0) continue;
+            movement[i] = (surface.Position - fitted[i]) * share;
+            result[i] += movement[i];
+            moved.Add(i);
+        }
+        if (moved.Count == 0) return result;
+        var tree = new OutfitSwapKdTree(moved.SelectMany(i => new[] { fitted[i].X, fitted[i].Y, fitted[i].Z }).ToArray(), 3);
+        var index = new int[16];
+        var distance = new float[16];
+        for (var i = 0; i < fitted.Length; i++)
+        {
+            if (!cloth[i]) continue;
+            var found = tree.Nearest([fitted[i].X, fitted[i].Y, fitted[i].Z], 16, index, distance);
+            var sum = Vector3.Zero;
+            var total = 0f;
+            for (var n = 0; n < found; n++)
+            {
+                if (distance[n] > radius) break;
+                var w = MathF.Exp(-MathF.Pow(distance[n] / (radius / 2), 2));
+                sum += movement[moved[index[n]]] * w;
+                total += w;
+            }
+            if (total > 1e-6f) result[i] += sum / Math.Max(total, 1);
+        }
+        return result;
     }
 
     private static Vector3[] CarrySkin(Vector3[] before, Vector3[] after, bool[] cloth, float radius = 0.04f)

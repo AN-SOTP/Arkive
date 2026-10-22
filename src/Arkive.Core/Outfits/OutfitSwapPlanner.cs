@@ -83,7 +83,7 @@ public static partial class OutfitSwapPlanner
             {
                 var colour = Texture(material, Role.Colour);
                 slots.Add(new Slot(t, material, (colour ?? material.Name).ToLowerInvariant(), OutfitSwapBodies.IsSkin(material.Name),
-                    OutfitSwapBodies.IsLowerSkin(material.Name), colour is not null && colour.StartsWith("pc_", StringComparison.OrdinalIgnoreCase)));
+                    OutfitSwapBodies.IsLowerSkin(material.Name), colour is not null && OutfitSwapBodies.OwnsPicture(targets[t].ObjectName, colour)));
             }
 
         // A piece with no picture of its own to repaint hands its part to one that has, and is hidden.
@@ -145,8 +145,8 @@ public static partial class OutfitSwapPlanner
                 : Build(donors, fitted, targets[t].Mesh, assign[t], (piece, material) =>
                 {
                     var (slot, canvas) = where[(t, piece, material)];
-                    return (slot.Material.Slot, canvas is null ? null : byKey[canvas].Rect(piece, material));
-                }, targetBody);
+                    return (slot.Material.Slot, canvas is null ? null : byKey[canvas].Rect(piece, material), slot.Skin ? slot.LowerSkin : null);
+                }, lower => slots.FirstOrDefault(slot => slot.Piece == t && slot.Skin && slot.LowerSkin == lower)?.Material.Slot, targetBody);
             results.Add(new OutfitSwapPieceResult(targets[t].ObjectName, mesh, hidden[t] || assign[t].Count == 0));
         }
         return new OutfitSwapPlan(results, finished, notes);
@@ -192,10 +192,12 @@ public static partial class OutfitSwapPlanner
         IReadOnlyList<Vector3[]> fitted,
         OutfitSwapMesh target,
         IReadOnlyList<(int Piece, int Section, int[] Triangles)> parts,
-        Func<int, int, (int Slot, Vector4? Rect)> placement,
+        Func<int, int, (int Slot, Vector4? Rect, bool? SkinLower)> placement,
+        Func<bool, int?> skinSlot,
         OutfitSwapBody? targetBody)
     {
-        var index = new Dictionary<(int Piece, int Vertex, Vector4? Rect), int>();
+        // Variant tells copies of one donor vertex apart: -1 as it is, 0/1 on upper/lower skin, 2+ a corner of one triangle.
+        var index = new Dictionary<(int Piece, int Vertex, Vector4? Rect, Vector2 Tile, int Variant), int>();
         var positions = new List<Vector3>();
         var normals = new List<Vector3>();
         var tangents = new List<Vector4>();
@@ -215,26 +217,40 @@ public static partial class OutfitSwapPlanner
         foreach (var (piece, section, triangles) in parts)
         {
             var donor = donors[piece].Mesh;
-            var (slot, rect) = placement(piece, donor.Sections[section].Material);
-            if (!sections.TryGetValue(slot, out var list)) sections[slot] = list = [];
-            foreach (var vertex in triangles)
+            var (slot, rect, skinLower) = placement(piece, donor.Sections[section].Material);
+            var skin = skinLower is not null && targetBody is { Native: true } ? SkinUvs(fitted[piece], triangles, skinLower.Value, skinSlot, targetBody) : null;
+            for (var i = 0; i < triangles.Length; i++)
             {
-                if (!index.TryGetValue((piece, vertex, rect), out var at))
+                var vertex = triangles[i];
+                var variant = -1;
+                var triangleSlot = slot;
+                if (skin is not null) (triangleSlot, variant) = (skin.Slots[i / 3], skin.Variants[i]);
+                if (!sections.TryGetValue(triangleSlot, out var list)) sections[triangleSlot] = list = [];
+                // A picture squeezed into a square of a shared one no longer repeats, so a triangle laid out on a later
+                // repeat of it (UVs past 0..1) is moved back by whole repeats first.
+                var tile = Vector2.Zero;
+                if (rect is not null)
+                {
+                    var first = i - i % 3;
+                    var centre = (donor.Uv0[triangles[first]] + donor.Uv0[triangles[first + 1]] + donor.Uv0[triangles[first + 2]]) / 3;
+                    tile = new Vector2(MathF.Floor(centre.X), MathF.Floor(centre.Y));
+                }
+                if (!index.TryGetValue((piece, vertex, rect, tile, variant), out var at))
                 {
                     at = positions.Count;
-                    index[(piece, vertex, rect)] = at;
+                    index[(piece, vertex, rect, tile, variant)] = at;
                     var position = fitted[piece][vertex];
                     positions.Add(position);
                     normals.Add(donor.Normals[vertex]);
                     tangents.Add(donor.Tangents[vertex]);
-                    var uv = donor.Uv0[vertex];
-                    if (rect is { } r) uv = new Vector2(r.X + uv.X * (r.Z - r.X), r.Y + uv.Y * (r.W - r.Y));
+                    var uv = skin is not null ? skin.Uvs[i] : donor.Uv0[vertex] - tile;
+                    if (rect is { } r) uv = new Vector2(r.X + Math.Clamp(uv.X, 0, 1) * (r.Z - r.X), r.Y + Math.Clamp(uv.Y, 0, 1) * (r.W - r.Y));
                     uv0.Add(uv);
                     uv1.Add(donor.Uv1[vertex]);
                     for (var c = 0; c < 4; c++) colours.Add(donor.Colours[vertex * 4 + c]);
-                    var skin = RemapWeights(donor, vertex, position, target, targetBones, chains, firstChild, targetBody);
-                    joints.AddRange(skin.Select(item => item.Bone));
-                    weights.AddRange(skin.Select(item => item.Weight));
+                    var bones = RemapWeights(donor, vertex, position, target, targetBones, chains, firstChild, targetBody);
+                    joints.AddRange(bones.Select(item => item.Bone));
+                    weights.AddRange(bones.Select(item => item.Weight));
                 }
                 list.Add(at);
             }
@@ -246,6 +262,55 @@ public static partial class OutfitSwapPlanner
             Sections = sections.OrderBy(pair => pair.Key).Select(pair => new OutfitSwapSection(pair.Key, pair.Value.ToArray())).ToArray(),
             Materials = target.Materials, BoneNames = target.BoneNames, BonePositions = target.BonePositions, BoneParents = target.BoneParents,
         };
+    }
+
+    private sealed record SkinLayout(Vector2[] Uvs, int[] Variants, int[] Slots);
+
+    /// <summary>
+    /// Bare skin drawn with the target's own skin material takes its picture coordinates from the target's base body at the
+    /// same spot, since each class lays its skin picture out differently. A triangle goes to the upper or lower skin
+    /// material by where it lies on the body, when the piece has both; a triangle across a seam of the body's layout
+    /// takes all three corners from the piece of the layout its middle lies on.
+    /// </summary>
+    private static SkinLayout SkinUvs(Vector3[] positions, int[] triangles, bool lower, Func<bool, int?> skinSlot, OutfitSwapBody body)
+    {
+        var both = skinSlot(!lower) is not null;
+        var uvs = new Vector2[triangles.Length];
+        var variants = new int[triangles.Length];
+        var slots = new int[triangles.Length / 3];
+        var perVertex = new Dictionary<(int Vertex, bool Lower), (Vector2 Uv, int Chart)>();
+        for (var t = 0; t * 3 < triangles.Length; t++)
+        {
+            var corners = new[] { triangles[t * 3], triangles[t * 3 + 1], triangles[t * 3 + 2] };
+            var centre = (positions[corners[0]] + positions[corners[1]] + positions[corners[2]]) / 3;
+            var home = body.Closest(centre, both ? null : lower);
+            var kind = home.Triangle < 0 ? lower : home.Lower;
+            slots[t] = skinSlot(kind) ?? skinSlot(lower)!.Value;
+            var split = false;
+            for (var c = 0; c < 3; c++)
+            {
+                var vertex = corners[c];
+                if (!perVertex.TryGetValue((vertex, kind), out var found))
+                {
+                    var surface = body.Closest(positions[vertex], kind);
+                    found = surface.Triangle < 0 ? (Vector2.Zero, -1) : (body.UvAt(surface.Triangle, surface.Position), surface.Chart);
+                    perVertex[(vertex, kind)] = found;
+                }
+                uvs[t * 3 + c] = found.Uv;
+                if (home.Triangle >= 0 && found.Chart != home.Chart) split = true;
+            }
+            for (var c = 0; c < 3; c++)
+            {
+                if (split)
+                {
+                    // Corners nearest another piece of the layout take the nearest spot on the triangle's own piece.
+                    var surface = body.Closest(positions[corners[c]], kind, home.Chart);
+                    uvs[t * 3 + c] = surface.Triangle < 0 ? body.UvAt(home.Triangle, home.Position) : body.UvAt(surface.Triangle, surface.Position);
+                }
+                variants[t * 3 + c] = split ? 2 + t : kind ? 1 : 0;
+            }
+        }
+        return new SkinLayout(uvs, variants, slots);
     }
 
     /// <summary>
