@@ -80,8 +80,8 @@ internal static class Program
             () => $"The game database mapping did not load: {Control<TextBlock>(window, "GameMetadataText").Text}");
         var tabs = Control<TabControl>(window, "MainTabControl");
         Check(tabs.Items.OfType<TabItem>().Where(tab => tab.Visibility == Visibility.Visible)
-                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Sounds", "Login Screen", "Fonts", "Language", "Mods"]),
-            "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, Sounds, Login screen, Fonts, Language, and Mods.");
+                .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Outfit Swap", "Sounds", "Login Screen", "Fonts", "Language", "Mods"]),
+            "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, Outfit swap, Sounds, Login screen, Fonts, Language, and Mods.");
         Check(tabs.SelectedItem == Control<TabItem>(window, "ModifiedUpksTab"), "Mods was not the initial destination.");
         var kinds = Control<ComboBox>(window, "WorkshopKindComboBox").Items.OfType<ComboBoxItem>()
             .Select(item => $"{item.Content}={item.Tag}").ToArray();

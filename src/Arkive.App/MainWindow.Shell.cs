@@ -60,7 +60,7 @@ public partial class MainWindow : Window
         // The advanced views list the package workspace, which enabling mods leaves to be reloaded when needed.
         if (_packageWorkspaceStale && MainTabControl.SelectedItem is TabItem tab &&
             tab != LibraryTab && tab != CreateModTab && tab != WorkshopTab && tab != ModifiedUpksTab && tab != BodyProportionsTab &&
-            tab != SoundsTab && tab != LoginScreenTab && tab != FontsTab && tab != LanguageTab)
+            tab != SoundsTab && tab != LoginScreenTab && tab != FontsTab && tab != LanguageTab && tab != OutfitSwapTab)
             _ = RefreshStalePackageWorkspaceWithNoticeAsync();
     }
 
@@ -91,6 +91,11 @@ public partial class MainWindow : Window
         {
             PackageAliasText.Text = "Mod Library";
             PathText.Text = "Enable mods and set priorities; Apply changes updates the game.";
+        }
+        else if (MainTabControl.SelectedItem == OutfitSwapTab)
+        {
+            PackageAliasText.Text = "Outfit Swap";
+            PathText.Text = "Wear one player outfit in place of another, on any body.";
         }
         else if (MainTabControl.SelectedItem == SoundsTab)
         {
