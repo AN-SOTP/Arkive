@@ -532,11 +532,16 @@ public sealed class UnifiedPackageComposerService
 
         // Meshes drawn with other packages' materials need the package to import those materials first.
         var materialReferences = new List<PackageObjectReference>();
+        var meshMaterials = new Dictionary<string, IReadOnlyList<PackageObjectReference>>(StringComparer.OrdinalIgnoreCase);
         foreach (var (edit, _) in meshInputs)
-            foreach (var reference in SkeletalMeshMaterialReferences.ReadUsed(
-                         await File.ReadAllBytesAsync(edit.EditedGlbPath, cancellationToken).ConfigureAwait(false)))
+        {
+            var used = SkeletalMeshMaterialReferences.ReadUsed(
+                await File.ReadAllBytesAsync(edit.EditedGlbPath, cancellationToken).ConfigureAwait(false));
+            if (used.Count > 0) meshMaterials[edit.Manifest.ObjectName] = used.Select(reference => reference.Material).ToArray();
+            foreach (var reference in used)
                 if (materialReferences.All(item => !item.Path.Equals(reference.Material.Path, StringComparison.OrdinalIgnoreCase)))
                     materialReferences.Add(reference.Material);
+        }
 
         var totalSteps = checked((materialReferences.Count > 0 ? 1 : 0) + request.TextureProjects.Count * 9 +
                                  request.MaterialEdits.Count * MaterialSteps +
@@ -1260,6 +1265,7 @@ public sealed class UnifiedPackageComposerService
                 VariableSizeDeploymentGatePassed = false,
                 AddedNames = importStage?.Manifest.AddedNames ?? 0,
                 AddedImports = importStage?.Manifest.AddedImports ?? 0,
+                ReferencedMaterials = meshMaterials,
             },
             cancellationToken).ConfigureAwait(false);
 
