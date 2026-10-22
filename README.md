@@ -194,6 +194,17 @@ The model changes as you move them. **Save as mod** creates a new mod with a wor
 - The editor and viewer can play the character's animations and use game lighting (see Asset library above), to check an outfit in motion and in game-like light before saving.
 - A mod replaces the outfit (or NPC) for every character you see wearing it. Very large or combined values can still make pieces overlap.
 
+### Outfit swap
+
+**Outfit Swap** puts any player outfit in place of another, on any body: for example an Assassin's anniversary outfit worn as a Slayer's class skin. Search for the outfit to wear on the left and the outfit it replaces on the right (by in-game name or object name), select one of each and choose **Preview swap…**.
+
+- The outfit is moved onto the other body's skeleton first, then given that body's shape. The shape difference is learned from the costumes the game makes for both bodies (same costume, refitted by the game's artists), the first time two bodies are swapped (about a minute); later swaps between them reuse it.
+- Cloth that would end up inside the new body is pushed back out to the small gap it had on its own body, using the game's bare base bodies. The preview window says how much cloth was inside the body and how many faces were stretched.
+- Nothing is added to the game files: the replaced pieces get the new geometry on their own skeleton, and the outfit is painted into the replaced outfit's own pictures and materials. Its colours are baked with the game's shaders, so they look as they do on the original; when it has more materials than the replaced outfit has pictures, several share one picture. Dyeing a swapped outfit in game has no effect, because its colours are in the pictures. A one-piece dress can replace a top and pants and the other way round; a replaced piece left with nothing to show is hidden.
+- **Body shape** reshapes the swapped outfit like Simple Upscale: with your Simple Upscale mod for the replaced outfit, or a saved preset of its body. Give the swap mod the higher priority in Mods (or turn the upscale mod off) where both change the same pieces.
+- The preview shows the new body's face and hair and can play its animations. **Save as mod** saves the swap as a new mod through the usual mesh, skeleton and animation checks.
+- Swapping between male and female bodies works but the shape can be rough (experimental). Pieces whose skeleton is only a placeholder bone, and outfits whose materials the viewer cannot read, are refused.
+
 ### Particle effects and interface
 
 **Particle effects** are a mod type: search the Asset Library for an effect (filter by particle effects), **Preview** it in its own window, or add it in **Edit Mods** and choose **Edit effect**. The window plays the effect live (play, pause, restart, speed, loop, grid and background) and shows each change as it is made: a tint colour and strength, and multipliers for brightness, opacity, size, lifetime, spawn rate and speed, with emitters that can be hidden one by one. **Save changes** keeps the settings in the mod's working copy; the mod writes the patched values into the effect's package like any other edit.
