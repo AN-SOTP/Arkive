@@ -27,6 +27,13 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
 {
     private readonly OutfitSwapLearning _learning = new(library, Path.Combine(cacheDirectory, "fields"));
 
+    /// <summary>
+    /// Experimental: put the new body's base-body feet in place of the outfit's and reshape the shoes around them. Off by
+    /// default: base-body feet are modelled in less detail than outfits' own feet, so the outfit's feet (fitted to the
+    /// new legs) look better.
+    /// </summary>
+    public bool BodyFeet { get; init; } = Environment.GetEnvironmentVariable("ARKIVE_SWAP_BODY_FEET") == "1";
+
     public async Task<OutfitSwapFit> FitAsync(
         IReadOnlyList<OutfitSwapPiece> donors,
         IReadOnlyList<OutfitSwapPiece> targets,
@@ -59,7 +66,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             (neck, head) = (Vector3.Zero, Vector3.Zero);
         // The new body's own bare feet, to put in place of the outfit's.
         var targetFeet = new List<OutfitSwapMesh>();
-        if (targetBody is { Native: true })
+        if (BodyFeet && targetBody is { Native: true })
             foreach (var name in to.BaseBody)
                 if (await library.LoadAsync(name, cancellationToken).ConfigureAwait(false) is { } part) targetFeet.Add(part);
         var targetFootPoints = targetFeet.SelectMany(part => part.Sections.Where(section => OutfitSwapBodies.IsSkin(part.Materials[section.Material]))
@@ -107,7 +114,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             }
             // Shoes and socks are reshaped around the new body's own feet, which replace the outfit's (see the end).
             var ankleJoint = DonorAnkle(mesh);
-            var newFeet = targetFeet.Count > 0 && ankleJoint is not null;
+            var newFeet = BodyFeet && targetFeet.Count > 0 && ankleJoint is not null;
             OutfitSwapFeet.Stance? stance = null;
             if (newFeet && feet.Any(share => share >= 0.1f))
             {
