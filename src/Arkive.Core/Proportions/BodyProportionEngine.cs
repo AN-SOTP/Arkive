@@ -489,6 +489,7 @@ public static partial class BodyProportionEngine
             "buttocks" => Buttocks(vertex, Shape.Size),
             "buttocksWidth" => Buttocks(vertex, Shape.Width),
             "buttocksProjection" => Buttocks(vertex, Shape.Projection),
+            "buttocksHeight" => Buttocks(vertex, Shape.Height),
             "buttocksLift" => Buttocks(vertex, Shape.Lift),
             "buttocksSag" => Buttocks(vertex, Shape.Sag),
             "thighs" => Thighs(vertex, Vector3.One),

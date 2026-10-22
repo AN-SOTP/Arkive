@@ -13,7 +13,31 @@ internal static class ProportionSmokeTests
         new("keeps an upscale mod's sliders in its tags and reads older mods from their description", TestModSettings),
         new("keeps a body-wide upscale mod's description within the mod file's limit", TestLongDescription),
         new("holds back reshaping that would fold the surface onto itself", TestFoldGuard),
+        new("makes the buttocks taller or shorter without pushing them out", TestButtocksHeight),
     ];
+
+    private static void TestButtocksHeight()
+    {
+        // A tiny female warrior mesh: a vertex on the left buttock above its fullest point, one below it, one on the chest.
+        var glb = BuildMesh(
+            [("bip001-pelvis", new(0, 0.734f, 0)), ("bip001-spine", new(0, 0.80f, 0)), ("bip001-spine2", new(0.02f, 0.90f, 0)),
+             ("bip001-head", new(0, 1.152f, 0))],
+            [(new(-0.10f, 0.77f, -0.046f), 0), (new(-0.10f, 0.73f, -0.046f), 0), (new(0.10f, 0.948f, -0.044f), 2)]);
+        var model = BodyProportionEngine.Build(glb, default);
+        Assert(model.Profile.Zones.Any(zone => zone.Id == "buttocksHeight" && zone.Group == "Hips and buttocks"),
+            "the buttocks height slider is not offered");
+        Assert(model.AffectedZones.Contains("buttocksHeight"), "buttocks height does not affect the buttocks");
+        var original = Positions(glb);
+        var taller = Positions(BodyProportionEngine.Apply(glb, model, new Dictionary<string, double> { ["buttocksHeight"] = 80 }));
+        var shorter = Positions(BodyProportionEngine.Apply(glb, model, new Dictionary<string, double> { ["buttocksHeight"] = -50 }));
+        Assert(taller[0].Y > original[0].Y + 0.002f && taller[1].Y < original[1].Y - 0.001f,
+            "a taller buttock does not stretch up above and down below its fullest point");
+        Assert(shorter[0].Y < original[0].Y && shorter[1].Y > original[1].Y, "a shorter buttock does not pull in from above and below");
+        for (var vertex = 0; vertex < 2; vertex++)
+            Assert(taller[vertex].X == original[vertex].X && taller[vertex].Z == original[vertex].Z,
+                "buttocks height pushed the buttocks out or sideways");
+        Assert(taller[2] == original[2], "buttocks height moved the chest");
+    }
 
     private static void TestPlayerPieceNames()
     {
