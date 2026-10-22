@@ -16,6 +16,7 @@ internal static class OutfitSwapSmokeTests
         new("pushes cloth that ended up inside the new body back out to the gap it had", TestPushOut),
         new("packs donor materials into the target's own pictures and hides a piece with none", TestPlanner),
         new("writes a swapped piece into the target's GLB with shared or separate section vertices", TestGlbRoundTrip),
+        new("learns how much brighter and which roughness values the replaced outfit's shaders need", TestCalibration),
     ];
 
     private static void TestNames()
@@ -118,6 +119,25 @@ internal static class OutfitSwapSmokeTests
         var packed = plan.Canvases.Single(canvas => canvas.Grid == 2);
         var rect = packed.Rect(packed.Tiles[1].Piece, packed.Tiles[1].Material)!.Value;
         Assert(rect == new Vector4(0.5f, 0, 1, 0.5f), "the second tile takes the top right square");
+    }
+
+    private static void TestCalibration()
+    {
+        // A shader that draws a quarter of the light the donor's did: the gain brings it back (within its limit of 3).
+        static Arkive.Core.Textures.RgbaImage Grey(int size, Func<int, byte> value, byte alpha = 255)
+        {
+            var pixels = new byte[size * size * 4];
+            for (var i = 0; i < size * size; i++) { pixels[i * 4] = pixels[i * 4 + 1] = pixels[i * 4 + 2] = value(i); pixels[i * 4 + 3] = alpha; }
+            return new Arkive.Core.Textures.RgbaImage(size, size, pixels);
+        }
+        var gain = OutfitSwapColourCurve.Learn(Grey(64, _ => 180), Grey(64, _ => 100));
+        Assert(gain is not null && gain.Gain > 2.5f && gain.Gain <= 3f, $"a dull painting is brightened ({gain?.Gain:N2})");
+        // A shader computing roughness = 1 - (gloss in alpha): the curve finds the alpha that gives a wanted roughness.
+        var picture = Grey(128, i => (byte)(i % 256));
+        for (var i = 0; i < 128 * 128; i++) picture.Pixels[i * 4 + 3] = (byte)(i % 256);
+        var baked = Grey(128, i => (byte)(255 - i % 256));
+        var curve = OutfitSwapChannelCurve.Learn(picture, 3, baked, 0);
+        Assert(curve is not null && Math.Abs(curve.Map(55) - 200) <= 2, $"wanted roughness 55 needs gloss 200 ({curve?.Map(55)})");
     }
 
     private static void TestGlbRoundTrip()

@@ -51,6 +51,12 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         var donorBody = await BodyAsync(from, donors.Select(piece => piece.Mesh).ToArray(), gameBuild, cancellationToken).ConfigureAwait(false);
         var targetBody = await BodyAsync(to, targets.Select(piece => piece.Mesh).ToArray(), gameBuild, cancellationToken).ConfigureAwait(false);
 
+        // Where the new body's face starts, for the outfit's bare neck to meet.
+        IReadOnlyList<(Vector3 A, Vector3 B)>? seam = null;
+        if (targetBody is { Native: true } && targetSkeleton.TryGet("bip001-neck", out var neck) && targetSkeleton.TryGet("bip001-head", out var head))
+            seam = targetBody.HeadSeam(neck, head);
+        else
+            (neck, head) = (Vector3.Zero, Vector3.Zero);
         var fitted = new List<Vector3[]>();
         var shaded = new List<OutfitSwapPiece>();
         long judged = 0, clippedBefore = 0, clippedAfter = 0, stretched = 0, faces = 0;
@@ -99,6 +105,8 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             if (targetBody is { Native: true })
                 moved = Expand(OutfitSwapClearance.SnapSkin(Average(moved, ids, weldedCount), weldedCloth,
                     weldedFeet.Select(share => Math.Clamp((share - 0.1f) / 0.4f, 0, 1)).ToArray(), targetBody), ids);
+            if (seam is not null)
+                moved = Expand(OutfitSwapClearance.MeetHead(Average(moved, ids, weldedCount), weldedCloth, triangles, seam, neck, head), ids);
             // Cloth that lay over the outfit's own bare skin stays over it now the skin has moved.
             if (OutfitSwapClearance.SkinSurface(mesh, mesh.Positions) is { } donorSkin &&
                 OutfitSwapClearance.SkinSurface(mesh, moved) is { } movedSkin)

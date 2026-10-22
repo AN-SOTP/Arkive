@@ -174,7 +174,10 @@ const isTranslucent = (info) => /Translucent|Additive|Modulate/i.test(info?.blen
 const bakeTile = { value: new THREE.Vector2() };
 const bakePosition = 'gl_Position = vec4((uv.x + ark_bakeTile.x) * 2.0 - 1.0, 1.0 - (uv.y + ark_bakeTile.y) * 2.0, 0.0, 1.0);';
 
+// bake: false for display, true for a colour (albedo) bake, 'lit' for a bake of the lit colour as the viewer shows it,
+// 'surface' for a bake of roughness (red) and metalness (green) as the material computes them.
 function recipeMaterial(info, plan, game, bake = false, part = null) {
+  const albedoBake = bake === true;
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 });
   material.name = info.name;
   material.side = info.twoSided || state.toggles.backfaces ? THREE.DoubleSide : THREE.FrontSide;
@@ -220,7 +223,7 @@ function recipeMaterial(info, plan, game, bake = false, part = null) {
     baseColour = `{\n${game.inputs.map(gameInput).join('\n')}\nark_game_shader();\n` +
       `vec4 ark_albedo = uintBitsToFloat(ark_o${game.albedoOutput});\n` +
       // An effect material is all emitted light: nothing of it is lit (a bake keeps its colour).
-      `diffuseColor.rgb = ${game.unlit && !bake ? 'vec3(0.0)' : 'clamp(ark_albedo.rgb, 0.0, 16.0)'};\n` +
+      `diffuseColor.rgb = ${game.unlit && !albedoBake ? 'vec3(0.0)' : 'clamp(ark_albedo.rgb, 0.0, 16.0)'};\n` +
       (translucent ? 'diffuseColor.a = clamp(abs(uintBitsToFloat(ark_o0).w), 0.0, 1.0);\n' : '') + '}';
     opacity = null;
   }
@@ -272,7 +275,11 @@ function recipeMaterial(info, plan, game, bake = false, part = null) {
     if (game && state.debugOutput) fs = fs.replace('#include <dithering_fragment>', 'gl_FragColor = vec4(vec3(ark_debug), 1.0);');
     if (bake) {
       if (!game) fs = fs.replace('#include <common>', `#include <common>\n${state.scene.glslPrelude}`);
-      fs = fs.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor = vec4(ark_encode_srgb(diffuseColor.rgb), diffuseColor.a);');
+      // A lit bake keeps every face's own outside (texture space has no front or back) and its lit colour.
+      if (bake === 'lit') fs = fs.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('gl_FrontFacing ? 1.0 : - 1.0', '1.0'));
+      fs = fs.replace('#include <dithering_fragment>', bake === 'surface'
+        ? '#include <dithering_fragment>\ngl_FragColor = vec4(roughnessFactor, metalnessFactor, 0.0, diffuseColor.a);'
+        : `#include <dithering_fragment>\ngl_FragColor = vec4(ark_encode_srgb(${albedoBake ? 'diffuseColor.rgb' : 'gl_FragColor.rgb'}), diffuseColor.a);`);
     }
     shader.fragmentShader = fs;
   };
@@ -1794,9 +1801,12 @@ function bakeSize(info) {
   return Math.min(2048, 2 ** Math.round(Math.log2(size)));
 }
 
-function renderBake(meshes, material, size) {
+function renderBake(meshes, material, size, lit = false) {
   const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false });
-  const bakeScene = new THREE.Scene();
+  // A lit bake draws in the viewer's own world (its lights and environment) with everything else hidden.
+  const bakeScene = lit ? world : new THREE.Scene();
+  const hidden = lit ? world.children.filter((child) => child.visible && !child.isLight && child !== camera) : [];
+  for (const child of hidden) child.visible = false;
   const proxies = meshes.map((mesh) => {
     const proxy = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(mesh.geometry, material) : new THREE.Mesh(mesh.geometry, material);
     if (mesh.isSkinnedMesh) proxy.bind(mesh.skeleton, mesh.bindMatrix);
@@ -1827,6 +1837,7 @@ function renderBake(meshes, material, size) {
   renderer.setClearColor(previousClear, previousAlpha);
   target.dispose();
   for (const proxy of proxies) bakeScene.remove(proxy);
+  for (const child of hidden) child.visible = true;
   return pixels;
 }
 
@@ -1894,7 +1905,8 @@ async function bakeNormal(info) {
   return canvas.toDataURL('image/png');
 }
 
-async function bakeTextures(requestId) {
+async function bakeTextures(requestId, kind = 'colour') {
+  const lit = kind === 'lit';
   const lod = Math.min(...state.lods.keys());
   const bySlot = new Map();
   for (const mesh of state.lods.get(lod) ?? []) {
@@ -1907,9 +1919,9 @@ async function bakeTextures(requestId) {
     const info = state.scene.materials[slot];
     if (!info || !meshes.some((mesh) => mesh.geometry.attributes.uv)) continue;
     const game = state.shading === 'game' && info.gameShader && !info.gameShaderBroken ? info.gameShader : null;
-    const material = recipeMaterial(info, info.recipe, game, true);
+    const material = recipeMaterial(info, info.recipe, game, kind === 'colour' ? true : kind);
     const size = bakeSize(info);
-    const colour = renderBake(meshes, material, size);
+    const colour = renderBake(meshes, material, size, lit);
     const coverage = renderBake(meshes, coverageMaterial, size);
     material.dispose();
     dilate(colour, coverage, size, 8);
@@ -1923,7 +1935,7 @@ async function bakeTextures(requestId) {
 }
 
 host?.addEventListener('message', (event) => {
-  if (event.data?.type === 'bake') bakeTextures(event.data.requestId).catch((error) => post({ type: 'bakeDone', requestId: event.data.requestId, count: 0, error: String(error) }));
+  if (event.data?.type === 'bake') bakeTextures(event.data.requestId, event.data.kind ?? 'colour').catch((error) => post({ type: 'bakeDone', requestId: event.data.requestId, count: 0, error: String(error) }));
 });
 
 // Diagnostics handle for Arkive's host and tests.
@@ -2056,7 +2068,7 @@ window.arkiveViewer = {
     requestRender();
     return 'ok';
   },
-  bake: () => bakeTextures('debug'),
+  bake: (kind = 'colour') => bakeTextures('debug', kind),
   bakeStats: (slot, size = 256) => {
     const info = state.scene.materials[slot];
     const meshes = [...state.lods.get(Math.min(...state.lods.keys()))].filter((mesh) => slotOf(mesh) === slot);

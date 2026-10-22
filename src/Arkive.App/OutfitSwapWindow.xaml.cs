@@ -156,18 +156,35 @@ public partial class OutfitSwapWindow : Window
             var progress = new Progress<string>(Status);
             _fit = await Task.Run(() => _service.FitAsync(donors.Select(item => item.Piece).ToArray(), _targets, _gameBuild, progress, token), token);
 
-            // The donor's colours as the game's shaders draw them.
+            // The donor as the game's shaders draw it: its colours, its lit colours and its roughness and metalness.
             Status("Baking the outfit's colours with the game's shaders…");
             var combined = BodyProportionSceneCombiner.Combine(donors.Select(item => item.Result).ToArray(), SceneCacheRoot);
             await LoadSceneAsync(combined.SceneJson, keepView: false, token);
-            var baked = await BakeAsync(Path.Combine(_workDirectory, "colours"), token);
-            var bakedByPiece = combined.Parts.Select(part => (IReadOnlyDictionary<int, string>)baked
-                .Where(pair => pair.Key >= part.MaterialOffset && pair.Key < part.MaterialOffset + part.MaterialCount)
-                .ToDictionary(pair => pair.Key - part.MaterialOffset, pair => pair.Value)).ToArray();
+            var bakedByPiece = ByPiece(combined, await BakeAsync(Path.Combine(_workDirectory, "colours"), token));
+            var litByPiece = ByPiece(combined, await BakeAsync(Path.Combine(_workDirectory, "lit-colours"), token, "lit"));
+            var surfaceByPiece = ByPiece(combined, await BakeAsync(Path.Combine(_workDirectory, "surfaces"), token, "surface"));
 
             Status("Painting the outfit into the replaced outfit's pictures…");
+            var firstPainting = await Task.Run(() => OutfitSwapPictures.PaintAsync(_fit.Plan, donors.Select(item => item.Piece).ToArray(),
+                donors.Select(item => item.Scene).ToArray(), bakedByPiece, _targetScenes, Path.Combine(_workDirectory, "first-pictures"), token), token);
+
+            // Each outfit shader lights and shines its pictures in its own way: bake the first painting as the replaced
+            // outfit draws it, learn that, and paint again so the colours and sheen come out as the original's.
+            Status("Matching the colours and sheen to the original…");
+            _pictures = firstPainting;
+            var painted = new List<ModelViewerSceneResult>();
+            for (var i = 0; i < _targets.Count; i++) painted.Add(await PrepareTargetAsync(i, upscale: null, token));
+            var paintedCombined = BodyProportionSceneCombiner.Combine(painted, SceneCacheRoot);
+            await LoadSceneAsync(paintedCombined.SceneJson, keepView: false, token);
+            var paintedLit = ByPiece(paintedCombined, await BakeAsync(Path.Combine(_workDirectory, "painted-lit"), token, "lit"));
+            var paintedSurface = ByPiece(paintedCombined, await BakeAsync(Path.Combine(_workDirectory, "painted-surfaces"), token, "surface"));
+            var wanted = await Task.Run(() => OutfitSwapPictures.PaintAsync(_fit.Plan, donors.Select(item => item.Piece).ToArray(),
+                donors.Select(item => item.Scene).ToArray(), litByPiece, _targetScenes, Path.Combine(_workDirectory, "wanted"), token), token);
+            var calibration = await Task.Run(() => OutfitSwapCalibration.LearnAsync(wanted.Pictures, firstPainting.Pictures, _targetScenes,
+                paintedLit, paintedSurface, token), token);
             _pictures = await Task.Run(() => OutfitSwapPictures.PaintAsync(_fit.Plan, donors.Select(item => item.Piece).ToArray(),
-                donors.Select(item => item.Scene).ToArray(), bakedByPiece, _targetScenes, Path.Combine(_workDirectory, "pictures"), token), token);
+                donors.Select(item => item.Scene).ToArray(), bakedByPiece, _targetScenes, Path.Combine(_workDirectory, "pictures"), token,
+                paintedLit, calibration, surfaceByPiece), token);
 
             var heads = new List<ModelViewerRequest>();
             if (OutfitSwapBodies.For(_fit.Report.To) is { } body)
@@ -221,28 +238,36 @@ public partial class OutfitSwapWindow : Window
         Status(upscale is null ? "Preparing the preview…" : "Reshaping with the chosen body shape…");
         var meshes = new List<OutfitSwapMesh>();
         var scenes = new List<ModelViewerSceneResult>();
-        var folder = Path.Combine(_workDirectory, "meshes");
-        Directory.CreateDirectory(folder);
         for (var i = 0; i < _targets.Count; i++)
         {
-            var working = await File.ReadAllBytesAsync(_targetGlbs[i], token);
             var piece = _fit.Plan.Pieces[i];
-            var mesh = piece.Hidden ? piece.Mesh : OutfitSwapModWriter.Reshape(working, piece.Mesh, upscale, piece.ObjectName);
-            meshes.Add(mesh);
-            var glb = Path.Combine(folder, $"{piece.ObjectName}-{Guid.NewGuid():N}.glb");
-            await File.WriteAllBytesAsync(glb, OutfitSwapMesh.WriteInto(working, mesh), token);
-            var textures = _targetScenes[i].Scene.Textures.Select(texture => texture.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var materials = _targetScenes[i].Scene.Materials.Select(material => material.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var edits = new ModelViewerEdits("Outfit swap", glb,
-                _pictures.Pictures.Where(pair => textures.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value),
-                _pictures.Materials.Where(pair => materials.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value), []);
-            scenes.Add(await Task.Run(() => _scenes.PrepareAsync(_targetSources[i].ViewerRequest, edits, null, token), token));
+            meshes.Add(piece.Hidden ? piece.Mesh : OutfitSwapModWriter.Reshape(await File.ReadAllBytesAsync(_targetGlbs[i], token), piece.Mesh, upscale, piece.ObjectName));
+            scenes.Add(await PrepareTargetAsync(i, upscale, token, meshes[^1]));
         }
         foreach (var head in _heads) scenes.Add(await Task.Run(() => _scenes.PrepareAsync(head, null, token), token));
         var combined = BodyProportionSceneCombiner.Combine(scenes, SceneCacheRoot);
         await LoadSceneAsync(combined.SceneJson, keepView: _shownOnce, token);
         _shownOnce = true;
         _shown = meshes;
+    }
+
+    /// <summary>A replaced piece with the swap's geometry (reshaped when asked) and current pictures, as a viewer scene.</summary>
+    private async Task<ModelViewerSceneResult> PrepareTargetAsync(int i, BodyProportionModSettings? upscale, CancellationToken token,
+        OutfitSwapMesh? mesh = null)
+    {
+        var folder = Path.Combine(_workDirectory, "meshes");
+        Directory.CreateDirectory(folder);
+        var working = await File.ReadAllBytesAsync(_targetGlbs[i], token);
+        var piece = _fit!.Plan.Pieces[i];
+        mesh ??= piece.Hidden ? piece.Mesh : OutfitSwapModWriter.Reshape(working, piece.Mesh, upscale, piece.ObjectName);
+        var glb = Path.Combine(folder, $"{piece.ObjectName}-{Guid.NewGuid():N}.glb");
+        await File.WriteAllBytesAsync(glb, OutfitSwapMesh.WriteInto(working, mesh), token);
+        var textures = _targetScenes[i].Scene.Textures.Select(texture => texture.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var materials = _targetScenes[i].Scene.Materials.Select(material => material.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var edits = new ModelViewerEdits("Outfit swap", glb,
+            _pictures!.Pictures.Where(pair => textures.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value),
+            _pictures.Materials.Where(pair => materials.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value), []);
+        return await Task.Run(() => _scenes.PrepareAsync(_targetSources[i].ViewerRequest, edits, null, token), token);
     }
 
     private async Task LoadSceneAsync(string sceneJson, bool keepView, CancellationToken token)
@@ -255,15 +280,24 @@ public partial class OutfitSwapWindow : Window
         await _sceneLoaded.Task.WaitAsync(TimeSpan.FromMinutes(5), token);
     }
 
-    /// <summary>Bakes every material of the shown scene to PNGs, by material slot.</summary>
-    private async Task<Dictionary<int, string>> BakeAsync(string directory, CancellationToken token)
+    /// <summary>
+    /// Bakes every material of the shown scene to PNGs, by material slot: its colour ("colour"), its lit colour ("lit"),
+    /// or its roughness and metalness ("surface").
+    /// </summary>
+    private async Task<Dictionary<int, string>> BakeAsync(string directory, CancellationToken token, string kind = "colour")
     {
         Directory.CreateDirectory(directory);
         var job = _bake = new BakeJob(Guid.NewGuid().ToString("N"), directory);
-        Post(new { type = "bake", requestId = job.Id });
+        Post(new { type = "bake", requestId = job.Id, kind });
         await job.Completion.Task.WaitAsync(TimeSpan.FromMinutes(10), token);
         return job.Files;
     }
+
+    /// <summary>A combined scene's bakes split back into its pieces, by each piece's own material slot.</summary>
+    private static IReadOnlyDictionary<int, string>[] ByPiece(BodyProportionSceneCombiner.CombinedScene combined, Dictionary<int, string> baked) =>
+        combined.Parts.Select(part => (IReadOnlyDictionary<int, string>)baked
+            .Where(pair => pair.Key >= part.MaterialOffset && pair.Key < part.MaterialOffset + part.MaterialCount)
+            .ToDictionary(pair => pair.Key - part.MaterialOffset, pair => pair.Value)).ToArray();
 
     private async void UpscaleComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {

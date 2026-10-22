@@ -299,15 +299,27 @@ public static partial class OutfitSwapPlanner
                 uvs[t * 3 + c] = found.Uv;
                 if (home.Triangle >= 0 && found.Chart != home.Chart) split = true;
             }
+            // A triangle stretched across the picture spans a seam inside one piece of the layout (around a leg).
+            var uvSpan = MathF.Max(Vector2.Distance(uvs[t * 3], uvs[t * 3 + 1]), MathF.Max(Vector2.Distance(uvs[t * 3 + 1], uvs[t * 3 + 2]), Vector2.Distance(uvs[t * 3 + 2], uvs[t * 3])));
+            var size = MathF.Max(Vector3.Distance(positions[corners[0]], positions[corners[1]]),
+                MathF.Max(Vector3.Distance(positions[corners[1]], positions[corners[2]]), Vector3.Distance(positions[corners[2]], positions[corners[0]])));
+            var across = home.Triangle >= 0 && uvSpan > 4 * body.PictureScale * size + 0.01f;
             for (var c = 0; c < 3; c++)
             {
-                if (split)
+                if (across)
+                {
+                    // Every corner takes the nearest spot on the side of the seam the triangle's middle lies on.
+                    var near = body.UvAt(home.Triangle, home.Position);
+                    var surface = body.Closest(positions[corners[c]], kind, home.Chart, near);
+                    uvs[t * 3 + c] = surface.Triangle < 0 ? near : body.UvAt(surface.Triangle, surface.Position);
+                }
+                else if (split)
                 {
                     // Corners nearest another piece of the layout take the nearest spot on the triangle's own piece.
                     var surface = body.Closest(positions[corners[c]], kind, home.Chart);
                     uvs[t * 3 + c] = surface.Triangle < 0 ? body.UvAt(home.Triangle, home.Position) : body.UvAt(surface.Triangle, surface.Position);
                 }
-                variants[t * 3 + c] = split ? 2 + t : kind ? 1 : 0;
+                variants[t * 3 + c] = split || across ? 2 + t : kind ? 1 : 0;
             }
         }
         return new SkinLayout(uvs, variants, slots);

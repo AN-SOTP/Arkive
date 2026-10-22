@@ -105,9 +105,24 @@ public sealed class OutfitSwapBody
         _cornerNormals = cornerNormals.ToArray();
         _lower = lower.ToArray();
         _charts = charts.ToArray();
+        // How many picture units one metre of skin covers, typically: a triangle stretched far beyond it straddles a seam.
+        var ratios = Enumerable.Range(0, _lower.Length).Select(t =>
+        {
+            float uv = 0, size = 0;
+            for (var e = 0; e < 3; e++)
+            {
+                uv = MathF.Max(uv, Vector2.Distance(_cornerUvs[t * 3 + e], _cornerUvs[t * 3 + (e + 1) % 3]));
+                size = MathF.Max(size, Vector3.Distance(_corners[t * 3 + e], _corners[t * 3 + (e + 1) % 3]));
+            }
+            return size > 1e-5f ? uv / size : 0;
+        }).Where(ratio => ratio > 0).OrderBy(ratio => ratio).ToArray();
+        PictureScale = ratios.Length > 0 ? ratios[ratios.Length / 2] : 1;
         _triangles = new OutfitSwapKdTree(Flatten(Enumerable.Range(0, _lower.Length)
             .Select(i => (_corners[i * 3] + _corners[i * 3 + 1] + _corners[i * 3 + 2]) / 3).ToArray()), 3);
     }
+
+    /// <summary>Picture units per metre of skin on a typical triangle.</summary>
+    public float PictureScale { get; }
 
     /// <summary>Whether the body is the class's own (its skin picture layout is the one the class's outfits use).</summary>
     public bool Native { get; }
@@ -116,10 +131,13 @@ public sealed class OutfitSwapBody
     /// connected piece of the skin picture layout it lies in.</summary>
     public readonly record struct SurfacePoint(int Triangle, Vector3 Position, bool Lower, int Chart);
 
-    /// <summary>The nearest point on the body's surface, optionally only on upper or lower skin, or on one piece of the layout.</summary>
-    public SurfacePoint Closest(Vector3 point, bool? lower = null, int? chart = null)
+    /// <summary>
+    /// The nearest point on the body's surface, optionally only on upper or lower skin, on one piece of the layout, or
+    /// where the skin picture is near <paramref name="nearUv"/> (one side of a seam).
+    /// </summary>
+    public SurfacePoint Closest(Vector3 point, bool? lower = null, int? chart = null, Vector2? nearUv = null, float uvReach = 0.06f)
     {
-        var count = chart is not null ? 128 : lower is null ? 16 : 64;
+        var count = chart is not null || nearUv is not null ? 128 : lower is null ? 16 : 64;
         Span<int> index = stackalloc int[count];
         Span<float> distance = stackalloc float[count];
         var found = _triangles.Nearest([point.X, point.Y, point.Z], count, index, distance);
@@ -130,6 +148,8 @@ public sealed class OutfitSwapBody
             var triangle = index[n];
             if (lower is { } wanted && _lower[triangle] != wanted) continue;
             if (chart is { } piece && _charts[triangle] != piece) continue;
+            if (nearUv is { } uv && Vector2.Distance((_cornerUvs[triangle * 3] + _cornerUvs[triangle * 3 + 1] + _cornerUvs[triangle * 3 + 2]) / 3, uv) > uvReach)
+                continue;
             var at = ClosestOnTriangle(point, _corners[triangle * 3], _corners[triangle * 3 + 1], _corners[triangle * 3 + 2]);
             var d = Vector3.DistanceSquared(point, at);
             if (d < bestDistance) { bestDistance = d; best = new SurfacePoint(triangle, at, _lower[triangle], _charts[triangle]); }
@@ -162,6 +182,29 @@ public sealed class OutfitSwapBody
         var v = (d11 * d20 - d01 * d21) / denominator;
         var w = (d00 * d21 - d01 * d20) / denominator;
         return (1 - v - w, v, w);
+    }
+
+    /// <summary>
+    /// Where the body's skin ends under the head: its open edges above the neck joint and close around the head joint.
+    /// The class's face mesh starts exactly there.
+    /// </summary>
+    public IReadOnlyList<(Vector3 A, Vector3 B)> HeadSeam(Vector3 neck, Vector3 head, float reach = 0.1f)
+    {
+        static (long, long, long) Key(Vector3 p) => ((long)MathF.Round(p.X * 5000), (long)MathF.Round(p.Y * 5000), (long)MathF.Round(p.Z * 5000));
+        var edges = new Dictionary<((long, long, long), (long, long, long)), (Vector3 A, Vector3 B, int Count)>();
+        for (var t = 0; t < _lower.Length; t++)
+            for (var e = 0; e < 3; e++)
+            {
+                Vector3 a = _corners[t * 3 + e], b = _corners[t * 3 + (e + 1) % 3];
+                var (ka, kb) = (Key(a), Key(b));
+                var key = ka.CompareTo(kb) < 0 ? (ka, kb) : (kb, ka);
+                edges[key] = edges.TryGetValue(key, out var found) ? found with { Count = found.Count + 1 } : (a, b, 1);
+            }
+        return edges.Values.Where(edge => edge.Count == 1).Select(edge => (edge.A, edge.B)).Where(edge =>
+        {
+            var middle = (edge.A + edge.B) / 2;
+            return middle.Y > neck.Y && MathF.Sqrt((middle.X - head.X) * (middle.X - head.X) + (middle.Z - head.Z) * (middle.Z - head.Z)) < reach;
+        }).ToArray();
     }
 
     private static Vector3 ClosestOnTriangle(Vector3 p, Vector3 a, Vector3 b, Vector3 c)
@@ -374,6 +417,65 @@ public static class OutfitSwapClearance
                 total += w;
             }
             if (total > 1e-6f) result[i] += sum / Math.Max(total, 1);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Brings the open top edge of the outfit's bare neck onto the new body's head seam, so the neck meets the head
+    /// without a gap whatever the two bodies' neck lengths, and blends the move down the neck and into nearby cloth.
+    /// </summary>
+    public static Vector3[] MeetHead(Vector3[] fitted, bool[] cloth, IReadOnlyList<int> triangles, IReadOnlyList<(Vector3 A, Vector3 B)> seam,
+        Vector3 neck, Vector3 head, float reach = 0.1f, float radius = 0.02f)
+    {
+        if (seam.Count == 0) return fitted;
+        var count = new Dictionary<(int, int), int>();
+        for (var i = 0; i + 2 < triangles.Count; i += 3)
+            for (var e = 0; e < 3; e++)
+            {
+                int a = triangles[i + e], b = triangles[i + (e + 1) % 3];
+                var key = a < b ? (a, b) : (b, a);
+                count[key] = count.GetValueOrDefault(key) + 1;
+            }
+        var ring = count.Where(pair => pair.Value == 1).SelectMany(pair => new[] { pair.Key.Item1, pair.Key.Item2 }).Distinct()
+            .Where(v => !cloth[v] && fitted[v].Y > neck.Y - 0.02f &&
+                        MathF.Sqrt((fitted[v].X - head.X) * (fitted[v].X - head.X) + (fitted[v].Z - head.Z) * (fitted[v].Z - head.Z)) < reach)
+            .ToArray();
+        var moves = new List<(int Vertex, Vector3 Move)>();
+        foreach (var v in ring)
+        {
+            var best = fitted[v];
+            var bestDistance = float.MaxValue;
+            foreach (var (a, b) in seam)
+            {
+                var ab = b - a;
+                var s = ab.LengthSquared() < 1e-12f ? 0 : Math.Clamp(Vector3.Dot(fitted[v] - a, ab) / ab.LengthSquared(), 0, 1);
+                var point = a + ab * s;
+                var d = Vector3.Distance(point, fitted[v]);
+                if (d < bestDistance) { bestDistance = d; best = point; }
+            }
+            if (bestDistance < 0.05f) moves.Add((v, best - fitted[v]));
+        }
+        if (moves.Count == 0) return fitted;
+        var tree = new OutfitSwapKdTree(moves.SelectMany(item => new[] { fitted[item.Vertex].X, fitted[item.Vertex].Y, fitted[item.Vertex].Z }).ToArray(), 3);
+        var result = (Vector3[])fitted.Clone();
+        var index = new int[8];
+        var distance = new float[8];
+        var onRing = moves.ToDictionary(item => item.Vertex, item => item.Move);
+        for (var v = 0; v < fitted.Length; v++)
+        {
+            if (onRing.TryGetValue(v, out var exact)) { result[v] += exact; continue; }
+            var found = tree.Nearest([fitted[v].X, fitted[v].Y, fitted[v].Z], 8, index, distance);
+            var sum = Vector3.Zero;
+            var total = 0f;
+            for (var n = 0; n < found; n++)
+            {
+                if (distance[n] > radius * 2.5f) break;
+                var w = MathF.Exp(-MathF.Pow(distance[n] / radius, 2));
+                sum += moves[index[n]].Move * w;
+                total += w;
+            }
+            if (total > 1e-6f) result[v] += sum / Math.Max(total, 1);
         }
         return result;
     }

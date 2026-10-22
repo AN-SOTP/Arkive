@@ -9,14 +9,14 @@ namespace Arkive.Core.Outfits;
 /// </summary>
 public static partial class OutfitSwapFitting
 {
-    // Body bones that turn on their own: the limb and spine segments, hands and fingers (each class rests its fingers
-    // differently), and feet (aimed at the toes, so shoes follow the new body's heel height). The head and twist helpers
-    // turn with their parent; outfit bones (skirts, capes, hair)
+    // Body bones that turn on their own: the limb and spine segments, and hands and fingers (each class rests its fingers
+    // differently). Feet keep the way they stood on the donor (see BoneMaps). The head and twist helpers turn with their
+    // parent; outfit bones (skirts, capes, hair)
     // follow their nearest body bone entirely, because they sit differently from one outfit to the next.
-    [GeneratedRegex(@"^bip001-(spine\d?|neck|[lr]-(clavicle|upperarm|forearm|thigh|calf|foot|hand|finger\d+))$")]
+    [GeneratedRegex(@"^bip001-(spine\d?|neck|[lr]-(clavicle|upperarm|forearm|thigh|calf|hand|finger\d+))$")]
     private static partial Regex TurnsOnItsOwn();
 
-    [GeneratedRegex(@"^bip001-([lr]-(hand|foot|toe0)|head)$")]
+    [GeneratedRegex(@"^bip001-([lr]-(hand|foot)|head)$")]
     private static partial Regex LimbEnd();
 
     [GeneratedRegex(@"^bip001|twist")]
@@ -48,6 +48,16 @@ public static partial class OutfitSwapFitting
                 return inherited;
             }
             var head = donor.BonePositions[bone];
+            if (FootBone().IsMatch(name))
+            {
+                // A shoe is made for its own heel height: the foot keeps its angle to the floor and its height above it,
+                // and only moves across to where the new body's foot is; toes go with the foot.
+                var foot = parent >= 0 && FootBone().IsMatch(donor.BoneNames[parent])
+                    ? Compute(parent)
+                    : new BoneMap(Quaternion.Identity, head, new Vector3(targetHead.X, head.Y, targetHead.Z));
+                maps[bone] = foot;
+                return foot;
+            }
             Quaternion? turn = null;
             if (TurnsOnItsOwn().IsMatch(name))
             {

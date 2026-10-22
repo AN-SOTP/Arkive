@@ -146,6 +146,10 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--out"),
                 ReadTextOption(arguments, "--cache"),
                 ReadTextOption(arguments, "--bakes"),
+                ReadTextOption(arguments, "--target-bakes"),
+                ReadTextOption(arguments, "--lit-bakes"),
+                ReadTextOption(arguments, "--surface-bakes"),
+                ReadTextOption(arguments, "--target-surface-bakes"),
                 json),
             "body-proportions" => BodyProportions(
                 target,
@@ -1068,10 +1072,13 @@ static int SkeletalMeshExportEditable(string reconPath, string? outputPath, bool
 /// <summary>
 /// Swaps one player outfit onto another body's outfit, headless: writes each replaced piece's new GLB, its repainted
 /// pictures and a viewer edits file (for model-viewer-scene --edits), and prints how well it fitted. Colours come from
-/// baked PNGs in --bakes (piece number/slot.png, from the viewer's bake) when given, otherwise from the stored pictures.
+/// baked PNGs in --bakes (piece number/slot.png, from the viewer's bake) when given, otherwise from the stored pictures;
+/// --lit-bakes and --surface-bakes hold the donor's lit and roughness/metalness bakes; --target-bakes and
+/// --target-surface-bakes the same of an earlier run's result (the replaced pieces with that run's pictures), from which
+/// the replaced outfit's shaders are learned and the pictures painted again to match the donor.
 /// </summary>
 static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, string? replace, string? outPath, string? cachePath,
-    string? bakesPath, bool json)
+    string? bakesPath, string? targetBakesPath, string? litBakesPath, string? surfaceBakesPath, string? targetSurfaceBakesPath, bool json)
 {
     if (string.IsNullOrWhiteSpace(indexCache) || string.IsNullOrWhiteSpace(wear) || string.IsNullOrWhiteSpace(replace) ||
         string.IsNullOrWhiteSpace(outPath))
@@ -1109,17 +1116,36 @@ static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, str
     var service = new OutfitSwapService(library, Path.Combine(cache, "outfit-swap"));
     var fit = service.FitAsync(donors.Select(item => item.Piece).ToArray(), targets.Select(item => item.Piece).ToArray(),
         "cli", progress, token).GetAwaiter().GetResult();
-    var baked = donors.Select((_, index) =>
+    IReadOnlyDictionary<int, string>[] Bakes(string? root, int count) => Enumerable.Range(0, count).Select(index =>
     {
-        var folder = bakesPath is null ? null : Path.Combine(Path.GetFullPath(bakesPath), index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var folder = root is null ? null : Path.Combine(Path.GetFullPath(root), index.ToString(System.Globalization.CultureInfo.InvariantCulture));
         return (IReadOnlyDictionary<int, string>)(folder is null || !Directory.Exists(folder)
             ? new Dictionary<int, string>()
             : Directory.EnumerateFiles(folder, "*.png").ToDictionary(
                 path => int.Parse(new string(Path.GetFileNameWithoutExtension(path).TakeWhile(char.IsDigit).ToArray()), System.Globalization.CultureInfo.InvariantCulture),
                 path => path));
     }).ToArray();
+    var baked = Bakes(bakesPath, donors.Length);
+    var targetBaked = targetBakesPath is null ? null : Bakes(targetBakesPath, targets.Length);
+    var litBaked = litBakesPath is null ? null : Bakes(litBakesPath, donors.Length);
+    var surfaceBaked = surfaceBakesPath is null ? null : Bakes(surfaceBakesPath, donors.Length);
+    var targetSurfaceBaked = targetSurfaceBakesPath is null ? null : Bakes(targetSurfaceBakesPath, targets.Length);
+    // With bakes of an earlier run's result (lit, and roughness/metalness), learn how the replaced outfit's shaders draw
+    // the pictures and paint again to match the donor's lit colours and surfaces.
+    var picturesFolder = Path.Combine(output, "pictures");
+    OutfitSwapCalibration? calibration = null;
+    if ((targetBaked is not null || targetSurfaceBaked is not null) && Directory.Exists(picturesFolder))
+    {
+        var painted = Directory.EnumerateFiles(picturesFolder, "*.png").ToDictionary(path => Path.GetFileNameWithoutExtension(path), path => path, StringComparer.OrdinalIgnoreCase);
+        var wanted = litBaked is null ? null : OutfitSwapPictures.PaintAsync(fit.Plan, donors.Select(item => item.Piece).ToArray(), donors.Select(item => item.Scene).ToArray(),
+            litBaked, targets.Select(item => item.Scene).ToArray(), Path.Combine(output, "wanted"), token).GetAwaiter().GetResult().Pictures;
+        calibration = OutfitSwapCalibration.LearnAsync(wanted, painted, targets.Select(item => item.Scene).ToArray(), targetBaked, targetSurfaceBaked, token)
+            .GetAwaiter().GetResult();
+        foreach (var (name, curve) in calibration.Colour) Console.Error.WriteLine($"colour gain {name}: {curve.Gain:N2}");
+        foreach (var name in calibration.Roughness.Keys) Console.Error.WriteLine($"roughness curve {name}");
+    }
     var pictures = OutfitSwapPictures.PaintAsync(fit.Plan, donors.Select(item => item.Piece).ToArray(), donors.Select(item => item.Scene).ToArray(),
-        baked, targets.Select(item => item.Scene).ToArray(), Path.Combine(output, "pictures"), token).GetAwaiter().GetResult();
+        baked, targets.Select(item => item.Scene).ToArray(), picturesFolder, token, targetBaked, calibration, surfaceBaked).GetAwaiter().GetResult();
     var results = new List<object>();
     for (var i = 0; i < targets.Length; i++)
     {
@@ -3658,7 +3684,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive dds-rgb-view <dxt5.dds> [--out FILE] [--json]");
     Console.WriteLine("  arkive texture-export-native <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive texture-project-create <arkive-native-texture.json> --edited FILE --workspace DIR [--name TEXT] [--alpha preserve-original|use-edited|force-opaque] [--json]");
-    Console.WriteLine("  arkive outfit-swap <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR [--cache DIR] [--bakes DIR] [--json]");
+    Console.WriteLine("  arkive outfit-swap <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR [--cache DIR] [--bakes DIR] [--lit-bakes DIR] [--surface-bakes DIR] [--target-bakes DIR] [--target-surface-bakes DIR] [--json]");
     Console.WriteLine("  arkive model-viewer-scene <package.upk> --object NAME [--alias NAME] [--cache DIR] [--edits EDITS.json] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive static-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
