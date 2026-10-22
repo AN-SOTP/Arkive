@@ -426,7 +426,7 @@ public static class OutfitSwapClearance
     /// without a gap whatever the two bodies' neck lengths, and blends the move down the neck and into nearby cloth.
     /// </summary>
     public static Vector3[] MeetHead(Vector3[] fitted, bool[] cloth, IReadOnlyList<int> triangles, IReadOnlyList<(Vector3 A, Vector3 B)> seam,
-        Vector3 neck, Vector3 head, float reach = 0.1f, float radius = 0.02f)
+        Vector3 neck, Vector3 head, float reach = 0.1f, float radius = 0.02f, float overlap = 0.005f)
     {
         if (seam.Count == 0) return fitted;
         var count = new Dictionary<(int, int), int>();
@@ -441,20 +441,33 @@ public static class OutfitSwapClearance
             .Where(v => !cloth[v] && fitted[v].Y > neck.Y - 0.02f &&
                         MathF.Sqrt((fitted[v].X - head.X) * (fitted[v].X - head.X) + (fitted[v].Z - head.Z) * (fitted[v].Z - head.Z)) < reach)
             .ToArray();
+        // The seam as dense points ordered by their angle around the neck, so each ring vertex goes to the seam point at
+        // its own angle: the whole ring then meets the whole seam, even where the two necks differ in height.
+        static float Angle(Vector3 point, Vector3 axis) => MathF.Atan2(point.Z - axis.Z, point.X - axis.X);
+        var samples = new List<(float Angle, Vector3 Point)>();
+        foreach (var (a, b) in seam)
+            for (var k = 0; k <= 4; k++)
+            {
+                var point = a + (b - a) * (k / 4f);
+                samples.Add((Angle(point, head), point));
+            }
+        samples.Sort((x, y) => x.Angle.CompareTo(y.Angle));
+        var angles = samples.Select(sample => sample.Angle).ToArray();
         var moves = new List<(int Vertex, Vector3 Move)>();
         foreach (var v in ring)
         {
-            var best = fitted[v];
-            var bestDistance = float.MaxValue;
-            foreach (var (a, b) in seam)
-            {
-                var ab = b - a;
-                var s = ab.LengthSquared() < 1e-12f ? 0 : Math.Clamp(Vector3.Dot(fitted[v] - a, ab) / ab.LengthSquared(), 0, 1);
-                var point = a + ab * s;
-                var d = Vector3.Distance(point, fitted[v]);
-                if (d < bestDistance) { bestDistance = d; best = point; }
-            }
-            if (bestDistance < 0.05f) moves.Add((v, best - fitted[v]));
+            var angle = Angle(fitted[v], head);
+            var at = Array.BinarySearch(angles, angle);
+            if (at < 0) at = ~at;
+            // The nearer of the two neighbours in angle (wrapping around the circle).
+            var before = samples[(at - 1 + samples.Count) % samples.Count];
+            var after = samples[at % samples.Count];
+            static float Gap(float a, float b) { var d = MathF.Abs(a - b); return MathF.Min(d, 2 * MathF.PI - d); }
+            var best = Gap(before.Angle, angle) <= Gap(after.Angle, angle) ? before.Point : after.Point;
+            // A little past the seam and in, tucked under the face, so no sliver shows between them.
+            var inward = new Vector3(head.X - best.X, 0, head.Z - best.Z);
+            best += new Vector3(0, overlap, 0) + (inward.LengthSquared() > 1e-8f ? Vector3.Normalize(inward) * (overlap / 4) : Vector3.Zero);
+            if (Vector3.Distance(best, fitted[v]) < 0.05f) moves.Add((v, best - fitted[v]));
         }
         if (moves.Count == 0) return fitted;
         var tree = new OutfitSwapKdTree(moves.SelectMany(item => new[] { fitted[item.Vertex].X, fitted[item.Vertex].Y, fitted[item.Vertex].Z }).ToArray(), 3);
