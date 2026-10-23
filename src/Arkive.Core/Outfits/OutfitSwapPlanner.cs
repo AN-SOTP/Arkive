@@ -243,24 +243,6 @@ public static partial class OutfitSwapPlanner
                 added = (lower, SlotFor(material));
                 return added.Value.Slot;
             }
-            // Whether the new body lays out the skin a donor material draws like the donor's body does: each point of that
-            // skin finds the new body's own picture coordinates there (the Assassin's and the Slayer's feet do, a Mage's
-            // do not).
-            var sameLayout = new Dictionary<(int Piece, int Material), bool>();
-            bool SameLayout(int piece, int material, bool lower)
-            {
-                if (sameLayout.TryGetValue((piece, material), out var known)) return known;
-                var mesh = donors[piece].Mesh;
-                var distances = new List<float>();
-                if (targetBody is { Native: true })
-                    foreach (var v in mesh.Sections.Where(section => section.Material == material).SelectMany(section => section.Triangles).Distinct())
-                    {
-                        var surface = targetBody.Closest(fitted[piece][v], lower);
-                        if (surface.Triangle >= 0) distances.Add(Vector2.Distance(targetBody.UvAt(surface.Triangle, surface.Position), mesh.Uv0[v]));
-                    }
-                distances.Sort();
-                return sameLayout[(piece, material)] = distances.Count >= 30 && distances[distances.Count / 2] < 0.06f;
-            }
             var mesh = Build(donors, fitted, target, assign[t], (piece, material) =>
             {
                 var mesh = donors[piece].Mesh;
@@ -271,12 +253,6 @@ public static partial class OutfitSwapPlanner
                 var bodySkin = OutfitSwapBodies.IsSkin(name) && !mesh.OwnPictureSkin.Contains(material);
                 if (bodySkin && SkinSlot(lower) is { } skin) return (skin, null, lower);
                 if (bodySkin && SkinSlot(!lower) is { } other) return (other, null, !lower);
-                // When the new body lays them out the same way, its own skin draws them from that picture instead, in its
-                // own tone (the outfit's skin material keeps the outfit body's tone).
-                if (OutfitSwapBodies.IsSkin(name) && (lower ? sources.LowerSkin : sources.UpperSkin) is { } bodyMaterial &&
-                    SameLayout(piece, material, lower) && SkinSlot(lower) is { } own &&
-                    OutfitSwapBodies.ClassOf(materials[own]) == OutfitSwapBodies.ClassOf(bodyMaterial.Path))
-                    return (own, null, null);
                 // A slot the fit added (a copy of one of the piece's materials) is that material.
                 var original = material < sources.Donors[piece].Count ? material
                     : Enumerable.Range(0, Math.Min(sources.Donors[piece].Count, mesh.Materials.Count))
