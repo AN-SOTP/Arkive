@@ -202,6 +202,8 @@ public static class OutfitSwapHands
             foreach (var copy in copies[ids[v]].Where(copy => copy >= hands.Length))
             {
                 moves[copy] = best.Point - points[copy];
+                mesh.Normals[copy] = mesh.Normals[best.Corner];
+                mesh.Tangents[copy] = mesh.Tangents[best.Corner];
                 for (var k = 0; k < 4; k++)
                 {
                     joints[copy * 4 + k] = joints[best.Corner * 4 + k];
@@ -239,6 +241,29 @@ public static class OutfitSwapHands
         }
         Zip(sections, native, mesh, outfitEdge.SelectMany(segment => new[] { segment.A, segment.B }).DistinctBy(v => ids[v]).ToArray(),
             handSegments.SelectMany(segment => new[] { segment.A, segment.B }).DistinctBy(v => ids[v]).ToArray());
+        // The hands' own bone weights take over from the arm's gradually, over 3 cm from the wrist: switched at once, the
+        // twist bones turn the two rows either side of the seam apart and it creases open as the wrist turns.
+        var ringTree = new OutfitSwapKdTree(edge.SelectMany(v => new[] { positions[v].X, positions[v].Y, positions[v].Z }).ToArray(), 3);
+        for (var v = hands.Length; v < points.Length; v++)
+        {
+            if (moves.ContainsKey(v) || ringTree.Nearest([positions[v].X, positions[v].Y, positions[v].Z], 1, index, distance) == 0 ||
+                distance[0] >= 0.03f) continue;
+            var share = 1 - distance[0] / 0.03f;
+            var ring = edge[index[0]];
+            var sum = new Dictionary<int, float>();
+            for (var k = 0; k < 4; k++)
+            {
+                sum[joints[v * 4 + k]] = sum.GetValueOrDefault(joints[v * 4 + k]) + weights[v * 4 + k] * (1 - share);
+                sum[joints[ring * 4 + k]] = sum.GetValueOrDefault(joints[ring * 4 + k]) + weights[ring * 4 + k] * share;
+            }
+            var best = sum.Where(pair => pair.Value > 0).OrderByDescending(pair => pair.Value).Take(4).ToArray();
+            var total = best.Sum(pair => pair.Value);
+            for (var k = 0; k < 4; k++)
+            {
+                joints[v * 4 + k] = k < best.Length ? best[k].Key : 0;
+                weights[v * 4 + k] = k < best.Length ? best[k].Value / total : 0;
+            }
+        }
     }
 
     /// <summary>
@@ -286,6 +311,9 @@ public static class OutfitSwapHands
                     foreach (var copy in mesh.Copies(partner))
                     {
                         positions[copy] = positions[ring[n]];
+                        // Shaded alike too, or a line shows where they meet.
+                        mesh.Normals[copy] = mesh.Normals[ring[n]];
+                        mesh.Tangents[copy] = mesh.Tangents[ring[n]];
                         for (var k = 0; k < 4; k++)
                         {
                             mesh.Joints[copy * 4 + k] = mesh.Joints[ring[n] * 4 + k];
