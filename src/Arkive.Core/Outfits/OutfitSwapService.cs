@@ -54,6 +54,11 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         if (from.Profile.Id != to.Profile.Id && field is null)
             notes.Add($"The game has no costumes shared by {from.Profile.DisplayName} and {to.Profile.DisplayName}, so only the skeleton guides the fit.");
         var targetSkeleton = new OutfitSwapSkeleton(targets.Select(piece => piece.Mesh));
+        // Bodies sharing a skeleton can lay their skin pictures out differently (the Female Gunner's next to the Female
+        // Assassin's base body): bare skin can then only keep the outfit's own picture.
+        var bodyClasses = to.BaseBody.Select(OutfitSwapBodies.ClassOf).ToHashSet();
+        var foreignSkin = targets.SelectMany(piece => piece.Mesh.Materials).Where(OutfitSwapBodies.IsSkin)
+            .Any(material => OutfitSwapBodies.ClassOf(material) is { } skinClass && !bodyClasses.Contains(skinClass));
         progress?.Report("Reading the bare bodies");
         var donorBody = await BodyAsync(from, donors.Select(piece => piece.Mesh).ToArray(), gameBuild, cancellationToken).ConfigureAwait(false);
         var targetBody = await BodyAsync(to, targets.Select(piece => piece.Mesh).ToArray(), gameBuild, cancellationToken).ConfigureAwait(false);
@@ -233,7 +238,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                         cloth.Select((value, v) => value && feet[v] >= 0.05f).ToArray(), donorBody, shownFoot);
             }
             fitted.Add(moved);
-            shaded.Add(OwnPictureFeetAndHands(donor with { Mesh = newFeet ? finished : BendWithShoes(finished, feet) }, feet));
+            shaded.Add(OwnPictureFeetAndHands(donor with { Mesh = newFeet ? finished : BendWithShoes(finished, feet) }, feet, foreignSkin));
         }
         // Layers of one piece (a dress over its underskirt, an overlay over a bodice, a sleeve over the arm) stay in their
         // order: each large connected part of a piece's cloth keeps the piece's other cloth and its bare skin that lay
@@ -516,11 +521,11 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
     /// picture, laid out for its own toes and fingers, cannot draw them: their skin triangles move to a copy of the skin
     /// material that keeps the outfit's own picture (<see cref="OutfitSwapMesh.OwnPictureSkin"/>).
     /// </summary>
-    private static OutfitSwapPiece OwnPictureFeetAndHands(OutfitSwapPiece piece, float[] feet)
+    private static OutfitSwapPiece OwnPictureFeetAndHands(OutfitSwapPiece piece, float[] feet, bool allSkin = false)
     {
         var mesh = piece.Mesh;
         var features = OutfitSwapFitting.Features(mesh, Enumerable.Range(0, mesh.VertexCount).ToArray());
-        bool Held(int v) => v < feet.Length && feet[v] >= 0.5f || features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
+        bool Held(int v) => allSkin || v < feet.Length && feet[v] >= 0.5f || features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
             features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand] >= 0.5f;
         var materials = mesh.Materials.ToList();
         var pieceMaterials = piece.Materials.ToList();

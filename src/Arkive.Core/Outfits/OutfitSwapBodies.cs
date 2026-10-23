@@ -65,6 +65,10 @@ public static partial class OutfitSwapBodies
     [GeneratedRegex(@"^pc_[a-z]{2,3}(_[mf])?_", RegexOptions.IgnoreCase)]
     private static partial Regex ClassPrefix();
 
+    /// <summary>The class prefix of an object or material name (pc_gn_f_ for pc_gn_f_av_base_upper_mi), or null.</summary>
+    public static string? ClassOf(string name) =>
+        ClassPrefix().Match(OutfitSwapMesh.ShortMaterialName(StripLocale(name))) is { Success: true } match ? match.Value.ToLowerInvariant() : null;
+
     /// <summary>The pieces of one outfit by their part (upper, lower, dress…), from object names.</summary>
     public static string? OutfitStem(string objectName) => BodyProfiles.OutfitStem(StripLocale(objectName));
 
