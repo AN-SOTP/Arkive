@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace Arkive.Core.Mods;
@@ -85,6 +86,8 @@ public sealed class ArkiveModLibrary
     public const int MinimumPriority = -1_000_000;
     public const int MaximumPriority = 1_000_000;
     private const string LockFileName = ".arkive-mod-library.lock";
+    // Not indented: with large mods the indented file was 2.4 times the size, and it is written on every change.
+    private static readonly JsonSerializerOptions StateJsonOptions = new(ArkiveModFileService.JsonOptions) { WriteIndented = false };
     private readonly ConcurrentDictionary<string, (long Length, DateTime WriteTime, string Message)> _unreadable =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -123,17 +126,40 @@ public sealed class ArkiveModLibrary
     {
         if (!File.Exists(ManifestPath))
             return new ArkiveModLibraryManifest(CurrentSchemaVersion, DateTimeOffset.UtcNow, null, []);
-        await using var stream = new FileStream(
-            ManifestPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
-            64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var manifest = await JsonSerializer.DeserializeAsync<ArkiveModLibraryManifest>(
-                           stream, ArkiveModFileService.JsonOptions, cancellationToken).ConfigureAwait(false) ??
+        byte[] bytes;
+        await using (var stream = new FileStream(
+                         ManifestPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+                         64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            using var buffer = new MemoryStream(stream.CanSeek ? (int)Math.Min(stream.Length, int.MaxValue) : 0);
+            await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+            bytes = buffer.ToArray();
+        }
+        // The file embeds every mod's manifest (tens of MB with large mods) and is read several times for each
+        // change in the Mods list. Parsing it takes most of a second; checking its bytes are the ones parsed last
+        // takes a few milliseconds, and unlike a size and time check it cannot miss a write.
+        var sha256 = SHA256.HashData(bytes);
+        if (_loaded is { } loaded && loaded.Sha256.AsSpan().SequenceEqual(sha256))
+            return loaded.Manifest;
+        var manifest = JsonSerializer.Deserialize<ArkiveModLibraryManifest>(bytes, ArkiveModFileService.JsonOptions) ??
                        throw new InvalidDataException("The Arkive mod library manifest was empty.");
         if (manifest.SchemaVersion != CurrentSchemaVersion)
             throw new NotSupportedException(
                 $"Mod library schema {manifest.SchemaVersion} is unsupported; Arkive requires {CurrentSchemaVersion}.");
-        return manifest with { Mods = manifest.Mods ?? [] };
+        manifest = Freeze(manifest);
+        _loaded = new LoadedManifest(sha256, manifest);
+        return manifest;
     }
+
+    private sealed record LoadedManifest(byte[] Sha256, ArkiveModLibraryManifest Manifest);
+
+    private volatile LoadedManifest? _loaded;
+
+    /// <summary>One parsed library is handed to every caller, so its lists are arrays no caller can add to.</summary>
+    private static ArkiveModLibraryManifest Freeze(ArkiveModLibraryManifest manifest) => manifest with
+    {
+        Mods = (manifest.Mods ?? []).Select(mod => mod with { Bindings = (mod.Bindings ?? []).ToArray() }).ToArray(),
+    };
 
     public async Task<ArkiveModLibraryManifest> UpdateAsync(
         Func<ArkiveModLibraryManifest, ArkiveModLibraryManifest> mutate,
@@ -572,15 +598,16 @@ public sealed class ArkiveModLibrary
         var temporary = ManifestPath + $".{Guid.NewGuid():N}.tmp";
         try
         {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest, StateJsonOptions);
             await using (var stream = new FileStream(
                              temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                              64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                await JsonSerializer.SerializeAsync(stream, manifest, ArkiveModFileService.JsonOptions, cancellationToken)
-                    .ConfigureAwait(false);
+                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
             File.Move(temporary, ManifestPath, overwrite: true);
+            _loaded = new LoadedManifest(SHA256.HashData(bytes), Freeze(manifest));
         }
         finally
         {

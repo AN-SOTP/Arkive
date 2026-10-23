@@ -74,20 +74,37 @@ public partial class MainWindow : Window
         void Lap(string stage) { stages.Add($"{stage} {clock.Elapsed.TotalSeconds:N1}s"); clock.Restart(); }
         try
         {
+            var selectionOnly = _selectionOnlyChange;
+            _selectionOnlyChange = null;
             var scan = await _arkiveModAuthoring.ScanAsync();
             var library = scan.Library;
             _arkiveModLibraryManifest = library;
             Lap("scan");
-            var snapshot = await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
+            // After enabling, disabling or a priority change the working files are as the selection left them, unless
+            // the scan found changed mod files.
+            var snapshot = selectionOnly is not null && scan.RegisteredModIds.Count + scan.RefreshedModIds.Count +
+                scan.Released.Count == 0
+                ? selectionOnly
+                : await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
             Lap("working files");
-            IReadOnlyList<ArkiveModOutsideChange> outside = [];
-            try { outside = await _arkiveModApply.FindOutsideChangesAsync(); }
-            catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
-            { Log($"Checking game files for outside changes failed: {exception.Message}"); }
-            foreach (var change in outside)
-                Log($"Game file changed outside this Arkive: {change.PhysicalPackageName} ({change.PackageAlias}), " +
-                    $"sha256={change.GameSha256}, changed objects={string.Join(", ", change.ChangedObjects)}.");
-            _outsideChanges = outside;
+            // Choosing which mods are on changes no game file, so the last check of the game folder still holds.
+            // Applying, restoring and Refresh check again, and every install verifies the game files itself.
+            var outside = _outsideChanges;
+            if (selectionOnly is null || !_outsideChangesChecked)
+            {
+                outside = [];
+                try
+                {
+                    outside = await _arkiveModApply.FindOutsideChangesAsync();
+                    _outsideChangesChecked = true;
+                }
+                catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+                { Log($"Checking game files for outside changes failed: {exception.Message}"); }
+                foreach (var change in outside)
+                    Log($"Game file changed outside this Arkive: {change.PhysicalPackageName} ({change.PackageAlias}), " +
+                        $"sha256={change.GameSha256}, changed objects={string.Join(", ", change.ChangedObjects)}.");
+                _outsideChanges = outside;
+            }
             Lap("game files");
             var installedTables = _arkiveModContext.GameDataFor(library)?.Archive.Current();
             var statuses = await ArkiveModApplyService.DescribeAsync(
@@ -158,7 +175,7 @@ public partial class MainWindow : Window
                 foreach (var line in state.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)) Log(line);
             }
             if (scan.Released.Count > 0) await RefreshGuidedTextureModsAsync("mod file updated");
-            await RefreshModAuthoringAsync();
+            await RefreshModAuthoringAsync(snapshot: scan.Released.Count > 0 ? null : snapshot);
             Lap("edit mods");
             Log($"Mod library refresh took: {string.Join(", ", stages)}.");
         }
@@ -277,6 +294,7 @@ public partial class MainWindow : Window
     {
         if (!ModLibraryIdle) return;
         _modLibraryBusy = true;
+        _selectionOnlyChange = null;
         UpdateModLibraryActionState();
         using var busy = ShowBusy(BusyTitle(title), "Arkive is updating the mod list. Please wait until it finishes.");
         try
@@ -308,12 +326,13 @@ public partial class MainWindow : Window
     /// </param>
     private async Task SynchronizeModSelectionsAsync(string trigger, bool onlyIfChanged = false, bool deferWorkspace = false)
     {
-        var changes = await ArkiveModSelectionService.SynchronizeAsync(_arkiveModLibrary, _arkiveModEdits);
+        var (changes, snapshot) = await ArkiveModSelectionService.SynchronizeWithSnapshotAsync(_arkiveModLibrary, _arkiveModEdits);
         if (changes.Count > 0)
             Log($"Mod selection synchronized: trigger={trigger}, changes={changes.Count:N0}, " +
                 string.Join("; ", changes.Take(20).Select(change =>
                     $"mod={change.ModName}, kind={change.Kind}, object={change.ObjectName}, edit={change.EditId}, included={change.Included}")) +
                 (changes.Count > 20 ? $"; and {changes.Count - 20:N0} more." : "."));
+        if (deferWorkspace) _selectionOnlyChange = snapshot;
         if (onlyIfChanged && changes.Count == 0) return;
         if (deferWorkspace)
         {
@@ -326,6 +345,12 @@ public partial class MainWindow : Window
     }
 
     private bool _packageWorkspaceStale;
+
+    /// <summary>
+    /// Set when the last Mods-list operation only changed which mods are on or their priorities (see
+    /// SynchronizeModSelectionsAsync): the working files as that left them, for the refresh that follows it.
+    /// </summary>
+    private ArkiveModEditSnapshot? _selectionOnlyChange;
 
     /// <summary>Reloads the package workspace if a deferred change left it behind (see SynchronizeModSelectionsAsync).</summary>
     private async Task RefreshStalePackageWorkspaceAsync(string trigger)
@@ -889,6 +914,7 @@ public partial class MainWindow : Window
         await RunModApplyAsync(previewOnly: false);
 
     private IReadOnlyList<ArkiveModOutsideChange> _outsideChanges = [];
+    private bool _outsideChangesChecked;
 
     /// <summary>
     /// Puts back game files that another Arkive data folder changed, from that folder's verified backups. Only files

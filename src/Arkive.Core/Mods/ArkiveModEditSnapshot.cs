@@ -62,6 +62,14 @@ public sealed class ArkiveModEditSnapshot
 
     public ArkiveModLocalEdit? Find(string editId) => _byId.GetValueOrDefault(editId);
 
+    /// <summary>This snapshot with the given edits, as just saved, in place of the ones read from the same files.</summary>
+    internal ArkiveModEditSnapshot Replace(IReadOnlyCollection<ArkiveModLocalEdit> saved)
+    {
+        if (saved.Count == 0) return this;
+        var byPath = saved.ToDictionary(edit => edit.ManifestPath, StringComparer.OrdinalIgnoreCase);
+        return new ArkiveModEditSnapshot(Edits.Select(edit => byPath.GetValueOrDefault(edit.ManifestPath) ?? edit).ToArray());
+    }
+
     public IReadOnlyList<ArkiveModLocalEdit> ForPackage(string sourcePackagePath) => Edits
         .Where(edit => SamePath(edit.SourcePackagePath, sourcePackagePath)).ToArray();
 

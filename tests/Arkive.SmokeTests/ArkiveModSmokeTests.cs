@@ -22,6 +22,7 @@ internal static class ArkiveModSmokeTests
         new("reinstalls the previous build when an .arkive asset cannot be set up", TestArkiveFailedSetupKeepsPreviousBuild),
         new("keeps same-named package objects apart by their object path", TestArkiveSameNamedObjectPaths),
         new("detects game files changed by another Arkive data folder and restores them from its backups", TestArkiveOutsideChanges),
+        new("re-reads the mod library and working files whenever they change on disk", TestArkiveLibraryAndWorkingFileCaches),
     ];
 
     private static readonly JsonSerializerOptions ManifestJson = new()
@@ -476,6 +477,16 @@ internal static class ArkiveModSmokeTests
 
         player.Library.SetPriorityAsync(a.ModId, 1).GetAwaiter().GetResult();
         player.Library.SetPriorityAsync(b.ModId, 9).GetAwaiter().GetResult();
+        // The Mods list shows the working files as the selection left them without reading them all again.
+        var synced = ArkiveModSelectionService.SynchronizeWithSnapshotAsync(player.Library, player.Edits).GetAwaiter().GetResult();
+        var reread = ArkiveModEditSnapshot.LoadAsync(player.Edits).GetAwaiter().GetResult();
+        Assert(synced.Changes is [{ Included: false } dropped] && dropped.EditId == aEdit.EditId &&
+               synced.Snapshot.Edits.Count == reread.Edits.Count &&
+               reread.Edits.All(edit => synced.Snapshot.Find(edit.EditId) is { Entry: MaterialInstanceEditEntry kept } held &&
+                                        held.Included == edit.Included && edit.Entry is MaterialInstanceEditEntry saved &&
+                                        kept.Document.IncludedInPackageBuild == saved.Document.IncludedInPackageBuild &&
+                                        kept.Document.UpdatedAt == saved.Document.UpdatedAt),
+            "the selection's working files differed from the ones saved after a priority change");
         var swap = service.PlanAsync().GetAwaiter().GetResult();
         Assert(swap.Packages is [{ Action: ArkiveModPackageAction.Rebuild, RestoreFirst: true }] &&
                swap.Packages[0].Setups.Single().ModId == b.ModId,
@@ -851,6 +862,56 @@ internal static class ArkiveModSmokeTests
             string.Join(" | ", result.Packages.Select(item => item.Message)));
     }
 
+
+    private static void TestArkiveLibraryAndWorkingFileCaches()
+    {
+        var root = Path.Combine(fixtureDirectory, "arkive-caches");
+        var packagePath = CreateMaterialClient(root, out _);
+        var arkive = AuthorMaterialMod(root, packagePath, "Cached gloss", roughness: 0.7f, blue: null);
+        var environment = CreateEnvironment(Path.Combine(root, "data"));
+        var library = environment.Library;
+        var mod = library.ImportAsync(arkive).GetAwaiter().GetResult().Entry;
+        var loaded = library.LoadAsync().GetAwaiter().GetResult();
+        Assert(ReferenceEquals(loaded, library.LoadAsync().GetAwaiter().GetResult()) &&
+               loaded.Mods is ArkiveModLibraryEntry[] && loaded.Mods.All(item => item.Bindings is ArkiveModAssetBinding[]),
+            "an unchanged mod library was parsed again, or handed out in lists a caller could add to");
+
+        // Another Arkive on the same data folder, or the command line, changes the library. The second change keeps
+        // the file's size and write time, as two saves in one clock tick can.
+        var other = new ArkiveModLibrary(library.ModsDirectory, library.StateDirectory);
+        other.SetPriorityAsync(mod.ModId, 4).GetAwaiter().GetResult();
+        var seen = library.LoadAsync().GetAwaiter().GetResult().Find(mod.ModId);
+        var written = new FileInfo(library.ManifestPath);
+        other.SetPriorityAsync(mod.ModId, 5).GetAwaiter().GetResult();
+        File.SetLastWriteTimeUtc(library.ManifestPath, written.LastWriteTimeUtc);
+        Assert(seen is { Priority: 4 } && new FileInfo(library.ManifestPath).Length == written.Length &&
+               library.LoadAsync().GetAwaiter().GetResult().Find(mod.ModId) is { Priority: 5 },
+            "a library change written by another Arkive was not seen");
+        library.SetEnabledAsync(mod.ModId, true).GetAwaiter().GetResult();
+        Assert(other.LoadAsync().GetAwaiter().GetResult().Find(mod.ModId) is { Enabled: true, Priority: 5 } &&
+               library.LoadAsync().GetAwaiter().GetResult().Find(mod.ModId) is { Enabled: true, Priority: 5 } &&
+               !File.ReadAllText(library.ManifestPath).Contains('\n'),
+            "the library's own change was not read back the same by another Arkive, or the file was still indented");
+
+        // Working files: a record left alone is not parsed again; one saved elsewhere is, even with its old time.
+        var edit = CreateMaterialEdit(environment, packagePath, "Cached draft", 0.6f, null, candidate: false);
+        File.SetLastWriteTimeUtc(edit.DocumentPath, DateTime.UtcNow.AddHours(-1));
+        var store = environment.Edits.MaterialEdits;
+        var listed = store.LoadAsync().GetAwaiter().GetResult().Single();
+        Assert(ReferenceEquals(listed.Document, store.LoadAsync().GetAwaiter().GetResult().Single().Document),
+            "an unchanged working-file record was parsed again");
+        new MaterialInstanceEditWorkspaceStore(store.RootDirectory)
+            .SetIncludedAsync(listed, !listed.Document.IncludedInPackageBuild).GetAwaiter().GetResult();
+        var changed = store.LoadAsync().GetAwaiter().GetResult().Single();
+        var stamp = File.GetLastWriteTimeUtc(edit.DocumentPath);
+        new MaterialInstanceEditWorkspaceStore(store.RootDirectory)
+            .SetIncludedAsync(changed, listed.Document.IncludedInPackageBuild).GetAwaiter().GetResult();
+        File.SetLastWriteTimeUtc(edit.DocumentPath, stamp);
+        Assert(changed.Document.IncludedInPackageBuild != listed.Document.IncludedInPackageBuild &&
+               store.LoadAsync().GetAwaiter().GetResult().Single().Document.IncludedInPackageBuild ==
+               listed.Document.IncludedInPackageBuild,
+            "a working-file record saved by another Arkive was not read again");
+    }
 
     private static string WriteTextureMod(string path, string name, out ArkiveModFileManifest manifest)
     {
