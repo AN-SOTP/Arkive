@@ -212,6 +212,8 @@ public static partial class OutfitSwapPlanner
         var sections = new Dictionary<int, List<int>>();
         var targetBones = new Dictionary<string, int>(StringComparer.Ordinal);
         var boneTargets = new Dictionary<int, int[]>();
+        var arms = new Dictionary<int, ArmSkin?>();
+        var skinUnder = new Dictionary<int, SleeveSkin?>();
         for (var i = 0; i < target.BoneNames.Length; i++) targetBones.TryAdd(target.BoneNames[i], i);
 
         foreach (var (piece, section, triangles) in parts)
@@ -249,7 +251,11 @@ public static partial class OutfitSwapPlanner
                     uv1.Add(donor.Uv1[vertex]);
                     for (var c = 0; c < 4; c++) colours.Add(donor.Colours[vertex * 4 + c]);
                     if (!boneTargets.TryGetValue(piece, out var boneFor)) boneTargets[piece] = boneFor = BoneTargets(donor, target, targetBones);
-                    var bones = RemapWeights(donor, vertex, position, target, targetBones, boneFor, targetBody);
+                    if (!arms.TryGetValue(piece, out var arm)) arms[piece] = arm = ArmSkin.Of(target);
+                    var bones = RemapWeights(donor, vertex, position, target, targetBones, boneFor, targetBody, arm);
+                    if (!skinUnder.TryGetValue(piece, out var under))
+                        skinUnder[piece] = under = SleeveSkin.Of(donor, fitted[piece], v => RemapWeights(donor, v, fitted[piece][v], target, targetBones, boneFor, targetBody, arm), target);
+                    if (under is not null && !OutfitSwapBodies.IsSkin(donor.Materials[donor.Sections[section].Material])) bones = under.Blend(position, bones);
                     joints.AddRange(bones.Select(item => item.Bone));
                     weights.AddRange(bones.Select(item => item.Weight));
                 }
@@ -330,12 +336,46 @@ public static partial class OutfitSwapPlanner
     /// The target bone each donor bone's vertices hang from: a body bone by name; an outfit bone (skirt, sleeve and cape
     /// chains) by name only when the target's bone of that name sits where the donor's lands on the new body. Another
     /// outfit's chain of the same name hangs elsewhere, and in game the target's own cloth physics and animation swing it
-    /// around its own pivot, which stretches the cloth into flat sheets. Otherwise the nearest ancestor that qualifies
-    /// (the chain's root, or the body bone it hangs from); -1 for the body's own weights.
+    /// around its own pivot, which stretches the cloth into flat sheets. Otherwise a link of the target's own chain that
+    /// hangs from the same body bone and lies where the donor's link lands (so the target's cloth physics swings it), or
+    /// the nearest ancestor that qualifies. Chains hanging from the arm (sleeves) follow the arm under them instead
+    /// (<see cref="FollowArm"/>): held rigidly by the upper arm, a sleeve's cuff stays put while the forearm bends and
+    /// twists, opening a hole at the wrist. -1 for the body's own weights.
     /// </summary>
-    private static int[] BoneTargets(OutfitSwapMesh donor, OutfitSwapMesh target, Dictionary<string, int> targetBones, float reach = 0.03f)
+    private static int[] BoneTargets(OutfitSwapMesh donor, OutfitSwapMesh target, Dictionary<string, int> targetBones, float reach = 0.03f,
+        float borrow = 0.04f)
     {
         var maps = OutfitSwapFitting.BoneMaps(donor, new OutfitSwapSkeleton([target]));
+        bool Body(string name) => name.StartsWith("bip001", StringComparison.Ordinal) || name.Contains("twist", StringComparison.Ordinal);
+        var landed = Enumerable.Range(0, donor.BoneNames.Length).Select(i => maps[i].Apply(donor.BonePositions[i])).ToArray();
+        // The body bone each outfit bone hangs from, on either skeleton.
+        static string? Anchor(string[] names, int[] parents, int bone)
+        {
+            for (var at = parents[bone]; at >= 0; at = parents[at])
+                if (names[at].StartsWith("bip001", StringComparison.Ordinal) || names[at].Contains("twist", StringComparison.Ordinal)) return names[at];
+            return null;
+        }
+        var targetChains = Enumerable.Range(0, target.BoneNames.Length).Where(b => !Body(target.BoneNames[b]))
+            .GroupBy(b => Anchor(target.BoneNames, target.BoneParents, b)).Where(group => group.Key is not null)
+            .ToDictionary(group => group.Key!, group => group.ToArray(), StringComparer.Ordinal);
+        // A chain borrows link by link from its root down, and stops at the first link with no target link near it (its
+        // rest then hangs from the last borrowed one): skipping a link would leave cloth between two swinging pivots.
+        var borrowed = new int?[donor.BoneNames.Length];
+        int Borrowed(int bone)
+        {
+            if (borrowed[bone] is { } known) return known;
+            var parent = donor.BoneParents[bone];
+            var link = -1;
+            if (!Body(donor.BoneNames[bone]) && (parent < 0 || Body(donor.BoneNames[parent]) || Borrowed(parent) >= 0) &&
+                Anchor(donor.BoneNames, donor.BoneParents, bone) is { } anchor && !OutfitSwapBody.IsArmBone(anchor) &&
+                targetChains.GetValueOrDefault(anchor) is { } links)
+            {
+                var nearest = links.MinBy(candidate => Vector3.Distance(landed[bone], target.BonePositions[candidate]));
+                if (Vector3.Distance(landed[bone], target.BonePositions[nearest]) < borrow) link = nearest;
+            }
+            borrowed[bone] = link;
+            return link;
+        }
         var result = new int[donor.BoneNames.Length];
         for (var i = 0; i < result.Length; i++)
         {
@@ -343,11 +383,23 @@ public static partial class OutfitSwapPlanner
             for (var candidate = i; candidate >= 0; candidate = donor.BoneParents[candidate])
             {
                 var name = donor.BoneNames[candidate];
-                if (!targetBones.TryGetValue(name, out var bone)) continue;
-                var body = name.StartsWith("bip001", StringComparison.Ordinal) || name.Contains("twist", StringComparison.Ordinal);
-                if (body || Vector3.Distance(maps[candidate].Apply(donor.BonePositions[candidate]), target.BonePositions[bone]) < reach)
+                var body = Body(name);
+                if (targetBones.TryGetValue(name, out var bone) &&
+                    (body || Vector3.Distance(landed[candidate], target.BonePositions[bone]) < reach))
                 {
                     result[i] = bone;
+                    break;
+                }
+                if (body) continue;
+                if (Anchor(donor.BoneNames, donor.BoneParents, candidate) is not { } anchor) continue;
+                if (OutfitSwapBody.IsArmBone(anchor))
+                {
+                    result[i] = FollowArm;
+                    break;
+                }
+                if (Borrowed(candidate) is var link and >= 0)
+                {
+                    result[i] = link;
                     break;
                 }
             }
@@ -355,12 +407,86 @@ public static partial class OutfitSwapPlanner
         return result;
     }
 
+    /// <summary>A <see cref="BoneTargets"/> result: the vertex takes the weights of the replaced outfit's arm nearest it.</summary>
+    private const int FollowArm = -2;
+
+    /// <summary>
+    /// The outfit's own bare arm skin, to bend the cloth lying on it with: a sleeve over a forearm weighted differently
+    /// from the skin under it (to the arm's other twist bone, say) lets the skin through when the game twists the wrist.
+    /// </summary>
+    private sealed class SleeveSkin(Vector3[] positions, int[] vertices, (int Bone, float Weight)[][] weights)
+    {
+        private readonly OutfitSwapKdTree _tree = new(vertices.SelectMany(v => new[] { positions[v].X, positions[v].Y, positions[v].Z }).ToArray(), 3);
+
+        public static SleeveSkin? Of(OutfitSwapMesh donor, Vector3[] positions, Func<int, (int Bone, float Weight)[]> remap, OutfitSwapMesh target)
+        {
+            var arm = target.BoneNames.Select(OutfitSwapBody.IsArmBone).ToArray();
+            var vertices = new List<int>();
+            var weights = new List<(int, float)[]>();
+            foreach (var section in donor.Sections.Where(section => OutfitSwapBodies.IsSkin(donor.Materials[section.Material])))
+                foreach (var v in section.Triangles.Distinct())
+                {
+                    var bones = remap(v);
+                    if (bones.Where(item => arm[item.Bone]).Sum(item => item.Weight) < 0.5f) continue;
+                    vertices.Add(v);
+                    weights.Add(bones);
+                }
+            return vertices.Count > 0 ? new SleeveSkin(positions, vertices.ToArray(), weights.ToArray()) : null;
+        }
+
+        /// <summary>A cloth point's weights, taken over by the skin's where it lies on the arm skin (fully within 5 mm).</summary>
+        public (int Bone, float Weight)[] Blend(Vector3 point, (int Bone, float Weight)[] own, float near = 0.005f, float far = 0.015f)
+        {
+            Span<int> index = stackalloc int[1];
+            Span<float> distance = stackalloc float[1];
+            if (_tree.Nearest([point.X, point.Y, point.Z], 1, index, distance) == 0 || distance[0] >= far) return own;
+            var share = Math.Clamp((far - distance[0]) / (far - near), 0, 1);
+            var sum = new Dictionary<int, float>();
+            foreach (var (bone, weight) in own) if (weight > 0) sum[bone] = sum.GetValueOrDefault(bone) + weight * (1 - share);
+            foreach (var (bone, weight) in weights[index[0]]) if (weight > 0) sum[bone] = sum.GetValueOrDefault(bone) + weight * share;
+            var best = sum.OrderByDescending(pair => pair.Value).Take(4).ToArray();
+            var total = best.Sum(pair => pair.Value);
+            var result = new (int, float)[4];
+            for (var i = 0; i < 4; i++) result[i] = i < best.Length ? (best[i].Key, best[i].Value / total) : (0, 0);
+            return result;
+        }
+    }
+
+    /// <summary>The replaced piece's own arm (sleeves and skin weighted to the arm's bones), to bend sleeves with.</summary>
+    private sealed class ArmSkin(OutfitSwapMesh target, int[] vertices)
+    {
+        private readonly OutfitSwapKdTree _tree = new(vertices.SelectMany(v => new[] { target.Positions[v].X, target.Positions[v].Y, target.Positions[v].Z }).ToArray(), 3);
+
+        public static ArmSkin? Of(OutfitSwapMesh target)
+        {
+            var arm = target.BoneNames.Select(OutfitSwapBody.IsArmBone).ToArray();
+            var vertices = Enumerable.Range(0, target.VertexCount).Where(v =>
+                Enumerable.Range(0, 4).Sum(k => arm[target.Joints[v * 4 + k]] ? target.Weights[v * 4 + k] : 0) >= 0.99f).ToArray();
+            return vertices.Length > 0 ? new ArmSkin(target, vertices) : null;
+        }
+
+        public Dictionary<int, float> At(Vector3 point)
+        {
+            Span<int> index = stackalloc int[4];
+            Span<float> distance = stackalloc float[4];
+            var found = _tree.Nearest([point.X, point.Y, point.Z], 4, index, distance);
+            var result = new Dictionary<int, float>();
+            for (var n = 0; n < found; n++)
+                for (var k = 0; k < 4; k++)
+                    if (target.Weights[vertices[index[n]] * 4 + k] is var weight and > 0)
+                        result[target.Joints[vertices[index[n]] * 4 + k]] = result.GetValueOrDefault(target.Joints[vertices[index[n]] * 4 + k]) + weight / (distance[n] + 1e-3f);
+            var total = result.Values.Sum();
+            foreach (var bone in result.Keys.ToArray()) result[bone] /= total;
+            return result;
+        }
+    }
+
     /// <summary>
     /// A donor vertex's skin on the target skeleton, by <see cref="BoneTargets"/>; bones with no target take the target
     /// body's own skin weights at that spot. At most four bones, normalised.
     /// </summary>
     private static (int Bone, float Weight)[] RemapWeights(OutfitSwapMesh donor, int vertex, Vector3 position, OutfitSwapMesh target,
-        Dictionary<string, int> targetBones, int[] boneFor, OutfitSwapBody? body)
+        Dictionary<string, int> targetBones, int[] boneFor, OutfitSwapBody? body, ArmSkin? arm)
     {
         var sum = new Dictionary<int, float>();
         for (var k = 0; k < 4; k++)
@@ -371,6 +497,11 @@ public static partial class OutfitSwapPlanner
             if (bone < 0)
             {
                 if (body is null) continue;
+                if (bone == FollowArm && arm?.At(position) is { Count: > 0 } onArm)
+                {
+                    foreach (var (armBone, share) in onArm) sum[armBone] = sum.GetValueOrDefault(armBone) + weight * share;
+                    continue;
+                }
                 foreach (var (bodyBone, share) in body.WeightsAt(position, targetBones.ContainsKey))
                     sum[targetBones[bodyBone]] = sum.GetValueOrDefault(targetBones[bodyBone]) + weight * share;
                 continue;

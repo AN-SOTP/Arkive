@@ -161,10 +161,16 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             if (OutfitSwapClearance.ShoeSurface(mesh, mesh.Positions, feet) is { } donorShoes &&
                 OutfitSwapClearance.ShoeSurface(mesh, moved, feet) is { } shoes)
                 moved = OutfitSwapClearance.KeepInShoes(mesh.Positions, moved, cloth, donorShoes, shoes);
-            // Cloth that lay over the outfit's own bare skin stays over it now the skin has moved.
+            // Cloth that lay over the outfit's own bare skin stays over it now the skin has moved: what hugged it (a chain
+            // round a bare thigh, a garter) keeps hugging it, and nothing sinks into it.
             if (OutfitSwapClearance.SkinSurface(mesh, mesh.Positions) is { } donorSkin &&
                 OutfitSwapClearance.SkinSurface(mesh, moved) is { } movedSkin)
+            {
+                var weldedMovable = weldedCloth.Select((value, v) => value && weldedFeet[v] < 0.1f).ToArray();
+                moved = Expand(OutfitSwapClearance.Conform(Average(mesh.Positions, ids, weldedCount), Average(moved, ids, weldedCount),
+                    donorSkin, movedSkin, weldedMovable, triangles, near: 0.006f, far: 0.02f, rounds: 8, onSkin: true), ids);
                 moved = OutfitSwapClearance.PushOut(mesh.Positions, moved, donorSkin, movedSkin, movable, reach: 0.015f);
+            }
             if (donorBody is not null && targetBody is not null)
             {
                 var (donorGap, donorNear, _) = donorBody.Measure(mesh.Positions);
@@ -208,7 +214,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                         cloth.Select((value, v) => value && feet[v] >= 0.05f).ToArray(), donorBody, shownFoot);
             }
             fitted.Add(moved);
-            shaded.Add(OwnPictureFeetAndHands(donor with { Mesh = finished }, feet));
+            shaded.Add(OwnPictureFeetAndHands(donor with { Mesh = newFeet ? finished : BendWithShoes(finished, feet) }, feet));
         }
         // Layers of one piece (a dress over its underskirt, an overlay over a bodice, a sleeve over the arm) stay in their
         // order: each large connected part of a piece's cloth keeps the piece's other cloth and its bare skin that lay
@@ -259,7 +265,15 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                     fitted[k], count);
             }
         }
-        // Pieces were fitted one by one: cloth of one that lay under another's keeps lying under it.
+        // Pieces were fitted one by one: cloth of one that lay under another's keeps lying under it. Cloth hugging its own
+        // piece's bare skin stays on the skin (it was wrapped onto it): pushed under another piece's skirt that came to
+        // lie closer in, a chain round the thigh would stand away from it.
+        var hugging = donors.Select(donor =>
+        {
+            if (OutfitSwapClearance.SkinSurface(donor.Mesh, donor.Mesh.Positions) is not { } skin) return new bool[donor.Mesh.VertexCount];
+            var (gap, near, _) = skin.MeasureExact(donor.Mesh.Positions);
+            return gap.Select((g, v) => near[v] < 0.01f && g > -0.001f).ToArray();
+        }).ToArray();
         for (var inner = 0; inner < donors.Count; inner++)
             for (var outer = 0; outer < donors.Count; outer++)
             {
@@ -273,7 +287,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 var innerCloth = new bool[count];
                 foreach (var section in innerMesh.Sections)
                     if (!OutfitSwapBodies.IsSkin(innerMesh.Materials[section.Material]))
-                        foreach (var v in section.Triangles) innerCloth[v] = true;
+                        foreach (var v in section.Triangles) innerCloth[v] = !hugging[inner][v];
                 var kept = OutfitSwapClearance.KeepUnder(innerMesh, fitted[inner][..count], innerCloth, before, after);
                 Array.Copy(kept, fitted[inner], count);
             }
@@ -328,6 +342,83 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             });
         }
         return moved.Count > 0 ? new OutfitSwapBody(moved, native: false) : null;
+    }
+
+    /// <summary>
+    /// A bare foot in a shoe, and the shoe's inner layers, bend with the shoe's bottom: each point takes the bone weights
+    /// of the lowest shoe surface straight below it. Outfits often weight toes and the insole mostly to the toe bone and
+    /// a heel's rigid sole mostly to the foot; on a body whose animations bend the toes further than the outfit's own class
+    /// does (a battle stance), the toes then go through the sole.
+    /// </summary>
+    private static OutfitSwapMesh BendWithShoes(OutfitSwapMesh mesh, float[] feet, float reach = 0.03f)
+    {
+        var shoe = new List<int>();
+        var bare = new HashSet<int>();
+        foreach (var section in mesh.Sections)
+        {
+            var skin = OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]);
+            for (var i = 0; i + 2 < section.Triangles.Length; i += 3)
+            {
+                int a = section.Triangles[i], b = section.Triangles[i + 1], c = section.Triangles[i + 2];
+                if (skin) { foreach (var v in new[] { a, b, c }) if (feet[v] >= 0.5f) bare.Add(v); }
+                else if (feet[a] >= 0.1f && feet[b] >= 0.1f && feet[c] >= 0.1f)
+                {
+                    shoe.AddRange([a, b, c]);
+                    bare.UnionWith([a, b, c]);
+                }
+            }
+        }
+        if (shoe.Count == 0 || bare.Count == 0) return mesh;
+        var p = mesh.Positions;
+        var tree = new OutfitSwapKdTree(Enumerable.Range(0, shoe.Count / 3)
+            .SelectMany(t => ((p[shoe[t * 3]] + p[shoe[t * 3 + 1]] + p[shoe[t * 3 + 2]]) / 3) is var m ? new[] { m.X, m.Y, m.Z } : []).ToArray(), 3);
+        var joints = (int[])mesh.Joints.Clone();
+        var weights = (float[])mesh.Weights.Clone();
+        var near = new List<int>();
+        foreach (var v in bare)
+        {
+            // The shoe's bottom straight below: the furthest triangle a ray downwards meets.
+            tree.Within([p[v].X, p[v].Y - reach / 2, p[v].Z], reach, near);
+            var best = 0f;
+            (int Triangle, float U, float W)? hit = null;
+            foreach (var t in near)
+            {
+                if (shoe[t * 3] == v || shoe[t * 3 + 1] == v || shoe[t * 3 + 2] == v) continue;
+                Vector3 a = p[shoe[t * 3]], e1 = p[shoe[t * 3 + 1]] - a, e2 = p[shoe[t * 3 + 2]] - a;
+                var q = Vector3.Cross(-Vector3.UnitY, e2);
+                var det = Vector3.Dot(e1, q);
+                if (MathF.Abs(det) < 1e-12f) continue;
+                var s0 = p[v] - a;
+                var u = Vector3.Dot(s0, q) / det;
+                var r = Vector3.Cross(s0, e1);
+                var w = Vector3.Dot(-Vector3.UnitY, r) / det;
+                var along = Vector3.Dot(e2, r) / det;
+                if (u < 0 || w < 0 || u + w > 1 || along <= 1e-4f || along > reach || along <= best) continue;
+                best = along;
+                hit = (t, u, w);
+            }
+            if (hit is not { } found) continue;
+            var sum = new Dictionary<int, float>();
+            var corners = new[] { (shoe[found.Triangle * 3], 1 - found.U - found.W), (shoe[found.Triangle * 3 + 1], found.U), (shoe[found.Triangle * 3 + 2], found.W) };
+            foreach (var (corner, share) in corners)
+                for (var k = 0; k < 4; k++)
+                    if (mesh.Weights[corner * 4 + k] > 0)
+                        sum[mesh.Joints[corner * 4 + k]] = sum.GetValueOrDefault(mesh.Joints[corner * 4 + k]) + mesh.Weights[corner * 4 + k] * share;
+            var top = sum.OrderByDescending(pair => pair.Value).Take(4).ToArray();
+            var total = top.Sum(pair => pair.Value);
+            if (total <= 0) continue;
+            for (var k = 0; k < 4; k++)
+            {
+                joints[v * 4 + k] = k < top.Length ? top[k].Key : 0;
+                weights[v * 4 + k] = k < top.Length ? top[k].Value / total : 0;
+            }
+        }
+        return new OutfitSwapMesh
+        {
+            Positions = mesh.Positions, Normals = mesh.Normals, Tangents = mesh.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1, Colours = mesh.Colours,
+            Joints = joints, Weights = weights, Sections = mesh.Sections, Materials = mesh.Materials, BoneNames = mesh.BoneNames,
+            BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents, OwnPictureSkin = mesh.OwnPictureSkin,
+        };
     }
 
     /// <summary>
