@@ -150,6 +150,7 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--lit-bakes"),
                 ReadTextOption(arguments, "--surface-bakes"),
                 ReadTextOption(arguments, "--target-surface-bakes"),
+                ReadTextOption(arguments, "--clean-backups"),
                 json),
             "outfit-swap-mod" => OutfitSwapMod(
                 target,
@@ -697,7 +698,7 @@ static int ModelViewerScene(
     var result = service.PrepareAsync(new ModelViewerRequest(
         package,
         string.IsNullOrWhiteSpace(packageAlias) ? Path.GetFileNameWithoutExtension(package) : packageAlias.Trim(),
-        Path.GetDirectoryName(package),
+        Environment.GetEnvironmentVariable("ARKIVE_PACKAGES_ROOT") ?? Path.GetDirectoryName(package),
         asset.ExportIndex, asset.SerialOffset, asset.SerialSize, asset.ClassName, asset.ObjectName), edits)
         .GetAwaiter().GetResult();
     if (json) WriteJson(result.Scene);
@@ -1088,7 +1089,7 @@ static int SkeletalMeshExportEditable(string reconPath, string? outputPath, bool
 /// the replaced outfit's shaders are learned and the pictures painted again to match the donor.
 /// </summary>
 static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, string? replace, string? outPath, string? cachePath,
-    string? bakesPath, string? targetBakesPath, string? litBakesPath, string? surfaceBakesPath, string? targetSurfaceBakesPath, bool json)
+    string? bakesPath, string? targetBakesPath, string? litBakesPath, string? surfaceBakesPath, string? targetSurfaceBakesPath, string? cleanBackupsPath, bool json)
 {
     if (string.IsNullOrWhiteSpace(indexCache) || string.IsNullOrWhiteSpace(wear) || string.IsNullOrWhiteSpace(replace) ||
         string.IsNullOrWhiteSpace(outPath))
@@ -1104,7 +1105,10 @@ static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, str
     var library = new OutfitSwapPackageLibrary(new PackageIndexStore(Path.GetFullPath(indexCache)), root, reader, provider,
         new SkeletalMeshReconnaissanceService(reader, provider, bridge),
         new SkeletalMeshReconnaissanceWorkspaceStore(Path.Combine(cache, "reconnaissance")),
-        new SkeletalMeshEditableExportService(reader, provider), Path.Combine(cache, "pieces"));
+        new SkeletalMeshEditableExportService(reader, provider), Path.Combine(cache, "pieces"),
+        // With mods applied, pieces are read from Arkive's clean backups (any copy of the same file name in the folder).
+        cleanBackupsPath is null ? null : (package, _) => Task.FromResult(Directory.EnumerateFiles(Path.GetFullPath(cleanBackupsPath),
+            Path.GetFileName(package), SearchOption.AllDirectories).FirstOrDefault() ?? package));
     var scenes = new ModelViewerSceneService(bridge, new ModelViewerCache(Path.Combine(cache, "model-viewer")), protectionProvider: provider);
     var token = CancellationToken.None;
 
@@ -3803,7 +3807,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive texture-export-native <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive texture-project-create <arkive-native-texture.json> --edited FILE --workspace DIR [--name TEXT] [--alpha preserve-original|use-edited|force-opaque] [--json]");
     Console.WriteLine("  arkive outfit-swap-mod <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --root Arkive-project-root --name TEXT [--game PACKAGES_DIR] [--cache DIR] [--json]");
-    Console.WriteLine("  arkive outfit-swap <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR [--cache DIR] [--bakes DIR] [--lit-bakes DIR] [--surface-bakes DIR] [--target-bakes DIR] [--target-surface-bakes DIR] [--json]");
+    Console.WriteLine("  arkive outfit-swap <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR [--cache DIR] [--bakes DIR] [--lit-bakes DIR] [--surface-bakes DIR] [--target-bakes DIR] [--target-surface-bakes DIR] [--clean-backups DIR] [--json]");
     Console.WriteLine("  arkive model-viewer-scene <package.upk> --object NAME [--alias NAME] [--cache DIR] [--edits EDITS.json] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive static-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");

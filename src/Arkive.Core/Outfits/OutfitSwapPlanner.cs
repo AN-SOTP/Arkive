@@ -53,8 +53,7 @@ public static partial class OutfitSwapPlanner
     [GeneratedRegex(@"thigh|calf|foot|toe|skirt|hip|knee|leg", RegexOptions.IgnoreCase)]
     private static partial Regex LegBone();
 
-    [GeneratedRegex(@"^(.*)_(\d+)$")]
-    private static partial Regex ChainLink();
+
 
     private sealed record Slot(int Piece, OutfitSwapMaterial Material, string Key, bool Skin, bool LowerSkin, bool Own);
 
@@ -334,11 +333,8 @@ public static partial class OutfitSwapPlanner
         var weights = new List<float>();
         var sections = new Dictionary<int, List<int>>();
         var targetBones = new Dictionary<string, int>(StringComparer.Ordinal);
+        var boneTargets = new Dictionary<int, int[]>();
         for (var i = 0; i < target.BoneNames.Length; i++) targetBones.TryAdd(target.BoneNames[i], i);
-        var chains = target.BoneNames.Select((name, i) => (Match: ChainLink().Match(name), i)).Where(item => item.Match.Success)
-            .GroupBy(item => item.Match.Groups[1].Value).ToDictionary(group => group.Key, group => group.Select(item => item.i).ToArray(), StringComparer.Ordinal);
-        var firstChild = new Dictionary<int, int>();
-        for (var i = 0; i < target.BoneParents.Length; i++) if (target.BoneParents[i] >= 0) firstChild.TryAdd(target.BoneParents[i], i);
 
         foreach (var (piece, section, triangles) in parts)
         {
@@ -374,7 +370,8 @@ public static partial class OutfitSwapPlanner
                     uv0.Add(uv);
                     uv1.Add(donor.Uv1[vertex]);
                     for (var c = 0; c < 4; c++) colours.Add(donor.Colours[vertex * 4 + c]);
-                    var bones = RemapWeights(donor, vertex, position, target, targetBones, chains, firstChild, targetBody);
+                    if (!boneTargets.TryGetValue(piece, out var boneFor)) boneTargets[piece] = boneFor = BoneTargets(donor, target, targetBones);
+                    var bones = RemapWeights(donor, vertex, position, target, targetBones, boneFor, targetBody);
                     joints.AddRange(bones.Select(item => item.Bone));
                     weights.AddRange(bones.Select(item => item.Weight));
                 }
@@ -452,29 +449,54 @@ public static partial class OutfitSwapPlanner
     }
 
     /// <summary>
-    /// A donor vertex's skin on the target skeleton: the same bones by name; links of a chain (skirt, cape) pick the
-    /// target's link nearest the point, since chains differ in length; bones the target lacks take the target body's own
-    /// skin weights at that spot. At most four bones, normalised.
+    /// The target bone each donor bone's vertices hang from: a body bone by name; an outfit bone (skirt, sleeve and cape
+    /// chains) by name only when the target's bone of that name sits where the donor's lands on the new body. Another
+    /// outfit's chain of the same name hangs elsewhere, and in game the target's own cloth physics and animation swing it
+    /// around its own pivot, which stretches the cloth into flat sheets. Otherwise the nearest ancestor that qualifies
+    /// (the chain's root, or the body bone it hangs from); -1 for the body's own weights.
+    /// </summary>
+    private static int[] BoneTargets(OutfitSwapMesh donor, OutfitSwapMesh target, Dictionary<string, int> targetBones, float reach = 0.03f)
+    {
+        var maps = OutfitSwapFitting.BoneMaps(donor, new OutfitSwapSkeleton([target]));
+        var result = new int[donor.BoneNames.Length];
+        for (var i = 0; i < result.Length; i++)
+        {
+            result[i] = -1;
+            for (var candidate = i; candidate >= 0; candidate = donor.BoneParents[candidate])
+            {
+                var name = donor.BoneNames[candidate];
+                if (!targetBones.TryGetValue(name, out var bone)) continue;
+                var body = name.StartsWith("bip001", StringComparison.Ordinal) || name.Contains("twist", StringComparison.Ordinal);
+                if (body || Vector3.Distance(maps[candidate].Apply(donor.BonePositions[candidate]), target.BonePositions[bone]) < reach)
+                {
+                    result[i] = bone;
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// A donor vertex's skin on the target skeleton, by <see cref="BoneTargets"/>; bones with no target take the target
+    /// body's own skin weights at that spot. At most four bones, normalised.
     /// </summary>
     private static (int Bone, float Weight)[] RemapWeights(OutfitSwapMesh donor, int vertex, Vector3 position, OutfitSwapMesh target,
-        Dictionary<string, int> targetBones, Dictionary<string, int[]> chains, Dictionary<int, int> firstChild, OutfitSwapBody? body)
+        Dictionary<string, int> targetBones, int[] boneFor, OutfitSwapBody? body)
     {
         var sum = new Dictionary<int, float>();
         for (var k = 0; k < 4; k++)
         {
             var weight = donor.Weights[vertex * 4 + k];
             if (weight <= 0) continue;
-            var name = donor.BoneNames[donor.Joints[vertex * 4 + k]];
-            if (!targetBones.TryGetValue(name, out var bone))
+            var bone = boneFor[donor.Joints[vertex * 4 + k]];
+            if (bone < 0)
             {
                 if (body is null) continue;
                 foreach (var (bodyBone, share) in body.WeightsAt(position, targetBones.ContainsKey))
                     sum[targetBones[bodyBone]] = sum.GetValueOrDefault(targetBones[bodyBone]) + weight * share;
                 continue;
             }
-            if (ChainLink().Match(name) is { Success: true } link && chains.TryGetValue(link.Groups[1].Value, out var chain) && chain.Length > 1)
-                bone = chain.MinBy(candidate => SegmentDistance(position, target.BonePositions[candidate],
-                    target.BonePositions[firstChild.GetValueOrDefault(candidate, candidate)]));
             sum[bone] = sum.GetValueOrDefault(bone) + weight;
         }
         var best = sum.OrderByDescending(pair => pair.Value).Take(4).ToArray();
@@ -489,12 +511,6 @@ public static partial class OutfitSwapPlanner
         return result;
     }
 
-    private static float SegmentDistance(Vector3 point, Vector3 a, Vector3 b)
-    {
-        var ab = b - a;
-        var s = ab.LengthSquared() < 1e-12f ? 0 : Math.Clamp(Vector3.Dot(point - a, ab) / ab.LengthSquared(), 0, 1);
-        return Vector3.Distance(point, a + ab * s);
-    }
 
     /// <summary>The triangles that have an area: ones squeezed to a line or a point by the fit draw nothing and are dropped.</summary>
     private static int[] WithArea(List<int> triangles, List<Vector3> positions)
