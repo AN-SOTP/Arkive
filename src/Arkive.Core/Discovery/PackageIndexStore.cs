@@ -374,10 +374,7 @@ public sealed partial class PackageIndexStore
                         if (hasArchetypeFilter)
                         {
                             metadata = metadata
-                                .Where(item => string.Equals(
-                                    item.Archetype,
-                                    archetype,
-                                    StringComparison.OrdinalIgnoreCase))
+                                .Where(item => gameMetadata!.MatchesArchetype(item.Archetype, archetype!))
                                 .ToArray();
                             if (metadata.Count == 0)
                             {

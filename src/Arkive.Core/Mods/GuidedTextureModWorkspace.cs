@@ -158,6 +158,8 @@ public sealed class GuidedTextureModWorkspace
         }
     }
 
+    private readonly ParsedRecordCache<GuidedTextureModProjectEntry> _parsed = new();
+
     public async Task<IReadOnlyList<GuidedTextureModProjectEntry>> LoadAsync(
         CancellationToken cancellationToken = default)
     {
@@ -168,7 +170,7 @@ public sealed class GuidedTextureModWorkspace
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                entries.Add(await LoadProjectAsync(path, cancellationToken).ConfigureAwait(false));
+                entries.Add(await _parsed.GetAsync(path, LoadProjectAsync, cancellationToken).ConfigureAwait(false));
             }
             catch (Exception exception) when (exception is IOException or JsonException or NotSupportedException)
             {

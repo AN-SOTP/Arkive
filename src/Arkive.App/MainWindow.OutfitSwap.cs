@@ -121,10 +121,13 @@ public partial class MainWindow
                 })
                 .OrderBy(row => row.Stem, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            grid.ItemsSource = rows;
+            grid.Tag = rows;
+            var shown = ShowOutfitSwapRows(grid);
             OutfitSwapStatusText.Text = rows.Length == 0
                 ? $"No player outfits match {query}."
-                : $"{rows.Length:N0} outfit(s) match {query}.";
+                : shown == rows.Length
+                    ? $"{rows.Length:N0} outfit(s) match {query}."
+                    : $"{rows.Length:N0} outfit(s) match {query}; {shown:N0} for the chosen class.";
             Log($"Outfit swap search: query={query}, scope={scope}, matches={result.TotalMatches}, outfits={rows.Length}.");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
@@ -139,10 +142,120 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>A class to filter outfits by: the outfit code of its own skins and of the body it is built on.</summary>
+    private sealed record OutfitSwapClass(string Label, string Code, string BodyCode, IReadOnlySet<string> Codes)
+    {
+        public override string ToString() => Label;
+    }
+
+    private IReadOnlyList<OutfitSwapClass> _outfitSwapClasses = [];
+
+    /// <summary>
+    /// Fills the class boxes from the game's class list: each class with the code its gear uses (pc_mar_ for Arcanist)
+    /// and its body's code (pc_mg_), so a class shows its own skins and its body's outfits. A base body also shows the
+    /// skins of every class built on it.
+    /// </summary>
+    private void FillOutfitSwapClasses()
+    {
+        if (_gameMetadataIndex is not { } metadata || OutfitSwapWearClassBox is null) return;
+        static string? CodeOf(string? reference) =>
+            reference is null ? null : reference[(reference.LastIndexOf('.') + 1)..].ToLowerInvariant() switch
+            {
+                var code when code.StartsWith("pc_", StringComparison.Ordinal) => code[3..] switch
+                {
+                    // Shadowhunter's character record is PC_DMN, but her gear is PC_DDM.
+                    "dmn" => "ddm",
+                    var other => other,
+                },
+                _ => null,
+            };
+        var players = metadata.Entities.Where(entity => entity.Kind == GameEntityKind.PlayableCharacter)
+            .Select(entity => (Entity: entity, Code: CodeOf(entity.PrimaryAssetReference)))
+            .Where(item => item.Code is not null).ToArray();
+        var codes = players.ToDictionary(item => item.Entity.EntityId, item => item.Code!);
+        _outfitSwapClasses = players.Select(item =>
+            {
+                var body = item.Entity.BaseEntityId is { } baseId && codes.TryGetValue(baseId, out var baseCode) ? baseCode : item.Code!;
+                var family = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { item.Code!, body };
+                if (body == item.Code)
+                    family.UnionWith(players.Where(other => other.Entity.BaseEntityId == item.Entity.EntityId).Select(other => other.Code!));
+                var name = item.Entity.DisplayName;
+                if (name.EndsWith("_Male", StringComparison.Ordinal)) name = "Male " + name[..^5];
+                else if (name.EndsWith("_Female", StringComparison.Ordinal)) name = "Female " + name[..^7];
+                return new OutfitSwapClass(GameClassNames.Label(name), item.Code!, body, family);
+            })
+            .DistinctBy(item => item.Code).OrderBy(item => item.Label, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        foreach (var box in new[] { OutfitSwapWearClassBox, OutfitSwapReplaceClassBox })
+        {
+            var selected = (box.SelectedItem as OutfitSwapClass)?.Code;
+            box.ItemsSource = new object[] { "All classes" }.Concat(_outfitSwapClasses).ToArray();
+            box.SelectedItem = _outfitSwapClasses.FirstOrDefault(item => item.Code == selected) ?? box.Items[0];
+        }
+    }
+
+    // The class an outfit belongs to, from its name: pc_mar_av_137 is Arcanist's, pc_wbk_f_hr_00 Slayer's, pc_dl_av_217a the Assassin body's.
+    private string? OutfitSwapCode(string stem)
+    {
+        var name = stem.ToLowerInvariant();
+        if (!name.StartsWith("pc_", StringComparison.Ordinal)) return null;
+        return _outfitSwapClasses.SelectMany(item => item.Codes).Distinct().OrderByDescending(code => code.Length)
+            .FirstOrDefault(code => name.StartsWith("pc_" + code + "_", StringComparison.Ordinal));
+    }
+
+    /// <summary>Shows the search results the grid's class box allows; returns how many.</summary>
+    private int ShowOutfitSwapRows(DataGrid grid)
+    {
+        var rows = grid.Tag as OutfitSwapRow[] ?? [];
+        var box = grid == OutfitSwapWearGrid ? OutfitSwapWearClassBox : OutfitSwapReplaceClassBox;
+        var shown = box.SelectedItem is OutfitSwapClass chosen
+            ? rows.Where(row => OutfitSwapCode(row.Stem) is { } code && chosen.Codes.Contains(code)).ToArray()
+            : rows;
+        grid.ItemsSource = shown;
+        return shown.Length;
+    }
+
+    private void OutfitSwapClassBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        var grid = sender == OutfitSwapWearClassBox ? OutfitSwapWearGrid : OutfitSwapReplaceGrid;
+        if (grid.Tag is not OutfitSwapRow[] rows) return;
+        var shown = ShowOutfitSwapRows(grid);
+        OutfitSwapStatusText.Text = shown == rows.Length
+            ? $"Showing all {rows.Length:N0} outfit(s) found."
+            : $"Showing {shown:N0} of {rows.Length:N0} outfit(s) found, for {((ComboBox)sender).SelectedItem}.";
+        UpdateOutfitSwapActions();
+    }
+
+    /// <summary>Selects the row under the mouse, so the right-click menu acts on it.</summary>
+    private void OutfitSwapGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        for (var element = e.OriginalSource as DependencyObject; element is not null && element != sender;
+             element = System.Windows.Media.VisualTreeHelper.GetParent(element))
+        {
+            if (element is not DataGridRow { Item: OutfitSwapRow row }) continue;
+            ((DataGrid)sender).SelectedItem = row;
+            return;
+        }
+    }
+
+    /// <summary>Opens the outfit's top (or dress) in the Asset Viewer, as the game has it.</summary>
+    private void OutfitSwapPreviewInViewer_Click(object sender, RoutedEventArgs e)
+    {
+        var grid = (sender as MenuItem)?.Parent is ContextMenu { PlacementTarget: DataGrid target } ? target : null;
+        if (grid?.SelectedItem is not OutfitSwapRow row) return;
+        if (OpenModelViewer(ToModelViewerRequest(row.Pieces[0]), edits: null))
+            OutfitSwapStatusText.Text = $"Opened {row.Pieces[0].ObjectName} in the Asset Viewer.";
+        else
+            OutfitSwapStatusText.Text = "The Asset Viewer needs UModel, which Arkive could not find.";
+    }
+
     private async void OutfitSwapPreviewButton_Click(object sender, RoutedEventArgs e)
     {
         if (OutfitSwapWearGrid.SelectedItem is not OutfitSwapRow wear || OutfitSwapReplaceGrid.SelectedItem is not OutfitSwapRow replace ||
             _umodelBridge is null || string.IsNullOrWhiteSpace(_libraryRootPath)) return;
+        // Reading the mods and presets that can shape the swap takes a moment; the wait card shows until the window opens.
+        OutfitSwapStatusText.Text = $"Opening the swap of {wear.Stem} onto {replace.Stem}…";
+        using var busy = ShowBusy("Opening the swap preview…", $"Preparing {wear.Stem} to wear in place of {replace.Stem}.");
         try
         {
             var window = new OutfitSwapWindow(ModelViewerService(), OutfitSwapLibrary(),

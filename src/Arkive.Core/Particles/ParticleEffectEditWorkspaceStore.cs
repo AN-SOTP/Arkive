@@ -40,6 +40,8 @@ public sealed class ParticleEffectEditWorkspaceStore(string rootDirectory)
 
     public string RootDirectory { get; } = Path.GetFullPath(rootDirectory);
 
+    private readonly Mods.ParsedRecordCache<ParticleEffectEditEntry> _parsed = new();
+
     public async Task<IReadOnlyList<ParticleEffectEditEntry>> LoadAsync(CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(RootDirectory)) return [];
@@ -47,7 +49,7 @@ public sealed class ParticleEffectEditWorkspaceStore(string rootDirectory)
         foreach (var path in Directory.EnumerateFiles(RootDirectory, DocumentFileName, SearchOption.AllDirectories))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            try { entries.Add(await LoadEntryAsync(path, cancellationToken).ConfigureAwait(false)); }
+            try { entries.Add(await _parsed.GetAsync(path, LoadEntryAsync, cancellationToken).ConfigureAwait(false)); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
             {
                 // One damaged working copy must not hide the others.

@@ -57,14 +57,15 @@ public partial class MainWindow
 
     /// <summary>
     /// Adds the assets of the maps whose zone name the query matches ("Land of Death and Order") to a search's results,
-    /// before them. Object-name searches and queries naming many zones are left as they are.
+    /// before them. Object-name searches, queries naming many zones and searches filtered to a class (map assets
+    /// belong to no class) are left as they are.
     /// </summary>
     private async Task<PackageIndexSearchResult> AddZoneMatchesAsync(
-        PackageIndexSearchResult result, string query, string? category, PackageIndexSearchScope scope, int resultLimit,
-        Action<string> showStatus, CancellationToken cancellationToken)
+        PackageIndexSearchResult result, string query, string? category, string? archetype, PackageIndexSearchScope scope,
+        int resultLimit, Action<string> showStatus, CancellationToken cancellationToken)
     {
-        if (scope == PackageIndexSearchScope.ObjectName || _gameMetadataIndex is not { } metadata ||
-            string.IsNullOrEmpty(_libraryRootPath)) return result;
+        if (scope == PackageIndexSearchScope.ObjectName || !string.IsNullOrEmpty(archetype) || !MapsHave(category) ||
+            _gameMetadataIndex is not { } metadata || string.IsNullOrEmpty(_libraryRootPath)) return result;
         var zones = ZoneMapSidecar.Match(_zoneMap, query);
         if (zones.Count is 0 or > MaximumZonesPerSearch) return result;
         var watch = Stopwatch.StartNew();
@@ -166,9 +167,13 @@ public partial class MainWindow
     }
 
     /// <summary>Shows a card for each map whose zone name the query matches, above the search results.</summary>
-    private async Task ShowZoneCardsAsync(string query)
+    /// <summary>Whether a map can hold assets of the category the search is filtered to (all, or textures, materials, static meshes).</summary>
+    private static bool MapsHave(string? category) =>
+        string.IsNullOrEmpty(category) || category is "Texture" or "Material" or "MaterialInstanceConstant" or "StaticMesh";
+
+    private async Task ShowZoneCardsAsync(string query, string? category, string? archetype)
     {
-        var zones = ZoneMapSidecar.Match(_zoneMap, query);
+        var zones = !string.IsNullOrEmpty(archetype) || !MapsHave(category) ? [] : ZoneMapSidecar.Match(_zoneMap, query);
         if (zones.Count is 0 or > MaximumZonesPerSearch || _gameMetadataIndex is not { } metadata ||
             string.IsNullOrEmpty(_libraryRootPath))
         {

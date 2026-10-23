@@ -48,7 +48,7 @@ public partial class MainWindow : Window
         _ => null,
     };
 
-    private async Task RefreshModAuthoringAsync(string? selectId = null)
+    private async Task RefreshModAuthoringAsync(string? selectId = null, ArkiveModEditSnapshot? snapshot = null)
     {
         if (AuthoringModComboBox is null || _authoringBusy || _authoringLoading) return;
         _authoringLoading = true;
@@ -77,7 +77,7 @@ public partial class MainWindow : Window
             var id = selectId ?? _authoringDraft?.DraftId;
             AuthoringModComboBox.ItemsSource = choices;
             AuthoringModComboBox.SelectedItem = choices.FirstOrDefault(choice => choice.Id == id);
-            if (_authoringDraft is not null) await LoadAuthoringAssetsAsync();
+            if (_authoringDraft is not null) await LoadAuthoringAssetsAsync(snapshot);
             UpdateAuthoringActions();
         }
         catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
@@ -89,10 +89,11 @@ public partial class MainWindow : Window
         finally { _authoringLoading = false; UpdateAuthoringActions(); }
     }
 
-    private async Task LoadAuthoringAssetsAsync()
+    /// <param name="snapshot">The working files just read by the caller, if nothing has changed them since.</param>
+    private async Task LoadAuthoringAssetsAsync(ArkiveModEditSnapshot? snapshot = null)
     {
         if (_authoringDraft is null) { AuthoringAssetsGrid.ItemsSource = null; return; }
-        var snapshot = await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
+        snapshot ??= await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
         var library = await _arkiveModLibrary.LoadAsync();
         var mod = _authoringDraft.ModId is null ? null : library.Find(_authoringDraft.ModId);
         var selectedIds = AuthoringAssetsGrid.SelectedItems.OfType<AuthoringAssetRow>()

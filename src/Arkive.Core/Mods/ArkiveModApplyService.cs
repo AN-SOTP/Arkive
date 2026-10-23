@@ -1291,6 +1291,42 @@ public sealed class ArkiveModApplyService
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, IReadOnlyList<string>> OutsideChangeChecks =
         new(StringComparer.OrdinalIgnoreCase);
 
+    private static volatile bool _outsideChangesDirty;
+
+    /// <summary>
+    /// Reads the outside-change answers kept from earlier runs, so starting Arkive does not compare the same changed game
+    /// files object by object again (a minute after a game update with large effect mods in the library). Each answer
+    /// is keyed by the file's hash and the objects asked about, so a changed file or mod is checked afresh.
+    /// </summary>
+    public static void LoadOutsideChangeCache(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return;
+            var saved = JsonSerializer.Deserialize<Dictionary<string, string[]>>(File.ReadAllText(path));
+            foreach (var (key, changed) in saved ?? []) OutsideChangeChecks.TryAdd(key, changed);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+        }
+    }
+
+    public static void SaveOutsideChangeCache(string path)
+    {
+        if (!_outsideChangesDirty) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var temporary = path + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(OutsideChangeChecks.ToDictionary(pair => pair.Key, pair => pair.Value)));
+            File.Move(temporary, path, overwrite: true);
+            _outsideChangesDirty = false;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
     public async Task<IReadOnlyList<ArkiveModOutsideChange>> FindOutsideChangesAsync(CancellationToken cancellationToken = default)
     {
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
@@ -1320,14 +1356,11 @@ public sealed class ArkiveModApplyService
             var key = $"{path}|{hash}|{string.Join(",", assets.Select(asset => $"{asset.Target.ObjectName}:{asset.Target.SourcePackageSha256}"))}";
             if (!OutsideChangeChecks.TryGetValue(key, out var changed))
             {
-                var found = new List<string>();
-                foreach (var asset in assets)
-                {
-                    var check = await _materializer.CheckTargetAsync(asset, path, hash, cancellationToken).ConfigureAwait(false);
-                    if (check.State != ArkiveModTargetState.Exact) found.Add(asset.Target.ObjectName);
-                }
-                changed = found;
-                OutsideChangeChecks[key] = found;
+                var checks = await _materializer.CheckTargetsAsync(assets, path, hash, cancellationToken).ConfigureAwait(false);
+                changed = assets.Where((_, index) => checks[index].State != ArkiveModTargetState.Exact)
+                    .Select(asset => asset.Target.ObjectName).ToArray();
+                OutsideChangeChecks[key] = changed;
+                _outsideChangesDirty = true;
             }
             if (changed.Count > 0)
                 changes.Add(new ArkiveModOutsideChange(group.Key, group.First().Target.PackageAlias, path, hash, clean, changed));
