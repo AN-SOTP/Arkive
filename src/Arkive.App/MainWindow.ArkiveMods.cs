@@ -645,6 +645,16 @@ public partial class MainWindow : Window
         if (paths.Count == 0 || !ModLibraryIdle) return;
         ModifiedUpksTab.IsSelected = true;
         ModLibraryTab.IsSelected = true;
+        // Asked before anything is imported, so No leaves the library as it was.
+        var names = paths.Select(path => Path.GetFileNameWithoutExtension(path)).ToArray();
+        if (MessageBox.Show(this,
+                (paths.Count == 1 ? $"Import {names[0]}?" : $"Import these {paths.Count:N0} mods?\n\n" +
+                    string.Join("\n", names.Take(12).Select(name => "  • " + name)) +
+                    (names.Length > 12 ? $"\n  …and {names.Length - 12:N0} more" : string.Empty)) +
+                "\n\nNew mods are turned on. Nothing changes in the game until you choose Apply changes, " +
+                "and you can turn them off or set priorities first.",
+                "Import .arkive", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes)
+            return;
         string? lastImported = null;
         await RunModLibraryOperationAsync("Import .arkive", async () =>
         {
@@ -682,19 +692,13 @@ public partial class MainWindow : Window
                 MessageBox.Show(this,
                     $"{failures.Count:N0} file(s) were not imported:\n\n{string.Join("\n", failures.Take(10))}",
                     "Import .arkive", MessageBoxButton.OK, MessageBoxImage.Warning);
-            var added = imported.Where(result => !result.Entry.Enabled).ToArray();
-            if (added.Length > 0 && MessageBox.Show(this,
-                    $"Imported {imported.Count:N0} mod(s):\n\n" +
-                    string.Join("\n", imported.Take(12).Select(result =>
-                        $"  • {result.Entry.Manifest.Name} {result.Entry.Manifest.Version}" +
-                        (result.UpdatedExistingMod ? " (updated)" : string.Empty))) +
-                    "\n\nEnable the new mods now? You can set priorities before choosing Apply changes.",
-                    "Import .arkive", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
-            {
-                foreach (var result in added)
-                    await _arkiveModLibrary.SetEnabledAsync(result.Entry.ModId, true);
-            }
-            await SynchronizeModSelectionsAsync("mods imported");
+            // An updated mod keeps whether it was on.
+            foreach (var result in imported.Where(result => !result.UpdatedExistingMod && !result.Entry.Enabled))
+                await _arkiveModLibrary.SetEnabledAsync(result.Entry.ModId, true);
+            // The package workspace is reloaded when a page needs it (as after turning mods on), instead of holding
+            // the window for half a minute on a large library; the list below still checks the game files again.
+            await SynchronizeModSelectionsAsync("mods imported", deferWorkspace: true);
+            _selectionOnlyChange = null;
             return imported.Count == 0
                 ? null
                 : $"Imported {imported.Count:N0} mod(s). Review conflicts, then choose Apply changes.";

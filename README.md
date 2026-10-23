@@ -223,7 +223,7 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 
 ### Import, priorities and deployment
 
-Use **Mods → Import**, or open a `.arkive` file with Arkive. Import never installs anything. Review, enable, set priority, preview the plan, then confirm **Apply changes**.
+Use **Mods → Import**, or open a `.arkive` file with Arkive. Arkive asks before importing, and new mods are turned on, but nothing reaches the game until you apply. Review, set priority, preview the plan, then confirm **Apply changes**.
 
 - Higher priority wins for the **same asset**. Edits to different assets in one package are combined into one package. Equal-priority competing edits block Apply: change priority or use **Make this mod win**.
 - Ctrl- or Shift-click several mods to enable, disable, update or pack them together. Right-click a mod to rename it, change its author, update it or delete it.
