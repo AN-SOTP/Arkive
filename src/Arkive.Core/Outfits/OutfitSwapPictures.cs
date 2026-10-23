@@ -66,19 +66,16 @@ public static class OutfitSwapPictures
                 var material = scene.Materials.FirstOrDefault(item => item.Slot == slot)
                                ?? throw new InvalidDataException($"{donors[piece].ObjectName} has no material in slot {slot}.");
                 string? baked = bakedColours[piece].GetValueOrDefault(slot);
-                if (OutfitSwapBodies.IsSkin(donorMaterial))
-                {
-                    // Skin with no skin slot to go to: painted with the new body's own skin picture.
-                    var lower = OutfitSwapBodies.IsLowerSkin(donorMaterial);
-                    if (targetMaterials.FirstOrDefault(item => OutfitSwapBodies.IsSkin(item.Material.Name) &&
-                                                               OutfitSwapBodies.IsLowerSkin(item.Material.Name) == lower) is { Material: not null } skin)
-                    {
-                        scene = skin.Scene;
-                        material = skin.Material;
-                        baked = null;
-                    }
-                }
+                // Skin with no skin slot to go to keeps the outfit's own skin picture (its UVs are laid out for it; the
+                // new body's picture is laid out differently and would put nails and toe gaps in the wrong places),
+                // toned to the new body's skin.
+                var skinPaint = OutfitSwapBodies.IsSkin(donorMaterial);
                 var maps = await ReadMapsAsync(scene, material, baked, cancellationToken).ConfigureAwait(false);
+                if (skinPaint)
+                {
+                    skinTone ??= await SkinToneAsync(targetMaterials, targetScenes, targetBakes, cancellationToken).ConfigureAwait(false);
+                    Tone(maps.Colour, skinTone);
+                }
                 if (material.Translucent && !holder.Translucent)
                 {
                     skinTone ??= await SkinToneAsync(targetMaterials, targetScenes, targetBakes, cancellationToken).ConfigureAwait(false);
@@ -257,8 +254,9 @@ public static class OutfitSwapPictures
         {
             // The shader's own opacity where the bake gave one (sheer cloth is often drawn fainter than its picture).
             var alpha = Math.Min(pixels[i + 3], opacity?[i / 4] ?? (byte)255) / 255f;
-            // Faint edges (fur, lace) are cut away rather than painted as skin.
-            if (alpha < 0.25f) { pixels[i + 3] = 0; continue; }
+            // Faint parts (the sheer body of a stocking, the fringe of fur) are cut away rather than painted as skin:
+            // painted, they cover the skin's own detail (toes, nails) with a flat skin-coloured layer.
+            if (alpha < 0.5f) { pixels[i + 3] = 0; continue; }
             for (var c = 0; c < 3; c++) pixels[i + c] = (byte)Math.Clamp(MathF.Round(pixels[i + c] * alpha + under[c] * (1 - alpha)), 0, 255);
             pixels[i + 3] = 255;
         }
@@ -320,6 +318,26 @@ public static class OutfitSwapPictures
             if (metal.Curve is not null) pixels[i + metal.Channel] = metal.Curve.Map(surface.Pixels[i + 1]);
         }
         return new RgbaImage(source.Width, source.Height, pixels);
+    }
+
+    /// <summary>Scales a picture's colours (in linear light, per channel) so its median matches <paramref name="tone"/>.</summary>
+    private static void Tone(RgbaImage colour, byte[] tone)
+    {
+        var pixels = colour.Pixels;
+        var table = new byte[3][];
+        for (var c = 0; c < 3; c++)
+        {
+            var values = new List<byte>();
+            for (var i = 0; i < pixels.Length; i += 4 * 5)
+                if (pixels[i + 3] > 128) values.Add(pixels[i + c]);
+            if (values.Count < 100) return;
+            values.Sort();
+            var gain = Math.Clamp(Linear(tone[c]) / Math.Max(Linear(values[values.Count / 2]), 1e-3f), 0.7f, 1.4f);
+            table[c] = new byte[256];
+            for (var v = 0; v < 256; v++) table[c][v] = Encode(Math.Min(1, Linear((byte)v) * gain));
+        }
+        for (var i = 0; i < pixels.Length; i += 4)
+            for (var c = 0; c < 3; c++) pixels[i + c] = table[c][pixels[i + c]];
     }
 
     private static float Linear(byte value)

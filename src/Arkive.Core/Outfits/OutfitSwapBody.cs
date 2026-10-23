@@ -559,15 +559,16 @@ public static class OutfitSwapClearance
     /// at least 1 mm under it.
     /// </summary>
     public static Vector3[] KeepUnder(Vector3[] donorInner, Vector3[] fittedInner, bool[] innerCloth, OutfitSwapBody outerBefore,
-        OutfitSwapBody outerAfter, float reach = 0.015f)
+        OutfitSwapBody outerAfter, float reach = 0.015f, float flush = -0.0005f)
     {
         var (before, near, _) = outerBefore.Measure(donorInner);
         var (after, _, outward) = outerAfter.Measure(fittedInner);
         var result = (Vector3[])fittedInner.Clone();
         for (var v = 0; v < result.Length; v++)
         {
-            if (!innerCloth[v] || near[v] >= reach || before[v] >= -0.0005f) continue;
-            var want = Math.Min(before[v], -0.001f);
+            // Under it, or flush with it (a hem the skin was drawn over, which would otherwise show as a band).
+            if (!innerCloth[v] || near[v] >= reach || before[v] >= flush) continue;
+            var want = Math.Min(before[v], before[v] < -0.0005f ? -0.001f : -0.0005f);
             if (after[v] > want) result[v] -= outward[v] * (after[v] - want);
         }
         return result;
