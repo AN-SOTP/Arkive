@@ -280,6 +280,33 @@ public sealed class OutfitSwapBody
         return (signed, nearest, outward);
     }
 
+    /// <summary>
+    /// <see cref="Measure"/> against the surface's triangles themselves rather than points sampled on them: slower, but
+    /// exact where the surface is coarse and curved (a sleeve over a forearm), where the sampled measure reads points
+    /// lying on it as well inside it.
+    /// </summary>
+    public (float[] Signed, float[] Nearest, Vector3[] Outward) MeasureExact(Vector3[] points)
+    {
+        var signed = new float[points.Length];
+        var nearest = new float[points.Length];
+        var outward = new Vector3[points.Length];
+        Parallel.For(0, points.Length, i =>
+        {
+            var at = Closest(points[i]);
+            if (at.Triangle < 0)
+            {
+                (signed[i], nearest[i], outward[i]) = (float.MaxValue, float.MaxValue, Vector3.UnitY);
+                return;
+            }
+            var normal = NormalAt(at.Triangle, at.Position);
+            var distance = Vector3.Distance(points[i], at.Position);
+            signed[i] = Vector3.Dot(points[i] - at.Position, normal) >= 0 ? distance : -distance;
+            nearest[i] = distance;
+            outward[i] = normal;
+        });
+        return (signed, nearest, outward);
+    }
+
     /// <summary>The body's skin weights near a point, limited to <paramref name="allowed"/> bones.</summary>
     public Dictionary<string, float> WeightsAt(Vector3 point, Func<string, bool> allowed)
     {
@@ -556,21 +583,62 @@ public static class OutfitSwapClearance
     /// <summary>
     /// Keeps one outfit piece's cloth under another's where it lay under it on the old body (a skirt's waistband under a
     /// dress's back), since each piece is fitted on its own: points that were just under the other piece's cloth go back
-    /// at least 1 mm under it.
+    /// at least 1 mm (and up to 3 mm) under it. Neighbouring points go along part of the way, so thin triangles between
+    /// a point that must move and one that need not are not folded over.
     /// </summary>
-    public static Vector3[] KeepUnder(Vector3[] donorInner, Vector3[] fittedInner, bool[] innerCloth, OutfitSwapBody outerBefore,
-        OutfitSwapBody outerAfter, float reach = 0.015f, float flush = -0.0005f)
+    public static Vector3[] KeepUnder(OutfitSwapMesh innerMesh, Vector3[] fittedInner, bool[] innerCloth, OutfitSwapBody outerBefore,
+        OutfitSwapBody outerAfter, float reach = 0.015f, float flush = -0.0005f, bool exact = false, int rounds = 0)
     {
-        var (before, near, _) = outerBefore.Measure(donorInner);
-        var (after, _, outward) = outerAfter.Measure(fittedInner);
+        var (before, near, _) = exact ? outerBefore.MeasureExact(innerMesh.Positions) : outerBefore.Measure(innerMesh.Positions);
+        var (after, _, outward) = exact ? outerAfter.MeasureExact(fittedInner) : outerAfter.Measure(fittedInner);
+        var ids = OutfitSwapFitting.Weld(innerMesh.Positions, out var count);
+        // How far in each (welded) point must go, and which way.
+        var need = new Vector3[count];
+        var depth = new float[count];
+        var free = new bool[count];
+        for (var v = 0; v < fittedInner.Length; v++)
+        {
+            if (!innerCloth[v]) continue;
+            free[ids[v]] = true;
+            // Under it, or flush with it (a hem the skin was drawn over, which would otherwise show as a band).
+            if (near[v] >= reach || before[v] >= flush) continue;
+            var want = Math.Clamp(before[v], -0.003f, before[v] < -0.0005f ? -0.001f : -0.0005f);
+            // Far outside it now, the two no longer lie on each other.
+            if (after[v] <= want || after[v] - want > 0.02f || after[v] - want <= depth[ids[v]]) continue;
+            depth[ids[v]] = after[v] - want;
+            need[ids[v]] = -outward[v];
+        }
+        var neighbours = new HashSet<int>[count];
+        for (var i = 0; i < count; i++) neighbours[i] = [];
+        foreach (var section in innerMesh.Sections)
+            for (var i = 0; i + 2 < section.Triangles.Length; i += 3)
+                for (var e = 0; e < 3; e++)
+                {
+                    int a = ids[section.Triangles[i + e]], b = ids[section.Triangles[i + (e + 1) % 3]];
+                    if (a == b) continue;
+                    neighbours[a].Add(b);
+                    neighbours[b].Add(a);
+                }
+        var move = new Vector3[count];
+        for (var i = 0; i < count; i++) move[i] = need[i] * depth[i];
+        for (var round = 0; round < rounds; round++)
+        {
+            var next = new Vector3[count];
+            Parallel.For(0, count, i =>
+            {
+                if (!free[i]) return;
+                var sum = move[i];
+                foreach (var n in neighbours[i]) sum += move[n];
+                var spread = sum / (neighbours[i].Count + 1);
+                if (depth[i] > 0 && Vector3.Dot(spread, need[i]) is var reached && reached < depth[i])
+                    spread += need[i] * (depth[i] - reached);
+                next[i] = spread;
+            });
+            move = next;
+        }
         var result = (Vector3[])fittedInner.Clone();
         for (var v = 0; v < result.Length; v++)
-        {
-            // Under it, or flush with it (a hem the skin was drawn over, which would otherwise show as a band).
-            if (!innerCloth[v] || near[v] >= reach || before[v] >= flush) continue;
-            var want = Math.Min(before[v], before[v] < -0.0005f ? -0.001f : -0.0005f);
-            if (after[v] > want) result[v] -= outward[v] * (after[v] - want);
-        }
+            if (innerCloth[v]) result[v] += move[ids[v]];
         return result;
     }
 

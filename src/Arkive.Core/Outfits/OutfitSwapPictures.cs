@@ -192,6 +192,7 @@ public static class OutfitSwapPictures
             var shaded = Resize(await PngRgbaCodec.ReadAsync(baked, token).ConfigureAwait(false), w, h);
             // Texels the shader never drew (cut away, or between pieces of the layout) keep the picture's own colour, toned
             // like the drawn ones, so a cut-out's edges do not darken when the game blends the picture's smaller copies.
+            // So do texels it only partly covered along a piece's edge: those are darkened, and draw dotted seam lines.
             var tone = new float[3];
             for (var c = 0; c < 3; c++)
             {
@@ -205,7 +206,7 @@ public static class OutfitSwapPictures
             var merged = new byte[w * h * 4];
             for (var i = 0; i < w * h; i++)
             {
-                var drawn = shaded.Pixels[i * 4 + 3] > 0;
+                var drawn = shaded.Pixels[i * 4 + 3] >= 230;
                 for (var c = 0; c < 3; c++)
                     merged[i * 4 + c] = drawn ? shaded.Pixels[i * 4 + c] : Encode(Math.Min(1, Linear(colour.Pixels[i * 4 + c]) * tone[c]));
                 merged[i * 4 + 3] = colour.Pixels[i * 4 + 3];

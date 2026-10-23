@@ -97,22 +97,50 @@ public static partial class OutfitSwapFitting
         return Quaternion.Normalize(new Quaternion(cross, 1 + dot));
     }
 
-    /// <summary>Where each vertex goes when the skeleton moves to the target's: blended over its skin weights.</summary>
+    [GeneratedRegex(@"^bip001-[lr]-(hand|finger\d+)$")]
+    private static partial Regex HandBone();
+
+    /// <summary>
+    /// Where each vertex goes when the skeleton moves to the target's: blended over its skin weights. On hands the
+    /// bones' turns are blended rather than the places each would put the vertex: fingers bend far more between one
+    /// class's rest pose and another's, and averaging places pinches the knuckles and thins the fingers.
+    /// </summary>
     public static Vector3[] Retarget(OutfitSwapMesh donor, BoneMap[] maps)
     {
+        var hand = donor.BoneNames.Select(name => HandBone().IsMatch(name)).ToArray();
         var result = new Vector3[donor.VertexCount];
         for (var v = 0; v < result.Length; v++)
         {
             var sum = Vector3.Zero;
             var total = 0f;
+            var onHand = false;
             for (var k = 0; k < 4; k++)
             {
                 var weight = donor.Weights[v * 4 + k];
                 if (weight <= 0) continue;
                 sum += maps[donor.Joints[v * 4 + k]].Apply(donor.Positions[v]) * weight;
                 total += weight;
+                onHand |= hand[donor.Joints[v * 4 + k]];
             }
-            result[v] = total > 0 ? sum / total : donor.Positions[v];
+            if (total <= 0)
+            {
+                result[v] = donor.Positions[v];
+                continue;
+            }
+            result[v] = sum / total;
+            if (!onHand) continue;
+            var turn = new Quaternion(0, 0, 0, 0);
+            Vector3 from = Vector3.Zero, to = Vector3.Zero;
+            for (var k = 0; k < 4; k++)
+            {
+                var weight = donor.Weights[v * 4 + k];
+                if (weight <= 0) continue;
+                var map = maps[donor.Joints[v * 4 + k]];
+                turn += (Quaternion.Dot(turn, map.Turn) < 0 ? -map.Turn : map.Turn) * (weight / total);
+                from += map.From * (weight / total);
+                to += map.To * (weight / total);
+            }
+            result[v] = to + Vector3.Transform(donor.Positions[v] - from, Quaternion.Normalize(turn));
         }
         return result;
     }
@@ -191,7 +219,9 @@ public static partial class OutfitSwapFitting
 
     /// <summary>
     /// Moves the corners of triangles that face against their vertices' normals towards their neighbours, a few times,
-    /// until they face the right way (the game draws such faces dark or not at all).
+    /// until they face the right way (the game draws such faces dark or not at all). Triangles folded sharply onto a
+    /// neighbour they lay nearly flat beside are smoothed out the same way: a thin strip of skin stood on its edge pokes
+    /// through the sleeve over it without facing the wrong way.
     /// </summary>
     /// <param name="original">The positions before the fit: triangles already facing that way there are the model's own
     /// (thin details such as toenails) and are left alone.</param>
@@ -207,6 +237,30 @@ public static partial class OutfitSwapFitting
         if (original is not null)
             for (var i = 0; i + 2 < triangles.Count; i += 3)
                 if (Flipped(original, i)) own.Add(i);
+        Vector3 Face(Vector3[] at, int i) => Vector3.Cross(at[triangles[i + 1]] - at[triangles[i]], at[triangles[i + 2]] - at[triangles[i]]);
+        bool Folded(Vector3[] at, int i, int j)
+        {
+            Vector3 first = Face(at, i), second = Face(at, j);
+            var size = MathF.Sqrt(first.LengthSquared() * second.LengthSquared());
+            return size > 1e-20f && Vector3.Dot(first, second) < -0.17f * size;
+        }
+        // Pairs of triangles sharing an edge that lay within 60 degrees of each other before the fit.
+        var pairs = new List<(int, int)>();
+        if (original is not null)
+        {
+            var byEdge = new Dictionary<(int, int), int>();
+            for (var i = 0; i + 2 < triangles.Count; i += 3)
+                for (var e = 0; e < 3; e++)
+                {
+                    int a = triangles[i + e], b = triangles[i + (e + 1) % 3];
+                    var key = (Math.Min(a, b), Math.Max(a, b));
+                    if (!byEdge.TryAdd(key, i))
+                    {
+                        Vector3 first = Face(original, byEdge[key]), second = Face(original, i);
+                        if (Vector3.Dot(first, second) > 0.5f * MathF.Sqrt(first.LengthSquared() * second.LengthSquared())) pairs.Add((byEdge[key], i));
+                    }
+                }
+        }
         var result = (Vector3[])positions.Clone();
         var neighbours = new List<int>[positions.Length];
         for (var v = 0; v < neighbours.Length; v++) neighbours[v] = [];
@@ -224,6 +278,12 @@ public static partial class OutfitSwapFitting
                 {
                     flipped.Add(triangles[i]); flipped.Add(triangles[i + 1]); flipped.Add(triangles[i + 2]);
                 }
+            foreach (var (i, j) in pairs)
+                if (Folded(result, i, j))
+                    foreach (var t in new[] { i, j })
+                    {
+                        flipped.Add(triangles[t]); flipped.Add(triangles[t + 1]); flipped.Add(triangles[t + 2]);
+                    }
             if (flipped.Count == 0) break;
             var next = (Vector3[])result.Clone();
             foreach (var v in flipped)
