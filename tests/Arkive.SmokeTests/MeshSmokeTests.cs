@@ -10,7 +10,34 @@ internal static class MeshSmokeTests
         new("reconnoitres and byte-preserves a native SkeletalMesh payload", TestSkeletalMeshReconnaissanceAndNoOp),
         new("classifies skeletons and creates a conservative retarget workspace", TestSkeletonCompatibilityAndRetargetWorkspace),
         new("parses the SkeletalMesh UModel semantic oracle", TestSkeletalMeshOracleParsing),
+        new("grows the per-material list after a SkeletalMesh's LODs with its added material slots", TestTrailingMaterialList),
     ];
+
+    private static void TestTrailingMaterialList()
+    {
+        // As Sympathetic Eternity's pants end: two bone names, three empty lists, one material, then the mesh's last values.
+        var tail = new byte[] { 0x7F, 0x80, 0x99, 0x42, 2 };
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(2);
+            for (var bone = 0; bone < 2; bone++) { writer.Write(10 + bone); writer.Write(0); writer.Write(bone); }
+            writer.Write(0); writer.Write(0); writer.Write(0);
+            writer.Write(1); writer.Write(0);
+            writer.Write(tail);
+        }
+        var source = stream.ToArray();
+        var grown = SkeletalMeshTopologyCompilerService.TrailingWithMaterials(source, 1, 3);
+        Assert(grown is not null && grown.Length == source.Length + 12 &&
+               BinaryPrimitives.ReadInt32LittleEndian(grown.AsSpan(4 + 24 + 12)) == 4 &&
+               grown.AsSpan(4 + 24 + 16, 16).IndexOfAnyExcept((byte)0) < 0 &&
+               grown.AsSpan(grown.Length - tail.Length).SequenceEqual(tail) &&
+               grown.AsSpan(0, 4 + 24 + 12).SequenceEqual(source.AsSpan(0, 4 + 24 + 12)),
+            "the per-material list did not grow with the added slots");
+        Assert(SkeletalMeshTopologyCompilerService.TrailingWithMaterials(source, 2, 3) is null &&
+               SkeletalMeshTopologyCompilerService.TrailingWithMaterials(source, 1, 0) is null,
+            "a list that does not follow the material count, or no added slot, should leave the bytes as they are");
+    }
 
     private static void TestSkeletalMeshSelectionRefresh()
     {

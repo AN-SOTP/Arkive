@@ -36,9 +36,25 @@ public sealed class OutfitSwapModWriter(ArkiveModEditWorkspaces edits, IChunkPro
         var shared = OutfitSwapMesh.WriteInto(workingGlb, mesh, sharedVertices: true);
         var model = BodyProportionEngine.Build(shared, upscale.Follow, upscale.Profile, objectName);
         var reshaped = OutfitSwapMesh.Read(BodyProportionEngine.Apply(shared, model, upscale.Settings));
+        // The upscale grows the skin more than the cloth lying on it (a sheer layer over the hips sank under it): cloth
+        // that lay outside the skin before stays outside it.
+        var positions = reshaped.Positions;
+        var skin = new bool[mesh.VertexCount];
+        foreach (var section in mesh.Sections)
+            foreach (var v in section.Triangles)
+                skin[v] = mesh.SkinVertices?.Contains(v) ?? OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]);
+        var cloth = skin.Select(value => !value).ToArray();
+        var skinSections = mesh.Sections.Select(section => new OutfitSwapSection(section.Material, Enumerable.Range(0, section.Triangles.Length / 3)
+            .Where(t => skin[section.Triangles[t * 3]] && skin[section.Triangles[t * 3 + 1]] && skin[section.Triangles[t * 3 + 2]])
+            .SelectMany(t => new[] { section.Triangles[t * 3], section.Triangles[t * 3 + 1], section.Triangles[t * 3 + 2] }).ToArray()))
+            .Where(section => section.Triangles.Length > 0).ToArray();
+        if (positions.Length == mesh.VertexCount &&
+            OutfitSwapClearance.Surface(mesh, mesh.Positions, skinSections) is { } skinBefore &&
+            OutfitSwapClearance.Surface(mesh, positions, skinSections) is { } skinAfter)
+            positions = OutfitSwapClearance.PushOut(mesh.Positions, positions, skinBefore, skinAfter, cloth, reach: 0.02f, rounds: 24);
         return new OutfitSwapMesh
         {
-            Positions = reshaped.Positions, Normals = reshaped.Normals, Tangents = reshaped.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1,
+            Positions = positions, Normals = reshaped.Normals, Tangents = reshaped.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1,
             Colours = mesh.Colours, Joints = mesh.Joints, Weights = mesh.Weights, Sections = mesh.Sections, Materials = mesh.Materials,
             BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents,
             MaterialReferences = mesh.MaterialReferences,
