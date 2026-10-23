@@ -1124,8 +1124,12 @@ static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, str
     var targets = replace.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Select(name => Load(name).GetAwaiter().GetResult()).ToArray();
     var service = new OutfitSwapService(library, Path.Combine(cache, "outfit-swap"));
+    // A replaced piece without skin of its own gets the body's skin material.
+    var targetBody = targets.Select(item => OutfitSwapBodies.Detect(item.Piece.Mesh, item.Piece.ObjectName)).FirstOrDefault(profile => profile is not null);
+    var skin = OutfitSwapMaterialSources.ReadAsync(library, donors.Select(item => item.Piece).ToArray(),
+        targetBody is null ? null : OutfitSwapBodies.For(targetBody), token).GetAwaiter().GetResult() with { KeepOwn = false };
     var fit = service.FitAsync(donors.Select(item => item.Piece).ToArray(), targets.Select(item => item.Piece).ToArray(),
-        "cli", progress, token).GetAwaiter().GetResult();
+        "cli", progress, token, skin).GetAwaiter().GetResult();
     IReadOnlyDictionary<int, string>[] Bakes(string? root, int count) => Enumerable.Range(0, count).Select(index =>
     {
         var folder = root is null ? null : Path.Combine(Path.GetFullPath(root), index.ToString(System.Globalization.CultureInfo.InvariantCulture));

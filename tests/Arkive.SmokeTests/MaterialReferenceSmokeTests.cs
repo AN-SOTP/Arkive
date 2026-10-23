@@ -146,6 +146,19 @@ internal static class MaterialReferenceSmokeTests
         Assert(Throws(() => OutfitSwapPlanner.Plan([new OutfitSwapPiece("pc_xx_av_1_upper_sk", donor, [])], [donor.Positions],
             [new OutfitSwapPiece("pc_yy_av_1_upper_sk", target, [])], null, sources with { Donors = [[null, null, null, null]] })),
             "a donor material Arkive cannot find refuses rather than painting");
+        // Repainted instead, onto a piece with no skin slot: the bare skin gets the body's skin material, not the cloth picture.
+        static OutfitSwapMaterial Picture(int slot, string name, string colour) => new(slot, OutfitSwapMesh.ShortMaterialName(name), false,
+            new Dictionary<string, string> { ["texture_diffuse"] = colour }, new Dictionary<string, float[]>(), new Dictionary<string, float>());
+        var bare = Mesh(3, [new(0, [0, 1, 2])], ["MaterialInstanceConstant'mat.pc_yy_av_1_lower_mi'"]);
+        var bodySkin = new PackageObjectReference([new("pc_yy_basebody", "package", "core"), new("mat", "package", "core"),
+            new("pc_yy_basebody_upper_mi", "materialinstanceconstant", "engine")]);
+        var painted = OutfitSwapPlanner.Plan([new OutfitSwapPiece("pc_xx_av_1_upper_sk", donor, Enumerable.Range(0, 4)
+                .Select(slot => Picture(slot, donor.Materials[slot], $"pc_xx_{slot}_d")).ToArray())], [donor.Positions],
+            [new OutfitSwapPiece("pc_yy_av_1_upper_sk", bare, [Picture(0, bare.Materials[0], "pc_yy_av_1_lower_d")])], null,
+            new OutfitSwapMaterialSources([], bodySkin, null) { KeepOwn = false });
+        var repainted = painted.Pieces[0].Mesh;
+        Assert(painted.Canvases.Count == 1 && repainted.Materials.Count == 2 && repainted.MaterialReferences.Single().Value.Material == bodySkin &&
+               repainted.Sections.Any(section => section.Material == 1), "the repainted piece gains the body's skin slot for the bare skin");
         var glb = OutfitSwapMesh.WriteInto(MinimalGlb(target.Materials), mesh);
         var used = SkeletalMeshMaterialReferences.ReadUsed(glb);
         Assert(used.Count == 3 && used.All(reference => reference.Material.PackageName == "pc_xx_av_1"),

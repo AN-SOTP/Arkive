@@ -12,6 +12,12 @@ public sealed record OutfitSwapMaterialSources(
     PackageObjectReference? UpperSkin,
     PackageObjectReference? LowerSkin)
 {
+    /// <summary>
+    /// The outfit keeps its own materials. When false, a repainted swap only uses the body's skin materials, for a
+    /// replaced piece that has no skin slot of its own.
+    /// </summary>
+    public bool KeepOwn { get; init; } = true;
+
     /// <summary>The material a piece's slot names (MaterialInstanceConstant'mat.name' as the GLB has it), read from its package.</summary>
     public static PackageObjectReference? Resolve(AssetCatalog catalog, string packageAlias, string slotName)
     {

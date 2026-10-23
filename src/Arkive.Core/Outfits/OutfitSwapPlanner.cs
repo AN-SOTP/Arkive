@@ -55,7 +55,8 @@ public static partial class OutfitSwapPlanner
     private sealed record Slot(int Piece, OutfitSwapMaterial Material, string Key, bool Skin, bool LowerSkin, bool Own);
 
     /// <param name="ownMaterials">When given, the outfit keeps its own materials: each donor material is drawn as the game draws
-    /// it (the replaced pieces take its place in one of their slots, or gain a slot), and nothing is repainted.</param>
+    /// it (the replaced pieces take its place in one of their slots, or gain a slot), and nothing is repainted. With
+    /// <see cref="OutfitSwapMaterialSources.KeepOwn"/> false the swap is repainted and only the body's skin materials are used.</param>
     public static OutfitSwapPlan Plan(
         IReadOnlyList<OutfitSwapPiece> donors,
         IReadOnlyList<Vector3[]> fitted,
@@ -82,7 +83,7 @@ public static partial class OutfitSwapPlanner
             }
         }
 
-        if (ownMaterials is not null) return PlanOwnMaterials(donors, fitted, targets, targetBody, assign, ownMaterials, notes);
+        if (ownMaterials is { KeepOwn: true }) return PlanOwnMaterials(donors, fitted, targets, targetBody, assign, ownMaterials, notes);
 
         var slots = new List<Slot>();
         for (var t = 0; t < targets.Count; t++)
@@ -117,12 +118,29 @@ public static partial class OutfitSwapPlanner
                 var key = (t, piece, donors[piece].Mesh.Sections[section].Material);
                 sizes[key] = sizes.GetValueOrDefault(key) + triangles.Length;
             }
+        // A piece with no skin slot of its own gets the body's skin material for the skin it shows (one kind, laid out
+        // like that body's skin), instead of skin painted into its cloth.
+        var addedSkin = new Dictionary<int, List<(Slot Slot, PackageObjectReference Material)>>();
+        Slot? AddSkin(int t, bool lower)
+        {
+            if (slots.Any(slot => slot.Piece == t && slot.Skin) || addedSkin.ContainsKey(t) ||
+                (lower ? ownMaterials?.LowerSkin : ownMaterials?.UpperSkin) is not { } reference)
+                return null;
+            var name = $"{reference.ClassName}'{reference.Path}'";
+            var slot = new Slot(t, new OutfitSwapMaterial(targets[t].Mesh.Materials.Count, name, false, new Dictionary<string, string>(),
+                new Dictionary<string, float[]>(), new Dictionary<string, float>()), name.ToLowerInvariant(), true, lower, false);
+            slots.Add(slot);
+            addedSkin[t] = [(slot, reference)];
+            notes.Add($"{targets[t].ObjectName} has no skin of its own, so it gains the body's skin material for the outfit's bare skin.");
+            return slot;
+        }
         foreach (var ((t, piece, material), _) in sizes.OrderByDescending(pair => pair.Value))
         {
             var donorMaterial = donors[piece].Mesh.Materials[material];
             if (OutfitSwapBodies.IsSkin(donorMaterial))
             {
-                var skin = slots.FirstOrDefault(slot => slot.Piece == t && slot.Skin && slot.LowerSkin == OutfitSwapBodies.IsLowerSkin(donorMaterial));
+                var skin = slots.FirstOrDefault(slot => slot.Piece == t && slot.Skin && slot.LowerSkin == OutfitSwapBodies.IsLowerSkin(donorMaterial))
+                           ?? AddSkin(t, OutfitSwapBodies.IsLowerSkin(donorMaterial));
                 if (skin is not null) { where[(t, piece, material)] = (skin, null); continue; }
             }
             var translucent = donors[piece].Materials.FirstOrDefault(m => m.Slot == material)?.Translucent ?? false;
@@ -154,6 +172,15 @@ public static partial class OutfitSwapPlanner
                     var (slot, canvas) = where[(t, piece, material)];
                     return (slot.Material.Slot, canvas is null ? null : byKey[canvas].Rect(piece, material), slot.Skin ? slot.LowerSkin : null);
                 }, lower => slots.FirstOrDefault(slot => slot.Piece == t && slot.Skin && slot.LowerSkin == lower)?.Material.Slot, targetBody);
+            if (!hidden[t] && assign[t].Count > 0 && addedSkin.TryGetValue(t, out var added))
+                mesh = new OutfitSwapMesh
+                {
+                    Positions = mesh.Positions, Normals = mesh.Normals, Tangents = mesh.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1,
+                    Colours = mesh.Colours, Joints = mesh.Joints, Weights = mesh.Weights, Sections = mesh.Sections,
+                    Materials = [.. mesh.Materials, .. added.Select(item => item.Slot.Material.Name)],
+                    BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents,
+                    MaterialReferences = added.ToDictionary(item => item.Slot.Material.Slot, item => new SkeletalMeshMaterialReference(item.Material, null)),
+                };
             results.Add(new OutfitSwapPieceResult(targets[t].ObjectName, mesh, hidden[t] || assign[t].Count == 0));
         }
         return new OutfitSwapPlan(results, finished, notes);

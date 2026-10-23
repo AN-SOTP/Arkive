@@ -64,7 +64,7 @@ public partial class OutfitSwapWindow : Window
     private OutfitSwapFit? _fit;
     private OutfitSwapPictureResult? _pictures;
     private IReadOnlyList<OutfitSwapMesh> _shown = [];
-    private IReadOnlyList<ModelViewerSceneResult> _donorScenes = [];
+    private IReadOnlyList<ModelViewerSceneResult> _materialScenes = [];
     private bool _shownOnce;
     private bool _busy;
 
@@ -164,19 +164,27 @@ public partial class OutfitSwapWindow : Window
             _targetGlbs = glbs;
 
             var progress = new Progress<string>(Status);
+            // The game materials the swap can draw with: the outfit's own (when kept) and the body's skin.
+            Status("Finding the outfit's materials…");
+            var body = OutfitSwapBodies.Detect(_targets[0].Mesh, _targets[0].ObjectName) is { } profile ? OutfitSwapBodies.For(profile) : null;
+            var materials = await OutfitSwapMaterialSources.ReadAsync(_library, donors.Select(item => item.Piece).ToArray(), body, token)
+                with { KeepOwn = OwnMaterials };
+            // The preview draws added slots with these scenes' materials: the outfit's own and the body's skin.
+            var materialScenes = donors.Select(item => item.Result).ToList();
+            foreach (var name in body?.BaseBody ?? [])
+                if (await _library.LocateAsync(name, token) is { } baseBody)
+                    materialScenes.Add(await Task.Run(() => _scenes.PrepareAsync(baseBody.ViewerRequest, null, token), token));
+            _materialScenes = materialScenes;
             if (OwnMaterials)
             {
-                Status("Finding the outfit's own materials…");
-                var body = OutfitSwapBodies.Detect(_targets[0].Mesh, _targets[0].ObjectName) is { } profile ? OutfitSwapBodies.For(profile) : null;
-                var materials = await OutfitSwapMaterialSources.ReadAsync(_library, donors.Select(item => item.Piece).ToArray(), body, token);
                 _fit = await Task.Run(() => _service.FitAsync(donors.Select(item => item.Piece).ToArray(), _targets, _gameBuild, progress, token,
                     materials), token);
                 _pictures = new OutfitSwapPictureResult(new Dictionary<string, string>(), new Dictionary<string, ModelViewerMaterialEdit>());
-                _donorScenes = donors.Select(item => item.Result).ToArray();
                 await FinishAsync(token);
                 return;
             }
-            _fit = await Task.Run(() => _service.FitAsync(donors.Select(item => item.Piece).ToArray(), _targets, _gameBuild, progress, token), token);
+            _fit = await Task.Run(() => _service.FitAsync(donors.Select(item => item.Piece).ToArray(), _targets, _gameBuild, progress, token,
+                materials), token);
 
             // The donor as the game's shaders draw it: its colours, its lit colours and its roughness and metalness.
             Status("Baking the outfit's colours with the game's shaders…");
@@ -297,7 +305,7 @@ public partial class OutfitSwapWindow : Window
             _pictures!.Pictures.Where(pair => textures.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value),
             _pictures.Materials.Where(pair => materials.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value), []);
         var scene = await Task.Run(() => _scenes.PrepareAsync(_targetSources[i].ViewerRequest, edits, null, token), token);
-        return OutfitSwapPreview.WithDonorMaterials(scene, mesh, _donorScenes);
+        return OutfitSwapPreview.WithDonorMaterials(scene, mesh, _materialScenes);
     }
 
     private async Task LoadSceneAsync(string sceneJson, bool keepView, CancellationToken token)
