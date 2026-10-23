@@ -20,12 +20,6 @@ public static class OutfitSwapLooks
         var donorLooks = donors.Select(donor => (Donor: donor, Looks: archive.GameLooks(donor, cancellationToken))).ToArray();
         var targetLooks = pieces.ToDictionary(piece => piece.ObjectName, piece => archive.GameLooks(piece.ObjectName, cancellationToken),
             StringComparer.OrdinalIgnoreCase);
-        // Materials no donor's own look draws (a body's skin): as the looks name them, or by their path.
-        var known = new Dictionary<string, (string Material, string Dye)>(StringComparer.OrdinalIgnoreCase);
-        foreach (var look in donorLooks.SelectMany(donor => donor.Looks).Concat(targetLooks.Values.SelectMany(looks => looks)))
-            for (var slot = 0; slot < look.Materials.Count; slot++)
-                if (look.Materials[slot].Length > 0)
-                    known.TryAdd(OutfitLooks.ObjectName(look.Materials[slot]), Pair(look, slot));
         (string Material, string Dye) For(SkeletalMeshMaterialReference reference, string variant)
         {
             // The donor material's slot in its own look; a target variant takes the donor variant's material there.
@@ -39,7 +33,9 @@ public static class OutfitSwapLooks
                                                          look.Materials.Count == own!.Materials.Count && look.Materials[slot].Length > 0);
                 return Pair(match ?? own!, slot);
             }
-            return known.TryGetValue(reference.Material.ObjectName, out var found)
+            // Materials no donor's own look draws (a body's skin): spelled as the game's looks spell them, since the open
+            // world finds materials by their exact names.
+            return archive.GameMaterial(reference.Material.Path, cancellationToken) is { } found
                 ? found
                 : (OutfitLooks.MaterialPath(reference.Material.ClassName, reference.Material.Path),
                     OutfitLooks.MaterialPath(reference.Material.ClassName, reference.Material.Path));

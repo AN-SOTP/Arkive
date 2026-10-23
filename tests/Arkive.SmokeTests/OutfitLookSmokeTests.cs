@@ -92,6 +92,23 @@ internal static class OutfitLookSmokeTests
                    Material = look.Materials[1], DyeMaterial = look.DyeMaterials[1], OriginalMaterial = edits[0].Material,
                    OriginalDyeMaterial = edits[0].DyeMaterial,
                }]).SequenceEqual(bytes), "changing a slot and back gives the game's look byte for byte");
+        // An item that cannot be dyed lists only empty dyed entries.
+        var plain = Look("PC_T_Upper_SK", [Mat("PC_T_Upper_MI"), Mat("PC_B_Base_Upper_MI")], ["", ""]);
+        var plainLook = OutfitLooks.Read(UpperEntry, plain) ?? throw new InvalidOperationException("A look that cannot be dyed was not read.");
+        var plainPatched = OutfitLooks.Read(UpperEntry, OutfitLooks.Patch(UpperEntry, plain, [
+            new OutfitLookEdit(UpperEntry, 0, Mat("PC_D_Upper_MI"), Mat("PC_D_Upper_MI_DYE"), plainLook.Materials[0], ""),
+            new OutfitLookEdit(UpperEntry, 2, Mat("PC_D_Upper1_MI"), Mat("PC_D_Upper1_MI"), null, null)]))!;
+        Assert(plainLook.DyeMaterials.All(dye => dye.Length == 0) && plainPatched.Materials.Count == 3 &&
+               plainPatched.DyeMaterials[0] == Mat("PC_D_Upper_MI_DYE") && plainPatched.DyeMaterials[1] == "",
+            "a look whose dyed entries are all empty is read and changed");
+        var undyeable = Look("PC_T_Upper_SK", [Mat("PC_T_Upper_MI")], []);
+        var undyeableLook = OutfitLooks.Read(UpperEntry, undyeable) ?? throw new InvalidOperationException("A look with no dyed list was not read.");
+        var undyeablePatched = OutfitLooks.Patch(UpperEntry, undyeable, [
+            new OutfitLookEdit(UpperEntry, 0, Mat("PC_D_Upper_MI"), Mat("PC_D_Upper_MI_DYE"), undyeableLook.Materials[0], ""),
+            new OutfitLookEdit(UpperEntry, 1, Mat("PC_D_Upper1_MI"), Mat("PC_D_Upper1_MI"), null, null)]);
+        Assert(undyeableLook.DyeMaterials.SequenceEqual([""]) && OutfitLooks.Read(UpperEntry, undyeablePatched) is { Materials.Count: 2 } read2 &&
+               read2.DyeMaterials.All(dye => dye.Length == 0) && read2.Materials[0] == Mat("PC_D_Upper_MI"),
+            "a look with no dyed list keeps none and still takes the outfit's materials");
         Refused(() => OutfitLooks.Patch(UpperEntry, TargetUpper("X"), [edits[0]]), "a slot the game changed since the edit was made");
         Refused(() => OutfitLooks.Patch(UpperEntry, bytes, [edits[2]]), "an added slot that does not follow on from the look's own");
         Refused(() => OutfitLooks.Patch(UpperEntry, bytes, [edits[0] with { Slot = 3 }]), "a slot the look does not have");
@@ -212,6 +229,9 @@ internal static class OutfitLookSmokeTests
             "the piece's own look and its variant on the same mesh are found, and the other variant mesh is not");
         Assert(OutfitLooks.Variant(targetVariant, "PC_T_Upper_SK") == "-1" && OutfitLooks.Variant(UpperEntry, "PC_T_Upper_SK") == "",
             "a look's variant is read from its name");
+        Assert(OutfitLooks.PackageStem("pc_flm_hr_02_dress_sk_loc_int") == "pc_flm_hr_02" && OutfitLooks.PackageStem("PC_T_Upper_SK") == "PC_T" &&
+               OutfitLooks.Variant(OutfitLooks.Folder + "EFDLItem_PC_FBM_HR_01-3_Upper.PC_FBM_HR_01-3_Upper.loa", "pc_fbm_hr_01_upper_sk_loc_int") == "-3",
+            "the international client's _loc_int pieces are found by their item's package");
         var notes = new List<string>();
         var edits = OutfitSwapLooks.Edits(archive, ["PC_D_Upper_SK"], [SwapPiece()], notes);
         var variant = edits.Where(edit => edit.Entry == targetVariant).OrderBy(edit => edit.Slot).ToArray();

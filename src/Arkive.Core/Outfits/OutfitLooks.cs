@@ -32,10 +32,13 @@ public static class OutfitLooks
 {
     public const string Folder = "/EFGame_Extra/ClientData/XmlData/LookInfo/Item/";
 
-    /// <summary>The look's mesh and its two material lists, or null when the file is not a single-mesh item look.</summary>
+    /// <summary>
+    /// The look's mesh and its two material lists, or null when the file is not a single-mesh item look. A look with no
+    /// dyed list (an item that cannot be dyed) reads as empty dyed entries.
+    /// </summary>
     public static OutfitLook? Read(string entry, byte[] bytes) => Find(bytes) is { } layout
         ? new OutfitLook(entry, layout.Mesh.Text, layout.Materials.Items.Select(item => item.Text).ToArray(),
-            layout.Dyes.Items.Select(item => item.Text).ToArray())
+            layout.Materials.Items.Select((_, slot) => slot < layout.Dyes.Items.Count ? layout.Dyes.Items[slot].Text : "").ToArray())
         : null;
 
     /// <summary>
@@ -57,12 +60,14 @@ public static class OutfitLooks
             }
             if (edit.Slot < 0 || edit.Slot >= count)
                 throw new InvalidDataException($"{entry} has no material slot {edit.Slot}.");
-            var (material, dye) = (layout.Materials.Items[edit.Slot], layout.Dyes.Items[edit.Slot]);
+            var material = layout.Materials.Items[edit.Slot];
+            var dye = layout.Dyes.Items.Count > 0 ? layout.Dyes.Items[edit.Slot] : null;
             if (!material.Text.Equals(edit.OriginalMaterial, StringComparison.OrdinalIgnoreCase) ||
-                !dye.Text.Equals(edit.OriginalDyeMaterial ?? "", StringComparison.OrdinalIgnoreCase))
+                !(dye?.Text ?? "").Equals(edit.OriginalDyeMaterial ?? "", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException($"{entry} slot {edit.Slot} is no longer {edit.OriginalMaterial} in this game version.");
             changes.Add((material.Start, material.End, Text(edit.Material)));
-            changes.Add((dye.Start, dye.End, Text(edit.DyeMaterial)));
+            // An item with no dyed list cannot be dyed, so it keeps none.
+            if (dye is not null) changes.Add((dye.Start, dye.End, Text(edit.DyeMaterial)));
         }
         if (added.Count > 0)
         {
@@ -74,8 +79,11 @@ public static class OutfitLooks
             changes.Add((layout.SettingsStart, layout.SettingsStart + 4, total));
             // A new slot has no setting of its own: the default every look uses, None and four zeros.
             changes.Add((layout.SettingsEnd, layout.SettingsEnd, [.. Enumerable.Range(0, added.Count).SelectMany(_ => Text("None").Concat(new byte[16]))]));
-            changes.Add((layout.Dyes.Start, layout.Dyes.Start + 4, total));
-            changes.Add((layout.Dyes.Items[^1].End, layout.Dyes.Items[^1].End, [.. added.Values.SelectMany(edit => Text(edit.DyeMaterial))]));
+            if (layout.Dyes.Items.Count > 0)
+            {
+                changes.Add((layout.Dyes.Start, layout.Dyes.Start + 4, total));
+                changes.Add((layout.Dyes.Items[^1].End, layout.Dyes.Items[^1].End, [.. added.Values.SelectMany(edit => Text(edit.DyeMaterial))]));
+            }
         }
         using var output = new MemoryStream();
         var at = 0;
@@ -93,6 +101,14 @@ public static class OutfitLooks
     /// <summary>The material path a look names: MaterialInstanceConstant'Package.Group.Object'.</summary>
     public static string MaterialPath(string className, string path) =>
         $"{(className.Equals("materialinstanceconstant", StringComparison.OrdinalIgnoreCase) ? "MaterialInstanceConstant" : className)}'{path}'";
+
+    /// <summary>The Package.Group.Object a look's material or mesh path names, without its class.</summary>
+    public static string InnerPath(string path)
+    {
+        var inner = path.Trim().TrimEnd('\'');
+        var quote = inner.IndexOf('\'');
+        return quote >= 0 ? inner[(quote + 1)..] : inner;
+    }
 
     /// <summary>The object a look's material or mesh path names (PC_DL_AV_151_Upper_MI), without its package and group.</summary>
     public static string ObjectName(string path)
@@ -124,10 +140,14 @@ public static class OutfitLooks
         return looks.OrderBy(look => look.Entry, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    /// <summary>The package a piece's looks are named after: PC_WBK_F_AV_137 for pc_wbk_f_av_137_lower_sk.</summary>
+    /// <summary>
+    /// The package a piece's looks are named after: PC_WBK_F_AV_137 for pc_wbk_f_av_137_lower_sk, PC_FLM_HR_02 for the
+    /// international client's pc_flm_hr_02_dress_sk_loc_int.
+    /// </summary>
     public static string PackageStem(string meshObject)
     {
-        var stem = meshObject.EndsWith("_sk", StringComparison.OrdinalIgnoreCase) ? meshObject[..^3] : meshObject;
+        var stem = meshObject.EndsWith("_loc_int", StringComparison.OrdinalIgnoreCase) ? meshObject[..^8] : meshObject;
+        stem = stem.EndsWith("_sk", StringComparison.OrdinalIgnoreCase) ? stem[..^3] : stem;
         var part = stem.LastIndexOf('_');
         return part > 0 ? stem[..part] : stem;
     }
@@ -153,23 +173,41 @@ public static class OutfitLooks
 
     private sealed record Layout(Token Mesh, TokenList Materials, int SettingsStart, int SettingsEnd, TokenList Dyes);
 
-    // The mesh, its material list, the per-slot settings right before the dyed list, and the dyed list, all one entry per slot.
+    // The mesh, its material list, the per-slot settings, and right after them the dyed list, all one entry per slot. An item
+    // that cannot be dyed has a dyed list of empty entries, or none at all (a count of 0).
     private static Layout? Find(byte[] bytes)
     {
         var meshes = Meshes(bytes).ToArray();
         if (meshes.Length != 1) return null;
-        var lists = Lists(bytes).Where(list => list.Start > meshes[0].Start).Take(2).ToArray();
-        if (lists.Length < 2 || lists[0].Items.Count != lists[1].Items.Count) return null;
-        var count = lists[0].Items.Count;
-        for (var at = lists[0].Items[^1].End; at + 4 <= lists[1].Start; at++)
+        if (Lists(bytes).FirstOrDefault(list => list.Start > meshes[0].Start) is not { } materials) return null;
+        var count = materials.Items.Count;
+        for (var at = materials.Items[^1].End; at + 4 <= bytes.Length; at++)
         {
             if (BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at)) != count) continue;
             var next = at + 4;
             for (var slot = 0; slot < count && next > 0; slot++)
                 next = TextAt(bytes, next) is { Text.Length: > 0 } name ? name.End + 16 : -1;
-            if (next == lists[1].Start) return new Layout(meshes[0], lists[0], at, next, lists[1]);
+            if (next > 0 && ListAt(bytes, next) is { } dyes && (dyes.Items.Count == count || dyes.Items.Count == 0))
+                return new Layout(meshes[0], materials, at, next, dyes);
         }
         return null;
+    }
+
+    // A list of materials at a place in the look: its count, then that many material paths or empty entries.
+    private static TokenList? ListAt(byte[] bytes, int at)
+    {
+        if (at + 4 > bytes.Length) return null;
+        var count = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at));
+        if (count is < 0 or > 64) return null;
+        var items = new List<Token>(count);
+        var next = at + 4;
+        while (items.Count < count && TextAt(bytes, next) is { } token &&
+               (token.Text.Length == 0 || token.Text.StartsWith("Material", StringComparison.OrdinalIgnoreCase)))
+        {
+            items.Add(token);
+            next = token.End;
+        }
+        return items.Count == count ? new TokenList(at, items) : null;
     }
 
     private static byte[] Int(int value)

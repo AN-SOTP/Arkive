@@ -24,6 +24,7 @@ public sealed class OutfitLookArchive
     private readonly string _statePath;
     private readonly string _backupDirectory;
     private readonly IModDeploymentProcessGuard _processGuard;
+    private Dictionary<string, (string Material, string Dye)>? _materials;
 
     /// <param name="efGameDirectory">The game's EFGame folder (the one holding data4.lpk).</param>
     /// <param name="dataRoot">Arkive's data folder, for the copy of the game's file and the record of what was changed.</param>
@@ -51,6 +52,31 @@ public sealed class OutfitLookArchive
     {
         using var stream = File.OpenRead(GameArchivePath());
         return OutfitLooks.ForMesh(stream, LostArkDataArchive.ReadEntries(stream, cancellationToken), meshObject, cancellationToken);
+    }
+
+    /// <summary>
+    /// A material (Package.Group.Object, any case) as the game's own item looks write it, with the dyed version they
+    /// pair it with; null when no look names it. The game looks materials up by these exact names in the open world.
+    /// </summary>
+    public (string Material, string Dye)? GameMaterial(string path, CancellationToken cancellationToken = default)
+    {
+        if (_materials is null)
+        {
+            var materials = new Dictionary<string, (string Material, string Dye)>(StringComparer.OrdinalIgnoreCase);
+            using var stream = File.OpenRead(GameArchivePath());
+            foreach (var entry in LostArkDataArchive.ReadEntries(stream, cancellationToken)
+                         .Where(entry => entry.Path.StartsWith(OutfitLooks.Folder, StringComparison.OrdinalIgnoreCase)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (OutfitLooks.Read(entry.Path, LostArkDataArchive.Read(stream, entry)) is not { } look) continue;
+                for (var slot = 0; slot < look.Materials.Count; slot++)
+                    if (look.Materials[slot].Length > 0)
+                        materials.TryAdd(OutfitLooks.InnerPath(look.Materials[slot]),
+                            (look.Materials[slot], look.DyeMaterials[slot].Length > 0 ? look.DyeMaterials[slot] : look.Materials[slot]));
+            }
+            _materials = materials;
+        }
+        return _materials.TryGetValue(path, out var found) ? found : null;
     }
 
     /// <summary>The game's own looks at <paramref name="entries"/> (an entry the game has no look at is left out).</summary>
