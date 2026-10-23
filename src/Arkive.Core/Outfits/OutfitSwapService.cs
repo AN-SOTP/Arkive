@@ -186,7 +186,8 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                     if (Stretched(mesh.Positions, moved, section.Triangles[i], section.Triangles[i + 1], section.Triangles[i + 2])) stretched++;
                 }
             // Small folds the moves pressed inside out (lace edges, hems) are smoothed back the right way round.
-            moved = Expand(OutfitSwapFitting.Untangle(Average(moved, ids, weldedCount), Average(normals, ids, weldedCount), triangles), ids);
+            moved = Expand(OutfitSwapFitting.Untangle(Average(moved, ids, weldedCount), Average(normals, ids, weldedCount), triangles,
+                Average(mesh.Positions, ids, weldedCount)), ids);
             // Bare skin lying on the new body shades like it.
             var handShares = OutfitSwapFitting.Features(mesh, Enumerable.Range(0, mesh.VertexCount).ToArray());
             if (targetBody is { Native: true })
@@ -208,6 +209,47 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             }
             fitted.Add(moved);
             shaded.Add(donor with { Mesh = finished });
+        }
+        // Layers of one piece (a dress over its underskirt, an overlay over a bodice) stay in their order: each large
+        // connected part of a piece's cloth keeps the piece's other cloth that lay under it, under it.
+        for (var k = 0; k < donors.Count; k++)
+        {
+            var mesh = donors[k].Mesh;
+            var count = mesh.VertexCount;
+            foreach (var layer in Layers(mesh))
+            {
+                var inner = new bool[count];
+                foreach (var section in mesh.Sections)
+                    if (!OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
+                        foreach (var v in section.Triangles) inner[v] = true;
+                foreach (var v in layer.SelectMany(section => section.Triangles)) inner[v] = false;
+                // Shoes and toenails keep their own shape (see the fit), so layering leaves the feet alone.
+                var feetShares = OutfitSwapFitting.FootShares(mesh);
+                for (var v = 0; v < count; v++) if (feetShares[v] >= 0.1f) inner[v] = false;
+                if (OutfitSwapClearance.Surface(mesh, mesh.Positions, layer) is { } before &&
+                    OutfitSwapClearance.Surface(mesh, fitted[k][..count], layer) is { } after)
+                    Array.Copy(OutfitSwapClearance.KeepUnder(mesh.Positions, fitted[k][..count], inner, before, after), fitted[k], count);
+            }
+        }
+        // Cloth hidden behind the outfit's own bare skin (a hem tucked in at the waist) stays behind it: the skin now
+        // lies on the new body, the cloth went with the body-shape correction, and the two can part.
+        for (var skinPiece = 0; skinPiece < donors.Count; skinPiece++)
+        {
+            var skinMesh = donors[skinPiece].Mesh;
+            if (OutfitSwapClearance.SkinSurface(skinMesh, skinMesh.Positions) is not { } skinBefore ||
+                OutfitSwapClearance.SkinSurface(skinMesh, fitted[skinPiece][..skinMesh.VertexCount]) is not { } skinAfter) continue;
+            for (var k = 0; k < donors.Count; k++)
+            {
+                var mesh = donors[k].Mesh;
+                var count = mesh.VertexCount;
+                var clothOnly = new bool[count];
+                var shares = OutfitSwapFitting.FootShares(mesh);
+                foreach (var section in mesh.Sections)
+                    if (!OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
+                        foreach (var v in section.Triangles) clothOnly[v] = shares[v] < 0.1f;
+                Array.Copy(OutfitSwapClearance.KeepUnder(mesh.Positions, fitted[k][..count], clothOnly, skinBefore, skinAfter, reach: 0.02f),
+                    fitted[k], count);
+            }
         }
         // Pieces were fitted one by one: cloth of one that lay under another's keeps lying under it.
         for (var inner = 0; inner < donors.Count; inner++)
@@ -278,6 +320,35 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             });
         }
         return moved.Count > 0 ? new OutfitSwapBody(moved, native: false) : null;
+    }
+
+    /// <summary>The piece's large connected parts of cloth (layers), each as sections of its triangles.</summary>
+    private static IEnumerable<OutfitSwapSection[]> Layers(OutfitSwapMesh mesh, int minimumTriangles = 300)
+    {
+        var parent = Enumerable.Range(0, mesh.VertexCount).ToArray();
+        int Find(int x)
+        {
+            while (parent[x] != x) x = parent[x] = parent[parent[x]];
+            return x;
+        }
+        var cloth = mesh.Sections.Where(section => !OutfitSwapBodies.IsSkin(mesh.Materials[section.Material])).ToArray();
+        foreach (var section in cloth)
+            for (var i = 0; i + 2 < section.Triangles.Length; i += 3)
+            {
+                parent[Find(section.Triangles[i])] = Find(section.Triangles[i + 1]);
+                parent[Find(section.Triangles[i + 1])] = Find(section.Triangles[i + 2]);
+            }
+        var groups = new Dictionary<int, Dictionary<int, List<int>>>();
+        foreach (var section in cloth)
+            for (var i = 0; i + 2 < section.Triangles.Length; i += 3)
+            {
+                var root = Find(section.Triangles[i]);
+                if (!groups.TryGetValue(root, out var bySection)) groups[root] = bySection = [];
+                if (!bySection.TryGetValue(section.Material, out var list)) bySection[section.Material] = list = [];
+                list.AddRange([section.Triangles[i], section.Triangles[i + 1], section.Triangles[i + 2]]);
+            }
+        foreach (var group in groups.Values.Where(group => group.Values.Sum(list => list.Count) / 3 >= minimumTriangles))
+            yield return group.Select(pair => new OutfitSwapSection(pair.Key, pair.Value.ToArray())).ToArray();
     }
 
     /// <summary>The height of the outfit's ankle joint (its foot bone), or null when it has none.</summary>

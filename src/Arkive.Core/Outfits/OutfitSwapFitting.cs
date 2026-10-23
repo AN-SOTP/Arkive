@@ -193,8 +193,20 @@ public static partial class OutfitSwapFitting
     /// Moves the corners of triangles that face against their vertices' normals towards their neighbours, a few times,
     /// until they face the right way (the game draws such faces dark or not at all).
     /// </summary>
-    public static Vector3[] Untangle(Vector3[] positions, Vector3[] normals, IReadOnlyList<int> triangles, int rounds = 8)
+    /// <param name="original">The positions before the fit: triangles already facing that way there are the model's own
+    /// (thin details such as toenails) and are left alone.</param>
+    public static Vector3[] Untangle(Vector3[] positions, Vector3[] normals, IReadOnlyList<int> triangles, Vector3[]? original = null, int rounds = 8)
     {
+        bool Flipped(Vector3[] at, int i)
+        {
+            int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            var face = Vector3.Cross(at[b] - at[a], at[c] - at[a]);
+            return face.LengthSquared() > 1e-16f && Vector3.Dot(face, normals[a] + normals[b] + normals[c]) < 0;
+        }
+        var own = new HashSet<int>();
+        if (original is not null)
+            for (var i = 0; i + 2 < triangles.Count; i += 3)
+                if (Flipped(original, i)) own.Add(i);
         var result = (Vector3[])positions.Clone();
         var neighbours = new List<int>[positions.Length];
         for (var v = 0; v < neighbours.Length; v++) neighbours[v] = [];
@@ -208,14 +220,10 @@ public static partial class OutfitSwapFitting
         {
             var flipped = new HashSet<int>();
             for (var i = 0; i + 2 < triangles.Count; i += 3)
-            {
-                int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
-                var face = Vector3.Cross(result[b] - result[a], result[c] - result[a]);
-                if (face.LengthSquared() > 1e-16f && Vector3.Dot(face, normals[a] + normals[b] + normals[c]) < 0)
+                if (!own.Contains(i) && Flipped(result, i))
                 {
-                    flipped.Add(a); flipped.Add(b); flipped.Add(c);
+                    flipped.Add(triangles[i]); flipped.Add(triangles[i + 1]); flipped.Add(triangles[i + 2]);
                 }
-            }
             if (flipped.Count == 0) break;
             var next = (Vector3[])result.Clone();
             foreach (var v in flipped)
