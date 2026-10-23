@@ -51,7 +51,7 @@ public sealed class OutfitSwapModWriter(ArkiveModEditWorkspaces edits, IChunkPro
         if (positions.Length == mesh.VertexCount &&
             OutfitSwapClearance.Surface(mesh, mesh.Positions, skinSections) is { } skinBefore &&
             OutfitSwapClearance.Surface(mesh, positions, skinSections) is { } skinAfter)
-            positions = OutfitSwapClearance.PushOut(mesh.Positions, positions, skinBefore, skinAfter, cloth, reach: 0.02f);
+            positions = OutfitSwapClearance.PushOut(mesh.Positions, positions, skinBefore, skinAfter, cloth, reach: 0.02f, rounds: 24);
         return new OutfitSwapMesh
         {
             Positions = positions, Normals = reshaped.Normals, Tangents = reshaped.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1,

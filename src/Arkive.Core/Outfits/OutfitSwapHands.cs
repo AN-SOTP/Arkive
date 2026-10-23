@@ -141,6 +141,15 @@ public static class OutfitSwapHands
         /// <summary>The vertices at the same place as one (split along a picture seam), itself included.</summary>
         public Func<int, IEnumerable<int>> Copies { get; set; } = v => [v];
 
+        public void CopyWeights(int from, int to)
+        {
+            for (var k = 0; k < 4; k++)
+            {
+                Joints[to * 4 + k] = Joints[from * 4 + k];
+                Weights[to * 4 + k] = Weights[from * 4 + k];
+            }
+        }
+
         /// <summary>A copy of a vertex, with another picture position.</summary>
         public int Copy(int v, Vector2 uv)
         {
@@ -204,11 +213,6 @@ public static class OutfitSwapHands
                 moves[copy] = best.Point - points[copy];
                 mesh.Normals[copy] = mesh.Normals[best.Corner];
                 mesh.Tangents[copy] = mesh.Tangents[best.Corner];
-                for (var k = 0; k < 4; k++)
-                {
-                    joints[copy * 4 + k] = joints[best.Corner * 4 + k];
-                    weights[copy * 4 + k] = weights[best.Corner * 4 + k];
-                }
             }
         }
         if (moves.Count == 0) return;
@@ -241,15 +245,18 @@ public static class OutfitSwapHands
         }
         Zip(sections, native, mesh, outfitEdge.SelectMany(segment => new[] { segment.A, segment.B }).DistinctBy(v => ids[v]).ToArray(),
             handSegments.SelectMany(segment => new[] { segment.A, segment.B }).DistinctBy(v => ids[v]).ToArray());
-        // The hands' own bone weights take over from the arm's gradually, over 3 cm from the wrist: switched at once, the
-        // twist bones turn the two rows either side of the seam apart and it creases open as the wrist turns.
-        var ringTree = new OutfitSwapKdTree(edge.SelectMany(v => new[] { positions[v].X, positions[v].Y, positions[v].Z }).ToArray(), 3);
-        for (var v = hands.Length; v < points.Length; v++)
+        // The arm's skin takes the wrist's weights gradually, over 5 cm up from the wrist (which now bends with the new
+        // body's own hand weights): switched at once, the twist bones turn the rows either side apart and the join opens.
+        var outfitRing = outfitEdge.SelectMany(segment => new[] { segment.A, segment.B }).Distinct().ToArray();
+        var ringTree = new OutfitSwapKdTree(outfitRing.SelectMany(v => new[] { positions[v].X, positions[v].Y, positions[v].Z }).ToArray(), 3);
+        var ringSet = outfitRing.SelectMany(v => mesh.Copies(v)).ToHashSet();
+        var armSkin = sections.Where(section => OutfitSwapBodies.IsSkin(materials[section.Material]) && !native.Contains(section.Material))
+            .SelectMany(section => section.Triangles).Distinct().Where(v => v < hands.Length && !ringSet.Contains(v)).ToArray();
+        foreach (var v in armSkin)
         {
-            if (moves.ContainsKey(v) || ringTree.Nearest([positions[v].X, positions[v].Y, positions[v].Z], 1, index, distance) == 0 ||
-                distance[0] >= 0.03f) continue;
-            var share = 1 - distance[0] / 0.03f;
-            var ring = edge[index[0]];
+            if (ringTree.Nearest([positions[v].X, positions[v].Y, positions[v].Z], 1, index, distance) == 0 || distance[0] >= 0.05f) continue;
+            var share = 1 - distance[0] / 0.05f;
+            var ring = outfitRing[index[0]];
             var sum = new Dictionary<int, float>();
             for (var k = 0; k < 4; k++)
             {
@@ -314,16 +321,19 @@ public static class OutfitSwapHands
                         // Shaded alike too, or a line shows where they meet.
                         mesh.Normals[copy] = mesh.Normals[ring[n]];
                         mesh.Tangents[copy] = mesh.Tangents[ring[n]];
-                        for (var k = 0; k < 4; k++)
-                        {
-                            mesh.Joints[copy * 4 + k] = mesh.Joints[ring[n] * 4 + k];
-                            mesh.Weights[copy * 4 + k] = mesh.Weights[ring[n] * 4 + k];
-                        }
                     }
+                    // Bent alike: the outfit's point takes the hands' own weights (made for this body's wrist).
+                    foreach (var copy in mesh.Copies(ring[n])) mesh.CopyWeights(partner, copy);
                 }
                 continue;
             }
-            // The outfit's ring points copied into the hands' skin, with the picture position of the hands' nearest point.
+            // The outfit's ring points take the weights of the hands' nearest, and are copied into the hands' skin with its
+            // picture position.
+            foreach (var v in ring)
+            {
+                var nearest = other.MinBy(x => Vector3.Distance(positions[x], positions[v]));
+                foreach (var copy in mesh.Copies(v)) mesh.CopyWeights(nearest, copy);
+            }
             var copies = ring.Select(v => mesh.Copy(v, mesh.Uv0[other.MinBy(x => Vector3.Distance(positions[x], positions[v]))])).ToArray();
             int i = 0, j = 0;
             var total = ring.Length + other.Length;
