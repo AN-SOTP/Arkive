@@ -220,7 +220,8 @@ public static partial class OutfitSwapPlanner
         {
             var donor = donors[piece].Mesh;
             var (slot, rect, skinLower) = placement(piece, donor.Sections[section].Material);
-            var skin = skinLower is not null && targetBody is { Native: true } ? SkinUvs(fitted[piece], triangles, skinLower.Value, skinSlot, targetBody) : null;
+            var skin = skinLower is not null && targetBody is { Native: true } && !donor.NativeSkin.Contains(donor.Sections[section].Material)
+                ? SkinUvs(fitted[piece], triangles, skinLower.Value, skinSlot, targetBody) : null;
             for (var i = 0; i < triangles.Length; i++)
             {
                 var vertex = triangles[i];
@@ -459,17 +460,19 @@ public static partial class OutfitSwapPlanner
 
         public static ArmSkin? Of(OutfitSwapMesh target)
         {
-            var arm = target.BoneNames.Select(OutfitSwapBody.IsArmBone).ToArray();
+            // Not the hand: a sleeve's wing hanging below it, bent with the hand's small turns, would swing far.
+            var arm = target.BoneNames.Select(name => OutfitSwapBody.IsArmBone(name) && !name.EndsWith("-hand", StringComparison.Ordinal)).ToArray();
             var vertices = Enumerable.Range(0, target.VertexCount).Where(v =>
                 Enumerable.Range(0, 4).Sum(k => arm[target.Joints[v * 4 + k]] ? target.Weights[v * 4 + k] : 0) >= 0.99f).ToArray();
             return vertices.Length > 0 ? new ArmSkin(target, vertices) : null;
         }
 
-        public Dictionary<int, float> At(Vector3 point)
+        public Dictionary<int, float> At(Vector3 point, out float away)
         {
             Span<int> index = stackalloc int[4];
             Span<float> distance = stackalloc float[4];
             var found = _tree.Nearest([point.X, point.Y, point.Z], 4, index, distance);
+            away = found > 0 ? distance[0] : float.MaxValue;
             var result = new Dictionary<int, float>();
             for (var n = 0; n < found; n++)
                 for (var k = 0; k < 4; k++)
@@ -497,9 +500,13 @@ public static partial class OutfitSwapPlanner
             if (bone < 0)
             {
                 if (body is null) continue;
-                if (bone == FollowArm && arm?.At(position) is { Count: > 0 } onArm)
+                if (bone == FollowArm && arm?.At(position, out var away) is { Count: > 0 } onArm)
                 {
-                    foreach (var (armBone, share) in onArm) sum[armBone] = sum.GetValueOrDefault(armBone) + weight * share;
+                    // The sleeve around the arm bends with it; panels hanging well away from it (down the back) hang from
+                    // the upper back instead, as a cape would: held by the arm they swing out with every arm movement.
+                    var back = targetBones.TryGetValue("bip001-spine2", out var spine) ? Math.Clamp((away - 0.04f) / 0.06f, 0, 1) : 0;
+                    foreach (var (armBone, share) in onArm) sum[armBone] = sum.GetValueOrDefault(armBone) + weight * share * (1 - back);
+                    if (back > 0) sum[spine] = sum.GetValueOrDefault(spine) + weight * back;
                     continue;
                 }
                 foreach (var (bodyBone, share) in body.WeightsAt(position, targetBones.ContainsKey))
