@@ -103,13 +103,16 @@ public static class OutfitLooks
         return inner[(inner.LastIndexOf('.') + 1)..];
     }
 
-    /// <summary>The item looks (by entry) whose mesh is <paramref name="meshObject"/>, from the archive's entries.</summary>
+    /// <summary>
+    /// The item looks (by entry) whose mesh is <paramref name="meshObject"/>, from the archive's entries: the item's own
+    /// look and its colour variants (EFDLItem_PC_WBK_F_AV_137-1_Lower), which can draw the same mesh.
+    /// </summary>
     public static IReadOnlyList<OutfitLook> ForMesh(Stream archive, IReadOnlyList<LostArkDataEntry> entries, string meshObject,
         CancellationToken cancellationToken = default)
     {
         var looks = new List<OutfitLook>();
-        // The look files are named after the item's mesh stem (EFDLItem_PC_WBK_F_HR_00_Upper for pc_wbk_f_hr_00_upper_sk).
-        var stem = meshObject.EndsWith("_sk", StringComparison.OrdinalIgnoreCase) ? meshObject[..^3] : meshObject;
+        // The look files are named after the item's package (EFDLItem_PC_WBK_F_HR_00_Upper for pc_wbk_f_hr_00_upper_sk).
+        var stem = PackageStem(meshObject);
         foreach (var entry in entries.Where(entry => entry.Path.StartsWith(Folder, StringComparison.OrdinalIgnoreCase) &&
                                                      entry.Path.Contains(stem, StringComparison.OrdinalIgnoreCase)))
         {
@@ -119,6 +122,29 @@ public static class OutfitLooks
                 looks.Add(look);
         }
         return looks.OrderBy(look => look.Entry, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    /// <summary>The package a piece's looks are named after: PC_WBK_F_AV_137 for pc_wbk_f_av_137_lower_sk.</summary>
+    public static string PackageStem(string meshObject)
+    {
+        var stem = meshObject.EndsWith("_sk", StringComparison.OrdinalIgnoreCase) ? meshObject[..^3] : meshObject;
+        var part = stem.LastIndexOf('_');
+        return part > 0 ? stem[..part] : stem;
+    }
+
+    /// <summary>
+    /// Which colour variant of its item a look is: "-1" for EFDLItem_PC_WBK_F_AV_137-1_Lower, empty for the item's own
+    /// look (EFDLItem_PC_WBK_F_AV_137_Lower).
+    /// </summary>
+    public static string Variant(string entry, string meshObject)
+    {
+        var name = entry.Split('/')[^1].Split('.')[0];
+        var stem = PackageStem(meshObject);
+        var at = name.IndexOf(stem, StringComparison.OrdinalIgnoreCase);
+        if (at < 0) return "";
+        var rest = name[(at + stem.Length)..];
+        var part = rest.IndexOf('_');
+        return part < 0 ? rest : rest[..part];
     }
 
     private sealed record Token(int Start, int End, string Text);

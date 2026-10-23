@@ -11,6 +11,7 @@ internal static class OutfitLookSmokeTests
         new("writes item looks into data4.lpk and puts the game's file back byte for byte", TestLookArchive),
         new("resolves item looks between mods, notices a game update and rebases the mod", TestLookMods),
         new("points a swapped piece's look at the donor's materials and their dyed versions", TestSwapLooks),
+        new("gives a swapped piece's colour variant look the donor's matching variant", TestSwapLookVariants),
     ];
 
     private sealed class NoGame : IModDeploymentProcessGuard
@@ -180,10 +181,60 @@ internal static class OutfitLookSmokeTests
         var path = Path.Combine(efGame, "data4.lpk");
         LostArkDataArchive.Create([new(UpperEntry, TargetUpper()), new(DonorEntry, DonorUpper())], path);
         var archive = new OutfitLookArchive(efGame, data, new NoGame());
-        PackageObjectReference Reference(string package, string material) => new([
-            new(package, "package", "core"), new("Mat", "package", "core"), new(material, "MaterialInstanceConstant", "engine")]);
-        // The target's three slots; the swap draws its first with the donor's cloth and adds the donor's second cloth and skin.
-        var mesh = new OutfitSwapMesh
+        var notes = new List<string>();
+        var edits = OutfitSwapLooks.Edits(archive, ["PC_D_Upper_SK"], [SwapPiece()], notes);
+        Assert(edits.Count == 3 && notes.Count == 0, $"one slot changed and two added ({edits.Count}): {string.Join(" ", notes)}");
+        Assert(edits[0] is { Slot: 0, Added: false } && edits[0].Material == Mat("PC_D_Upper_MI") && edits[0].DyeMaterial == Mat("PC_D_Upper_MI_DYE") &&
+               edits[0].OriginalMaterial == Mat("PC_T_Upper_MI"), "the replaced slot takes the donor's material and its dyed version");
+        Assert(edits[1] is { Slot: 3, Added: true } && edits[1].DyeMaterial == Mat("PC_D_Upper1_MI") &&
+               edits[2] is { Slot: 4, Added: true } && edits[2].Material == Mat("PC_C_Base_Upper_MI"),
+            "added slots follow the look's own, a material with no dyed version stands for it");
+        archive.WriteAsync(edits).GetAwaiter().GetResult();
+        Assert(LiveLook(path).Materials.Count == 5, "the swap's look changes write into data4.lpk");
+    });
+
+    private static void TestSwapLookVariants() => InWorkspace((efGame, data) =>
+    {
+        var path = Path.Combine(efGame, "data4.lpk");
+        const string targetVariant = OutfitLooks.Folder + "EFDLItem_PC_T-1_Upper.PC_T-1_Upper.loa";
+        const string donorVariant = OutfitLooks.Folder + "EFDLItem_PC_D-1_Upper.PC_D-1_Upper.loa";
+        // The -1 colour variants draw the same meshes with their own materials; another -1 piece has a mesh of its own.
+        LostArkDataArchive.Create([
+            new(UpperEntry, TargetUpper()), new(DonorEntry, DonorUpper()),
+            new(targetVariant, Look("PC_T_Upper_SK", [Mat("PC_T-1_Upper_MI"), Mat("PC_T-1_Upper1_MI"), Mat("PC_B_Base_Upper_MI")],
+                [Mat("PC_T-1_Upper_MI_DYE"), Mat("PC_T-1_Upper1_MI_DYE"), ""])),
+            new(donorVariant, Look("PC_D_Upper_SK", [Mat("PC_D-1_Upper_MI"), Mat("PC_D-1_Upper1_MI"), Mat("PC_C_Base_Upper_MI")],
+                [Mat("PC_D-1_Upper_MI_DYE"), "", Mat("PC_C_Base_Upper_MI")])),
+            new(OutfitLooks.Folder + "EFDLItem_PC_T-1_Lower.PC_T-1_Lower.loa", Look("PC_T-1_Lower_SK", [Mat("PC_T-1_Lower_MI")], [Mat("PC_T-1_Lower_MI_DYE")])),
+        ], path);
+        var archive = new OutfitLookArchive(efGame, data, new NoGame());
+        Assert(archive.GameLooks("PC_T_Upper_SK").Select(look => look.Entry).SequenceEqual([targetVariant, UpperEntry]),
+            "the piece's own look and its variant on the same mesh are found, and the other variant mesh is not");
+        Assert(OutfitLooks.Variant(targetVariant, "PC_T_Upper_SK") == "-1" && OutfitLooks.Variant(UpperEntry, "PC_T_Upper_SK") == "",
+            "a look's variant is read from its name");
+        var notes = new List<string>();
+        var edits = OutfitSwapLooks.Edits(archive, ["PC_D_Upper_SK"], [SwapPiece()], notes);
+        var variant = edits.Where(edit => edit.Entry == targetVariant).OrderBy(edit => edit.Slot).ToArray();
+        Assert(edits.Count(edit => edit.Entry == UpperEntry) == 3 && variant.Length == 3 && notes.Count == 0,
+            $"both looks of the mesh are changed ({edits.Count} slots): {string.Join(" ", notes)}");
+        Assert(variant[0] is { Slot: 0 } && variant[0].Material == Mat("PC_D-1_Upper_MI") && variant[0].DyeMaterial == Mat("PC_D-1_Upper_MI_DYE") &&
+               variant[0].OriginalMaterial == Mat("PC_T-1_Upper_MI"), "the variant's replaced slot takes the donor variant's material");
+        Assert(variant[1] is { Slot: 3, Added: true } && variant[1].Material == Mat("PC_D-1_Upper1_MI") && variant[1].DyeMaterial == Mat("PC_D-1_Upper1_MI") &&
+               variant[2] is { Slot: 4, Added: true } && variant[2].Material == Mat("PC_C_Base_Upper_MI"),
+            "the variant's added slots take the donor variant's materials, the skin stays the donor's");
+        archive.WriteAsync(edits).GetAwaiter().GetResult();
+        using var stream = File.OpenRead(path);
+        var entries = LostArkDataArchive.ReadEntries(stream);
+        Assert(OutfitLooks.ForMesh(stream, entries, "PC_T_Upper_SK").All(look => look.Materials.Count == 5),
+            "both looks of the mesh are written into data4.lpk");
+    });
+
+    private static PackageObjectReference Reference(string package, string material) => new([
+        new(package, "package", "core"), new("Mat", "package", "core"), new(material, "MaterialInstanceConstant", "engine")]);
+
+    // The target's three slots; the swap draws its first with the donor's cloth and adds the donor's second cloth and skin.
+    private static OutfitSwapLookPiece SwapPiece() => new("PC_T_Upper_SK", ["PC_T_Upper_MI", "PC_T_Upper1_MI", "PC_B_Base_Upper_MI"],
+        new OutfitSwapMesh
         {
             Positions = [], Normals = [], Tangents = [], Uv0 = [], Uv1 = [], Colours = [], Joints = [], Weights = [],
             Sections = [new(0, []), new(2, []), new(3, []), new(4, [])],
@@ -195,19 +246,7 @@ internal static class OutfitLookSmokeTests
                 [3] = new(Reference("PC_D", "PC_D_Upper1_MI"), null),
                 [4] = new(Reference("PC_C", "PC_C_Base_Upper_MI"), null),
             },
-        };
-        var notes = new List<string>();
-        var edits = OutfitSwapLooks.Edits(archive, ["PC_D_Upper_SK"],
-            [new OutfitSwapLookPiece("PC_T_Upper_SK", ["PC_T_Upper_MI", "PC_T_Upper1_MI", "PC_B_Base_Upper_MI"], mesh)], notes);
-        Assert(edits.Count == 3 && notes.Count == 0, $"one slot changed and two added ({edits.Count}): {string.Join(" ", notes)}");
-        Assert(edits[0] is { Slot: 0, Added: false } && edits[0].Material == Mat("PC_D_Upper_MI") && edits[0].DyeMaterial == Mat("PC_D_Upper_MI_DYE") &&
-               edits[0].OriginalMaterial == Mat("PC_T_Upper_MI"), "the replaced slot takes the donor's material and its dyed version");
-        Assert(edits[1] is { Slot: 3, Added: true } && edits[1].DyeMaterial == Mat("PC_D_Upper1_MI") &&
-               edits[2] is { Slot: 4, Added: true } && edits[2].Material == Mat("PC_C_Base_Upper_MI"),
-            "added slots follow the look's own, a material with no dyed version stands for it");
-        archive.WriteAsync(edits).GetAwaiter().GetResult();
-        Assert(LiveLook(path).Materials.Count == 5, "the swap's look changes write into data4.lpk");
-    });
+        });
 
     private static void Refused(Action action, string what)
     {

@@ -8,28 +8,42 @@ public sealed record OutfitSwapLookPiece(string ObjectName, IReadOnlyList<string
 
 /// <summary>
 /// The item look changes an own-material swap needs. The game draws each piece with its item look's materials, so every
-/// slot the swap gives another package's material gets that material in the replaced piece's look too, with the dyed
-/// version the donor's own look pairs it with; slots the swap adds are added to the look after its own.
+/// slot the swap gives another package's material gets that material in the replaced piece's looks too, with the dyed
+/// version the donor's own look pairs it with; slots the swap adds are added to the looks after their own. A replaced
+/// piece's colour variants (its -1 look) draw the same mesh, so they take the donor's matching variant where it has one.
 /// </summary>
 public static class OutfitSwapLooks
 {
     public static IReadOnlyList<OutfitLookEdit> Edits(OutfitLookArchive archive, IReadOnlyList<string> donors,
         IReadOnlyList<OutfitSwapLookPiece> pieces, ICollection<string> notes, CancellationToken cancellationToken = default)
     {
-        // The materials the donors' looks (then the replaced pieces' own) name, by object, with the dyed version each pairs it with.
-        var known = new Dictionary<string, (string Material, string Dye)>(StringComparer.OrdinalIgnoreCase);
+        var donorLooks = donors.Select(donor => (Donor: donor, Looks: archive.GameLooks(donor, cancellationToken))).ToArray();
         var targetLooks = pieces.ToDictionary(piece => piece.ObjectName, piece => archive.GameLooks(piece.ObjectName, cancellationToken),
             StringComparer.OrdinalIgnoreCase);
-        foreach (var look in donors.SelectMany(donor => archive.GameLooks(donor, cancellationToken)).Concat(targetLooks.Values.SelectMany(looks => looks)))
+        // Materials no donor's own look draws (a body's skin): as the looks name them, or by their path.
+        var known = new Dictionary<string, (string Material, string Dye)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var look in donorLooks.SelectMany(donor => donor.Looks).Concat(targetLooks.Values.SelectMany(looks => looks)))
             for (var slot = 0; slot < look.Materials.Count; slot++)
                 if (look.Materials[slot].Length > 0)
-                    known.TryAdd(OutfitLooks.ObjectName(look.Materials[slot]),
-                        (look.Materials[slot], look.DyeMaterials[slot].Length > 0 ? look.DyeMaterials[slot] : look.Materials[slot]));
-        (string Material, string Dye) For(SkeletalMeshMaterialReference reference) =>
-            known.TryGetValue(reference.Material.ObjectName, out var found)
+                    known.TryAdd(OutfitLooks.ObjectName(look.Materials[slot]), Pair(look, slot));
+        (string Material, string Dye) For(SkeletalMeshMaterialReference reference, string variant)
+        {
+            // The donor material's slot in its own look; a target variant takes the donor variant's material there.
+            foreach (var (donor, looks) in donorLooks)
+            {
+                var own = looks.FirstOrDefault(look => OutfitLooks.Variant(look.Entry, donor).Length == 0);
+                var slot = own?.Materials.ToList().FindIndex(material =>
+                    OutfitLooks.ObjectName(material).Equals(reference.Material.ObjectName, StringComparison.OrdinalIgnoreCase)) ?? -1;
+                if (slot < 0) continue;
+                var match = looks.FirstOrDefault(look => OutfitLooks.Variant(look.Entry, donor).Equals(variant, StringComparison.OrdinalIgnoreCase) &&
+                                                         look.Materials.Count == own!.Materials.Count && look.Materials[slot].Length > 0);
+                return Pair(match ?? own!, slot);
+            }
+            return known.TryGetValue(reference.Material.ObjectName, out var found)
                 ? found
                 : (OutfitLooks.MaterialPath(reference.Material.ClassName, reference.Material.Path),
                     OutfitLooks.MaterialPath(reference.Material.ClassName, reference.Material.Path));
+        }
 
         var edits = new List<OutfitLookEdit>();
         foreach (var piece in pieces)
@@ -52,6 +66,7 @@ public static class OutfitSwapLooks
             foreach (var look in looks)
             {
                 var name = Path.GetFileNameWithoutExtension(look.Entry.Split('/')[^1]);
+                var variant = OutfitLooks.Variant(look.Entry, piece.ObjectName);
                 if (look.Materials.Count != piece.GameSlots.Count)
                 {
                     notes.Add($"The item look {name} lists {look.Materials.Count} materials for the {piece.GameSlots.Count} slots of " +
@@ -60,7 +75,7 @@ public static class OutfitSwapLooks
                 }
                 foreach (var (slot, reference) in replaced.OrderBy(pair => pair.Key))
                 {
-                    var (material, dye) = For(reference);
+                    var (material, dye) = For(reference, variant);
                     if (material.Equals(look.Materials[slot], StringComparison.OrdinalIgnoreCase) &&
                         dye.Equals(look.DyeMaterials[slot], StringComparison.OrdinalIgnoreCase))
                         continue;
@@ -68,13 +83,17 @@ public static class OutfitSwapLooks
                 }
                 for (var index = 0; index < added.Count; index++)
                 {
-                    var (material, dye) = For(added[index]!);
+                    var (material, dye) = For(added[index]!, variant);
                     edits.Add(new OutfitLookEdit(look.Entry, piece.GameSlots.Count + index, material, dye, null, null));
                 }
             }
         }
         return edits;
     }
+
+    // A look's material at a slot and the dyed version it pairs it with (the material itself when it has none).
+    private static (string Material, string Dye) Pair(OutfitLook look, int slot) =>
+        (look.Materials[slot], look.DyeMaterials[slot].Length > 0 ? look.DyeMaterials[slot] : look.Materials[slot]);
 
     /// <summary>Writes <paramref name="edits"/> into the saved mod's file as its item look changes.</summary>
     public static async Task<ArkiveModLibraryEntry> AttachAsync(ArkiveModLibrary library, string modId, IReadOnlyList<OutfitLookEdit> edits,
