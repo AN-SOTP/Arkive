@@ -104,10 +104,20 @@ public partial class SoundWindow : Window
         ReplaceButton.IsEnabled = row is not null && !_busy;
         ExportButton.IsEnabled = row is not null && !_busy;
         RestoreButton.IsEnabled = row is not null && !_busy && _replacements.Find(row.Clip.SourceId) is not null;
-        NoteText.Text = row?.Clip.IsMusic == true
-            ? "Music keeps its original length so it still loops and changes on cue: a longer file is cut (with a short fade) and a shorter one ends in silence."
-            : "Sound effects and voices can be any length. Your file is converted to the clip's channels and sample rate.";
+        var music = row?.Clip.IsMusic == true;
+        var fittable = row?.Clip.MusicFit is not null;
+        FitBankCheckBox.Visibility = music ? Visibility.Visible : Visibility.Collapsed;
+        FitBankCheckBox.IsEnabled = fittable && !_busy;
+        NoteText.Text = !music
+            ? "Sound effects and voices can be any length. Your file is converted to the clip's channels and sample rate."
+            : fittable && FitBankCheckBox.IsChecked == true
+                ? "Your file plays at its own length and loops from its end, with no cut and no silence." +
+                  (row!.Clip.MusicFit!.Intros.Count > 0 ? " The intro this music plays first is pointed at your file too, so it plays through and loops as one song." : string.Empty)
+                : (fittable ? string.Empty : "This music shares its timing with other audio, so it cannot be fitted. ") +
+                  "Music keeps the game's length so it still loops and changes on cue: a longer file is cut (with a short fade) and a shorter one ends in silence.";
     }
+
+    private void FitBankCheckBox_Click(object sender, RoutedEventArgs e) => UpdateButtons();
 
     private void ClipsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -279,14 +289,20 @@ public partial class SoundWindow : Window
             var samples = await Task.Run(() => AudioInputConverter.Decode(dialog.FileName, sampleRate, channels));
             if (samples.Length == 0) throw new InvalidDataException($"{fileName} has no audio.");
             var inputLength = TimeSpan.FromSeconds((double)samples.Length / channels / sampleRate);
-            if (clip.IsMusic && original is { SampleCount: > 0 })
-                samples = WemAudio.FitLength(samples, channels, original.SampleCount, sampleRate);
+            var fit = clip.IsMusic && clip.MusicFit is not null && FitBankCheckBox.IsChecked == true;
+            // A clip fitted to an earlier replacement has that length now; the game's own is in its record.
+            var musicLength = _replacements.Find(clip.SourceId)?.OriginalMusicLengthMs is { } fittedFrom
+                ? TimeSpan.FromMilliseconds(fittedFrom)
+                : original?.Duration;
+            if (clip.IsMusic && !fit && musicLength is { } keep)
+                samples = WemAudio.FitLength(samples, channels, (int)Math.Round(keep.TotalSeconds * sampleRate), sampleRate);
             var wem = WemAudio.WritePcmWem(samples, channels, sampleRate);
 
-            var lengthNote = clip.IsMusic && original?.Duration is { } musicLength &&
-                             Math.Abs((musicLength - inputLength).TotalSeconds) > 0.5
-                ? $"\n\nYour file is {MainWindow.FormatLength(inputLength)} and this music is {MainWindow.FormatLength(musicLength)}, so it will be {(inputLength > musicLength ? "cut to fit" : "followed by silence")}."
-                : string.Empty;
+            var lengthNote = fit
+                ? $"\n\nThe game's music timing will be changed to play all {MainWindow.FormatLength(inputLength)} of your file and loop it from its end."
+                : clip.IsMusic && musicLength is { } length && Math.Abs((length - inputLength).TotalSeconds) > 0.5
+                    ? $"\n\nYour file is {MainWindow.FormatLength(inputLength)} and this music is {MainWindow.FormatLength(length)}, so it will be {(inputLength > length ? "cut to fit" : "followed by silence")}."
+                    : string.Empty;
             var answer = MessageBox.Show(this,
                 $"Play {fileName} in place of clip {row.Number} of {_sound.Name}?{lengthNote}\n\n" +
                 "This changes the game's audio files. Lost Ark must be closed. You can restore the original at any time.",
@@ -298,10 +314,12 @@ public partial class SoundWindow : Window
             }
 
             SetBusy(true, "Writing the new audio into the game files…");
-            var record = await _replacements.ReplaceAsync(clip, _sound.Name, fileName, wem);
-            StatusText.Text = $"Clip {row.Number} now plays {fileName}. Press Play to hear it as the game will.";
+            var record = await _replacements.ReplaceAsync(clip, _sound.Name, fileName, wem, fit);
+            StatusText.Text = $"Clip {row.Number} now plays {fileName}" + (fit ? " at its own length" : string.Empty) +
+                              ". Press Play to hear it as the game will.";
             _log($"Sound replaced: sound={_sound.Name}, source={clip.SourceId}, file={dialog.FileName}, " +
-                 $"packages={record.Packages.Count}, bankFields={record.Fields.Count}, looseFiles={record.LooseFiles.Count}, bytes={wem.Length}.");
+                 $"packages={record.Packages.Count}, bankFields={record.Fields.Count}, looseFiles={record.LooseFiles.Count}, " +
+                 $"timing={record.BankBytes.Count}, fitted={fit}, bytes={wem.Length}.");
             await LoadClipsAsync(clip.SourceId);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
