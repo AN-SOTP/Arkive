@@ -36,6 +36,12 @@ public sealed class OutfitSwapMesh
     /// body's skin picture layout.
     /// </summary>
     public IReadOnlySet<int> OwnPictureSkin { get; init; } = new HashSet<int>();
+
+    /// <summary>
+    /// Skin materials whose triangles already come laid out on the new body's skin picture (the new body's own hands, see
+    /// <see cref="OutfitSwapHands"/>): they keep their picture coordinates.
+    /// </summary>
+    public IReadOnlySet<int> NativeSkin { get; init; } = new HashSet<int>();
     /// <summary>Bone names without Arkive's numbering suffix, lowercase.</summary>
     public required string[] BoneNames { get; init; }
     /// <summary>Each bone's rest position in the model.</summary>
@@ -53,7 +59,7 @@ public sealed class OutfitSwapMesh
     {
         Positions = Positions, Normals = normals, Tangents = tangents, Uv0 = Uv0, Uv1 = Uv1, Colours = Colours, Joints = Joints,
         Weights = Weights, Sections = Sections, Materials = Materials, BoneNames = BoneNames, BonePositions = BonePositions,
-        BoneParents = BoneParents, MaterialReferences = MaterialReferences, OwnPictureSkin = OwnPictureSkin,
+        BoneParents = BoneParents, MaterialReferences = MaterialReferences, OwnPictureSkin = OwnPictureSkin, NativeSkin = NativeSkin,
     };
 
     public bool HasBodySkeleton => Array.IndexOf(BoneNames, "bip001-pelvis") >= 0;
