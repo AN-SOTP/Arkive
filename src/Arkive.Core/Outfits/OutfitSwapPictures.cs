@@ -46,6 +46,7 @@ public static class OutfitSwapPictures
         IReadOnlyList<IReadOnlyDictionary<int, string>>? surfaceBakes = null)
     {
         Directory.CreateDirectory(outputDirectory);
+        donors = plan.Donors ?? donors;
         var pictures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var materials = new Dictionary<string, ModelViewerMaterialEdit>(StringComparer.OrdinalIgnoreCase);
         var targetMaterials = targetScenes.SelectMany((scene, piece) => scene.Materials.Select(material => (Scene: scene, Material: material))).ToArray();
@@ -63,9 +64,12 @@ public static class OutfitSwapPictures
             {
                 var donorMaterial = donors[piece].Mesh.Materials[slot];
                 var scene = donorScenes[piece];
-                var material = scene.Materials.FirstOrDefault(item => item.Slot == slot)
+                var material = donors[piece].Materials.FirstOrDefault(item => item.Slot == slot)
                                ?? throw new InvalidDataException($"{donors[piece].ObjectName} has no material in slot {slot}.");
-                string? baked = bakedColours[piece].GetValueOrDefault(slot);
+                // A section split off another (own-picture skin) is baked under the material it came from.
+                var bakedSlot = scene.Materials.Any(item => item.Slot == slot && item.Name == material.Name) ? slot
+                    : scene.Materials.FirstOrDefault(item => item.Name == material.Name)?.Slot ?? slot;
+                string? baked = bakedColours[piece].GetValueOrDefault(bakedSlot);
                 // Skin with no skin slot to go to keeps the outfit's own skin picture (its UVs are laid out for it; the
                 // new body's picture is laid out differently and would put nails and toe gaps in the wrong places),
                 // toned to the new body's skin.

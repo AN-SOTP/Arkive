@@ -209,7 +209,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                         cloth.Select((value, v) => value && feet[v] >= 0.05f).ToArray(), donorBody, shownFoot);
             }
             fitted.Add(moved);
-            shaded.Add(donor with { Mesh = finished });
+            shaded.Add(OwnPictureFeetAndHands(donor with { Mesh = finished }, feet));
         }
         // Layers of one piece (a dress over its underskirt, an overlay over a bodice) stay in their order: each large
         // connected part of a piece's cloth keeps the piece's other cloth that lay under it, under it.
@@ -321,6 +321,51 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             });
         }
         return moved.Count > 0 ? new OutfitSwapBody(moved, native: false) : null;
+    }
+
+    /// <summary>
+    /// Bare feet and hands keep the outfit's own shape (they are not laid on the new body), so the new body's skin
+    /// picture, laid out for its own toes and fingers, cannot draw them: their skin triangles move to a copy of the skin
+    /// material that keeps the outfit's own picture (<see cref="OutfitSwapMesh.OwnPictureSkin"/>).
+    /// </summary>
+    private static OutfitSwapPiece OwnPictureFeetAndHands(OutfitSwapPiece piece, float[] feet)
+    {
+        var mesh = piece.Mesh;
+        var features = OutfitSwapFitting.Features(mesh, Enumerable.Range(0, mesh.VertexCount).ToArray());
+        bool Held(int v) => v < feet.Length && feet[v] >= 0.5f || features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
+            features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand] >= 0.5f;
+        var materials = mesh.Materials.ToList();
+        var pieceMaterials = piece.Materials.ToList();
+        var sections = new List<OutfitSwapSection>();
+        var own = new HashSet<int>();
+        foreach (var section in mesh.Sections)
+        {
+            if (!OutfitSwapBodies.IsSkin(mesh.Materials[section.Material])) { sections.Add(section); continue; }
+            var kept = new List<int>();
+            var held = new List<int>();
+            var t = section.Triangles;
+            for (var i = 0; i + 2 < t.Length; i += 3)
+                (Held(t[i]) && Held(t[i + 1]) && Held(t[i + 2]) ? held : kept).AddRange([t[i], t[i + 1], t[i + 2]]);
+            if (held.Count == 0) { sections.Add(section); continue; }
+            if (kept.Count > 0) sections.Add(new OutfitSwapSection(section.Material, kept.ToArray()));
+            var copy = materials.Count;
+            materials.Add(mesh.Materials[section.Material]);
+            if (pieceMaterials.FirstOrDefault(material => material.Slot == section.Material) is { } original)
+                pieceMaterials.Add(original with { Slot = copy });
+            sections.Add(new OutfitSwapSection(copy, held.ToArray()));
+            own.Add(copy);
+        }
+        if (own.Count == 0) return piece;
+        return piece with
+        {
+            Materials = pieceMaterials,
+            Mesh = new OutfitSwapMesh
+            {
+                Positions = mesh.Positions, Normals = mesh.Normals, Tangents = mesh.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1,
+                Colours = mesh.Colours, Joints = mesh.Joints, Weights = mesh.Weights, Sections = sections, Materials = materials,
+                BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents, OwnPictureSkin = own,
+            },
+        };
     }
 
     /// <summary>The piece's large connected parts of cloth (layers), each as sections of its triangles.</summary>

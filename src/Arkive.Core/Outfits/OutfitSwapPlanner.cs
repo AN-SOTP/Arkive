@@ -38,7 +38,11 @@ public sealed record OutfitSwapPieceResult(string ObjectName, OutfitSwapMesh Mes
 public sealed record OutfitSwapPlan(
     IReadOnlyList<OutfitSwapPieceResult> Pieces,
     IReadOnlyList<OutfitSwapCanvas> Canvases,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes)
+{
+    /// <summary>The donor pieces as planned (sections and materials can differ from the pieces read from the game).</summary>
+    public IReadOnlyList<OutfitSwapPiece>? Donors { get; init; }
+}
 
 /// <summary>
 /// Decides which target piece and material slot draws each part of the donor outfit, and builds the target pieces' new
@@ -137,7 +141,7 @@ public static partial class OutfitSwapPlanner
         foreach (var ((t, piece, material), _) in sizes.OrderByDescending(pair => pair.Value))
         {
             var donorMaterial = donors[piece].Mesh.Materials[material];
-            if (OutfitSwapBodies.IsSkin(donorMaterial))
+            if (OutfitSwapBodies.IsSkin(donorMaterial) && !donors[piece].Mesh.OwnPictureSkin.Contains(material))
             {
                 var skin = slots.FirstOrDefault(slot => slot.Piece == t && slot.Skin && slot.LowerSkin == OutfitSwapBodies.IsLowerSkin(donorMaterial))
                            ?? AddSkin(t, OutfitSwapBodies.IsLowerSkin(donorMaterial));
@@ -183,7 +187,7 @@ public static partial class OutfitSwapPlanner
                 };
             results.Add(new OutfitSwapPieceResult(targets[t].ObjectName, mesh, hidden[t] || assign[t].Count == 0));
         }
-        return new OutfitSwapPlan(results, finished, notes);
+        return new OutfitSwapPlan(results, finished, notes) { Donors = donors };
     }
 
     /// <summary>
@@ -242,13 +246,19 @@ public static partial class OutfitSwapPlanner
             }
             var mesh = Build(donors, fitted, target, assign[t], (piece, material) =>
             {
-                var name = donors[piece].Mesh.Materials[material];
-                // Skin (including the body's own feet a donor piece gained) goes on the piece's skin, of the other kind
-                // when the piece only has that.
+                var mesh = donors[piece].Mesh;
+                var name = mesh.Materials[material];
+                // Skin goes on the piece's skin (of the other kind when the piece only has that). Bare feet and hands keep
+                // the outfit's own shape, so they keep its own skin material and picture, toes and nails included.
                 var lower = OutfitSwapBodies.IsLowerSkin(name);
-                if (OutfitSwapBodies.IsSkin(name) && SkinSlot(lower) is { } skin) return (skin, null, lower);
-                if (OutfitSwapBodies.IsSkin(name) && SkinSlot(!lower) is { } other) return (other, null, !lower);
-                var reference = material < sources.Donors[piece].Count ? sources.Donors[piece][material] : null;
+                var bodySkin = OutfitSwapBodies.IsSkin(name) && !mesh.OwnPictureSkin.Contains(material);
+                if (bodySkin && SkinSlot(lower) is { } skin) return (skin, null, lower);
+                if (bodySkin && SkinSlot(!lower) is { } other) return (other, null, !lower);
+                // A slot the fit added (a copy of one of the piece's materials) is that material.
+                var original = material < sources.Donors[piece].Count ? material
+                    : Enumerable.Range(0, Math.Min(sources.Donors[piece].Count, mesh.Materials.Count))
+                        .FirstOrDefault(slot => mesh.Materials[slot].Equals(name, StringComparison.OrdinalIgnoreCase), -1);
+                var reference = original >= 0 ? sources.Donors[piece][original] : null;
                 if (reference is null)
                     throw new InvalidDataException($"Arkive cannot tell which game material {donors[piece].ObjectName} draws {name} with.");
                 return (SlotFor(reference), null, null);
@@ -265,7 +275,7 @@ public static partial class OutfitSwapPlanner
             }, false));
         }
         notes.Add("The outfit keeps its own materials, so nothing is repainted.");
-        return new OutfitSwapPlan(results, [], notes);
+        return new OutfitSwapPlan(results, [], notes) { Donors = donors };
     }
 
     /// <summary>Splits a section into connected pieces of cloth; a piece mostly hanging from the legs and hips goes to the lower half.</summary>
