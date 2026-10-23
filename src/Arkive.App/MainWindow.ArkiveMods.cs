@@ -1029,10 +1029,13 @@ public partial class MainWindow : Window
         {
             ModLibraryStatusText.Text = "Checking enabled mods, priorities, and installed packages...";
             ModLibraryProgressBar.IsIndeterminate = true;
+            var clock = Stopwatch.StartNew();
             await RefreshStalePackageWorkspaceAsync("before applying mods");
             await EnsureGamePackagesDirectoryAsync();
             if (!previewOnly) await SaveEnabledModChangesAsync();
+            var planStarted = clock.Elapsed;
             var plan = previewModId is null ? await _arkiveModApply.PlanAsync() : await _arkiveModApply.PreviewModAsync(previewModId);
+            var planSeconds = (clock.Elapsed - planStarted).TotalSeconds;
             ModLibraryProgressBar.IsIndeterminate = false;
             _lastModApplyPlan = plan;
             ModLibraryPlanGrid.ItemsSource = plan.Packages.Select(package => new ModPlanRow(package)).ToArray();
@@ -1046,7 +1049,7 @@ public partial class MainWindow : Window
             await RefreshArkiveModsAsync("apply plan reviewed");
             Log($"Mod apply plan: canApply={plan.CanApply}, changes={plan.HasChanges}, packages={plan.Packages.Count}, " +
                 $"summary={plan.Summary}, problems={string.Join(" | ", plan.BlockingProblems)}, " +
-                $"warnings={string.Join(" | ", plan.Warnings)}.");
+                $"warnings={string.Join(" | ", plan.Warnings)}, took={clock.Elapsed.TotalSeconds:N1}s (plan {planSeconds:N1}s).");
             ModLibraryStatusText.Text = previewModId is null ? plan.Summary :
                 "Preview if this mod is enabled · nothing was applied. " + plan.Summary;
             if (!plan.CanApply)
