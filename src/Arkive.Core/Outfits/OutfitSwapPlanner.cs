@@ -36,7 +36,11 @@ public sealed record OutfitSwapPieceResult(string ObjectName, OutfitSwapMesh Mes
 public sealed record OutfitSwapPlan(
     IReadOnlyList<OutfitSwapPieceResult> Pieces,
     IReadOnlyList<OutfitSwapCanvas> Canvases,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes)
+{
+    /// <summary>The donor pieces as planned (sections and materials can differ from the pieces read from the game).</summary>
+    public IReadOnlyList<OutfitSwapPiece>? Donors { get; init; }
+}
 
 /// <summary>
 /// Decides which target piece and material slot draws each part of the donor outfit, and builds the target pieces' new
@@ -113,7 +117,7 @@ public static partial class OutfitSwapPlanner
         foreach (var ((t, piece, material), _) in sizes.OrderByDescending(pair => pair.Value))
         {
             var donorMaterial = donors[piece].Mesh.Materials[material];
-            if (OutfitSwapBodies.IsSkin(donorMaterial))
+            if (OutfitSwapBodies.IsSkin(donorMaterial) && !donors[piece].Mesh.OwnPictureSkin.Contains(material))
             {
                 var skin = slots.FirstOrDefault(slot => slot.Piece == t && slot.Skin && slot.LowerSkin == OutfitSwapBodies.IsLowerSkin(donorMaterial));
                 if (skin is not null) { where[(t, piece, material)] = (skin, null); continue; }
@@ -149,7 +153,7 @@ public static partial class OutfitSwapPlanner
                 }, lower => slots.FirstOrDefault(slot => slot.Piece == t && slot.Skin && slot.LowerSkin == lower)?.Material.Slot, targetBody);
             results.Add(new OutfitSwapPieceResult(targets[t].ObjectName, mesh, hidden[t] || assign[t].Count == 0));
         }
-        return new OutfitSwapPlan(results, finished, notes);
+        return new OutfitSwapPlan(results, finished, notes) { Donors = donors };
     }
 
     /// <summary>Splits a section into connected pieces of cloth; a piece mostly hanging from the legs and hips goes to the lower half.</summary>
