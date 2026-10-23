@@ -2909,6 +2909,8 @@
                                                 ToolTip="After a game update, find out which mods are ready to apply and which need rebasing. No game file is changed." />
                                         <Button x:Name="ModLibraryRebaseButton" Content="Rebase mods" Visibility="Collapsed" Click="ModLibraryRebaseButton_Click"
                                                 ToolTip="Set up the mods the game update changed against the updated game files. No game file is changed until you choose Apply changes." />
+                                        <Button x:Name="ModLibraryRemoveButton" Content="Delete mod" Click="ModLibraryRemoveButton_Click"
+                                                ToolTip="Delete the selected mods from the library. A mod still in the game has to be disabled and applied first." />
                                         <Button Content="More actions" Click="ModLibraryMoreButton_Click">
                                             <Button.ContextMenu>
                                                 <ContextMenu>
@@ -2922,7 +2924,6 @@
                                                               ToolTip="Add, change or remove the game table cells this mod changes." />
                                                     <MenuItem x:Name="ModLibraryUpdateButton" Header="Update for this game version" Click="ModLibraryUpdateButton_Click" />
                                                     <MenuItem x:Name="ModLibraryGoToPackageButton" Header="Advanced package projects" Click="ModLibraryGoToPackageButton_Click" />
-                                                    <MenuItem x:Name="ModLibraryRemoveButton" Header="Delete mod" Click="ModLibraryRemoveButton_Click" />
                                                     <Separator />
                                                     <MenuItem x:Name="ModLibraryRestoreOtherFolderButton" Header="Restore from another Arkive folder…"
                                                               Click="ModLibraryRestoreOtherFolderButton_Click"

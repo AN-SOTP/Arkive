@@ -154,7 +154,9 @@ internal static class ModPackChecks
         Check(Item("ModLibraryRowEnableItem").Header as string == "Disable 2 mods" &&
               Item("ModLibraryRowUpdateItem").Header as string == "Update 2 mods for this game version" &&
               Item("ModLibraryRowRenameItem").Visibility == Visibility.Collapsed &&
-              Item("ModLibraryRowAuthorItem").Visibility == Visibility.Collapsed,
+              Item("ModLibraryRowAuthorItem").Visibility == Visibility.Collapsed &&
+              Item("ModLibraryRowDeleteItem") is { Header: "Delete 2 mods", Visibility: Visibility.Visible } &&
+              Control<Button>(window, "ModLibraryRemoveButton").Content as string == "Delete 2 mods",
             "Right-clicking two chosen mods does not offer to act on both: " +
             string.Join(", ", rowMenu.Items.OfType<MenuItem>().Where(item => item.Visibility == Visibility.Visible).Select(item => item.Header)));
         bool BothOff() => Rows(grid).Where(row => packIds.Contains(Id(row))).All(row => !Enabled(row)) && grid.SelectedItems.Count == 2;

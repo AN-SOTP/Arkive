@@ -237,7 +237,7 @@ There is no separate restore button for a mod: the **On** ticks say which mods s
 
 - **Restore one or more mods:** untick **On** and choose **Apply changes**. A package no enabled mod changes any more is put back from its verified backup; a package another mod still changes is rebuilt without the unticked ones. Until you apply, a disabled mod shows **Disabled · still in game until Apply**.
 - **Restore everything:** **Restore all game files** puts back every package Arkive installed and keeps your ticks, so a later **Apply changes** reinstalls them.
-- **Delete mod** (in **More actions** or on right-click) deletes the mod from the library. It refuses a mod whose files are still in the game: apply first.
+- **Delete mod** (a Mods button, or on right-click) deletes the chosen mods from the library. It refuses mods whose files are still in the game and names them: disable them, choose **Apply changes**, then delete.
 - **Game file changed outside Arkive** in the Status column means a file your mods target was changed by something else: another Arkive data folder, another tool or a game patch. Apply is held back so the changed bytes are never built on. If an older Arkive installed mods, choose **More actions → Restore from another Arkive folder…** and pick its data folder (the one holding its `backups` folder); each original is checked by its SHA-256, the replaced file is kept under `backups\replaced-outside-arkive`, and Lost Ark must be closed. Otherwise use Steam's Verify integrity of game files, or after a game patch see [Game updates and recovery](#game-updates-and-recovery).
 
 **Advanced → Package projects** keeps per-package rebuild, inspection, bulk install and restore, and cleanup. Prefer the named-mod workflow for normal use.
