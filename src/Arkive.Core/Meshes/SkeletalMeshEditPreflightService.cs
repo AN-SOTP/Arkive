@@ -363,7 +363,10 @@ public sealed class SkeletalMeshEditPreflightService
             // Measured against the game mesh, which can have opposed faces of its own (double-sided parts).
             var sourceOpposedPercent = sourceLod0.FaceOrientationTriangleCount == 0 ? 0d :
                 100d * sourceLod0.OpposedFaceNormalTriangleCount / sourceLod0.FaceOrientationTriangleCount;
-            if (opposedPercent > sourceOpposedPercent + 1d)
+            // An outfit swap draws another outfit, whose own thin details (toenails, folded hems) can face against
+            // their normals by design; a few percent of those is only worth a look.
+            var opposedAllowance = candidate.OutfitSwap ? 4d : 1d;
+            if (opposedPercent > sourceOpposedPercent + opposedAllowance)
                 AddError("SMT031",
                     $"Candidate winding opposes its vertex normals on {lod.OpposedFaceNormalTriangleCount:N0} of " +
                     $"{lod.FaceOrientationTriangleCount:N0} checked triangles ({opposedPercent:N3}%; the game mesh has {sourceOpposedPercent:N3}%). Recalculate normals outside, or flip the faces that point inward.");
