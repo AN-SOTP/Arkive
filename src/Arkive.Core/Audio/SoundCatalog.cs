@@ -18,6 +18,25 @@ public sealed record SoundBankField(
     uint PluginId,
     uint InMemorySize);
 
+/// <summary>
+/// A music segment that plays a clip and nothing else, in the bank at <paramref name="BankOffset"/> of
+/// <paramref name="PackagePath"/>: where its length and exit cue are, and where its one track's timing for the clip
+/// is (see <see cref="WwiseMusicClip"/>).
+/// </summary>
+public sealed record SoundMusicPlacement(
+    string PackagePath, long BankOffset, uint BankSize, long SegmentDurationOffset, long ExitCueOffset, long ClipOffset);
+
+/// <summary>
+/// The segment a playlist plays once before looping the clip's segment. Fitting points its track at the clip as well
+/// (<paramref name="SourceOffset"/> is its 14-byte source record, <paramref name="LoopSourceOffset"/> the looping
+/// track's), so a replacement plays through and loops as one song.
+/// </summary>
+public sealed record SoundMusicIntro(
+    uint SourceId, long SourceOffset, long LoopSourceOffset, SoundMusicPlacement Placement);
+
+/// <summary>Every place the game times a music clip, when all of them can be fitted to a new length.</summary>
+public sealed record SoundMusicFit(IReadOnlyList<SoundMusicPlacement> Placements, IReadOnlyList<SoundMusicIntro> Intros);
+
 /// <summary>One piece of audio (a Wwise source): every copy of it and every bank field that describes it.</summary>
 public sealed record SoundClip(
     uint SourceId,
@@ -26,6 +45,12 @@ public sealed record SoundClip(
     double? MusicDurationMs)
 {
     public bool IsMusic => MusicDurationMs is not null;
+
+    /// <summary>
+    /// Where the music system times this clip, or null when it is not music or some segment that plays it does more
+    /// than play this one clip (several tracks or clips in one segment), so its timing cannot simply follow the clip.
+    /// </summary>
+    public SoundMusicFit? MusicFit { get; init; }
 }
 
 /// <summary>A named game sound (a Wwise event) and the clips it can play.</summary>
@@ -168,6 +193,9 @@ public sealed class SoundCatalog
         var files = new Dictionary<uint, List<SoundClipFile>>();
         var fields = new Dictionary<uint, List<SoundBankField>>();
         var musicDurations = new Dictionary<uint, double>();
+        var placements = new Dictionary<uint, List<SoundMusicPlacement>>();
+        var intros = new Dictionary<uint, List<SoundMusicIntro>>();
+        var unfitted = new HashSet<uint>();
         var eventTargets = new Dictionary<uint, List<uint>>();
         var children = new Dictionary<uint, List<uint>>();
         var soundSources = new Dictionary<uint, uint>();
@@ -231,15 +259,20 @@ public sealed class SoundCatalog
                         if (music.DurationMs > 0) musicDurations.TryAdd(music.Source.SourceId, music.DurationMs);
                     }
                 }
+                ReadMusicTiming(path, entry.DataOffset, entry.Size, bank, placements, intros, unfitted);
             }
         }
 
         // Loose files are music the packages do not hold, named by the client's scramble of the source id.
+        // Voiced ones have a copy in each language's folder (English(US), Korean...).
         var looseNames = Directory.EnumerateFiles(audioRoot, "*.wem", SearchOption.AllDirectories)
-            .ToDictionary(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase);
+            .ToLookup(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase);
         foreach (var sourceId in fields.Keys.Concat(files.Keys).Distinct().ToArray())
-            if (looseNames.TryGetValue(LostArkAudioFileNames.ForSource(sourceId), out var loose))
-                Add(files, sourceId, new SoundClipFile(loose, null, "sfx"));
+            foreach (var loose in looseNames[LostArkAudioFileNames.ForSource(sourceId)])
+            {
+                var folder = Path.GetRelativePath(audioRoot, Path.GetDirectoryName(loose)!);
+                Add(files, sourceId, new SoundClipFile(loose, null, folder == "." ? "sfx" : folder));
+            }
 
         var clips = new Dictionary<uint, SoundClip>();
         foreach (var (sourceId, clipFiles) in files)
@@ -248,7 +281,12 @@ public sealed class SoundCatalog
                 sourceId,
                 clipFiles,
                 fields.GetValueOrDefault(sourceId) is { } clipFields ? clipFields.Distinct().ToArray() : [],
-                musicDurations.TryGetValue(sourceId, out var duration) ? duration : null);
+                musicDurations.TryGetValue(sourceId, out var duration) ? duration : null)
+            {
+                MusicFit = placements.TryGetValue(sourceId, out var placed) && !unfitted.Contains(sourceId)
+                    ? new SoundMusicFit(placed, intros.GetValueOrDefault(sourceId) ?? [])
+                    : null,
+            };
         }
 
         var events = eventNames
@@ -260,6 +298,76 @@ public sealed class SoundCatalog
         progress?.Report(new SoundCatalogProgress(packagePaths.Length, packagePaths.Length, "Sound banks read"));
         return new SoundCatalog(
             audioRoot, clips, eventTargets, children, soundSources, trackSources, events, bankCount, unsupported);
+    }
+
+    /// <summary>
+    /// Records, for every music clip in <paramref name="bank"/>, the segments that play only that clip (their timing
+    /// can follow a replacement's length) and marks clips some segment plays alongside other audio as not fittable.
+    /// </summary>
+    private static void ReadMusicTiming(
+        string path,
+        long bankOffset,
+        uint bankSize,
+        WwiseBank bank,
+        Dictionary<uint, List<SoundMusicPlacement>> placements,
+        Dictionary<uint, List<SoundMusicIntro>> intros,
+        HashSet<uint> unfitted)
+    {
+        var sole = new Dictionary<uint, (uint SourceId, WwiseMusicClip Clip, WwiseBankSource Source, SoundMusicPlacement Placement)>();
+        var segmented = new HashSet<uint>();
+        foreach (var (segmentId, segment) in bank.MusicSegments)
+        {
+            var clips = segment.TrackIds.SelectMany(track => bank.MusicClips.GetValueOrDefault(track) ?? []).ToArray();
+            var sources = segment.TrackIds.SelectMany(track => bank.MusicTracks[track]).ToArray();
+            segmented.UnionWith(segment.TrackIds);
+            if (segment.TrackIds.Count == 1 && clips.Length == 1 && sources.Length == 1 &&
+                sources[0].Source.SourceId == clips[0].SourceId && sources[0].Source.IsCodec)
+            {
+                var placement = new SoundMusicPlacement(path, bankOffset, bankSize, bankOffset + segment.DurationOffset,
+                    bankOffset + segment.ExitCueOffset, bankOffset + clips[0].Offset);
+                sole[segmentId] = (clips[0].SourceId, clips[0], sources[0].Source, placement);
+                Add(placements, clips[0].SourceId, placement);
+            }
+            else
+            {
+                unfitted.UnionWith(clips.Select(clip => clip.SourceId));
+            }
+        }
+        // A track this reader found no segment for may be timed by one it could not read.
+        foreach (var (track, clips) in bank.MusicClips)
+            if (!segmented.Contains(track)) unfitted.UnionWith(clips.Select(clip => clip.SourceId));
+
+        foreach (var items in bank.MusicPlaylists.Values)
+        {
+            if (items is not [{ Loop: 1 } intro, { Loop: 0 } loop] ||
+                !sole.TryGetValue(intro.SegmentId, out var first) || !sole.TryGetValue(loop.SegmentId, out var looping) ||
+                first.SourceId == looping.SourceId)
+                continue;
+            Add(intros, looping.SourceId, new SoundMusicIntro(first.SourceId,
+                bankOffset + first.Source.PluginIdOffset, bankOffset + looping.Source.PluginIdOffset,
+                first.Placement));
+        }
+    }
+
+    /// <summary>
+    /// The clip's music timing as the banks that hold <paramref name="known"/> say now. A replacement that fitted the
+    /// clip points its intro's track at it, so the catalog, if read meanwhile, sees no intro; once that replacement
+    /// is restored, reading the banks again finds it.
+    /// </summary>
+    public static SoundMusicFit? ReadMusicFit(uint sourceId, IEnumerable<SoundMusicPlacement> known)
+    {
+        var placements = new Dictionary<uint, List<SoundMusicPlacement>>();
+        var intros = new Dictionary<uint, List<SoundMusicIntro>>();
+        var unfitted = new HashSet<uint>();
+        foreach (var bankAt in known.DistinctBy(placement => (placement.PackagePath.ToUpperInvariant(), placement.BankOffset)))
+        {
+            using var audio = WwiseAudioFile.Open(bankAt.PackagePath);
+            var bank = WwiseBank.Parse(audio.Read(bankAt.BankOffset, (int)bankAt.BankSize));
+            ReadMusicTiming(bankAt.PackagePath, bankAt.BankOffset, bankAt.BankSize, bank, placements, intros, unfitted);
+        }
+        return placements.TryGetValue(sourceId, out var placed) && !unfitted.Contains(sourceId)
+            ? new SoundMusicFit(placed, intros.GetValueOrDefault(sourceId) ?? [])
+            : null;
     }
 
     private static SoundBankField Field(string path, WwisePackageEntry bank, WwiseBankSource source) => new(

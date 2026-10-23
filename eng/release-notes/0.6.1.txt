@@ -1,0 +1,4 @@
+Deleting mods is easier.
+
+- Delete mod is now a button on the Mods page, beside More actions, and on the right-click menu. It works on any number of chosen mods ("Delete 13 mods").
+- If a chosen mod is still in the game, nothing is deleted: the message names those mods and the steps to take (disable them, choose Apply changes, then delete again).

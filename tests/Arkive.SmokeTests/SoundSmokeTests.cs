@@ -10,6 +10,7 @@ internal static class SoundSmokeTests
         new("names loose music files the way the client does", TestLooseFileNames),
         new("writes PCM .wem files the format reader understands, and fits music length", TestPcmWem),
         new("names sounds, replaces a packaged clip and a loose music file, and restores both byte for byte", TestReplaceAndRestore),
+        new("fits music segments and their intro to a replacement's length and restores the bank byte for byte", TestFitMusicLength),
     ];
 
     private static void TestCipherOffsets()
@@ -107,6 +108,115 @@ internal static class SoundSmokeTests
         Assert(service.LoadState() is { Replacements.Count: 0, Packages.Count: 0 }, "restore left replacement records behind");
     }
 
+    // A song: a playlist that plays an intro segment once, then loops a second segment. Another segment plays two
+    // tracks of one clip together, which cannot follow a new length.
+    private const uint LoopSourceId = 543099088, IntroSourceId = 3498061, SharedSourceId = 10093369;
+    private const uint LoopTrackId = 1201, IntroTrackId = 1202, SharedTrackA = 1203, SharedTrackB = 1204;
+    private const uint LoopSegmentId = 1301, IntroSegmentId = 1302, SharedSegmentId = 1303, PlaylistId = 1401, SongActionId = 1402;
+
+    private static void TestFitMusicLength()
+    {
+        var root = Path.Combine(fixtureDirectory, "sounds-fit", "WwiseAudioPackage");
+        var data = Path.Combine(fixtureDirectory, "sounds-fit", "data");
+        Directory.CreateDirectory(root);
+        var packagePath = Path.Combine(root, "TESTPACKAGE.pck");
+        File.WriteAllBytes(packagePath, WwiseAudioFile.Scramble(BuildPackage()));
+        foreach (var source in new[] { LoopSourceId, IntroSourceId, SharedSourceId })
+            File.WriteAllBytes(Path.Combine(root, LostArkAudioFileNames.ForSource(source)), WwiseAudioFile.Scramble(VorbisWem(88200, 2)));
+        var originalPackage = File.ReadAllBytes(packagePath);
+        var loopPath = Path.Combine(root, LostArkAudioFileNames.ForSource(LoopSourceId));
+        var originalLoop = File.ReadAllBytes(loopPath);
+
+        var catalog = SoundCatalog.Build(root, [("test_song", "s_test")]);
+        var song = catalog.Search("test song", 10).Single();
+        Assert(song.SourceIds.Order().SequenceEqual(new[] { LoopSourceId, IntroSourceId }.Order()), "the song did not lead to its two clips");
+        var loop = catalog.Clip(LoopSourceId)!;
+        Assert(loop.MusicFit is { Placements.Count: 1, Intros: [{ SourceId: IntroSourceId }] } &&
+               catalog.Clip(IntroSourceId)!.MusicFit is { Placements.Count: 1, Intros.Count: 0 } &&
+               catalog.Clip(SharedSourceId) is { IsMusic: true, MusicFit: null },
+            "music timing was not found, or a segment playing a clip twice was offered for fitting");
+
+        var service = new SoundReplacementService(data, new NoGame());
+        var wem = WemAudio.WritePcmWem(new short[44100 * 3 * 2], 2, 44100);
+        try
+        {
+            service.ReplaceAsync(catalog.Clip(SharedSourceId)!, "shared", "song.wav", wem, fitBankToLength: true).GetAwaiter().GetResult();
+            throw new InvalidOperationException("a clip whose segment plays other audio was fitted");
+        }
+        catch (InvalidOperationException exception) when (exception.Message.Contains("cannot follow", StringComparison.Ordinal))
+        {
+        }
+        var record = service.ReplaceAsync(loop, song.Name, "song.wav", wem, fitBankToLength: true).GetAwaiter().GetResult();
+        var bank = ReadBank(packagePath);
+        Assert(record.OriginalMusicLengthMs == 2000 &&
+               bank.MusicSegments[LoopSegmentId] is { Duration: 3000, ExitCue: 3000 } &&
+               bank.MusicClips[LoopTrackId] is [{ SourceId: LoopSourceId, PlayAt: 0, BeginTrim: 0, EndTrim: 0, SourceDuration: 3000 }],
+            "the looping segment was not fitted to the replacement's three seconds");
+        Assert(bank.MusicSegments[IntroSegmentId] is { Duration: 3000, ExitCue: 3000 } &&
+               bank.MusicClips[IntroTrackId] is [{ SourceId: LoopSourceId, PlayAt: 0, BeginTrim: 0, SourceDuration: 3000 }] &&
+               bank.MusicTracks[IntroTrackId] is [{ Source: { SourceId: LoopSourceId, PluginId: WwiseBank.PcmPluginId } }],
+            "the intro was not pointed at the replacement and fitted to it");
+        Assert(bank.MusicSegments[SharedSegmentId] is { Duration: 2000 }, "a segment the replacement does not play was changed");
+        try
+        {
+            service.ReplaceAsync(catalog.Clip(IntroSourceId)!, song.Name, "intro.wav", wem, fitBankToLength: true).GetAwaiter().GetResult();
+            throw new InvalidOperationException("the intro was replaced over the song that now plays in its place");
+        }
+        catch (InvalidOperationException exception) when (exception.Message.Contains("Restore it first", StringComparison.Ordinal))
+        {
+        }
+
+        // A catalog read while the song is fitted sees the intro playing it; replacing again still fits the intro.
+        var reread = SoundCatalog.Build(root, [("test_song", "s_test")]).Clip(LoopSourceId)!;
+        Assert(reread.MusicFit is { Placements.Count: 2, Intros.Count: 0 }, "the fitted intro was not seen as playing the song");
+        service.ReplaceAsync(reread, song.Name, "song2.wav", WemAudio.WritePcmWem(new short[44100 * 2], 2, 44100), fitBankToLength: true)
+            .GetAwaiter().GetResult();
+        bank = ReadBank(packagePath);
+        Assert(bank.MusicSegments[IntroSegmentId] is { Duration: 1000 } &&
+               bank.MusicClips[IntroTrackId] is [{ SourceId: LoopSourceId, SourceDuration: 1000 }] &&
+               service.LoadState().Replacements.Single().OriginalMusicLengthMs == 2000,
+            "replacing a fitted song again did not fit it and its intro to the new length");
+
+        service.RestoreAsync(LoopSourceId).GetAwaiter().GetResult();
+        Assert(File.ReadAllBytes(packagePath).AsSpan().SequenceEqual(originalPackage) &&
+               File.ReadAllBytes(loopPath).AsSpan().SequenceEqual(originalLoop),
+            "the bank or the music is not byte-identical after restoring a fitted replacement");
+    }
+
+    private static WwiseBank ReadBank(string packagePath)
+    {
+        using var audio = WwiseAudioFile.Open(packagePath);
+        var entry = WwisePackage.Read(packagePath, audio).Entries.Single(item => item.Section == WwisePackageSection.SoundBank);
+        return WwiseBank.Parse(audio.Read(entry.DataOffset, (int)entry.Size));
+    }
+
+    private static byte[] MusicTrack(uint id, uint parent, uint sourceId, double playAt, double beginTrim, double duration) =>
+        HircObject(11, id,
+        [
+            0, .. BitConverter.GetBytes(1), .. Source(sourceId, 2, 0),
+            .. BitConverter.GetBytes(1), .. BitConverter.GetBytes(id), .. BitConverter.GetBytes(sourceId), .. BitConverter.GetBytes(0),
+            .. BitConverter.GetBytes(playAt), .. BitConverter.GetBytes(beginTrim), .. BitConverter.GetBytes(0d), .. BitConverter.GetBytes(duration),
+            .. BitConverter.GetBytes(1), .. BitConverter.GetBytes(0), .. NodeBase(parent),
+        ]);
+
+    /// <summary>A music segment: node parameters, its tracks, meter, no stingers, its length and entry and exit cues.</summary>
+    private static byte[] MusicSegment(uint id, uint parent, uint[] tracks, double duration, double exitCue) =>
+        HircObject(10, id,
+        [
+            0, .. NodeBase(parent), .. BitConverter.GetBytes(tracks.Length), .. tracks.SelectMany(BitConverter.GetBytes),
+            .. BitConverter.GetBytes(1000d), .. BitConverter.GetBytes(0d), .. BitConverter.GetBytes(120f), 4, 4, 0,
+            .. BitConverter.GetBytes(0), .. BitConverter.GetBytes(duration), .. BitConverter.GetBytes(2),
+            .. BitConverter.GetBytes(43573010u), .. BitConverter.GetBytes(0d), .. BitConverter.GetBytes(0),
+            .. BitConverter.GetBytes(1539036744u), .. BitConverter.GetBytes(exitCue), .. BitConverter.GetBytes(0),
+        ]);
+
+    private static byte[] PlaylistItem(uint segment, uint itemId, uint children, short loop) =>
+    [
+        .. BitConverter.GetBytes(segment), .. BitConverter.GetBytes(itemId), .. BitConverter.GetBytes(children),
+        .. BitConverter.GetBytes(segment == 0 ? 0 : -1), .. BitConverter.GetBytes(loop), .. BitConverter.GetBytes(loop),
+        .. BitConverter.GetBytes(loop), .. BitConverter.GetBytes(50000), 0, 0, 0, 0,
+    ];
+
     private static byte[] BuildPackage()
     {
         var bank = BuildBank();
@@ -161,6 +271,21 @@ internal static class SoundSmokeTests
             ]),
             HircObject(3, MusicActionId, [.. BitConverter.GetBytes((ushort)0x0403), .. BitConverter.GetBytes(TrackId), 0]),
             HircObject(4, WwiseId("test_music"), [1, .. BitConverter.GetBytes(MusicActionId)]),
+            MusicTrack(LoopTrackId, LoopSegmentId, LoopSourceId, 0, 0, 2000),
+            MusicTrack(IntroTrackId, IntroSegmentId, IntroSourceId, -500, 500, 2000),
+            MusicTrack(SharedTrackA, SharedSegmentId, SharedSourceId, 0, 0, 2000),
+            MusicTrack(SharedTrackB, SharedSegmentId, SharedSourceId, 0, 1000, 2000),
+            MusicSegment(LoopSegmentId, PlaylistId, [LoopTrackId], 2000, 1800),
+            MusicSegment(IntroSegmentId, PlaylistId, [IntroTrackId], 1500, 1500),
+            MusicSegment(SharedSegmentId, 0, [SharedTrackA, SharedTrackB], 2000, 2000),
+            HircObject(13, PlaylistId,
+            [
+                0, .. NodeBase(), .. BitConverter.GetBytes(2), .. BitConverter.GetBytes(IntroSegmentId), .. BitConverter.GetBytes(LoopSegmentId),
+                .. BitConverter.GetBytes(3),
+                .. PlaylistItem(0, 9001, 2, 1), .. PlaylistItem(IntroSegmentId, 9002, 0, 1), .. PlaylistItem(LoopSegmentId, 9003, 0, 0),
+            ]),
+            HircObject(3, SongActionId, [.. BitConverter.GetBytes((ushort)0x0403), .. BitConverter.GetBytes(PlaylistId), 0]),
+            HircObject(4, WwiseId("test_song"), [1, .. BitConverter.GetBytes(SongActionId)]),
         };
         byte[] hirc = [.. BitConverter.GetBytes(objects.Count), .. objects.SelectMany(item => item)];
         return [.. "BKHD"u8, .. BitConverter.GetBytes(8), .. BitConverter.GetBytes(WwiseBank.SupportedVersion), .. BitConverter.GetBytes(5000),
@@ -172,7 +297,7 @@ internal static class SoundSmokeTests
     private static byte[] Source(uint sourceId, byte streamType, uint inMemorySize) =>
         [.. BitConverter.GetBytes(WwiseBank.VorbisPluginId), streamType, .. BitConverter.GetBytes(sourceId), .. BitConverter.GetBytes(inMemorySize), 0];
 
-    private static byte[] NodeBase() => [0, 0, 0, .. BitConverter.GetBytes(0), .. BitConverter.GetBytes(0), 0, 0];
+    private static byte[] NodeBase(uint parent = 0) => [0, 0, 0, .. BitConverter.GetBytes(0), .. BitConverter.GetBytes(parent), 0, 0];
 
     private static byte[] HircObject(byte type, uint id, byte[] body) =>
         [type, .. BitConverter.GetBytes(body.Length + 4), .. BitConverter.GetBytes(id), .. body];

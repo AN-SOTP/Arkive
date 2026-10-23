@@ -75,8 +75,7 @@ public partial class MainWindow : Window
             _ => "Imported",
         };
 
-        public bool HasActiveAssets => Status.Assets.Any(asset => asset.InGame == true) || Status.GameData?.InGame == true ||
-                                       Status.Looks?.InGame == true;
+        public bool HasActiveAssets => Status.StillInGame;
 
         /// <summary>The pack this mod is listed under, or the run of mods outside packs it sits in.</summary>
         public ModListGroup Group { get; set; } = null!;

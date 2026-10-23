@@ -22,6 +22,9 @@ public sealed record SoundPackagePatch(
 /// <summary>A bank field (codec or stored size) Arkive rewrote.</summary>
 public sealed record SoundFieldPatch(string PackagePath, long Offset, uint Original, uint Replacement);
 
+/// <summary>Bytes in a bank Arkive rewrote: music timing, or a track pointed at another clip (hex).</summary>
+public sealed record SoundBytesPatch(string PackagePath, long Offset, string Original, string Replacement);
+
 /// <summary>A loose music file Arkive overwrote, with the copy of the original it keeps.</summary>
 public sealed record SoundLoosePatch(string Path, string BackupPath, string OriginalSha256, string ReplacementSha256);
 
@@ -33,7 +36,14 @@ public sealed record SoundReplacementRecord(
     string StoredWemPath,
     IReadOnlyList<SoundPackagePatch> Packages,
     IReadOnlyList<SoundFieldPatch> Fields,
-    IReadOnlyList<SoundLoosePatch> LooseFiles);
+    IReadOnlyList<SoundLoosePatch> LooseFiles)
+{
+    /// <summary>Music timing fitted to the replacement's length (none when the music keeps the game's timing).</summary>
+    public IReadOnlyList<SoundBytesPatch> BankBytes { get; init; } = [];
+
+    /// <summary>The music's length in the game's own timing, before it was fitted, in milliseconds.</summary>
+    public double? OriginalMusicLengthMs { get; init; }
+}
 
 /// <summary>A package Arkive appended audio to: its length before Arkive touched it and after Arkive's last write.</summary>
 public sealed record SoundPackageBaseline(string PackagePath, long OriginalContentLength, long ArkiveContentLength);
@@ -104,8 +114,14 @@ public sealed class SoundReplacementService
     /// Puts <paramref name="wem"/> (a .wem file, normally from <see cref="WemAudio.WritePcmWem"/>) in place of the clip
     /// everywhere the game stores it. A clip that is already replaced is restored first.
     /// </summary>
+    /// <param name="fitBankToLength">
+    /// For music: make every segment that plays the clip as long as <paramref name="wem"/>, with its exit cue (where
+    /// the music loops or moves on) at the end, so a longer song is not cut and a shorter one loops without silence.
+    /// A playlist's intro segment is pointed at the same clip, so the song plays through and loops as one.
+    /// </param>
     public async Task<SoundReplacementRecord> ReplaceAsync(
-        SoundClip clip, string soundName, string replacementFileName, byte[] wem, CancellationToken cancellationToken = default)
+        SoundClip clip, string soundName, string replacementFileName, byte[] wem, bool fitBankToLength = false,
+        CancellationToken cancellationToken = default)
     {
         var format = WemAudio.ReadFormat(wem) ?? throw new InvalidDataException("The replacement is not a .wem file.");
         if (!format.IsPcm) throw new InvalidDataException("Arkive replaces sounds with uncompressed (PCM) audio only.");
@@ -149,10 +165,41 @@ public sealed class SoundReplacementService
                 if (field.StreamType == 0 || field.InMemorySize > wem.Length)
                     fields.Add(new SoundFieldPatch(field.PackagePath, field.InMemorySizeOffset, field.InMemorySize, (uint)wem.Length));
             }
+            EnsureNotChangedByOthers(state, clip.SourceId, fields, []);
+            var bankBytes = new List<SoundBytesPatch>();
+            double? originalLength = null;
+            if (fitBankToLength)
+            {
+                if ((clip.MusicFit is { } known ? SoundCatalog.ReadMusicFit(clip.SourceId, known.Placements) : null) is not { } fit)
+                    throw new InvalidOperationException(
+                        "This music shares its segments with other audio, so its timing cannot follow a new length. Replace it without fitting.");
+                var length = format.SampleCount * 1000d / format.SampleRate;
+                if (!(length > 0)) throw new InvalidDataException("The replacement has no length.");
+                foreach (var placement in fit.Placements)
+                    originalLength ??= FitPlacement(placement, clip.SourceId, length, bankBytes);
+                var replaced = state.Replacements.Select(item => item.SourceId).ToHashSet();
+                // An intro another replacement already changed keeps that replacement.
+                foreach (var intro in fit.Intros.Where(intro => !replaced.Contains(intro.SourceId)))
+                {
+                    FitPlacement(intro.Placement, intro.SourceId, length, bankBytes);
+                    using var package = WwiseAudioFile.Open(intro.Placement.PackagePath);
+                    var source = package.Read(intro.LoopSourceOffset, SourceRecordLength);
+                    BinaryPrimitives.WriteUInt32LittleEndian(source, WwiseBank.PcmPluginId);
+                    if (source[4] == 0 || BinaryPrimitives.ReadUInt32LittleEndian(source.AsSpan(9)) > wem.Length)
+                        BinaryPrimitives.WriteUInt32LittleEndian(source.AsSpan(9), (uint)wem.Length);
+                    AddBytes(bankBytes, package, intro.Placement.PackagePath, intro.SourceOffset, source);
+                    AddBytes(bankBytes, package, intro.Placement.PackagePath,
+                        intro.Placement.ClipOffset + WwiseMusicClip.SourceIdField, BitConverter.GetBytes(clip.SourceId));
+                }
+            }
+            EnsureNotChangedByOthers(state, clip.SourceId, fields, bankBytes);
+            record = record with { BankBytes = bankBytes, OriginalMusicLengthMs = originalLength };
+
             var scrambled = WwiseAudioFile.Scramble(wem);
             foreach (var file in clip.Files.Where(file => file.IsLoose))
             {
-                var backup = Path.Combine(_backupDirectory, clip.SourceId.ToString(System.Globalization.CultureInfo.InvariantCulture), Path.GetFileName(file.Path));
+                var backup = Path.Combine(_backupDirectory, clip.SourceId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    file.Language == "sfx" ? string.Empty : file.Language, Path.GetFileName(file.Path));
                 looseFiles.Add(new SoundLoosePatch(file.Path, backup, Sha256(file.Path), Convert.ToHexString(SHA256.HashData(scrambled))));
             }
 
@@ -177,6 +224,12 @@ public sealed class SoundReplacementService
             {
                 using var package = WwiseAudioFile.Open(group.Key, writable: true);
                 foreach (var field in group) WriteUInt32(package, field.Offset, field.Replacement);
+                package.Flush();
+            }
+            foreach (var group in bankBytes.GroupBy(patch => patch.PackagePath, StringComparer.OrdinalIgnoreCase))
+            {
+                using var package = WwiseAudioFile.Open(group.Key, writable: true);
+                foreach (var patch in group) package.Write(patch.Offset, Convert.FromHexString(patch.Replacement));
                 package.Flush();
             }
             foreach (var patch in looseFiles)
@@ -226,6 +279,20 @@ public sealed class SoundReplacementService
                 package.Write(patch.EntryOffset, Convert.FromHexString(patch.OriginalEntry));
                 package.Flush();
             }
+        }
+        foreach (var group in record.BankBytes.Where(patch => File.Exists(patch.PackagePath))
+                     .GroupBy(patch => patch.PackagePath, StringComparer.OrdinalIgnoreCase))
+        {
+            using var package = WwiseAudioFile.Open(group.Key, writable: true);
+            foreach (var patch in group.Reverse())
+            {
+                // Only undo what is still Arkive's: a game update rewrites the bank with its own values.
+                var replacement = Convert.FromHexString(patch.Replacement);
+                if (patch.Offset + replacement.Length <= package.ContentLength &&
+                    package.Read(patch.Offset, replacement.Length).AsSpan().SequenceEqual(replacement))
+                    package.Write(patch.Offset, Convert.FromHexString(patch.Original));
+            }
+            package.Flush();
         }
         foreach (var group in record.Fields.Where(field => File.Exists(field.PackagePath))
                      .GroupBy(field => field.PackagePath, StringComparer.OrdinalIgnoreCase))
@@ -306,6 +373,54 @@ public sealed class SoundReplacementService
             });
         }
         return clip with { Files = files, BankFields = fields };
+    }
+
+    // Plug-in id, stream type, source id, in-memory size and a flags byte.
+    private const int SourceRecordLength = 14;
+
+    /// <summary>
+    /// Times one segment and its track for a clip of <paramref name="length"/> milliseconds: the clip starts at the
+    /// segment's start, untrimmed, and the segment and its exit cue end with it. Returns the clip's length in the
+    /// game's timing before.
+    /// </summary>
+    private static double FitPlacement(SoundMusicPlacement placement, uint sourceId, double length, List<SoundBytesPatch> patches)
+    {
+        using var package = WwiseAudioFile.Open(placement.PackagePath);
+        var clip = package.Read(placement.ClipOffset, 44);
+        if (BinaryPrimitives.ReadUInt32LittleEndian(clip.AsSpan(WwiseMusicClip.SourceIdField)) != sourceId)
+            throw new InvalidDataException("The game's music banks changed since Arkive read them. Search again, then replace.");
+        var played = BinaryPrimitives.ReadDoubleLittleEndian(clip.AsSpan(WwiseMusicClip.SourceDurationField));
+        AddBytes(patches, package, placement.PackagePath, placement.ClipOffset + WwiseMusicClip.PlayAtField, BitConverter.GetBytes(0d));
+        AddBytes(patches, package, placement.PackagePath, placement.ClipOffset + WwiseMusicClip.BeginTrimField, BitConverter.GetBytes(0d));
+        AddBytes(patches, package, placement.PackagePath, placement.ClipOffset + WwiseMusicClip.EndTrimField, BitConverter.GetBytes(0d));
+        AddBytes(patches, package, placement.PackagePath, placement.ClipOffset + WwiseMusicClip.SourceDurationField, BitConverter.GetBytes(length));
+        AddBytes(patches, package, placement.PackagePath, placement.SegmentDurationOffset, BitConverter.GetBytes(length));
+        AddBytes(patches, package, placement.PackagePath, placement.ExitCueOffset, BitConverter.GetBytes(length));
+        return played;
+    }
+
+    private static void AddBytes(List<SoundBytesPatch> patches, WwiseAudioFile package, string path, long offset, byte[] replacement)
+    {
+        var original = package.Read(offset, replacement.Length);
+        if (!original.AsSpan().SequenceEqual(replacement))
+            patches.Add(new SoundBytesPatch(path, offset, Convert.ToHexString(original), Convert.ToHexString(replacement)));
+    }
+
+    /// <summary>Refuses to write over bank values another replacement changed: restoring either would undo the other.</summary>
+    private static void EnsureNotChangedByOthers(
+        SoundReplacementState state, uint sourceId, IReadOnlyList<SoundFieldPatch> fields, IReadOnlyList<SoundBytesPatch> bankBytes)
+    {
+        static IEnumerable<(string Path, long Start, long End)> Ranges(
+            IEnumerable<SoundFieldPatch> fields, IEnumerable<SoundBytesPatch> bytes) =>
+            fields.Select(field => (field.PackagePath, field.Offset, field.Offset + 4))
+                .Concat(bytes.Select(patch => (patch.PackagePath, patch.Offset, patch.Offset + patch.Replacement.Length / 2)));
+        var mine = Ranges(fields, bankBytes).ToArray();
+        foreach (var other in state.Replacements.Where(item => item.SourceId != sourceId))
+            if (Ranges(other.Fields, other.BankBytes).Any(theirs => mine.Any(range =>
+                    range.Path.Equals(theirs.Path, StringComparison.OrdinalIgnoreCase) &&
+                    range.Start < theirs.End && theirs.Start < range.End)))
+                throw new InvalidOperationException(
+                    $"Your replacement for {other.SoundName} (clip {other.SourceId}) already changes this music in the game files. Restore it first.");
     }
 
     private void EnsureGameClosed()

@@ -285,6 +285,7 @@ public partial class MainWindow : Window
         ModLibraryUpdateButton.IsEnabled = idle && hasRow;
         ModLibraryGoToPackageButton.IsEnabled = idle && row is not null;
         ModLibraryRemoveButton.IsEnabled = idle && row is not null;
+        ModLibraryRemoveButton.Content = chosen.Length > 1 ? $"Delete {chosen.Length:N0} mods" : "Delete mod";
         ModLibraryRemoveAssetButton.IsEnabled = idle && hasRow && assetCount > 0;
         ModLibraryRemoveAssetButton.Content = assetCount > 0 ? $"Remove selected ({assetCount:N0})" : "Remove selected assets";
         ModDetailsSaveButton.IsEnabled = idle && hasRow;
@@ -373,7 +374,7 @@ public partial class MainWindow : Window
         "Turn pack off" => "Turning the pack off…",
         "Mod priority" => "Changing the priority…",
         "Rename mod" => "Renaming the mod…",
-        "Remove mod" => "Removing the mod…",
+        "Delete mod" => "Deleting the mod…",
         _ => $"{operation}…",
     };
 
@@ -515,6 +516,8 @@ public partial class MainWindow : Window
         ModLibraryRowEnableItem.IsEnabled = ModLibraryRowPriorityUpItem.IsEnabled =
             ModLibraryRowPriorityDownItem.IsEnabled = enabled;
         ModLibraryRowRenameItem.IsEnabled = ModLibraryRowAuthorItem.IsEnabled = enabled && !row!.Status.FileMissing;
+        ModLibraryRowDeleteItem.IsEnabled = enabled;
+        ModLibraryRowDeleteItem.Header = several ? $"Delete {rows.Length:N0} mods" : "Delete mod";
         // Priority, name and author belong to one mod; with several chosen only what applies to all of them shows.
         var single = several ? Visibility.Collapsed : Visibility.Visible;
         ModLibraryRowPriorityUpItem.Visibility = ModLibraryRowPriorityDownItem.Visibility =
@@ -885,31 +888,51 @@ public partial class MainWindow : Window
 
     private async void ModLibraryRemoveButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ModLibraryGrid.SelectedItem is not ModLibraryRow row) return;
-        if (row.HasActiveAssets)
+        var rows = SelectedModRows();
+        if (rows.Length == 0) return;
+        // Deleting a mod does not take it out of the game, so one still installed would be left there with no mod
+        // to restore it by: it is disabled and applied first.
+        var inGame = rows.Where(row => row.HasActiveAssets).ToArray();
+        if (inGame.Length > 0)
         {
             MessageBox.Show(this,
-                $"{row.DisplayName} is in game. Disable it and choose Apply changes first, so Arkive can rebuild or restore the packages it replaces.",
-                "Remove mod", MessageBoxButton.OK, MessageBoxImage.Information);
+                (inGame.Length == 1 ? "This mod is" : $"These {inGame.Length:N0} mods are") + " still in the game, so " +
+                (inGame.Length == 1 ? "it" : "they") + " can't be deleted yet:\n\n" + ModNameList(inGame) + "\n\n" +
+                "1. Disable " + (inGame.Length == 1 ? "it" : "them") + (inGame.All(row => !row.Enabled) ? " (already done)" : string.Empty) + ".\n" +
+                "2. Choose Apply changes, so Arkive restores or rebuilds the game files " + (inGame.Length == 1 ? "it changes" : "they change") + ".\n" +
+                "3. Delete " + (inGame.Length == 1 ? "it" : "them") + " again.",
+                "Delete mod", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
+        var imported = rows.Count(row => row.Entry.Origin == ArkiveModOrigin.Imported);
         if (MessageBox.Show(this,
-                $"Remove '{row.DisplayName}' from Arkive?\n\n" +
-                $"This deletes {row.FilePath}. Use Share / export first if you want to keep a copy.\n\n" +
-                (row.Entry.Origin == ArkiveModOrigin.Imported
-                    ? "Its local working copies were created from the .arkive file and are deleted too."
-                    : "Its local working copies stay in their package projects as unchecked drafts."),
-                "Remove mod", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) !=
+                (rows.Length == 1 ? $"Delete '{rows[0].DisplayName}'?" : $"Delete these {rows.Length:N0} mods?\n\n" + ModNameList(rows)) + "\n\n" +
+                (rows.Length == 1 ? $"This deletes {rows[0].FilePath}." : "This deletes their .arkive files from the mods folder.") +
+                " Use Share / export first if you want to keep a copy.\n\n" +
+                (imported == rows.Length
+                    ? (rows.Length == 1 ? "Its local working copies were created from the .arkive file" : "Their local working copies were created from the .arkive files") + " and are deleted too."
+                    : imported == 0
+                        ? (rows.Length == 1 ? "Its" : "Their") + " local working copies stay in their package projects as unchecked drafts."
+                        : "Working copies of imported mods are deleted too; those of mods made here stay as unchecked drafts."),
+                "Delete mod", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) !=
             MessageBoxResult.Yes) return;
-        await RunModLibraryOperationAsync("Remove mod", async () =>
+        await RunModLibraryOperationAsync("Delete mod", async () =>
         {
-            await _arkiveModAuthoring.RemoveModAsync(row.Entry.ModId);
-            TryChangePacks(() => ModPacks.RemoveMod(row.Entry.ModId));
-            Log($"Mod removed: mod={row.Entry.ModId}, name={row.DisplayName}, origin={row.Entry.Origin}, file={row.FilePath}.");
-            await SynchronizeModSelectionsAsync("mod removed");
-            return $"Removed {row.DisplayName}.";
+            foreach (var row in rows)
+            {
+                await _arkiveModAuthoring.RemoveModAsync(row.Entry.ModId);
+                TryChangePacks(() => ModPacks.RemoveMod(row.Entry.ModId));
+                Log($"Mod deleted: mod={row.Entry.ModId}, name={row.DisplayName}, origin={row.Entry.Origin}, file={row.FilePath}.");
+            }
+            await SynchronizeModSelectionsAsync("mod deleted");
+            return rows.Length == 1 ? $"Deleted {rows[0].DisplayName}." : $"Deleted {rows.Length:N0} mods.";
         });
     }
+
+    /// <summary>The mods' names one per line, the first ten and how many more.</summary>
+    private static string ModNameList(IReadOnlyList<ModLibraryRow> rows) =>
+        string.Join("\n", rows.Take(10).Select(row => "• " + row.DisplayName)) +
+        (rows.Count > 10 ? $"\n…and {rows.Count - 10:N0} more" : string.Empty);
 
     private async void ModLibraryPreviewButton_Click(object sender, RoutedEventArgs e) =>
         await RunModApplyAsync(previewOnly: true);

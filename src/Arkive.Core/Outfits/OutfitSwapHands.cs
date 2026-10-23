@@ -124,7 +124,7 @@ public static class OutfitSwapHands
             Positions = positions.ToArray(), Normals = normals.ToArray(), Tangents = tangents.ToArray(), Uv0 = uv0.ToArray(), Uv1 = uv1.ToArray(),
             Colours = colours.ToArray(), Joints = joints.ToArray(), Weights = weights.ToArray(), Sections = sections, Materials = materials,
             BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents,
-            OwnPictureSkin = mesh.OwnPictureSkin, NativeSkin = native,
+            MaterialReferences = mesh.MaterialReferences, OwnPictureSkin = mesh.OwnPictureSkin, NativeSkin = native,
         };
         return (result, positions.ToArray());
     }

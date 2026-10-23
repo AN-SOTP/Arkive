@@ -176,12 +176,20 @@ public sealed record ArkiveModStatus(
                           (GameData is not { Winning: > 0 } data || data.InGame) &&
                           (Looks is not { Winning: > 0 } looks || looks.InGame);
 
+    /// <summary>
+    /// Something this mod changes is in the game files now, enabled or not: a disabled mod stays in until Apply changes
+    /// puts its packages back. Assets that change nothing do not count.
+    /// </summary>
+    public bool StillInGame => Assets.Any(asset => asset.InGame == true && asset.Edit is { } edit &&
+                                                   !ArkiveModApplyService.ChangesNothing(edit)) ||
+                               GameData?.InGame == true || Looks?.InGame == true;
+
     public string State
     {
         get
         {
             if (FileMissing) return "File missing";
-            if (!Mod.Enabled) return "Disabled";
+            if (!Mod.Enabled) return StillInGame ? "Disabled · still in game until Apply" : "Disabled";
             if (TiedCount > 0) return "Conflict needs a choice";
             if (WinningCount == 0) return "Fully overridden";
             if (ModifiedLocally) return "Unsaved edits";
