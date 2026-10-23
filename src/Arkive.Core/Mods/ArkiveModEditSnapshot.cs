@@ -50,12 +50,14 @@ public sealed class ArkiveModEditSnapshot
         SkeletalSourceCache = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<string, ArkiveModLocalEdit> _byId;
+    private readonly Lazy<ILookup<string, ArkiveModLocalEdit>> _byPackage;
 
     private ArkiveModEditSnapshot(IReadOnlyList<ArkiveModLocalEdit> edits)
     {
         Edits = edits;
         _byId = edits.GroupBy(edit => edit.EditId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        _byPackage = new(() => edits.ToLookup(edit => Path.GetFullPath(edit.SourcePackagePath), StringComparer.OrdinalIgnoreCase));
     }
 
     public IReadOnlyList<ArkiveModLocalEdit> Edits { get; }
@@ -70,8 +72,8 @@ public sealed class ArkiveModEditSnapshot
         return new ArkiveModEditSnapshot(Edits.Select(edit => byPath.GetValueOrDefault(edit.ManifestPath) ?? edit).ToArray());
     }
 
-    public IReadOnlyList<ArkiveModLocalEdit> ForPackage(string sourcePackagePath) => Edits
-        .Where(edit => SamePath(edit.SourcePackagePath, sourcePackagePath)).ToArray();
+    public IReadOnlyList<ArkiveModLocalEdit> ForPackage(string sourcePackagePath) =>
+        _byPackage.Value[Path.GetFullPath(sourcePackagePath)].ToArray();
 
     public IReadOnlyList<ArkiveModLocalEdit> DraftsFor(string sourcePackagePath, ArkiveModLibraryManifest library) =>
         ForPackage(sourcePackagePath).Where(edit => edit.Included && library.FindOwner(edit.EditId) is null).ToArray();
