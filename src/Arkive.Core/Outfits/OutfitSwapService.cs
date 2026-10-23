@@ -153,7 +153,11 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 var hold = welded.Select((point, v) => Math.Max(newFeet
                     ? weldedCloth[v] ? Math.Clamp((weldedFeet[v] - 0.05f) / 0.2f, 0, 1) : 0
                     : Math.Max(Math.Clamp((weldedFeet[v] - 0.1f) / 0.4f, 0, 1), Math.Clamp((ankle + 0.06f - point.Y) / 0.05f, 0, 1)),
-                    Math.Clamp(hands[v] / 0.3f, 0, 1))).ToArray();
+                    0)).ToArray();
+                // The hand keeps the outfit's shape and the forearm takes the new body's: the change is spread over a few
+                // centimetres each side of the wrist, or the wrist shows a step where the thinner forearm meets the hand.
+                var wrist = OutfitSwapFitting.SmoothOnMesh(hands.Select(share => new Vector3(Math.Clamp(share / 0.3f, 0, 1), 0, 0)).ToArray(), triangles, 24);
+                for (var v = 0; v < hold.Length; v++) hold[v] = Math.Max(hold[v], Math.Max(wrist[v].X, Math.Clamp((hands[v] - 0.5f) / 0.5f, 0, 1)));
                 moved = Expand(OutfitSwapClearance.SnapSkin(welded, weldedCloth, hold, targetBody), ids);
             }
             if (seam is not null)
@@ -163,10 +167,16 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 moved = OutfitSwapClearance.KeepInShoes(mesh.Positions, moved, cloth, donorShoes, shoes);
             // Cloth that lay over the outfit's own bare skin stays over it now the skin has moved: what hugged it (a chain
             // round a bare thigh, a garter) keeps hugging it, and nothing sinks into it.
+            var onOwnSkin = new bool[weldedCount];
             if (OutfitSwapClearance.SkinSurface(mesh, mesh.Positions) is { } donorSkin &&
                 OutfitSwapClearance.SkinSurface(mesh, moved) is { } movedSkin)
             {
-                var weldedMovable = weldedCloth.Select((value, v) => value && weldedFeet[v] < 0.1f).ToArray();
+                // Only parts lying on the skin all along (a chain, a garter): wrapping part of a dress or of an ornament
+                // hanging from it would pull that part off the rest.
+                var donorWelded = Average(mesh.Positions, ids, weldedCount);
+                var (skinGap, skinNear, _) = donorSkin.MeasureExact(donorWelded);
+                var onSkin = weldedCloth.Select((value, v) => value && weldedFeet[v] < 0.1f && skinNear[v] < 0.006f && skinGap[v] > -0.001f).ToArray();
+                var weldedMovable = onOwnSkin = WholeParts(onSkin, weldedCloth, triangles, 0.8f);
                 moved = Expand(OutfitSwapClearance.Conform(Average(mesh.Positions, ids, weldedCount), Average(moved, ids, weldedCount),
                     donorSkin, movedSkin, weldedMovable, triangles, near: 0.006f, far: 0.02f, rounds: 8, onSkin: true), ids);
                 moved = OutfitSwapClearance.PushOut(mesh.Positions, moved, donorSkin, movedSkin, movable, reach: 0.015f);
@@ -194,6 +204,15 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             // Small folds the moves pressed inside out (lace edges, hems) are smoothed back the right way round.
             moved = Expand(OutfitSwapFitting.Untangle(Average(moved, ids, weldedCount), Average(normals, ids, weldedCount), triangles,
                 Average(mesh.Positions, ids, weldedCount)), ids);
+            // Small parts hanging from the cloth (bells, knots, tassels at a hem) move with the cloth they hang from: fitted
+            // on their own they drift off it.
+            var handShare = OutfitSwapFitting.Features(mesh, Enumerable.Range(0, mesh.VertexCount).ToArray());
+            var weldedHands = new float[weldedCount];
+            for (var v = 0; v < ids.Length; v++)
+                weldedHands[ids[v]] = Math.Max(weldedHands[ids[v]], handShare[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
+                                                                    handShare[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand]);
+            var small = weldedCloth.Select((value, v) => value && !onOwnSkin[v] && weldedFeet[v] < 0.1f && weldedHands[v] < 0.1f).ToArray();
+            moved = Expand(HangFromHosts(Average(mesh.Positions, ids, weldedCount), Average(moved, ids, weldedCount), small, weldedCloth, triangles), ids);
             // Bare skin lying on the new body shades like it.
             var handShares = OutfitSwapFitting.Features(mesh, Enumerable.Range(0, mesh.VertexCount).ToArray());
             if (targetBody is { Native: true })
@@ -272,7 +291,12 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         {
             if (OutfitSwapClearance.SkinSurface(donor.Mesh, donor.Mesh.Positions) is not { } skin) return new bool[donor.Mesh.VertexCount];
             var (gap, near, _) = skin.MeasureExact(donor.Mesh.Positions);
-            return gap.Select((g, v) => near[v] < 0.01f && g > -0.001f).ToArray();
+            var cloth = new bool[donor.Mesh.VertexCount];
+            foreach (var section in donor.Mesh.Sections)
+                if (!OutfitSwapBodies.IsSkin(donor.Mesh.Materials[section.Material]))
+                    foreach (var v in section.Triangles) cloth[v] = true;
+            return WholeParts(gap.Select((g, v) => near[v] < 0.01f && g > -0.001f).ToArray(), cloth,
+                donor.Mesh.Sections.SelectMany(section => section.Triangles).ToArray(), 0.8f);
         }).ToArray();
         for (var inner = 0; inner < donors.Count; inner++)
             for (var outer = 0; outer < donors.Count; outer++)
@@ -342,6 +366,72 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             });
         }
         return moved.Count > 0 ? new OutfitSwapBody(moved, native: false) : null;
+    }
+
+    /// <summary>
+    /// Moves each small connected part of <paramref name="candidates"/> (under <paramref name="largest"/> points) the way
+    /// the nearest point of the larger cloth around it moved, when that cloth lay within <paramref name="reach"/>.
+    /// </summary>
+    private static Vector3[] HangFromHosts(Vector3[] donor, Vector3[] fitted, bool[] candidates, bool[] cloth, IReadOnlyList<int> triangles,
+        int largest = 300, float reach = 0.02f)
+    {
+        var parent = Enumerable.Range(0, donor.Length).ToArray();
+        int Find(int x)
+        {
+            while (parent[x] != x) x = parent[x] = parent[parent[x]];
+            return x;
+        }
+        for (var i = 0; i + 2 < triangles.Count; i += 3)
+        {
+            parent[Find(triangles[i])] = Find(triangles[i + 1]);
+            parent[Find(triangles[i + 1])] = Find(triangles[i + 2]);
+        }
+        var size = new Dictionary<int, int>();
+        foreach (var v in Enumerable.Range(0, donor.Length).Where(v => cloth[v])) size[Find(v)] = size.GetValueOrDefault(Find(v)) + 1;
+        var hosts = Enumerable.Range(0, donor.Length).Where(v => cloth[v] && size[Find(v)] >= largest).ToArray();
+        if (hosts.Length == 0) return fitted;
+        var tree = new OutfitSwapKdTree(hosts.SelectMany(v => new[] { donor[v].X, donor[v].Y, donor[v].Z }).ToArray(), 3);
+        var result = (Vector3[])fitted.Clone();
+        Span<int> index = stackalloc int[1];
+        Span<float> distance = stackalloc float[1];
+        foreach (var part in Enumerable.Range(0, donor.Length).Where(v => candidates[v] && size[Find(v)] < largest).GroupBy(Find))
+        {
+            // The part's nearest point to the host cloth decides where it hangs from.
+            var best = (Distance: float.MaxValue, Host: -1);
+            foreach (var v in part)
+                if (tree.Nearest([donor[v].X, donor[v].Y, donor[v].Z], 1, index, distance) > 0 && distance[0] < best.Distance)
+                    best = (distance[0], hosts[index[0]]);
+            if (best.Distance >= reach) continue;
+            var anchor = part.MinBy(v => Vector3.Distance(donor[v], donor[best.Host]));
+            var shift = fitted[best.Host] - donor[best.Host] - (fitted[anchor] - donor[anchor]);
+            foreach (var v in part) result[v] = fitted[v] + shift;
+        }
+        return result;
+    }
+
+    /// <summary>The cloth of every connected part whose points are mostly (<paramref name="share"/>) marked.</summary>
+    private static bool[] WholeParts(bool[] marked, bool[] cloth, IReadOnlyList<int> triangles, float share)
+    {
+        var parent = Enumerable.Range(0, marked.Length).ToArray();
+        int Find(int x)
+        {
+            while (parent[x] != x) x = parent[x] = parent[parent[x]];
+            return x;
+        }
+        for (var i = 0; i + 2 < triangles.Count; i += 3)
+            if (cloth[triangles[i]] && cloth[triangles[i + 1]] && cloth[triangles[i + 2]])
+            {
+                parent[Find(triangles[i])] = Find(triangles[i + 1]);
+                parent[Find(triangles[i + 1])] = Find(triangles[i + 2]);
+            }
+        var counts = new Dictionary<int, (int Marked, int All)>();
+        for (var v = 0; v < marked.Length; v++)
+        {
+            if (!cloth[v]) continue;
+            var (m, all) = counts.GetValueOrDefault(Find(v));
+            counts[Find(v)] = (m + (marked[v] ? 1 : 0), all + 1);
+        }
+        return Enumerable.Range(0, marked.Length).Select(v => cloth[v] && counts[Find(v)] is var (m, all) && m >= share * all).ToArray();
     }
 
     /// <summary>
