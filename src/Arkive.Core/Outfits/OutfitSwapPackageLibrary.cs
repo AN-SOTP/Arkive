@@ -44,14 +44,21 @@ public sealed class OutfitSwapPackageLibrary(
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public Task<OutfitSwapSource?> LocateAsync(string objectName, CancellationToken cancellationToken) =>
-        _sources.GetOrAdd(objectName, async name =>
+    public async Task<OutfitSwapSource?> LocateAsync(string objectName, CancellationToken cancellationToken)
+    {
+        var source = await _sources.GetOrAdd(objectName, async name =>
         {
             var result = await index.SearchAsync(packagesRoot, name, "SkeletalMesh", null, PackageIndexSearchScope.ObjectName,
                 null, resultLimit: 50, cancellationToken: cancellationToken).ConfigureAwait(false);
             var match = result.Matches.FirstOrDefault(item => item.ObjectName.Equals(name, StringComparison.OrdinalIgnoreCase));
             return match is null ? null : Source(match);
-        });
+        }).ConfigureAwait(false);
+        // The viewer reads the piece's materials and pictures from its clean package: with a mod applied (an earlier
+        // swap onto this outfit, say), the game's file holds the mod's materials.
+        if (source is null || cleanPackage is null) return source;
+        var clean = await cleanPackage(source.CleanPackagePath, cancellationToken).ConfigureAwait(false);
+        return source with { ViewerRequest = source.ViewerRequest with { PackagePath = clean } };
+    }
 
     private OutfitSwapSource Source(PackageIndexMatch match) => new(match.ObjectName, match.PackageAlias, match.SourcePath,
         new ModelViewerRequest(match.SourcePath, match.PackageAlias, packagesRoot, match.ExportIndex, match.SerialOffset, match.SerialSize,
