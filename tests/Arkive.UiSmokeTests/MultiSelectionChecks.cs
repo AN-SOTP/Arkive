@@ -74,7 +74,7 @@ internal static class MultiSelectionChecks
         Check(!Control<Button>(window, "AuthoringRemoveButton").IsEnabled, "An empty selection still permits removal.");
         draft = await workspace.SaveAsync(original);
         draftField.SetValue(window, draft);
-        await (Task)typeof(MainWindow).GetMethod("LoadAuthoringAssetsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!;
+        await (Task)typeof(MainWindow).GetMethod("LoadAuthoringAssetsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [null])!;
         Console.WriteLine("PASS: native Select All can clear a mod draft, including missing working copies, without deleting saved content");
 
         object Row(string id, string? assetId, bool include) => Activator.CreateInstance(rowType,

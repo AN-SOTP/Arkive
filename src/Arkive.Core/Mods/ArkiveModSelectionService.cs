@@ -12,9 +12,20 @@ public sealed record ArkiveModSelectionChange(
     string EditId,
     bool Included);
 
+/// <param name="Snapshot">The working files as they are after the changes, for a caller that reads them next.</param>
+public sealed record ArkiveModSelectionResult(
+    IReadOnlyList<ArkiveModSelectionChange> Changes,
+    ArkiveModEditSnapshot Snapshot);
+
 public static class ArkiveModSelectionService
 {
     public static async Task<IReadOnlyList<ArkiveModSelectionChange>> SynchronizeAsync(
+        ArkiveModLibrary modLibrary,
+        ArkiveModEditWorkspaces edits,
+        CancellationToken cancellationToken = default) =>
+        (await SynchronizeWithSnapshotAsync(modLibrary, edits, cancellationToken).ConfigureAwait(false)).Changes;
+
+    public static async Task<ArkiveModSelectionResult> SynchronizeWithSnapshotAsync(
         ArkiveModLibrary modLibrary,
         ArkiveModEditWorkspaces edits,
         CancellationToken cancellationToken = default)
@@ -24,22 +35,31 @@ public static class ArkiveModSelectionService
         var library = await modLibrary.LoadAsync(cancellationToken).ConfigureAwait(false);
         var snapshot = await ArkiveModEditSnapshot.LoadAsync(edits, cancellationToken).ConfigureAwait(false);
         var resolution = ArkiveModConflictResolver.Resolve(library.Mods);
-        var changes = new List<ArkiveModSelectionChange>();
+        var pending = new List<(ArkiveModLibraryEntry Mod, ArkiveModLocalEdit Local, bool Include)>();
         foreach (var mod in library.Mods)
         {
             foreach (var binding in mod.Bindings)
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 var local = snapshot.Find(binding.EditId);
                 if (local is null) continue;
                 var include = resolution.OutcomeFor(mod.ModId, binding.AssetId) == ArkiveModAssetOutcome.Winning;
-                if (local.Included == include) continue;
-                await SetIncludedAsync(edits, local, include, cancellationToken).ConfigureAwait(false);
-                changes.Add(new ArkiveModSelectionChange(
-                    mod.Manifest.Name, local.Kind, local.ObjectName, local.EditId, include));
+                if (local.Included != include) pending.Add((mod, local, include));
             }
         }
-        return changes;
+        // Each change rewrites one working file's own record, so they are written side by side: turning a pack of
+        // large mods on or off changes over a thousand.
+        var written = new ArkiveModLocalEdit[pending.Count];
+        await Parallel.ForEachAsync(Enumerable.Range(0, pending.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
+            async (index, token) =>
+            {
+                var (_, local, include) = pending[index];
+                var entry = await SetIncludedEntryAsync(edits, local, include, token).ConfigureAwait(false);
+                written[index] = entry is null ? local : local with { Included = include, Entry = entry };
+            }).ConfigureAwait(false);
+        var changes = pending.Select(item => new ArkiveModSelectionChange(
+            item.Mod.Manifest.Name, item.Local.Kind, item.Local.ObjectName, item.Local.EditId, item.Include)).ToArray();
+        return new ArkiveModSelectionResult(changes, snapshot.Replace(written));
     }
 
     public static async Task ReleaseAsync(
@@ -64,39 +84,38 @@ public static class ArkiveModSelectionService
         }
     }
 
-    public static async Task SetIncludedAsync(
+    public static Task SetIncludedAsync(
         ArkiveModEditWorkspaces edits,
         ArkiveModLocalEdit edit,
         bool included,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        SetIncludedEntryAsync(edits, edit, included, cancellationToken);
+
+    /// <returns>The working file's record as written, or null for a kind this workspace set does not edit.</returns>
+    private static async Task<object?> SetIncludedEntryAsync(
+        ArkiveModEditWorkspaces edits,
+        ArkiveModLocalEdit edit,
+        bool included,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(edits);
         ArgumentNullException.ThrowIfNull(edit);
-        switch (edit.Entry)
+        return edit.Entry switch
         {
-            case GuidedTextureModProjectEntry texture:
-                await edits.Textures.SetIncludedAsync(texture.ManifestPath, included, cancellationToken)
-                    .ConfigureAwait(false);
-                break;
-            case SkeletalMeshEditWorkspaceEntry mesh:
-                await edits.SkeletalMeshEdits.SetIncludedAsync(mesh, included, cancellationToken)
-                    .ConfigureAwait(false);
-                break;
-            case StaticMeshEditEntry mesh:
-                await edits.StaticMeshEdits.SetIncludedAsync(mesh, included, cancellationToken)
-                    .ConfigureAwait(false);
-                break;
-            case MaterialInstanceEditEntry material:
-                await edits.MaterialEdits.SetIncludedAsync(material, included, cancellationToken)
-                    .ConfigureAwait(false);
-                break;
-            case Particles.ParticleEffectEditEntry particle:
-                await edits.ParticleEdits.SetIncludedAsync(particle, included, cancellationToken).ConfigureAwait(false);
-                break;
-            case InterfaceMovieEditEntry movie when edits.InterfaceMovies is { } movies:
-                await movies.SetIncludedAsync(movie, included, cancellationToken).ConfigureAwait(false);
-                break;
-        }
+            GuidedTextureModProjectEntry texture => await edits.Textures
+                .SetIncludedAsync(texture.ManifestPath, included, cancellationToken).ConfigureAwait(false),
+            SkeletalMeshEditWorkspaceEntry mesh => await edits.SkeletalMeshEdits
+                .SetIncludedAsync(mesh, included, cancellationToken).ConfigureAwait(false),
+            StaticMeshEditEntry mesh => await edits.StaticMeshEdits
+                .SetIncludedAsync(mesh, included, cancellationToken).ConfigureAwait(false),
+            MaterialInstanceEditEntry material => await edits.MaterialEdits
+                .SetIncludedAsync(material, included, cancellationToken).ConfigureAwait(false),
+            Particles.ParticleEffectEditEntry particle => await edits.ParticleEdits
+                .SetIncludedAsync(particle, included, cancellationToken).ConfigureAwait(false),
+            InterfaceMovieEditEntry movie when edits.InterfaceMovies is { } movies => await movies
+                .SetIncludedAsync(movie, included, cancellationToken).ConfigureAwait(false),
+            _ => null,
+        };
     }
 
     private static async Task DeleteEditAsync(

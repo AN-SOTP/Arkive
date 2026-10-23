@@ -24,6 +24,8 @@ public sealed class MaterialInstanceEditWorkspaceStore
 
     public string RootDirectory { get; }
 
+    private readonly Mods.ParsedRecordCache<MaterialInstanceEditEntry> _parsed = new();
+
     public async Task<IReadOnlyList<MaterialInstanceEditEntry>> LoadAsync(
         CancellationToken cancellationToken = default)
     {
@@ -35,7 +37,7 @@ public sealed class MaterialInstanceEditWorkspaceStore
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                entries.Add(await LoadEntryAsync(path, cancellationToken).ConfigureAwait(false));
+                entries.Add(await _parsed.GetAsync(path, LoadEntryAsync, cancellationToken).ConfigureAwait(false));
             }
             catch (Exception exception) when (
                 exception is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -21,8 +20,7 @@ public sealed class SkeletalMeshEditWorkspaceStore
 
     // Edit records carry their full mesh check (hundreds of KB each) and are listed by every mod refresh; each one
     // is parsed again only when its file changes.
-    private readonly ConcurrentDictionary<string, (long Length, DateTime WriteTimeUtc, SkeletalMeshEditRegistrationManifest Manifest)>
-        _parsed = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Mods.ParsedRecordCache<SkeletalMeshEditRegistrationManifest> _parsed = new();
 
     public SkeletalMeshEditWorkspaceStore(
         string rootDirectory,
@@ -142,22 +140,16 @@ public sealed class SkeletalMeshEditWorkspaceStore
                 try
                 {
                     var manifestPath = EnsureWithinRoot(path);
-                    var info = new FileInfo(manifestPath);
-                    SkeletalMeshEditRegistrationManifest manifest;
-                    if (_parsed.TryGetValue(manifestPath, out var parsed) && parsed.Length == info.Length &&
-                        parsed.WriteTimeUtc == info.LastWriteTimeUtc)
-                        manifest = parsed.Manifest;
-                    else
+                    var manifest = await _parsed.GetAsync(manifestPath, async (file, ct) =>
                     {
                         await using var stream = new FileStream(
-                            manifestPath, FileMode.Open, FileAccess.Read,
+                            file, FileMode.Open, FileAccess.Read,
                             FileShare.ReadWrite | FileShare.Delete, 64 * 1024,
                             FileOptions.Asynchronous | FileOptions.SequentialScan);
-                        manifest = await JsonSerializer.DeserializeAsync<SkeletalMeshEditRegistrationManifest>(
-                                       stream, JsonOptions, token).ConfigureAwait(false) ??
-                                   throw new InvalidDataException("The edited-mesh manifest was empty.");
-                        _parsed[manifestPath] = (info.Length, info.LastWriteTimeUtc, manifest);
-                    }
+                        return await JsonSerializer.DeserializeAsync<SkeletalMeshEditRegistrationManifest>(
+                                   stream, JsonOptions, ct).ConfigureAwait(false) ??
+                               throw new InvalidDataException("The edited-mesh manifest was empty.");
+                    }, token).ConfigureAwait(false);
                     if (manifest.SchemaVersion != CurrentSchemaVersion ||
                         string.IsNullOrWhiteSpace(manifest.EditId) ||
                         string.IsNullOrWhiteSpace(manifest.SourceExportId) ||
