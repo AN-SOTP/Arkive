@@ -133,6 +133,9 @@ public partial class OutfitSwapWindow : Window
     /// </summary>
     public bool OwnMaterials { get; init; }
 
+    /// <summary>The replaced pieces the game wears as inner avatars (<see cref="OutfitInnerAvatars"/>); set by Arkive's main window.</summary>
+    public IReadOnlySet<string> InnerAvatars { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     private string SceneCacheRoot => _scenes.Cache.RootDirectory;
 
     private void Status(string text) => StatusText.Text = text;
@@ -171,7 +174,7 @@ public partial class OutfitSwapWindow : Window
             Status("Finding the outfit's materials…");
             var body = OutfitSwapBodies.Detect(_targets[0].Mesh, _targets[0].ObjectName) is { } profile ? OutfitSwapBodies.For(profile) : null;
             var materials = await OutfitSwapMaterialSources.ReadAsync(_library, donors.Select(item => item.Piece).ToArray(), body, token)
-                with { KeepOwn = OwnMaterials };
+                with { KeepOwn = OwnMaterials, InnerAvatarPieces = InnerAvatars };
             // The preview draws added slots with these scenes' materials: the outfit's own and the body's skin.
             var materialScenes = donors.Select(item => item.Result).ToList();
             foreach (var name in body?.BaseBody ?? [])
