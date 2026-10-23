@@ -41,6 +41,12 @@ public sealed class OutfitSwapMesh
     /// <see cref="OutfitSwapHands"/>): they keep their picture coordinates.
     /// </summary>
     public IReadOnlySet<int> NativeSkin { get; init; } = new HashSet<int>();
+
+    /// <summary>
+    /// For a planned piece: the vertices that are the outfit's bare skin, whatever material draws them (skin keeping the
+    /// outfit's own picture goes to a cloth material); null when only the materials tell.
+    /// </summary>
+    public IReadOnlySet<int>? SkinVertices { get; init; }
     /// <summary>Bone names without Arkive's numbering suffix, lowercase.</summary>
     public required string[] BoneNames { get; init; }
     /// <summary>Each bone's rest position in the model.</summary>

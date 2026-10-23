@@ -216,9 +216,11 @@ public static partial class OutfitSwapPlanner
         var skinUnder = new Dictionary<int, SleeveSkin?>();
         for (var i = 0; i < target.BoneNames.Length; i++) targetBones.TryAdd(target.BoneNames[i], i);
 
+        var skinVertices = new HashSet<int>();
         foreach (var (piece, section, triangles) in parts)
         {
             var donor = donors[piece].Mesh;
+            var bareSkin = OutfitSwapBodies.IsSkin(donor.Materials[donor.Sections[section].Material]);
             var (slot, rect, skinLower) = placement(piece, donor.Sections[section].Material);
             var skin = skinLower is not null && targetBody is { Native: true } && !donor.NativeSkin.Contains(donor.Sections[section].Material)
                 ? SkinUvs(fitted[piece], triangles, skinLower.Value, skinSlot, targetBody) : null;
@@ -261,6 +263,7 @@ public static partial class OutfitSwapPlanner
                     weights.AddRange(bones.Select(item => item.Weight));
                 }
                 list.Add(at);
+                if (bareSkin) skinVertices.Add(at);
             }
         }
         return new OutfitSwapMesh
@@ -269,6 +272,7 @@ public static partial class OutfitSwapPlanner
             Uv0 = uv0.ToArray(), Uv1 = uv1.ToArray(), Colours = colours.ToArray(), Joints = joints.ToArray(), Weights = weights.ToArray(),
             Sections = sections.OrderBy(pair => pair.Key).Select(pair => new OutfitSwapSection(pair.Key, WithArea(pair.Value, positions))).ToArray(),
             Materials = target.Materials, BoneNames = target.BoneNames, BonePositions = target.BonePositions, BoneParents = target.BoneParents,
+            SkinVertices = skinVertices,
         };
     }
 
