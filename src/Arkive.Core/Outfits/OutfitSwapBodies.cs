@@ -10,7 +10,10 @@ namespace Arkive.Core.Outfits;
 /// game has none. They must share the skin picture layout of the class's outfits (some only ship in the Chinese build's
 /// _chn meshes, which the global client still carries).</param>
 /// <param name="Head">The face and hair shown with a swap preview.</param>
-public sealed record OutfitSwapBodyInfo(BodyProfile Profile, string AvatarCode, IReadOnlyList<string> BaseBody, IReadOnlyList<string> Head)
+/// <param name="Hands">A costume of the class showing its bare hands (the shared 130c dress every class has), whose hands a swap onto this body puts in place of the
+/// worn outfit's (<see cref="OutfitSwapHands"/>); null to keep the outfit's own.</param>
+public sealed record OutfitSwapBodyInfo(BodyProfile Profile, string AvatarCode, IReadOnlyList<string> BaseBody, IReadOnlyList<string> Head,
+    string? Hands = null)
 {
     public bool Female => Profile.Female;
 }
@@ -19,19 +22,19 @@ public static partial class OutfitSwapBodies
 {
     public static readonly IReadOnlyList<OutfitSwapBodyInfo> All =
     [
-        Info("female-warrior", "wr_f", ["pc_wr_f_basebody_upper_sk", "pc_wr_f_basebody_lower_sk", "pc_wr_f_basebody_arm_sk"]),
-        Info("female-assassin", "dl", ["pc_dk_av_base_upper_sk", "pc_dk_av_base_lower_sk"]),
+        Info("female-warrior", "wr_f", ["pc_wr_f_basebody_upper_sk", "pc_wr_f_basebody_lower_sk", "pc_wr_f_basebody_arm_sk"], "pc_wr_f_av_130c_dress_sk"),
+        Info("female-assassin", "dl", ["pc_dk_av_base_upper_sk", "pc_dk_av_base_lower_sk"], "pc_dl_av_130c_dress_sk"),
         Info("guardianknight", "dl", ["pc_dk_av_base_upper_sk", "pc_dk_av_base_lower_sk"]),
-        Info("female-mage", "mg", ["pc_mg_av_basebody_sk_chn"]),
-        Info("female-martial-artist", "ft", ["pc_ft_av_body_sk_chn"]),
+        Info("female-mage", "mg", ["pc_mg_av_basebody_sk_chn"], "pc_mg_av_130c_dress_sk"),
+        Info("female-martial-artist", "ft", ["pc_ft_av_body_sk_chn"], "pc_ft_av_130c_dress_sk"),
         Info("female-specialist", "sp", ["pc_sp_00_body_sk"]),
         Info("male-warrior", "wr", ["pc_wr_basebody_upper_00_sk", "pc_wr_basebody_lower_00_sk", "pc_wr_basebody_arm_00_sk"]),
         Info("male-gunner", "gn", ["pc_ft_m_av_base_upper_sk", "pc_ft_m_av_base_lower_sk"]),
         Info("male-specialist", "sp_m", ["pc_sp_m_av_base_upper_sk", "pc_sp_m_av_base_lower_sk"]),
     ];
 
-    private static OutfitSwapBodyInfo Info(string id, string code, string[] baseBody) =>
-        new(BodyProfiles.Players.Single(profile => profile.Id == id), code, baseBody, [$"pc_{code}_00_face_sk", $"pc_{code}_00_hair_sk"]);
+    private static OutfitSwapBodyInfo Info(string id, string code, string[] baseBody, string? hands = null) =>
+        new(BodyProfiles.Players.Single(profile => profile.Id == id), code, baseBody, [$"pc_{code}_00_face_sk", $"pc_{code}_00_hair_sk"], hands);
 
     public static OutfitSwapBodyInfo? For(BodyProfile profile) => All.FirstOrDefault(info => info.Profile.Id == profile.Id);
 

@@ -57,7 +57,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         var targetSkeleton = new OutfitSwapSkeleton(targets.Select(piece => piece.Mesh));
         // Bodies sharing a skeleton can lay their skin pictures out differently (the Female Gunner's next to the Female
         // Assassin's base body): bare skin can then only keep the outfit's own picture.
-        var bodyClasses = to.BaseBody.Select(OutfitSwapBodies.ClassOf).ToHashSet();
+        var bodyClasses = to.BaseBody.Select(OutfitSwapBodies.ClassOf).Append($"pc_{to.AvatarCode}_").ToHashSet();
         var foreignSkin = targets.SelectMany(piece => piece.Mesh.Materials).Where(OutfitSwapBodies.IsSkin)
             .Any(material => OutfitSwapBodies.ClassOf(material) is { } skinClass && !bodyClasses.Contains(skinClass));
         progress?.Report("Reading the bare bodies");
@@ -78,6 +78,11 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         var targetFootPoints = targetFeet.SelectMany(part => part.Sections.Where(section => OutfitSwapBodies.IsSkin(part.Materials[section.Material]))
             .SelectMany(section => section.Triangles).Distinct().Select(v => part.Positions[v])).ToArray();
         var targetFootAnkle = targetSkeleton.TryGet("bip001-l-foot", out var targetFootJoint) ? targetFootJoint.Y : 0.1f;
+        // The new body's own bare hands, for outfits from another body that show theirs.
+        // They draw with the replaced outfit's own upper skin material, so that outfit must have one.
+        var upperSkin = targets.Any(piece => piece.Mesh.Materials.Any(material => OutfitSwapBodies.IsSkin(material) && !OutfitSwapBodies.IsLowerSkin(material)));
+        var bodyHands = from.Profile.Id != to.Profile.Id && upperSkin && !foreignSkin && to.Hands is { } handsPiece
+            ? await library.LoadAsync(handsPiece, cancellationToken).ConfigureAwait(false) : null;
         var fitted = new List<Vector3[]>();
         var shaded = new List<OutfitSwapPiece>();
         long judged = 0, clippedBefore = 0, clippedAfter = 0, stretched = 0, faces = 0;
@@ -99,6 +104,8 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             // around its own foot, and bending either onto the new body's foot crumples soles and toes.
             var feet = OutfitSwapFitting.FootShares(mesh);
             var movable = cloth.Select((value, v) => value && feet[v] < 0.1f).ToArray();
+            var onHands = OutfitSwapHands.Shares(mesh);
+            var newHands = bodyHands is not null && OutfitSwapHands.Bare(mesh, onHands);
             if (field is not null)
             {
                 var all = Enumerable.Range(0, mesh.VertexCount).ToArray();
@@ -162,8 +169,10 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                     0)).ToArray();
                 // The hand keeps the outfit's shape and the forearm takes the new body's: the change is spread over a few
                 // centimetres each side of the wrist, or the wrist shows a step where the thinner forearm meets the hand.
+                // With the new body's own hands coming in, the arm's skin lies on the body down to them.
                 var wrist = OutfitSwapFitting.SmoothOnMesh(hands.Select(share => new Vector3(Math.Clamp(share / 0.3f, 0, 1), 0, 0)).ToArray(), triangles, 24);
-                for (var v = 0; v < hold.Length; v++) hold[v] = Math.Max(hold[v], Math.Max(wrist[v].X, Math.Clamp((hands[v] - 0.5f) / 0.5f, 0, 1)));
+                if (!newHands)
+                    for (var v = 0; v < hold.Length; v++) hold[v] = Math.Max(hold[v], Math.Max(wrist[v].X, Math.Clamp((hands[v] - 0.5f) / 0.5f, 0, 1)));
                 moved = Expand(OutfitSwapClearance.SnapSkin(welded, weldedCloth, hold, targetBody), ids);
             }
             if (seam is not null)
@@ -238,8 +247,10 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                     (finished, moved) = OutfitSwapFeet.Finish(finished, moved, mesh.VertexCount, mesh.Positions,
                         cloth.Select((value, v) => value && feet[v] >= 0.05f).ToArray(), donorBody, shownFoot);
             }
+            if (!newFeet) finished = BendWithShoes(finished, feet);
+            if (newHands) (finished, moved) = OutfitSwapHands.WithBodyHands(finished, moved, onHands, bodyHands!);
             fitted.Add(moved);
-            shaded.Add(OwnPictureFeetAndHands(donor with { Mesh = newFeet ? finished : BendWithShoes(finished, feet) }, feet, foreignSkin));
+            shaded.Add(OwnPictureFeetAndHands(donor with { Mesh = finished }, feet, foreignSkin));
         }
         // Layers of one piece (a dress over its underskirt, an overlay over a bodice, a sleeve over the arm) stay in their
         // order: each large connected part of a piece's cloth keeps the piece's other cloth and its bare skin that lay
@@ -534,7 +545,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         var own = new HashSet<int>();
         foreach (var section in mesh.Sections)
         {
-            if (!OutfitSwapBodies.IsSkin(mesh.Materials[section.Material])) { sections.Add(section); continue; }
+            if (!OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]) || mesh.NativeSkin.Contains(section.Material)) { sections.Add(section); continue; }
             var kept = new List<int>();
             var held = new List<int>();
             var t = section.Triangles;
@@ -558,6 +569,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 Positions = mesh.Positions, Normals = mesh.Normals, Tangents = mesh.Tangents, Uv0 = mesh.Uv0, Uv1 = mesh.Uv1,
                 Colours = mesh.Colours, Joints = mesh.Joints, Weights = mesh.Weights, Sections = sections, Materials = materials,
                 BoneNames = mesh.BoneNames, BonePositions = mesh.BonePositions, BoneParents = mesh.BoneParents, OwnPictureSkin = own,
+                NativeSkin = mesh.NativeSkin,
             },
         };
     }
