@@ -18,6 +18,12 @@ public sealed record OutfitSwapMaterialSources(
     /// </summary>
     public bool KeepOwn { get; init; } = true;
 
+    /// <summary>
+    /// Replaced pieces the game wears as inner avatars (<see cref="OutfitInnerAvatars"/>): they keep to their own material
+    /// slots, their extra cloth going to another replaced piece with slots to spare.
+    /// </summary>
+    public IReadOnlySet<string> InnerAvatarPieces { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The material a piece's slot names (MaterialInstanceConstant'mat.name' as the GLB has it), read from its package.</summary>
     public static PackageObjectReference? Resolve(AssetCatalog catalog, string packageAlias, string slotName)
     {

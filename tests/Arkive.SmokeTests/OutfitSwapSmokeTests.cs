@@ -17,7 +17,41 @@ internal static class OutfitSwapSmokeTests
         new("packs donor materials into the target's own pictures and hides a piece with none", TestPlanner),
         new("writes a swapped piece into the target's GLB with shared or separate section vertices", TestGlbRoundTrip),
         new("learns how much brighter and which roughness values the replaced outfit's shaders need", TestCalibration),
+        new("keeps an inner avatar piece within its own material slots, its cloth going to a piece with room", TestInnerAvatarSlots),
     ];
+
+    private static void TestInnerAvatarSlots()
+    {
+        // As Afterimage onto Sympathetic Eternity: the pants (one slot, an inner avatar) get cloth in two materials and skin,
+        // the top has four cloth slots and its skin, two of them taken by the donor's top.
+        (string, Vector3, int)[] bones = [("bip001-pelvis", Vector3.Zero, -1)];
+        var vertices = Enumerable.Range(0, 15).Select(i => (new Vector3(i, 0, 0), 0)).ToArray();
+        OutfitSwapSection Section(int material, int first) => new(material, [first, first + 1, first + 2]);
+        var donorLower = Mesh(bones, vertices, sections: [Section(0, 0), Section(1, 3), Section(2, 6)],
+            materials: ["mat.pc_dl_av_188b_lower_mi", "mat.pc_dl_av_188b_lower_trn_mi", "mat.pc_dl_av_base_lower_mi"]);
+        var donorUpper = Mesh(bones, vertices, sections: [Section(0, 0), Section(1, 3)],
+            materials: ["mat.pc_dl_av_188b_upper_mi", "mat.pc_dl_av_188b_upper1_mi"]);
+        var targetLower = Mesh(bones, vertices, materials: ["mat.pc_wbk_f_av_137_lower_mi"]);
+        var targetUpper = Mesh(bones, vertices,
+            materials: ["mat.pc_wbk_f_av_137_upper3_mi", "mat.pc_wr_f_basebody_upper_mi", "mat.pc_wbk_f_av_137_upper_mi", "mat.pc_wbk_f_av_137_upper1_mi", "mat.pc_wbk_f_av_137_upper2_mi"]);
+        OutfitSwapPiece[] donors = [new("pc_dl_av_188b_upper_sk", donorUpper, []), new("pc_dl_av_188b_lower_sk", donorLower, [])];
+        OutfitSwapPiece[] targets = [new("pc_wbk_f_av_137_upper_sk", targetUpper, []), new("pc_wbk_f_av_137_lower_sk", targetLower, [])];
+        IReadOnlyList<(int Piece, int Section, int[] Triangles)>[] assign =
+        [
+            [(0, 0, donorUpper.Sections[0].Triangles), (0, 1, donorUpper.Sections[1].Triangles)],
+            [(1, 0, donorLower.Sections[0].Triangles), (1, 1, donorLower.Sections[1].Triangles), (1, 2, donorLower.Sections[2].Triangles)],
+        ];
+        var sources = new OutfitSwapMaterialSources([], null, null)
+        {
+            InnerAvatarPieces = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "pc_wbk_f_av_137_lower_sk", "pc_wbk_f_av_137_upper_sk" },
+        };
+        var notes = new List<string>();
+        var kept = OutfitSwapPlanner.KeepInnerAvatarsInTheirSlots(donors, targets, assign, sources, notes);
+        Assert(kept[1] is [(1, 2, _)] && kept[0].Count == 4 && kept[0].Contains(assign[1][0]) && kept[0].Contains(assign[1][1]) &&
+               notes.Count == 1, "the pants keep only the body's skin and the top draws their cloth");
+        var plain = OutfitSwapPlanner.KeepInnerAvatarsInTheirSlots(donors, targets, assign, new OutfitSwapMaterialSources([], null, null), []);
+        Assert(plain[1].Count == 3 && plain[0].Count == 2, "pieces that are not inner avatars keep their cloth and may gain slots");
+    }
 
     private static void TestNames()
     {

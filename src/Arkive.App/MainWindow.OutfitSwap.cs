@@ -268,6 +268,7 @@ public partial class MainWindow
                 Animations = FindViewerAnimationsAsync,
                 Environments = FindViewerEnvironmentsAsync,
                 OwnMaterials = OutfitSwapOwnMaterialsCheckBox.IsChecked == true,
+                InnerAvatars = await OutfitSwapInnerAvatarsAsync(replace),
                 Owner = this,
             };
             window.Show();
@@ -280,6 +281,21 @@ public partial class MainWindow
             OutfitSwapStatusText.Text = $"Could not open the swap: {exception.Message}";
             Log($"Outfit swap could not open: {exception}");
         }
+    }
+
+    /// <summary>The replaced pieces the game wears as inner avatars, from its item table; none when that cannot be read.</summary>
+    private async Task<IReadOnlySet<string>> OutfitSwapInnerAvatarsAsync(OutfitSwapRow replace)
+    {
+        try
+        {
+            if (_arkiveModContext.GameDataFor(_arkiveModLibraryManifest) is { } tables)
+                return await OutfitInnerAvatars.ReadAsync(tables.Archive, replace.Pieces.Select(piece => piece.ObjectName));
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            Log($"Outfit swap could not read which pieces are inner avatars: {exception.Message}");
+        }
+        return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>

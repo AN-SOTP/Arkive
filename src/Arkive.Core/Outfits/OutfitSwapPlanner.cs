@@ -203,6 +203,7 @@ public static partial class OutfitSwapPlanner
         OutfitSwapMaterialSources sources,
         List<string> notes)
     {
+        assign = KeepInnerAvatarsInTheirSlots(donors, targets, assign, sources, notes);
         var results = new List<OutfitSwapPieceResult>();
         for (var t = 0; t < targets.Count; t++)
         {
@@ -242,6 +243,13 @@ public static partial class OutfitSwapPlanner
                 if (any || (lower ? sources.LowerSkin : sources.UpperSkin) is not { } material) return null;
                 added = (lower, SlotFor(material));
                 return added.Value.Slot;
+            }
+            // An inner avatar's skin takes one of its own slots before its cloth can.
+            if (sources.InnerAvatarPieces.Contains(targets[t].ObjectName) && !target.Materials.Any(OutfitSwapBodies.IsSkin) &&
+                assign[t].FirstOrDefault(part => BodySkin(donors, part)) is { Triangles: not null } skinPart)
+            {
+                var skinMesh = donors[skinPart.Piece].Mesh;
+                SkinSlot(OutfitSwapBodies.IsLowerSkin(skinMesh.Materials[skinMesh.Sections[skinPart.Section].Material]));
             }
             var mesh = Build(donors, fitted, target, assign[t], (piece, material) =>
             {
@@ -310,6 +318,59 @@ public static partial class OutfitSwapPlanner
             var share = vertices.Average(v => Enumerable.Range(0, 4).Sum(k => leg[mesh.Joints[v * 4 + k]] ? mesh.Weights[v * 4 + k] : 0));
             yield return (share > 0.5, group.SelectMany(triangle => new[] { t[triangle * 3], t[triangle * 3 + 1], t[triangle * 3 + 2] }).ToArray());
         }
+    }
+
+    /// <summary>
+    /// The open world misdraws an inner avatar piece whose material list grew (see <see cref="OutfitInnerAvatars"/>), so one
+    /// whose cloth needs more materials than it has slots for hands that cloth to another replaced piece with the slots to
+    /// spare, keeping only the body's skin.
+    /// </summary>
+    public static IReadOnlyList<(int Piece, int Section, int[] Triangles)>[] KeepInnerAvatarsInTheirSlots(
+        IReadOnlyList<OutfitSwapPiece> donors,
+        IReadOnlyList<OutfitSwapPiece> targets,
+        IReadOnlyList<(int Piece, int Section, int[] Triangles)>[] assign,
+        OutfitSwapMaterialSources sources,
+        List<string> notes)
+    {
+        var result = assign.ToArray();
+        int Free(int t) => targets[t].Mesh.Materials.Count(material => !OutfitSwapBodies.IsSkin(material));
+        // The cloth materials a piece's slots must hold, and a slot for the body's skin when it has none of its own.
+        int Need(int t, IEnumerable<(int Piece, int Section, int[] Triangles)> parts)
+        {
+            var list = parts.ToArray();
+            var cloth = list.Where(part => !BodySkin(donors, part))
+                .Select(part => donors[part.Piece].Mesh.Materials[donors[part.Piece].Mesh.Sections[part.Section].Material].ToLowerInvariant())
+                .Distinct().Count();
+            return cloth + (!targets[t].Mesh.Materials.Any(OutfitSwapBodies.IsSkin) && list.Any(part => BodySkin(donors, part)) ? 1 : 0);
+        }
+        for (var t = 0; t < targets.Count; t++)
+        {
+            if (!sources.InnerAvatarPieces.Contains(targets[t].ObjectName) || Need(t, result[t]) <= Free(t)) continue;
+            var cloth = result[t].Where(part => !BodySkin(donors, part)).ToArray();
+            var home = Enumerable.Range(0, targets.Count)
+                .Where(other => other != t && Need(other, result[other].Concat(cloth)) <= Free(other))
+                .OrderByDescending(other => Free(other) - Need(other, result[other].Concat(cloth)))
+                .Select(other => (int?)other).FirstOrDefault();
+            if (home is not { } other)
+            {
+                notes.Add($"{targets[t].ObjectName} is an inner avatar and needs more material slots than the replaced pieces have; " +
+                          "the open world may draw it with the wrong materials.");
+                continue;
+            }
+            result[t] = result[t].Where(part => !cloth.Contains(part)).ToArray();
+            result[other] = result[other].Concat(cloth).ToArray();
+            notes.Add($"{targets[t].ObjectName} is an inner avatar, which the open world misdraws with added material slots, " +
+                      $"so its cloth is drawn by {targets[other].ObjectName}.");
+        }
+        return result;
+    }
+
+    // Donor triangles drawn with the body's own skin (not the outfit's own skin picture that bare feet and hands keep).
+    private static bool BodySkin(IReadOnlyList<OutfitSwapPiece> donors, (int Piece, int Section, int[] Triangles) part)
+    {
+        var mesh = donors[part.Piece].Mesh;
+        var material = mesh.Sections[part.Section].Material;
+        return OutfitSwapBodies.IsSkin(mesh.Materials[material]) && !mesh.OwnPictureSkin.Contains(material);
     }
 
     private static OutfitSwapMesh Build(
