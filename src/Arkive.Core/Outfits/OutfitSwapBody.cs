@@ -321,6 +321,13 @@ public sealed class OutfitSwapBody
         foreach (var name in result.Keys.ToArray()) result[name] /= total;
         return result;
     }
+
+    /// <summary>Whether a bone is one of the arm's own (clavicle to hand, with its twist helpers).</summary>
+    public static bool IsArmBone(string name) =>
+        name.StartsWith("bip001-", StringComparison.Ordinal) && (name.EndsWith("clavicle", StringComparison.Ordinal) ||
+            name.EndsWith("upperarm", StringComparison.Ordinal) || name.EndsWith("forearm", StringComparison.Ordinal) ||
+            name.EndsWith("-hand", StringComparison.Ordinal)) ||
+        name.StartsWith("b_upperarmtwist", StringComparison.Ordinal) || name.StartsWith("b_forearmtwist", StringComparison.Ordinal);
 }
 
 /// <summary>Keeping a moved outfit off the new body's skin.</summary>
@@ -382,24 +389,27 @@ public static class OutfitSwapClearance
     /// followed a female chest or hip follows a male one (and the other way round). Loose cloth further out takes the
     /// movement of the cloth near it, and bare skin of the outfit moves with the cloth around it.
     /// </summary>
+    /// <param name="onSkin">The bodies are the outfit's own bare skin before and after it moved onto the new body: only
+    /// cloth lying on it is wrapped (a chain round a bare thigh), and the skin stays where it is.</param>
     public static Vector3[] Conform(Vector3[] donorPositions, Vector3[] fitted, OutfitSwapBody donorBody, OutfitSwapBody targetBody,
-        bool[] cloth, IReadOnlyList<int> triangles, float near = 0.012f, float far = 0.05f, int rounds = 3)
+        bool[] cloth, IReadOnlyList<int> triangles, float near = 0.012f, float far = 0.05f, int rounds = 3, bool onSkin = false)
     {
-        var (donorGap, donorNear, _) = donorBody.Measure(donorPositions);
+        var (donorGap, donorNear, _) = onSkin ? donorBody.MeasureExact(donorPositions) : donorBody.Measure(donorPositions);
         var hug = new float[fitted.Length];
         for (var i = 0; i < hug.Length; i++)
-            hug[i] = cloth[i] && donorNear[i] < 0.08f ? Math.Clamp((far - Math.Max(donorGap[i], 0)) / (far - near), 0, 1) : 0;
+            hug[i] = cloth[i] && donorNear[i] < 0.08f && (!onSkin || donorGap[i] > -0.001f)
+                ? Math.Clamp((far - Math.Max(donorGap[i], 0)) / (far - near), 0, 1) : 0;
         var result = (Vector3[])fitted.Clone();
         for (var round = 0; round < rounds; round++)
         {
-            var (gap, _, outward) = targetBody.Measure(result);
+            var (gap, _, outward) = onSkin ? targetBody.MeasureExact(result) : targetBody.Measure(result);
             var movement = new Vector3[result.Length];
             for (var i = 0; i < result.Length; i++)
                 movement[i] = outward[i] * ((Math.Clamp(donorGap[i], 0.0008f, 0.02f) - gap[i]) * hug[i]);
             movement = OutfitSwapFitting.SmoothOnMesh(movement, triangles, 8);
             for (var i = 0; i < result.Length; i++) result[i] += movement[i];
         }
-        return CarrySkin(fitted, result, cloth);
+        return onSkin ? result : CarrySkin(fitted, result, cloth);
     }
 
     /// <summary>
