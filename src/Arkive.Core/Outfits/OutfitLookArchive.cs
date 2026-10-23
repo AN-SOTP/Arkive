@@ -53,12 +53,17 @@ public sealed class OutfitLookArchive
         return OutfitLooks.ForMesh(stream, LostArkDataArchive.ReadEntries(stream, cancellationToken), meshObject, cancellationToken);
     }
 
-    /// <summary>The game's own look at <paramref name="entry"/>, or null when the game has none there.</summary>
-    public OutfitLook? GameLook(string entry)
+    /// <summary>The game's own looks at <paramref name="entries"/> (an entry the game has no look at is left out).</summary>
+    public IReadOnlyDictionary<string, OutfitLook> GameLooks(IEnumerable<string> entries, CancellationToken cancellationToken = default)
     {
         using var stream = File.OpenRead(GameArchivePath());
-        var found = LostArkDataArchive.ReadEntries(stream).FirstOrDefault(item => item.Path.Equals(entry, StringComparison.OrdinalIgnoreCase));
-        return found is null ? null : OutfitLooks.Read(found.Path, LostArkDataArchive.Read(stream, found));
+        var all = LostArkDataArchive.ReadEntries(stream, cancellationToken)
+            .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var looks = new Dictionary<string, OutfitLook>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries.Distinct(StringComparer.OrdinalIgnoreCase))
+            if (all.TryGetValue(entry, out var found) && OutfitLooks.Read(found.Path, LostArkDataArchive.Read(stream, found)) is { } look)
+                looks[entry] = look;
+        return looks;
     }
 
     /// <summary>Makes data4.lpk the game's own looks with <paramref name="edits"/> written in; no edits puts back the game's file.</summary>
@@ -82,15 +87,15 @@ public sealed class OutfitLookArchive
         if (edits.GroupBy(edit => edit.Key, StringComparer.Ordinal).Any(group => group.Count() > 1))
             throw new InvalidDataException("A look slot was given more than one material.");
         var state = ReadState();
-        if (state is not null && Replaced(state))
+        var current = await HashAsync(ArchivePath, cancellationToken).ConfigureAwait(false);
+        if (state is not null && Replaced(state) && !current.Equals(state.AppliedSha256, StringComparison.OrdinalIgnoreCase))
         {
-            // The game wrote a new data4.lpk over Arkive's: that file is the game's own now.
+            // The game wrote a new data4.lpk over Arkive's (an update, or Steam's file check): that file is the game's
+            // own now, and the copy of the old one is stale. Only the date changing leaves Arkive's file as it is.
             File.Delete(_statePath);
+            if (File.Exists(state.BackupPath)) File.Delete(state.BackupPath);
             state = null;
         }
-        var current = await HashAsync(ArchivePath, cancellationToken).ConfigureAwait(false);
-        if (state is not null && !current.Equals(state.AppliedSha256, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("data4.lpk was changed outside Arkive since Arkive last wrote it. Verify the game files in Steam, then try again.");
         if (state is null && edits.Count == 0) return;
 
         var (originalLength, originalWritten) = state is null ? Stamp(ArchivePath) : (state.OriginalLength, state.OriginalWriteTimeUtc);

@@ -355,6 +355,8 @@ public sealed class ArkiveModAuthoringService
             var manifest = CreateManifest(current.Manifest.ModId, name, current.Manifest.CreatedAt, DateTimeOffset.UtcNow) with
             {
                 GameData = current.Manifest.GameData,
+                // Item looks go with the outfit meshes; a mod left with no assets has none to go with.
+                Looks = packAssets.Count + carried.Count == 0 ? null : current.Manifest.Looks,
             };
             var written = await ArkiveModFileService.WriteAsync(
                     modPath, manifest,

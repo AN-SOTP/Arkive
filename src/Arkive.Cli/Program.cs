@@ -1276,11 +1276,20 @@ static int OutfitSwapMod(string packagesRoot, string? indexCache, string? wear, 
     }
     if (!json) Console.WriteLine("  Checking the meshes and saving the mod");
     var saved = environment.Authoring.SaveDraftAsync(draft, token).GetAwaiter().GetResult();
+    // The game draws the pieces with their item looks' materials, so the looks name the outfit's own materials too.
+    var lookNotes = new List<string>();
+    var looks = environment.Context.LooksFor(environment.Context.Library.LoadAsync(token).GetAwaiter().GetResult()) is { } lookService
+        ? OutfitSwapLooks.Edits(lookService.Archive, donors.Select(piece => piece.ObjectName).ToArray(),
+            targets.Select((piece, index) => new OutfitSwapLookPiece(piece.ObjectName, piece.Mesh.Materials, fit.Plan.Pieces[index].Mesh)).ToArray(),
+            lookNotes, token)
+        : [];
+    if (looks.Count == 0) lookNotes.Add("No item look was changed (the game folder has no data4.lpk, or the swap needs none).");
+    saved = OutfitSwapLooks.AttachAsync(environment.Context.Library, saved.ModId, looks, token).GetAwaiter().GetResult();
     var file = Path.Combine(environment.Context.Library.ModsDirectory, saved.FileName);
     if (json)
         WriteJson(new
         {
-            mod = saved.ModId, file, from = report.From.Id, to = report.To.Id, report.ClippingPercent, report.Notes,
+            mod = saved.ModId, file, from = report.From.Id, to = report.To.Id, report.ClippingPercent, report.Notes, looks, lookNotes,
             pieces = fit.Plan.Pieces.Select(piece => new
             {
                 piece = piece.ObjectName, piece.Hidden, materials = piece.Mesh.MaterialReferences.Values.Select(reference => new
@@ -1295,7 +1304,11 @@ static int OutfitSwapMod(string packagesRoot, string? indexCache, string? wear, 
         foreach (var piece in fit.Plan.Pieces)
             foreach (var reference in piece.Mesh.MaterialReferences.Values)
                 Console.WriteLine($"  {piece.ObjectName}: {reference.Material.Path}" + (reference.Replaces is null ? " (added slot)" : $" in place of {reference.Replaces}"));
-        foreach (var note in report.Notes) Console.WriteLine($"  Note: {note}");
+        foreach (var edit in looks)
+            Console.WriteLine($"  Look {Path.GetFileNameWithoutExtension(edit.Entry.Split('/')[^1])} slot {edit.Slot}: " +
+                              $"{OutfitLooks.ObjectName(edit.Material)} (dyed {OutfitLooks.ObjectName(edit.DyeMaterial)})" +
+                              (edit.Added ? " (added)" : $" in place of {OutfitLooks.ObjectName(edit.OriginalMaterial!)}"));
+        foreach (var note in report.Notes.Concat(lookNotes)) Console.WriteLine($"  Note: {note}");
         Console.WriteLine($"  Saved: {file}");
     }
     return 0;

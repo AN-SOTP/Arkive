@@ -266,6 +266,23 @@ public partial class MainWindow
         var saved = await SaveAuthoringAsync();
         Log($"Outfit swap mod saved: name={request.ModName}, from={report.From.Id}, to={report.To.Id}, pieces={request.Targets.Count}, " +
             $"pictures={request.Pictures.Pictures.Count}, materials={request.Pictures.Materials.Count}, shape={request.Upscale.Label}.");
+        if (request.OwnMaterials && request.TargetPieces.Count == request.Meshes.Count)
+        {
+            // The game draws the pieces with their item looks' materials, so the looks name the outfit's own materials too.
+            request.Progress?.Report("Pointing the pieces' item looks at the outfit's own materials");
+            var library = await _arkiveModLibrary.LoadAsync();
+            if (_arkiveModContext.LooksFor(library) is { } looks)
+            {
+                var notes = new List<string>();
+                var edits = await Task.Run(() => OutfitSwapLooks.Edits(looks.Archive, request.Donors,
+                    request.TargetPieces.Select((piece, index) => new OutfitSwapLookPiece(piece.ObjectName, piece.Mesh.Materials, request.Meshes[index])).ToArray(),
+                    notes));
+                saved = await OutfitSwapLooks.AttachAsync(_arkiveModLibrary, saved.ModId, edits);
+                Log($"Outfit swap item looks: {edits.Count} slot change(s) in " +
+                    $"{edits.Select(edit => edit.Entry).Distinct(StringComparer.OrdinalIgnoreCase).Count()} look(s). {string.Join(" ", notes)}");
+            }
+            else Log("Outfit swap item looks: the game folder has no data4.lpk, so the looks were left as they are.");
+        }
         return saved;
     }
 

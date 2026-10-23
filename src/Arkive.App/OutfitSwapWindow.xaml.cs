@@ -28,6 +28,9 @@ public sealed record OutfitSwapSaveRequest(
 
     /// <summary>The outfit keeps its own materials (nothing is repainted).</summary>
     public bool OwnMaterials { get; init; }
+
+    /// <summary>The replaced pieces as the game has them (their own material slots), in the order of <see cref="Targets"/>.</summary>
+    public IReadOnlyList<OutfitSwapPiece> TargetPieces { get; init; } = [];
 }
 
 /// <summary>
@@ -383,6 +386,7 @@ public partial class OutfitSwapWindow : Window
             {
                 Progress = new Progress<string>(text => Status(text + "…")),
                 OwnMaterials = OwnMaterials,
+                TargetPieces = _targets,
             }));
         }
         catch (Exception exception)

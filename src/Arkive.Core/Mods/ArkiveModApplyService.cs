@@ -4,6 +4,7 @@ using Arkive.Core.GameData;
 using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
+using Arkive.Core.Outfits;
 using Arkive.Core.StaticMeshes;
 
 namespace Arkive.Core.Mods;
@@ -51,6 +52,8 @@ public sealed record ArkiveModPackagePlan(
     {
         ArkiveModPackageAction.Rebuild when PhysicalPackageName == ArkiveModApplyService.GameDataPackageName => "Write the table changes",
         ArkiveModPackageAction.Restore when PhysicalPackageName == ArkiveModApplyService.GameDataPackageName => "Put back the game's tables",
+        ArkiveModPackageAction.Rebuild when PhysicalPackageName == ArkiveModApplyService.LooksPackageName => "Write the item look changes",
+        ArkiveModPackageAction.Restore when PhysicalPackageName == ArkiveModApplyService.LooksPackageName => "Put back the game's item looks",
         ArkiveModPackageAction.None => "Up to date",
         ArkiveModPackageAction.Install => "Install existing verified build",
         ArkiveModPackageAction.Rebuild => RestoreFirst ? "Restore, rebuild, and reinstall" : "Rebuild and install",
@@ -150,11 +153,15 @@ public sealed record ArkiveModStatus(
     /// <summary>How the mod's game table changes stand, for a mod that has them.</summary>
     public ArkiveModGameDataStatus? GameData { get; init; }
 
-    public int WinningCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Winning) + (GameData?.Winning ?? 0);
+    /// <summary>How the mod's item look changes stand, for a mod that has them.</summary>
+    public ArkiveModGameDataStatus? Looks { get; init; }
 
-    public int OverriddenCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Overridden) + (GameData?.Overridden ?? 0);
+    public int WinningCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Winning) + (GameData?.Winning ?? 0) + (Looks?.Winning ?? 0);
 
-    public int TiedCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Tied) + (GameData?.Tied ?? 0);
+    public int OverriddenCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Overridden) + (GameData?.Overridden ?? 0) +
+                                  (Looks?.Overridden ?? 0);
+
+    public int TiedCount => Assets.Count(asset => asset.Outcome == ArkiveModAssetOutcome.Tied) + (GameData?.Tied ?? 0) + (Looks?.Tied ?? 0);
 
     public bool ModifiedLocally => Assets.Any(asset => asset.ModifiedLocally);
 
@@ -166,7 +173,8 @@ public sealed record ArkiveModStatus(
 
     public bool InGame => !FileMissing && Mod.Enabled && TiedCount == 0 && WinningCount > 0 &&
                           Winners.All(asset => asset.Setup == ArkiveModSetupState.Ready && asset.InGame == true) &&
-                          (GameData is not { Winning: > 0 } data || data.InGame);
+                          (GameData is not { Winning: > 0 } data || data.InGame) &&
+                          (Looks is not { Winning: > 0 } looks || looks.InGame);
 
     public string State
     {
@@ -213,6 +221,16 @@ public sealed record ArkiveModApplyContext(
         var efGame = Path.GetFullPath(Path.Combine(packages, "..", ".."));
         return File.Exists(Path.Combine(efGame, "data2.lpk"))
             ? new GameDataModService(new GameDataArchive(efGame, GameDataRoot, GameProcessGuard))
+            : null;
+    }
+
+    /// <summary>Item look changes for the game whose Packages folder the library names; null until that folder is known.</summary>
+    public OutfitLookModService? LooksFor(ArkiveModLibraryManifest library)
+    {
+        if (GameDataRoot is null || library.GamePackagesDirectory is not { } packages) return null;
+        var efGame = Path.GetFullPath(Path.Combine(packages, "..", ".."));
+        return File.Exists(Path.Combine(efGame, "data4.lpk"))
+            ? new OutfitLookModService(new OutfitLookArchive(efGame, GameDataRoot, GameProcessGuard))
             : null;
     }
 
@@ -290,13 +308,15 @@ public sealed class ArkiveModApplyService
         IReadOnlyDictionary<string, GuidedTexturePackageRevision?>? activeRevisionsByPhysicalName = null,
         CancellationToken cancellationToken = default,
         IReadOnlyCollection<string>? outsideChangedPackages = null,
-        GameDataTarget? installedGameData = null)
+        GameDataTarget? installedGameData = null,
+        IReadOnlyList<OutfitLookEdit>? installedLooks = null)
     {
         ArgumentNullException.ThrowIfNull(library);
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(snapshot);
         var resolution = ArkiveModConflictResolver.Resolve(manifest.Mods);
         var gameData = GameDataResolution.Resolve(manifest.Mods);
+        var looks = OutfitLookResolution.Resolve(manifest.Mods);
         var statuses = new List<ArkiveModStatus>(manifest.Mods.Count);
         foreach (var mod in manifest.Mods)
         {
@@ -336,6 +356,7 @@ public sealed class ArkiveModApplyService
                         StringComparer.OrdinalIgnoreCase)),
                 GameData = mod.Manifest.GameData is null ? null
                     : gameData.StatusFor(mod.ModId, installedGameData ?? GameDataTarget.GameOwn),
+                Looks = mod.Manifest.Looks is null ? null : looks.StatusFor(mod.ModId, installedLooks ?? []),
             });
         }
         return statuses;
@@ -605,6 +626,8 @@ public sealed class ArkiveModApplyService
             problems.Add(_rebuildUnavailable);
         if (await PlanGameDataAsync(library, problems, needClientUpdate, cancellationToken).ConfigureAwait(false) is { } tables)
             plans.Add(tables);
+        if (PlanLooks(library, problems, needClientUpdate, cancellationToken) is { } looks)
+            plans.Add(looks);
         return new ArkiveModApplyPlan(resolution, plans, problems.Distinct().ToArray(), warnings)
         {
             ModsNeedingClientUpdate = needClientUpdate,
@@ -657,6 +680,51 @@ public sealed class ArkiveModApplyService
         };
     }
 
+    /// <summary>The name the plan gives the game's item look archive, beside the packages it changes.</summary>
+    public const string LooksPackageName = "data4.lpk";
+
+    // data4.lpk joins the plan like data2.lpk, whenever a mod changes item looks or Arkive's changes are installed.
+    private ArkiveModPackagePlan? PlanLooks(
+        ArkiveModLibraryManifest library, List<string> problems, HashSet<string> needClientUpdate, CancellationToken cancellationToken)
+    {
+        var wanted = library.Mods.Any(mod => mod.Enabled && mod.Manifest.Looks is not null);
+        if (_context.LooksFor(library) is not { } service)
+        {
+            if (!wanted) return null;
+            const string message = "Mods change item looks, but Lost Ark's EFGame folder (the one holding data4.lpk) is not known yet. Choose the game's Packages folder.";
+            problems.Add(message);
+            return new ArkiveModPackagePlan(LooksPackageName, "Item looks", null, null, ArkiveModPackageAction.Blocked, false, null, [], [], message);
+        }
+        if (!wanted && service.Archive.Current().Count == 0) return null;
+        var plan = service.Plan(library.Mods, cancellationToken);
+        problems.AddRange(plan.Problems);
+        needClientUpdate.UnionWith(plan.ModsNeedingUpdate);
+        var contributors = plan.Resolution.Looks
+            .GroupBy(look => look.Winner.Mod.ModId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new ArkiveModPackageContributor(group.First().Winner.Mod.ModId, group.First().Winner.Mod.Manifest.Name,
+                group.First().Winner.Mod.Priority, "Item looks", null, $"{group.Count():N0} item look(s)", false))
+            .ToArray();
+        var action = plan.Problems.Count > 0 ? ArkiveModPackageAction.Blocked
+            : !plan.Changes ? ArkiveModPackageAction.None
+            : plan.Restores ? ArkiveModPackageAction.Restore
+            : ArkiveModPackageAction.Rebuild;
+        var reason = action switch
+        {
+            ArkiveModPackageAction.Blocked => plan.Problems[0],
+            ArkiveModPackageAction.None => plan.Target.Count == 0
+                ? "No enabled mod changes item looks."
+                : "data4.lpk already holds exactly these item look changes.",
+            ArkiveModPackageAction.Restore => "No enabled mod changes item looks any more; the game's own looks will be put back.",
+            _ => $"{plan.Resolution.Looks.Count:N0} item look(s) will be written into data4.lpk from the game's own looks.",
+        };
+        return new ArkiveModPackagePlan(LooksPackageName, "Item looks", service.Archive.ArchivePath, null, action, false, null,
+            contributors, [], reason)
+        {
+            ContentFingerprint = string.Join(",", plan.Target.OrderBy(edit => edit.Key, StringComparer.Ordinal)
+                .Select(edit => $"{edit.Key}={edit.Material}|{edit.DyeMaterial}")),
+        };
+    }
+
     public async Task<ArkiveModApplyResult> ApplyAsync(
         string? expectedPlanFingerprint = null,
         IProgress<ArkiveModApplyProgress>? progress = null,
@@ -671,11 +739,14 @@ public sealed class ArkiveModApplyService
         var outcomes = new Dictionary<string, ArkiveModPackageOutcome>(StringComparer.OrdinalIgnoreCase);
         var tables = plan.Packages.FirstOrDefault(package => package.PhysicalPackageName == GameDataPackageName &&
                                                              package.Action != ArkiveModPackageAction.None);
-        var changing = plan.Packages.Where(package => package.Action != ArkiveModPackageAction.None && package != tables).ToArray();
+        var looks = plan.Packages.FirstOrDefault(package => package.PhysicalPackageName == LooksPackageName &&
+                                                            package.Action != ArkiveModPackageAction.None);
+        var changing = plan.Packages.Where(package => package.Action != ArkiveModPackageAction.None && package != tables && package != looks)
+            .ToArray();
         var totalSteps = Math.Max(1,
             changing.Count(package => package.RestoreFirst || package.Action == ArkiveModPackageAction.Restore) +
             changing.Sum(package => package.Setups.Count) +
-            changing.Count(package => package.Action == ArkiveModPackageAction.Rebuild) + (tables is null ? 0 : 1) + 3);
+            changing.Count(package => package.Action == ArkiveModPackageAction.Rebuild) + (tables is null ? 0 : 1) + (looks is null ? 0 : 1) + 3);
         var step = 0;
         void Report(string package, string message) =>
             progress?.Report(new ArkiveModApplyProgress(Interlocked.Increment(ref step), totalSteps, package, message));
@@ -861,6 +932,34 @@ public sealed class ArkiveModApplyService
                     $"data2.lpk was left as it was: {exception.Message}");
             }
         }
+        if (looks is not null)
+        {
+            Report(LooksPackageName, looks.Action == ArkiveModPackageAction.Restore
+                ? "Putting back the game's own item looks..."
+                : "Writing the item look changes into data4.lpk...");
+            try
+            {
+                // A look names the materials of the mesh its mod installs: with a package left as it was, the game's
+                // own mesh would be drawn with the mod's materials, so the looks wait for every package to be in.
+                if (looks.Action != ArkiveModPackageAction.Restore && outcomes.Values.FirstOrDefault(outcome =>
+                        !outcome.Succeeded && outcome.PhysicalPackageName != GameDataPackageName) is { } failed)
+                    Refuse("APL033", $"{failed.PhysicalPackageName} was not installed.");
+                var service = _context.LooksFor(library) ?? throw new ArkiveModRefusalException("APL030", "The game's data4.lpk is not known.");
+                var current = service.Plan(library.Mods, cancellationToken);
+                if (current.Problems.Count > 0) Refuse("APL032", current.Problems[0]);
+                await service.ApplyAsync(current, cancellationToken).ConfigureAwait(false);
+                outcomes[LooksPackageName] = new ArkiveModPackageOutcome(LooksPackageName, looks.Action, true,
+                    looks.Action == ArkiveModPackageAction.Restore
+                        ? "The game's own item looks were put back."
+                        : $"{current.Resolution.Looks.Count:N0} item look(s) written and read back.");
+                if (looks.Action == ArkiveModPackageAction.Restore) restored++;
+            }
+            catch (Exception exception) when (IsOperational(exception))
+            {
+                outcomes[LooksPackageName] = new ArkiveModPackageOutcome(LooksPackageName, looks.Action, false,
+                    $"data4.lpk was left as it was: {exception.Message}");
+            }
+        }
         // Priorities, install and finish are the three fixed steps; install is skipped when nothing was rebuilt.
         step = totalSteps - 1;
         Report("Mods", "Apply finished.");
@@ -879,7 +978,7 @@ public sealed class ArkiveModApplyService
         }
         return new ArkiveModApplyResult(
             plan,
-            changing.Concat(tables is null ? [] : [tables]).Select(package => outcomes.GetValueOrDefault(package.PhysicalPackageName) ??
+            changing.Concat(tables is null ? [] : [tables]).Concat(looks is null ? [] : [looks]).Select(package => outcomes.GetValueOrDefault(package.PhysicalPackageName) ??
                                        new ArkiveModPackageOutcome(package.PhysicalPackageName, package.Action, true,
                                            "Completed.")).ToArray(),
             setUp, rebuilt, installed, restored, watch.Elapsed);
@@ -964,6 +1063,8 @@ public sealed class ArkiveModApplyService
         progress?.Report((outcomes.Count, mod.Manifest.Assets.Count));
         if (mod.Manifest.GameData is not null)
             outcomes.Add(await UpdateGameDataForCurrentClientAsync(modId, cancellationToken).ConfigureAwait(false));
+        if (mod.Manifest.Looks is not null)
+            outcomes.Add(await UpdateLooksForCurrentClientAsync(modId, cancellationToken).ConfigureAwait(false));
         await ArkiveModSelectionService.SynchronizeAsync(_context.Library, _context.Edits, cancellationToken)
             .ConfigureAwait(false);
         return outcomes;
@@ -991,6 +1092,35 @@ public sealed class ArkiveModApplyService
                 mod.AuthoredForPackageProjectId, cancellationToken).ConfigureAwait(false);
             return new ArkiveModAssetUpdateOutcome(assetId, name, true, true,
                 $"{rebased.Updated:N0} cell(s) updated for this game version" +
+                (rebased.Removed > 0 ? $", {rebased.Removed:N0} removed because the game no longer has them" : string.Empty) +
+                ". " + string.Join(" ", rebased.Messages.Take(5)));
+        }
+        catch (Exception exception) when (IsOperational(exception))
+        {
+            return new ArkiveModAssetUpdateOutcome(assetId, name, false, false, exception.Message);
+        }
+    }
+
+    // Like table changes, look changes need no working copy: the .arkive file takes the game's new looks as its originals.
+    private async Task<ArkiveModAssetUpdateOutcome> UpdateLooksForCurrentClientAsync(string modId, CancellationToken cancellationToken)
+    {
+        const string assetId = "item-looks";
+        const string name = "Item looks";
+        try
+        {
+            var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
+            var service = _context.LooksFor(library) ?? throw new ArkiveModRefusalException("APL030",
+                "Lost Ark's EFGame folder (the one holding data4.lpk) is not known yet.");
+            var mod = library.Find(modId) ?? throw new ArkiveModRefusalException("APL021", $"Mod {modId} is not in the library.");
+            var rebased = service.Rebase(mod, cancellationToken);
+            if (rebased.Updated + rebased.Removed == 0)
+                return new ArkiveModAssetUpdateOutcome(assetId, name, true, false, "Every item look change still matches this game version.");
+            var written = await ArkiveModFileService.RewriteManifestAsync(_context.Library.GetModFilePath(mod),
+                mod.Manifest with { Looks = rebased.Looks, UpdatedAt = DateTimeOffset.UtcNow }, cancellationToken).ConfigureAwait(false);
+            await _context.Library.RegisterWrittenFileAsync(written, mod.Origin, mod.Enabled, mod.Priority, mod.Bindings,
+                mod.AuthoredForPackageProjectId, cancellationToken).ConfigureAwait(false);
+            return new ArkiveModAssetUpdateOutcome(assetId, name, true, true,
+                $"{rebased.Updated:N0} item look(s) updated for this game version" +
                 (rebased.Removed > 0 ? $", {rebased.Removed:N0} removed because the game no longer has them" : string.Empty) +
                 ". " + string.Join(" ", rebased.Messages.Take(5)));
         }
