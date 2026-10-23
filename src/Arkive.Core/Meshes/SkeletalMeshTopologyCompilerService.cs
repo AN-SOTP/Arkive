@@ -308,13 +308,14 @@ public sealed class SkeletalMeshTopologyCompilerService
             Refuse("SMC043", $"Source LOD {source.LodIndex} has an unsupported legacy bulk payload.");
 
         var capacity = source.VertexPositionOffset == 20 ? 4_096 : 256;
+        // Within a material the triangles keep the GLB's order: a translucent material draws them in that order, and the
+        // layers of a sheer garment are authored inside to outside.
         var triangles = candidate.Triangles
             .SelectMany(pair => Enumerable.Repeat(pair.Key, pair.Value))
             .Select(triangle => new CandidateTriangle(
                 triangle.A, triangle.B, triangle.C, triangle.Material,
                 materialSlots.TryGetValue(triangle.Material, out var slot) ? slot : -1))
-            .OrderBy(item => item.MaterialIndex).ThenBy(item => item.A)
-            .ThenBy(item => item.B).ThenBy(item => item.C).ToArray();
+            .OrderBy(item => item.MaterialIndex).ToArray();
         if (triangles.Any(item => item.MaterialIndex < 0))
             Refuse("SMC044", "A candidate material no longer maps to an original native slot.");
 
