@@ -42,7 +42,8 @@ public static class PackageImportGrowth
 
     private static readonly HashSet<string> MovableClasses = new(StringComparer.OrdinalIgnoreCase)
     {
-        "materialinstanceconstant", "objectredirector", "package",
+        // Lost Ark's international redirectors and the small anim sets of outfit packages are properties only too.
+        "materialinstanceconstant", "objectredirector", "package", "locassetredirector", "animset",
     };
 
     /// <summary>The plan, or null when the package already imports every reference.</summary>

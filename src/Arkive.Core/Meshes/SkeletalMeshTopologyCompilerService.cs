@@ -985,7 +985,9 @@ public sealed class SkeletalMeshTopologyCompilerService
         void Write(int at, int value) => BinaryPrimitives.WriteInt32LittleEndian(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes)[at..], value);
         int Read(int at) => BinaryPrimitives.ReadInt32LittleEndian(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes)[at..]);
 
-        var growth = 0;
+        // Per-material lists in the properties grow with the material list. Sizes and counts are written in the source's
+        // places first, then the new entries go in from the back so the earlier places stay put.
+        var inserts = new List<(int At, byte[] Bytes)>();
         if (appended.Length > 0 && recon.Properties.SingleOrDefault(property =>
                 property.Name.Equals("clothingassets", StringComparison.OrdinalIgnoreCase)) is { } cloth)
         {
@@ -995,11 +997,26 @@ public sealed class SkeletalMeshTopologyCompilerService
             if (!cloth.Type.Equals("arrayproperty", StringComparison.OrdinalIgnoreCase) || count != materials.Length ||
                 cloth.Size != 4 + 4 * count)
                 Refuse("SMC037", "The mesh's cloth list does not follow its material list, so Arkive cannot add material slots to it.");
-            bytes.InsertRange(valueAt + 4 + 4 * count, new byte[appended.Length * 4]);
             Write(checked((int)cloth.RelativeOffset) + 16, cloth.Size + appended.Length * 4);
             Write(valueAt, count + appended.Length);
-            growth = appended.Length * 4;
+            inserts.Add((valueAt + 4 + 4 * count, new byte[appended.Length * 4]));
         }
+        if (appended.Length > 0 && recon.Properties.SingleOrDefault(property =>
+                property.Name.Equals("lodinfo", StringComparison.OrdinalIgnoreCase)) is { } lodInfo &&
+            ShadowCastingGrowth(bytes.ToArray(), lodInfo, catalog, materials.Length)
+                is { } shadows)
+        {
+            // Each LOD casts shadows per material slot; added slots cast them like the slot before them.
+            foreach (var (listCountAt, sizeAt, valueEnd, flag) in shadows)
+            {
+                Write(sizeAt, Read(sizeAt) + appended.Length);
+                Write(listCountAt, Read(listCountAt) + appended.Length);
+                inserts.Add((valueEnd, Enumerable.Repeat(flag, appended.Length).ToArray()));
+            }
+            Write(checked((int)lodInfo.RelativeOffset) + 16, lodInfo.Size + shadows.Count * appended.Length);
+        }
+        foreach (var (at, insert) in inserts.OrderByDescending(item => item.At)) bytes.InsertRange(at, insert);
+        var growth = inserts.Sum(item => item.Bytes.Length);
         var materialsRange = layout.Ranges.Single(range => range.Name == "Material references");
         var countAt = checked((int)materialsRange.RelativeOffset) + growth;
         if (Read(countAt) != materials.Length) Refuse("SMC038", "The material list is not where the layout says.");
@@ -1017,6 +1034,51 @@ public sealed class SkeletalMeshTopologyCompilerService
             layout.LostArkExtensionValues.Select((value, index) => value == recon.SerialOffset + layout.Lods[index].RelativeOffset).All(value => value))
             extensionValues = checked((int)extension.RelativeOffset) + growth + appended.Length * 4 + 8;
         return new PlannedPrefix(bytes.ToArray(), growth, materials.Concat(appended).ToArray(), extensionValues);
+    }
+
+    // The bEnableShadowCasting lists of a mesh's LODInfo array (one flag byte per material slot): where each list's count,
+    // its property size and its end are, and its last flag. Null when the LODInfo does not read as expected, in which case
+    // it is left as it is.
+    private static List<(int CountAt, int SizeAt, int ValueEnd, byte Flag)>? ShadowCastingGrowth(
+        byte[] bytes, SkeletalMeshPropertyEvidence lodInfo, AssetCatalog catalog, int materials)
+    {
+        if (!lodInfo.Type.Equals("arrayproperty", StringComparison.OrdinalIgnoreCase)) return null;
+        string Name(int at)
+        {
+            var index = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at));
+            return index >= 0 && index < catalog.Names.Count ? catalog.Names[index].Value : "";
+        }
+        var start = checked((int)lodInfo.ValueRelativeOffset);
+        var end = start + lodInfo.Size;
+        var lods = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(start));
+        var at = start + 4;
+        var lists = new List<(int, int, int, byte)>();
+        for (var lod = 0; lod < lods; lod++)
+        {
+            var found = false;
+            while (true)
+            {
+                if (at + 8 > end) return null;
+                if (Name(at).Equals("None", StringComparison.OrdinalIgnoreCase)) { at += 8; break; }
+                if (at + 24 > end) return null;
+                var type = Name(at + 8);
+                var size = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at + 16));
+                var valueAt = at + 24 + (type.Equals("structproperty", StringComparison.OrdinalIgnoreCase) ? 8
+                    : type.Equals("boolproperty", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
+                if (size < 0 || valueAt + size > end) return null;
+                if (Name(at).Equals("benableshadowcasting", StringComparison.OrdinalIgnoreCase) &&
+                    type.Equals("arrayproperty", StringComparison.OrdinalIgnoreCase))
+                {
+                    var count = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(valueAt));
+                    if (count != materials || size != 4 + count || found) return null;
+                    lists.Add((valueAt, at + 16, valueAt + size, count > 0 ? bytes[valueAt + size - 1] : (byte)1));
+                    found = true;
+                }
+                at = valueAt + size;
+            }
+            if (!found) return null;
+        }
+        return at == end && lists.Count == lods ? lists : null;
     }
 
     private static long AlignUp(long value, int alignment) => (value + alignment - 1) / alignment * alignment;

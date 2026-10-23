@@ -157,13 +157,20 @@ public sealed class OutfitSwapMesh
         }
 
         var (names, positions, parents) = ReadSkeleton(container);
+        // A piece with one picture layout carries Arkive's vertex numbers in TEXCOORD_1 (the number, then a fixed
+        // 0.375 or 0.625); its second layout is its first.
+        var uv0 = Vec2("TEXCOORD_0");
+        var uv1 = attributes["TEXCOORD_1"] is null ? uv0 : Vec2("TEXCOORD_1");
+        if (uv1 != uv0 && uv1.Length > 0 && uv1.All(uv => Math.Abs(uv.Y - 0.375f) < 1e-3f || Math.Abs(uv.Y - 0.625f) < 1e-3f) &&
+            uv1.All(uv => Math.Abs(uv.X - MathF.Round(uv.X)) < 1e-3f))
+            uv1 = uv0;
         return new OutfitSwapMesh
         {
             Positions = Vec3("POSITION"),
             Normals = attributes["NORMAL"] is null ? new Vector3[count] : Vec3("NORMAL"),
             Tangents = tangents,
-            Uv0 = Vec2("TEXCOORD_0"),
-            Uv1 = attributes["TEXCOORD_1"] is null ? Vec2("TEXCOORD_0") : Vec2("TEXCOORD_1"),
+            Uv0 = uv0,
+            Uv1 = uv1,
             Colours = colours,
             Joints = joints,
             Weights = weights,
