@@ -439,9 +439,12 @@ public sealed class ArkiveModApplyService
                 continue;
             }
 
+            // Planning only reads which package is installed, so it reuses hashes of files whose length and write time
+            // are unchanged; the restores and installs Apply then runs inspect every file again with full hashes.
             var active = project is null
                 ? null
-                : await _context.FindActiveDeploymentAsync(project, cancellationToken).ConfigureAwait(false);
+                : await _context.FindActiveDeploymentAsync(project, cancellationToken, reuseKnownHashes: true)
+                    .ConfigureAwait(false);
             var cleanPath = active is null ? packagePath : active.Value.Inspection.BackupPath;
             var cleanHash = active is null
                 ? await ArkiveModEditSnapshot.HashFileCachedAsync(packagePath, cancellationToken).ConfigureAwait(false)
