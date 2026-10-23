@@ -190,7 +190,9 @@ public sealed class SkeletalMeshTopologyCompilerService
             }
 
             var trailingOffset = checked((int)layout.ParsedEndRelativeOffset);
-            writer.Write(sourceBytes, trailingOffset, sourceBytes.Length - trailingOffset);
+            var trailing = TrailingWithMaterials(sourceBytes.AsSpan(trailingOffset), layout.MaterialReferenceCount,
+                materialPlan.Added.Count) ?? sourceBytes.AsSpan(trailingOffset).ToArray();
+            writer.Write(trailing);
             writer.Flush();
             var compiledBytes = compiledStream.ToArray();
             var compiledBoundsOffset = checked((int)boundsRange.RelativeOffset + prefix.PropertyGrowth);
@@ -223,7 +225,7 @@ public sealed class SkeletalMeshTopologyCompilerService
             for (var index = 0; index < plans.Count; index++)
                 lodEvidence.Add(VerifyDecodedLod(candidate, plans[index], decoded[index]));
 
-            var sourceTrailing = sourceBytes.AsSpan(trailingOffset);
+            var sourceTrailing = trailing.AsSpan();
             var compiledTrailingOffset = checked((int)compiledLayout.ParsedEndRelativeOffset);
             var compiledTrailing = compiledBytes.AsSpan(compiledTrailingOffset);
             var trailingPreserved = sourceTrailing.SequenceEqual(compiledTrailing);
@@ -1079,6 +1081,28 @@ public sealed class SkeletalMeshTopologyCompilerService
             if (!found) return null;
         }
         return at == end && lists.Count == lods ? lists : null;
+    }
+
+    /// <summary>
+    /// The bytes after the LODs: the bone name map, three empty lists, then one 4-byte entry per material slot. Added slots
+    /// get zero entries like the game's own (the open world misdraws a mesh whose list is shorter than its material list).
+    /// Null when the bytes do not read that way, in which case they are kept.
+    /// </summary>
+    public static byte[]? TrailingWithMaterials(ReadOnlySpan<byte> trailing, int materials, int added)
+    {
+        if (added == 0 || trailing.Length < 4) return null;
+        var names = BinaryPrimitives.ReadInt32LittleEndian(trailing);
+        if (names < 0 || names > (trailing.Length - 4) / 12) return null;
+        var at = 4 + names * 12;
+        if (at + 16 > trailing.Length || trailing.Slice(at, 12).IndexOfAnyExcept((byte)0) >= 0 ||
+            BinaryPrimitives.ReadInt32LittleEndian(trailing[(at + 12)..]) != materials || at + 16 + materials * 4 > trailing.Length)
+            return null;
+        var end = at + 16 + materials * 4;
+        var grown = new byte[trailing.Length + added * 4];
+        trailing[..end].CopyTo(grown);
+        trailing[end..].CopyTo(grown.AsSpan(end + added * 4));
+        BinaryPrimitives.WriteInt32LittleEndian(grown.AsSpan(at + 12), materials + added);
+        return grown;
     }
 
     private static long AlignUp(long value, int alignment) => (value + alignment - 1) / alignment * alignment;
