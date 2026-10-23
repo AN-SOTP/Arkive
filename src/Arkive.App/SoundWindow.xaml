@@ -50,6 +50,9 @@
                 <Button x:Name="ExportButton" Content="Save as WAV…" Click="ExportButton_Click"
                         ToolTip="Save the selected clip, as the game plays it now, to a .wav file." />
             </WrapPanel>
+            <CheckBox x:Name="FitBankCheckBox" Content="Fit sound bank to new length" IsChecked="True" Margin="0,10,0,0"
+                      Click="FitBankCheckBox_Click"
+                      ToolTip="Music only. The game's sound bank is changed to play your file at its own length and loop it from its end, so a longer song is not cut off and a shorter one loops without silence. Restore puts the game's timing back." />
             <TextBlock x:Name="NoteText" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap" />
             <TextBlock x:Name="StatusText" Margin="0,6,0,0" TextWrapping="Wrap" />
         </StackPanel>
