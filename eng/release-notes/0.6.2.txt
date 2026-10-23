@@ -1,0 +1,8 @@
+Importing asks first, and Outfit Swap fits wrists and upscaled bodies better.
+
+- Import: Arkive asks before importing a .arkive file, and No cancels. Before, the question came after the mod was already imported. New mods are turned on, and nothing reaches the game until you choose Apply changes. Importing no longer holds the window for half a minute on a large library.
+- Outfit Swap: the wrist closes where the new body's own hands meet the outfit's sleeve, and bends with the body's own hand weights and shading.
+- Outfit Swap: with a Simple Upscale body shape, cloth stays outside the reshaped skin.
+- Outfit Swap with the outfit's own materials: meshes that gain material slots also get matching per-material entries, which should fix wrong leg or mask materials in the open world (not yet confirmed in game).
+
+Known issues: Outfit Swap is not 100% accurate, and there will be issues, particularly with Mage outfits on other bodies. Swaps onto Slayer Sympathetic Eternity can show wrong leg materials in the open world when combined with another swap (for example Unity on Cold Fury).
