@@ -369,7 +369,7 @@ public partial class MainWindow : Window
         "Turn pack off" => "Turning the pack off…",
         "Mod priority" => "Changing the priority…",
         "Rename mod" => "Renaming the mod…",
-        "Remove mod" => "Removing the mod…",
+        "Delete mod" => "Deleting the mod…",
         _ => $"{operation}…",
     };
 
@@ -511,10 +511,11 @@ public partial class MainWindow : Window
         ModLibraryRowEnableItem.IsEnabled = ModLibraryRowPriorityUpItem.IsEnabled =
             ModLibraryRowPriorityDownItem.IsEnabled = enabled;
         ModLibraryRowRenameItem.IsEnabled = ModLibraryRowAuthorItem.IsEnabled = enabled && !row!.Status.FileMissing;
+        ModLibraryRowDeleteItem.IsEnabled = enabled;
         // Priority, name and author belong to one mod; with several chosen only what applies to all of them shows.
         var single = several ? Visibility.Collapsed : Visibility.Visible;
         ModLibraryRowPriorityUpItem.Visibility = ModLibraryRowPriorityDownItem.Visibility =
-            ModLibraryRowRenameItem.Visibility = ModLibraryRowAuthorItem.Visibility = single;
+            ModLibraryRowRenameItem.Visibility = ModLibraryRowAuthorItem.Visibility = ModLibraryRowDeleteItem.Visibility = single;
         ModLibraryRowUpdateItem.Header = several ? $"Update {rows.Length:N0} mods for this game version" : "Update for this game version";
         ModLibraryRowUpdateItem.IsEnabled = enabled && rows.All(item => !item.Status.FileMissing);
         FillAddToPackMenu(several ? null : row);
@@ -885,25 +886,28 @@ public partial class MainWindow : Window
         if (row.HasActiveAssets)
         {
             MessageBox.Show(this,
-                $"{row.DisplayName} is in game. Disable it and choose Apply changes first, so Arkive can rebuild or restore the packages it replaces.",
-                "Remove mod", MessageBoxButton.OK, MessageBoxImage.Information);
+                row.Enabled
+                    ? $"{row.DisplayName} is in game. Disable it and choose Apply changes first, so Arkive can rebuild or restore the packages it replaces."
+                    : $"{row.DisplayName} is disabled but still in game, because Apply changes has not run since it was disabled. " +
+                      "Choose Apply changes first, so Arkive can rebuild or restore the packages it replaces.",
+                "Delete mod", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (MessageBox.Show(this,
-                $"Remove '{row.DisplayName}' from Arkive?\n\n" +
+                $"Delete '{row.DisplayName}'?\n\n" +
                 $"This deletes {row.FilePath}. Use Share / export first if you want to keep a copy.\n\n" +
                 (row.Entry.Origin == ArkiveModOrigin.Imported
                     ? "Its local working copies were created from the .arkive file and are deleted too."
                     : "Its local working copies stay in their package projects as unchecked drafts."),
-                "Remove mod", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) !=
+                "Delete mod", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) !=
             MessageBoxResult.Yes) return;
-        await RunModLibraryOperationAsync("Remove mod", async () =>
+        await RunModLibraryOperationAsync("Delete mod", async () =>
         {
             await _arkiveModAuthoring.RemoveModAsync(row.Entry.ModId);
             TryChangePacks(() => ModPacks.RemoveMod(row.Entry.ModId));
-            Log($"Mod removed: mod={row.Entry.ModId}, name={row.DisplayName}, origin={row.Entry.Origin}, file={row.FilePath}.");
-            await SynchronizeModSelectionsAsync("mod removed");
-            return $"Removed {row.DisplayName}.";
+            Log($"Mod deleted: mod={row.Entry.ModId}, name={row.DisplayName}, origin={row.Entry.Origin}, file={row.FilePath}.");
+            await SynchronizeModSelectionsAsync("mod deleted");
+            return $"Deleted {row.DisplayName}.";
         });
     }
 

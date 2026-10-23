@@ -682,6 +682,21 @@ internal static class ArkiveModSmokeTests
                Sha(packagePath) != originalHash, "the old Arkive did not install the mod");
         var installedHash = Sha(packagePath);
 
+        // Disabled but not applied since: the mod list says it is still in game, which is why it cannot be deleted yet.
+        old.Library.SetEnabledAsync(oldMod.ModId, false).GetAwaiter().GetResult();
+        var oldContext = Context(old, gameDirectory);
+        var projects = oldContext.Packages.LoadAsync().GetAwaiter().GetResult();
+        var active = new Dictionary<string, GuidedTexturePackageRevision?>(StringComparer.Ordinal)
+        {
+            [ArkiveModFileService.PhysicalPackageKey(Path.GetFileName(packagePath))] = oldContext.FindActiveDeploymentAsync(
+                ArkiveModApplyService.FindPackageProject(Path.GetFileName(packagePath), gameDirectory, projects)!)
+                .GetAwaiter().GetResult()?.Revision,
+        };
+        var disabled = ArkiveModApplyService.DescribeAsync(old.Library, old.Library.LoadAsync().GetAwaiter().GetResult(),
+            ArkiveModEditSnapshot.LoadAsync(old.Edits).GetAwaiter().GetResult(), active).GetAwaiter().GetResult().Single();
+        Assert(disabled.StillInGame && disabled.State == "Disabled · still in game until Apply",
+            "a disabled mod still in the game files showed as plain Disabled: " + disabled.State);
+
         // A new data folder gets only the .arkive file and sees a changed game file it never touched.
         var fresh = CreateEnvironment(Path.Combine(root, "new-data"));
         var mod = fresh.Library.ImportAsync(arkive).GetAwaiter().GetResult().Entry;
