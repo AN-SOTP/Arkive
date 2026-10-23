@@ -360,7 +360,7 @@ public sealed class SkeletalMeshStagedUpkRefusalException : NotSupportedExceptio
 /// the export are recompressed; all other stored chunks are copied byte-for-byte.
 /// The result is for inspection only and is never written into the game directory.
 /// </summary>
-public sealed class SkeletalMeshStagedUpkService
+public sealed partial class SkeletalMeshStagedUpkService
 {
     public const int CurrentSchemaVersion = 1;
     public const string ManifestFileName = "arkive-skeletalmesh-staged-upk.json";
@@ -818,6 +818,8 @@ public sealed class SkeletalMeshStagedUpkService
         if (appendedOffset > int.MaxValue || compiled.LongLength > int.MaxValue ||
             outputLogicalBytes > int.MaxValue)
             Refuse("SMV023", "The append-and-retarget layout exceeds UE3 Int32 serial storage.");
+        if (compilation.PlannedSerialOffset is { } planned && planned != appendedOffset)
+            Refuse("SMV034", "The compiled mesh's LOD offsets were written for another place in the package.");
 
         var desiredLogical = new byte[checked((int)outputLogicalBytes)];
         sourceLogical.CopyTo(desiredLogical, 0);

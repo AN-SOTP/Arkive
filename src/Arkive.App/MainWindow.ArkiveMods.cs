@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Arkive.Core.GameData;
 using Arkive.Core.Mods;
+using Arkive.Core.Outfits;
 using Microsoft.Win32;
 
 namespace Arkive.App;
@@ -107,10 +108,13 @@ public partial class MainWindow : Window
             }
             Lap("game files");
             var installedTables = _arkiveModContext.GameDataFor(library)?.Archive.Current();
+            var installedLooks = library.Mods.Any(mod => mod.Manifest.Looks is not null)
+                ? _arkiveModContext.LooksFor(library)?.Archive.Current()
+                : null;
             var statuses = await ArkiveModApplyService.DescribeAsync(
                 _arkiveModLibrary, library, snapshot, ActiveRevisionsByPhysicalName(),
                 outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray(),
-                installedGameData: installedTables);
+                installedGameData: installedTables, installedLooks: installedLooks);
             Lap("status"); 
             var previous = selectModId ?? (ModLibraryGrid.SelectedItem as ModLibraryRow)?.Entry.ModId;
             // Mods chosen together stay chosen when the list is rebuilt after acting on them.
@@ -984,10 +988,38 @@ public partial class MainWindow : Window
     {
         var tables = _arkiveModContext.GameDataFor(_arkiveModLibraryManifest);
         var tableCells = tables is null ? 0 : await Task.Run(() => tables.Archive.Current().Edits.Count);
-        if (tableCells == 0 || _guidedPackageRows.Any(HasActiveGuidedDeployment))
+        var looks = _arkiveModContext.LooksFor(_arkiveModLibraryManifest);
+        var lookSlots = looks is null ? 0 : await Task.Run(() => looks.Archive.Current().Count);
+        if (tableCells == 0 && lookSlots == 0 || _guidedPackageRows.Any(HasActiveGuidedDeployment))
             await RunGuidedQuickDeploymentAsync(restoreAll: true);
+        if (lookSlots > 0) await RestoreItemLooksAsync(looks!, lookSlots);
         if (tableCells > 0) await RestoreGameTablesAsync(tables!, tableCells);
         await RefreshArkiveModsAsync("restore all requested");
+    }
+
+    // Takes the outfit mods' item look changes out of data4.lpk, so the game's own outfits get their own materials again.
+    private async Task RestoreItemLooksAsync(OutfitLookModService looks, int slots)
+    {
+        if (_guidedTextureModInProgress || _modSetBusy) return;
+        _guidedTextureModInProgress = true;
+        UpdateGuidedTextureModActionState();
+        try
+        {
+            using var busy = ShowBusy("Restoring the game's item looks…", "Arkive is putting the game's own data4.lpk back. Please wait until it finishes.");
+            await Task.Run(() => looks.RestoreAsync());
+            StatusText.Text = "The game's own item looks are back in data4.lpk.";
+            Log($"Item looks restored: {slots} slot change(s) removed from {looks.Archive.ArchivePath}.");
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            Log($"Restoring the item looks failed: {exception}");
+            MessageBox.Show(this, exception.Message, "Restore item looks", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _guidedTextureModInProgress = false;
+            UpdateGuidedTextureModActionState();
+        }
     }
 
     // Takes the Game Data mods' cells out of data2.lpk; the Language tab's choice stays.

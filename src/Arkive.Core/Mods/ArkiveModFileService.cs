@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Arkive.Core.Assets;
 using Arkive.Core.GameData;
+using Arkive.Core.Outfits;
 
 namespace Arkive.Core.Mods;
 
@@ -142,8 +143,8 @@ public static class ArkiveModFileService
         var finalManifest = manifest with
         {
             Format = ArkiveModFileFormat.FormatId,
-            // Older Arkive versions read version 1, so only mods that need version 2 are written as it.
-            FormatVersion = manifest.GameData is null ? 1 : ArkiveModFileFormat.GameDataFormatVersion,
+            // Older Arkive versions read version 1, so only mods that need a later version are written as it.
+            FormatVersion = ArkiveModFileFormat.VersionFor(manifest),
             Assets = packedAssets,
         };
         ValidateManifest(finalManifest);
@@ -211,7 +212,7 @@ public static class ArkiveModFileService
         var fullPath = Path.GetFullPath(path);
         var finalManifest = manifest with
         {
-            FormatVersion = manifest.GameData is null ? 1 : ArkiveModFileFormat.GameDataFormatVersion,
+            FormatVersion = ArkiveModFileFormat.VersionFor(manifest),
         };
         ValidateManifest(finalManifest);
         var temporary = Path.Combine(
@@ -333,6 +334,28 @@ public static class ArkiveModFileService
         }
     }
 
+    public const int MaximumLookEdits = 4096;
+
+    private static void ValidateLooks(ArkiveModLooks looks)
+    {
+        if (looks.Edits is null || looks.Edits.Count is 0 or > MaximumLookEdits)
+            Refuse("ARK047", $"Item look changes must list between 1 and {MaximumLookEdits:N0} slots.");
+        static bool Material(string? text, bool mayBeEmpty) => text is not null && text.Length <= 1000 &&
+            (text.Length == 0 ? mayBeEmpty : text.StartsWith("Material", StringComparison.OrdinalIgnoreCase) && text.All(c => c is >= ' ' and <= '~'));
+        var slots = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var edit in looks.Edits)
+        {
+            if (edit is null || edit.Entry is not { Length: <= 400 } entry || !entry.StartsWith(OutfitLooks.Folder, StringComparison.OrdinalIgnoreCase) ||
+                entry.Contains("..", StringComparison.Ordinal) || entry.Any(c => c is < ' ' or > '~' or '\\') || edit.Slot is < 0 or > 63)
+                Refuse("ARK047", "An item look change names an invalid look or slot.");
+            if (!Material(edit.Material, false) || !Material(edit.DyeMaterial, false) || (edit.OriginalMaterial is null) != (edit.OriginalDyeMaterial is null) ||
+                edit.OriginalMaterial is not null && (!Material(edit.OriginalMaterial, true) || !Material(edit.OriginalDyeMaterial, true)))
+                Refuse("ARK047", $"An item look change for slot {edit.Slot} names an invalid material.");
+            if (!slots.Add(edit.Key))
+                Refuse("ARK047", $"Item look slot {edit.Slot} of {edit.Entry} is changed twice.");
+        }
+    }
+
     public static string ComputeContentSha256(ArkiveModFileAsset asset)
     {
         ArgumentNullException.ThrowIfNull(asset);
@@ -420,6 +443,14 @@ public static class ArkiveModFileService
             if (manifest.FormatVersion < ArkiveModFileFormat.GameDataFormatVersion)
                 Refuse("ARK046", $"Game table changes need format version {ArkiveModFileFormat.GameDataFormatVersion}.");
             ValidateGameData(manifest.GameData);
+        }
+        if (manifest.Looks is not null)
+        {
+            if (manifest.FormatVersion < ArkiveModFileFormat.LooksFormatVersion)
+                Refuse("ARK047", $"Item look changes need format version {ArkiveModFileFormat.LooksFormatVersion}.");
+            if (manifest.Assets.Count == 0)
+                Refuse("ARK047", "Item look changes go with the outfit meshes a mod changes; this mod changes none.");
+            ValidateLooks(manifest.Looks);
         }
 
         var assetIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

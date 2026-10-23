@@ -121,7 +121,11 @@ public sealed record ModExternalValidationResult(
     bool NativeLoadPassed,
     bool ExpectedObjectFound,
     IReadOnlyList<string> Diagnostics,
-    TimeSpan Duration);
+    TimeSpan Duration)
+{
+    /// <summary>The files the validator exported for the object (PACKAGE/Class/name.ext), when it exports any.</summary>
+    public IReadOnlyList<string> ExportedFiles { get; init; } = [];
+}
 
 public interface IModPackageExternalValidator
 {
@@ -242,7 +246,10 @@ public sealed class UmodelModPackageExternalValidator : IModPackageExternalValid
                     .Distinct(StringComparer.Ordinal)
                     .Take(100)
                     .ToArray(),
-                watch.Elapsed);
+                watch.Elapsed)
+            {
+                ExportedFiles = native.OutputFiles.Select(path => Path.GetRelativePath(validationDirectory, path)).ToArray(),
+            };
         }
         finally
         {

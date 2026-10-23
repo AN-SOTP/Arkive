@@ -44,6 +44,9 @@ public partial class MainWindow : Window
                     .Select(group => $"{group.Count():N0} {KindLabel(group.Key, group.Count())}");
                 if (Entry.Manifest.GameData is { } data)
                     counts = counts.Append($"{data.Edits.Count:N0} table {(data.Edits.Count == 1 ? "cell" : "cells")}");
+                if (Entry.Manifest.Looks is { } looks &&
+                    looks.Edits.Select(edit => edit.Entry).Distinct(StringComparer.OrdinalIgnoreCase).Count() is var lookCount)
+                    counts = counts.Append($"{lookCount:N0} item {(lookCount == 1 ? "look" : "looks")}");
                 return string.Join(", ", counts);
             }
         }
@@ -52,7 +55,8 @@ public partial class MainWindow : Window
             .Select(asset => asset.Target.PackageAlias)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(alias => alias, StringComparer.OrdinalIgnoreCase)
-            .Concat(Entry.Manifest.GameData is null ? [] : ["Game tables (data2.lpk)"]));
+            .Concat(Entry.Manifest.GameData is null ? [] : ["Game tables (data2.lpk)"])
+            .Concat(Entry.Manifest.Looks is null ? [] : ["Item looks (data4.lpk)"]));
 
         public bool AuthoringPending { get; init; }
         public bool NeedsGameUpdate { get; init; }

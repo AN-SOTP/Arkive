@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Arkive.Core.GameData;
 using Arkive.Core.Materials;
+using Arkive.Core.Outfits;
 using Arkive.Core.Particles;
 using Arkive.Core.Textures;
 
@@ -10,9 +11,14 @@ public static class ArkiveModFileFormat
 {
     public const string Extension = ".arkive";
     public const string FormatId = "arkive.mod";
-    public const int CurrentFormatVersion = 2;
-    // Version 2 added game table edits (GameData); mods without them are still written as version 1.
+    public const int CurrentFormatVersion = 3;
+    // Version 2 added game table edits (GameData) and version 3 item look edits (Looks); mods without them are still
+    // written as version 1, so older Arkive versions keep reading them.
     public const int GameDataFormatVersion = 2;
+    public const int LooksFormatVersion = 3;
+
+    public static int VersionFor(ArkiveModFileManifest manifest) =>
+        manifest.Looks is not null ? LooksFormatVersion : manifest.GameData is not null ? GameDataFormatVersion : 1;
     public const string ManifestEntryName = "arkive.json";
     public const string AssetDirectory = "assets";
     public const string ImageRole = "image";
@@ -102,6 +108,12 @@ public sealed record ArkiveModParticleData(ParticleEffectRecipe Recipe, IReadOnl
 /// <summary>A mod's changes to the game's tables (see <see cref="GameDataArchive"/>), each one table cell.</summary>
 public sealed record ArkiveModGameData(IReadOnlyList<GameDataCellEdit> Edits);
 
+/// <summary>
+/// A mod's changes to the game's item looks (see <see cref="OutfitLooks"/>), each one material slot: the materials the
+/// game puts on the outfit meshes the mod changes.
+/// </summary>
+public sealed record ArkiveModLooks(IReadOnlyList<OutfitLookEdit> Edits);
+
 public sealed record ArkiveModFileManifest(
     string Format,
     int FormatVersion,
@@ -121,6 +133,10 @@ public sealed record ArkiveModFileManifest(
     /// <summary>Changes to the game's tables in data2.lpk, or null for a mod that only changes packages.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ArkiveModGameData? GameData { get; init; }
+
+    /// <summary>Changes to the game's item looks in data4.lpk, or null for a mod that changes none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ArkiveModLooks? Looks { get; init; }
 
     [JsonIgnore]
     public IReadOnlyList<string> PhysicalPackageNames => Assets

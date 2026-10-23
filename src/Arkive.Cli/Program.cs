@@ -146,6 +146,23 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--out"),
                 ReadTextOption(arguments, "--cache"),
                 ReadTextOption(arguments, "--bakes"),
+                ReadTextOption(arguments, "--target-bakes"),
+                ReadTextOption(arguments, "--lit-bakes"),
+                ReadTextOption(arguments, "--surface-bakes"),
+                ReadTextOption(arguments, "--target-surface-bakes"),
+                ReadTextOption(arguments, "--clean-backups"),
+                ReadTextOption(arguments, "--upscale"),
+                json),
+            "outfit-swap-mod" => OutfitSwapMod(
+                target,
+                ReadTextOption(arguments, "--index"),
+                ReadTextOption(arguments, "--wear"),
+                ReadTextOption(arguments, "--replace"),
+                ReadTextOption(arguments, "--root"),
+                ReadTextOption(arguments, "--name"),
+                ReadTextOption(arguments, "--cache"),
+                ReadTextOption(arguments, "--game"),
+                ReadTextOption(arguments, "--upscale"),
                 json),
             "body-proportions" => BodyProportions(
                 target,
@@ -683,7 +700,7 @@ static int ModelViewerScene(
     var result = service.PrepareAsync(new ModelViewerRequest(
         package,
         string.IsNullOrWhiteSpace(packageAlias) ? Path.GetFileNameWithoutExtension(package) : packageAlias.Trim(),
-        Path.GetDirectoryName(package),
+        Environment.GetEnvironmentVariable("ARKIVE_PACKAGES_ROOT") ?? Path.GetDirectoryName(package),
         asset.ExportIndex, asset.SerialOffset, asset.SerialSize, asset.ClassName, asset.ObjectName), edits)
         .GetAwaiter().GetResult();
     if (json) WriteJson(result.Scene);
@@ -1068,10 +1085,13 @@ static int SkeletalMeshExportEditable(string reconPath, string? outputPath, bool
 /// <summary>
 /// Swaps one player outfit onto another body's outfit, headless: writes each replaced piece's new GLB, its repainted
 /// pictures and a viewer edits file (for model-viewer-scene --edits), and prints how well it fitted. Colours come from
-/// baked PNGs in --bakes (piece number/slot.png, from the viewer's bake) when given, otherwise from the stored pictures.
+/// baked PNGs in --bakes (piece number/slot.png, from the viewer's bake) when given, otherwise from the stored pictures;
+/// --lit-bakes and --surface-bakes hold the donor's lit and roughness/metalness bakes; --target-bakes and
+/// --target-surface-bakes the same of an earlier run's result (the replaced pieces with that run's pictures), from which
+/// the replaced outfit's shaders are learned and the pictures painted again to match the donor.
 /// </summary>
 static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, string? replace, string? outPath, string? cachePath,
-    string? bakesPath, bool json)
+    string? bakesPath, string? targetBakesPath, string? litBakesPath, string? surfaceBakesPath, string? targetSurfaceBakesPath, string? cleanBackupsPath, string? upscalePath, bool json)
 {
     if (string.IsNullOrWhiteSpace(indexCache) || string.IsNullOrWhiteSpace(wear) || string.IsNullOrWhiteSpace(replace) ||
         string.IsNullOrWhiteSpace(outPath))
@@ -1087,7 +1107,10 @@ static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, str
     var library = new OutfitSwapPackageLibrary(new PackageIndexStore(Path.GetFullPath(indexCache)), root, reader, provider,
         new SkeletalMeshReconnaissanceService(reader, provider, bridge),
         new SkeletalMeshReconnaissanceWorkspaceStore(Path.Combine(cache, "reconnaissance")),
-        new SkeletalMeshEditableExportService(reader, provider), Path.Combine(cache, "pieces"));
+        new SkeletalMeshEditableExportService(reader, provider), Path.Combine(cache, "pieces"),
+        // With mods applied, pieces are read from Arkive's clean backups (any copy of the same file name in the folder).
+        cleanBackupsPath is null ? null : (package, _) => Task.FromResult(Directory.EnumerateFiles(Path.GetFullPath(cleanBackupsPath),
+            Path.GetFileName(package), SearchOption.AllDirectories).FirstOrDefault() ?? package));
     var scenes = new ModelViewerSceneService(bridge, new ModelViewerCache(Path.Combine(cache, "model-viewer")), protectionProvider: provider);
     var token = CancellationToken.None;
 
@@ -1107,25 +1130,56 @@ static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, str
     var targets = replace.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Select(name => Load(name).GetAwaiter().GetResult()).ToArray();
     var service = new OutfitSwapService(library, Path.Combine(cache, "outfit-swap"));
+    // A replaced piece without skin of its own gets the body's skin material.
+    var targetBody = targets.Select(item => OutfitSwapBodies.Detect(item.Piece.Mesh, item.Piece.ObjectName)).FirstOrDefault(profile => profile is not null);
+    var skin = OutfitSwapMaterialSources.ReadAsync(library, donors.Select(item => item.Piece).ToArray(),
+        targetBody is null ? null : OutfitSwapBodies.For(targetBody), token).GetAwaiter().GetResult() with { KeepOwn = false };
     var fit = service.FitAsync(donors.Select(item => item.Piece).ToArray(), targets.Select(item => item.Piece).ToArray(),
-        "cli", progress, token).GetAwaiter().GetResult();
-    var baked = donors.Select((_, index) =>
+        "cli", progress, token, skin).GetAwaiter().GetResult();
+    IReadOnlyDictionary<int, string>[] Bakes(string? root, int count) => Enumerable.Range(0, count).Select(index =>
     {
-        var folder = bakesPath is null ? null : Path.Combine(Path.GetFullPath(bakesPath), index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var folder = root is null ? null : Path.Combine(Path.GetFullPath(root), index.ToString(System.Globalization.CultureInfo.InvariantCulture));
         return (IReadOnlyDictionary<int, string>)(folder is null || !Directory.Exists(folder)
             ? new Dictionary<int, string>()
             : Directory.EnumerateFiles(folder, "*.png").ToDictionary(
                 path => int.Parse(new string(Path.GetFileNameWithoutExtension(path).TakeWhile(char.IsDigit).ToArray()), System.Globalization.CultureInfo.InvariantCulture),
                 path => path));
     }).ToArray();
+    var baked = Bakes(bakesPath, donors.Length);
+    var targetBaked = targetBakesPath is null ? null : Bakes(targetBakesPath, targets.Length);
+    var litBaked = litBakesPath is null ? null : Bakes(litBakesPath, donors.Length);
+    var surfaceBaked = surfaceBakesPath is null ? null : Bakes(surfaceBakesPath, donors.Length);
+    var targetSurfaceBaked = targetSurfaceBakesPath is null ? null : Bakes(targetSurfaceBakesPath, targets.Length);
+    // With bakes of an earlier run's result (lit, and roughness/metalness), learn how the replaced outfit's shaders draw
+    // the pictures and paint again to match the donor's lit colours and surfaces.
+    var upscale = upscalePath is null ? null
+        : ArkiveModFileService.ReadAsync(Path.GetFullPath(upscalePath), verifyFiles: false, token).GetAwaiter().GetResult().Manifest is var manifest
+            ? BodyProportionModTags.Read(manifest.Tags, manifest.Description)
+              ?? throw new ArgumentException($"{upscalePath} is not a Simple upscale mod.")
+            : null;
+    var picturesFolder = Path.Combine(output, "pictures");
+    OutfitSwapCalibration? calibration = null;
+    if ((targetBaked is not null || targetSurfaceBaked is not null) && Directory.Exists(picturesFolder))
+    {
+        var painted = Directory.EnumerateFiles(picturesFolder, "*.png").ToDictionary(path => Path.GetFileNameWithoutExtension(path), path => path, StringComparer.OrdinalIgnoreCase);
+        var wanted = litBaked is null ? null : OutfitSwapPictures.PaintAsync(fit.Plan, donors.Select(item => item.Piece).ToArray(), donors.Select(item => item.Scene).ToArray(),
+            litBaked, targets.Select(item => item.Scene).ToArray(), Path.Combine(output, "wanted"), token).GetAwaiter().GetResult().Pictures;
+        calibration = OutfitSwapCalibration.LearnAsync(wanted, painted, targets.Select(item => item.Scene).ToArray(), targetBaked, targetSurfaceBaked, token)
+            .GetAwaiter().GetResult();
+        foreach (var (name, curve) in calibration.Colour) Console.Error.WriteLine($"colour gain {name}: {curve.Gain:N2}");
+        foreach (var name in calibration.Roughness.Keys) Console.Error.WriteLine($"roughness curve {name}");
+    }
     var pictures = OutfitSwapPictures.PaintAsync(fit.Plan, donors.Select(item => item.Piece).ToArray(), donors.Select(item => item.Scene).ToArray(),
-        baked, targets.Select(item => item.Scene).ToArray(), Path.Combine(output, "pictures"), token).GetAwaiter().GetResult();
+        baked, targets.Select(item => item.Scene).ToArray(), picturesFolder, token, targetBaked, calibration, surfaceBaked).GetAwaiter().GetResult();
     var results = new List<object>();
     for (var i = 0; i < targets.Length; i++)
     {
         var piece = fit.Plan.Pieces[i];
         var glbPath = Path.Combine(output, piece.ObjectName + ".glb");
-        File.WriteAllBytes(glbPath, OutfitSwapMesh.WriteInto(File.ReadAllBytes(targets[i].Glb), piece.Mesh));
+        // Shaped like the player's Simple upscale mod (the swap replaces the pieces that mod reshapes).
+        var working = File.ReadAllBytes(targets[i].Glb);
+        File.WriteAllBytes(glbPath, OutfitSwapMesh.WriteInto(working,
+            piece.Hidden ? piece.Mesh : OutfitSwapModWriter.Reshape(working, piece.Mesh, upscale, piece.ObjectName)));
         var textureNames = targets[i].Scene.Scene.Textures.Select(texture => texture.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var materialNames = targets[i].Scene.Scene.Materials.Select(material => material.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var edits = new ModelViewerEdits("Outfit swap", glbPath,
@@ -1155,6 +1209,123 @@ static int OutfitSwap(string packagesRoot, string? indexCache, string? wear, str
         foreach (var note in report.Notes) Console.WriteLine($"  Note: {note}");
         foreach (var piece in fit.Plan.Pieces) Console.WriteLine($"  {piece.ObjectName}: {(piece.Hidden ? "hidden" : $"{piece.Mesh.VertexCount:N0} vertices")}");
         Console.WriteLine($"  Output: {output}");
+    }
+    return 0;
+}
+
+/// <summary>
+/// Swaps one player outfit onto another body's outfit with the outfit's own materials (the replaced pieces draw each
+/// donor material from its own package, nothing is repainted) and saves it as a mod in an Arkive project root, headless.
+/// </summary>
+/// <param name="gamePath">The Packages folder the mod is made for (a scratch copy for tests); the library folder by default.</param>
+static int OutfitSwapMod(string packagesRoot, string? indexCache, string? wear, string? replace, string? projectRoot, string? name,
+    string? cachePath, string? gamePath, string? upscalePath, bool json)
+{
+    if (string.IsNullOrWhiteSpace(indexCache) || string.IsNullOrWhiteSpace(wear) || string.IsNullOrWhiteSpace(replace) ||
+        string.IsNullOrWhiteSpace(projectRoot) || string.IsNullOrWhiteSpace(name))
+        throw new ArgumentException("outfit-swap-mod requires --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --root DIR --name TEXT.");
+    var root = Path.GetFullPath(packagesRoot);
+    var projectDirectory = Path.GetFullPath(projectRoot);
+    Directory.CreateDirectory(projectDirectory);
+    var cache = Path.GetFullPath(cachePath ?? Path.Combine(projectDirectory, "cache"));
+    var environment = CreateModEnvironment(projectDirectory);
+    var game = Path.GetFullPath(gamePath ?? root);
+    environment.Context.Library.SetGamePackagesDirectoryAsync(game).GetAwaiter().GetResult();
+    var provider = ChunkProtectionProviderFactory.CreateWesternGlobal();
+    var reader = new UpkPackageReader();
+    var catalogReader = new AssetCatalogReader(reader, provider);
+    var executable = UmodelLocator.FindExecutable() ?? throw new InvalidOperationException("Outfit swaps need the Lost Ark UModel backend.");
+    var bridge = new UmodelBridge(executable);
+    var token = CancellationToken.None;
+    var library = new OutfitSwapPackageLibrary(new PackageIndexStore(Path.GetFullPath(indexCache)), root, reader, provider,
+        new SkeletalMeshReconnaissanceService(reader, provider, bridge),
+        new SkeletalMeshReconnaissanceWorkspaceStore(Path.Combine(cache, "reconnaissance")),
+        new SkeletalMeshEditableExportService(reader, provider), Path.Combine(cache, "pieces"),
+        // Pieces whose package the game folder holds are read from there (the clean copies a test folder carries).
+        (path, cancellationToken) => File.Exists(Path.Combine(game, Path.GetFileName(path)))
+            ? Task.FromResult(Path.Combine(game, Path.GetFileName(path)))
+            : environment.Apply.ResolveCleanPackageAsync(path, cancellationToken));
+
+    OutfitSwapPiece Load(string piece)
+    {
+        var glb = library.EditableGlbAsync(piece, token).GetAwaiter().GetResult() ??
+                  throw new InvalidOperationException($"Arkive cannot rebuild {piece}.");
+        return new OutfitSwapPiece(piece, OutfitSwapMesh.Read(File.ReadAllBytes(glb)), []);
+    }
+    var progress = new Progress<string>(text => { if (!json) Console.WriteLine($"  {text}"); });
+    var donors = wear.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Load).ToArray();
+    var targets = replace.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Load).ToArray();
+    var targetBody = targets.Select(piece => OutfitSwapBodies.Detect(piece.Mesh, piece.ObjectName)).FirstOrDefault(profile => profile is not null);
+    var sources = OutfitSwapMaterialSources.ReadAsync(library, donors,
+        targetBody is null ? null : OutfitSwapBodies.For(targetBody), token).GetAwaiter().GetResult();
+    var service = new OutfitSwapService(library, Path.Combine(cache, "outfit-swap"));
+    var fit = service.FitAsync(donors, targets, "cli", progress, token, sources).GetAwaiter().GetResult();
+    // Shaped like the player's Simple upscale mod, which the swap takes the place of for these pieces.
+    var upscale = upscalePath is null ? null
+        : ArkiveModFileService.ReadAsync(Path.GetFullPath(upscalePath), verifyFiles: false, token).GetAwaiter().GetResult().Manifest is var upscaleManifest
+            ? BodyProportionModTags.Read(upscaleManifest.Tags, upscaleManifest.Description)
+              ?? throw new ArgumentException($"{upscalePath} is not a Simple upscale mod.")
+            : null;
+
+    var report = fit.Report;
+    var description = $"Outfit swap: {string.Join(", ", donors.Select(piece => piece.ObjectName))} ({report.From.DisplayName}) worn in place of " +
+                      $"{string.Join(", ", targets.Select(piece => piece.ObjectName))} ({report.To.DisplayName}), with the outfit's own materials.";
+    var workspace = new ArkiveModAuthoringWorkspace(Path.Combine(environment.Context.Library.StateDirectory, "authoring"));
+    var draft = workspace.CreateAsync(new ArkiveModMetadata(name, "1.0.0", "", description,
+        Tags: ["outfit-swap", "outfit-swap:own-materials", $"outfit-swap:from={report.From.Id}", $"outfit-swap:to={report.To.Id}"]), token)
+        .GetAwaiter().GetResult();
+    var writer = new OutfitSwapModWriter(environment.Context.Edits, provider, Path.Combine(projectDirectory, "staging", "material-candidates"));
+    for (var i = 0; i < targets.Length; i++)
+    {
+        var piece = fit.Plan.Pieces[i];
+        var source = library.LocateAsync(piece.ObjectName, token).GetAwaiter().GetResult()!;
+        var clean = environment.Apply.ResolveCleanPackageAsync(Path.Combine(game, Path.GetFileName(source.CleanPackagePath)), token)
+            .GetAwaiter().GetResult();
+        var catalogue = catalogReader.Read(clean);
+        var export = catalogue.Assets.First(asset => asset.ObjectName.Equals(piece.ObjectName, StringComparison.OrdinalIgnoreCase) &&
+                                                     asset.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase));
+        if (!json) Console.WriteLine($"  Adding {piece.ObjectName}");
+        var edit = environment.Materializer.CreateEditableAsync(new ArkiveModAssetSelection(clean, catalogue.Summary.FolderName,
+            export.ClassName, export.ObjectName, null, export.SerialOffset, export.ExportIndex), token, null).GetAwaiter().GetResult();
+        draft = workspace.SaveAsync(draft with { EditIds = draft.EditIds.Append(edit.EditId).ToArray() }, token).GetAwaiter().GetResult();
+        writer.WriteMeshAsync(edit, piece.Mesh, upscale, token).GetAwaiter().GetResult();
+    }
+    if (!json) Console.WriteLine("  Checking the meshes and saving the mod");
+    var saved = environment.Authoring.SaveDraftAsync(draft, token).GetAwaiter().GetResult();
+    // The game draws the pieces with their item looks' materials, so the looks name the outfit's own materials too.
+    var lookNotes = new List<string>();
+    var looks = environment.Context.LooksFor(environment.Context.Library.LoadAsync(token).GetAwaiter().GetResult()) is { } lookService
+        ? OutfitSwapLooks.Edits(lookService.Archive, donors.Select(piece => piece.ObjectName).ToArray(),
+            targets.Select((piece, index) => new OutfitSwapLookPiece(piece.ObjectName, piece.Mesh.Materials, fit.Plan.Pieces[index].Mesh)).ToArray(),
+            lookNotes, token)
+        : [];
+    if (looks.Count == 0) lookNotes.Add("No item look was changed (the game folder has no data4.lpk, or the swap needs none).");
+    saved = OutfitSwapLooks.AttachAsync(environment.Context.Library, saved.ModId, looks, token).GetAwaiter().GetResult();
+    var file = Path.Combine(environment.Context.Library.ModsDirectory, saved.FileName);
+    if (json)
+        WriteJson(new
+        {
+            mod = saved.ModId, file, from = report.From.Id, to = report.To.Id, report.ClippingPercent, report.Notes, looks, lookNotes,
+            pieces = fit.Plan.Pieces.Select(piece => new
+            {
+                piece = piece.ObjectName, piece.Hidden, materials = piece.Mesh.MaterialReferences.Values.Select(reference => new
+                {
+                    material = reference.Material.Path, reference.Replaces,
+                }),
+            }),
+        });
+    else
+    {
+        Console.WriteLine($"{report.From.DisplayName} -> {report.To.DisplayName}: clipping {report.ClippingPercent:N2}%");
+        foreach (var piece in fit.Plan.Pieces)
+            foreach (var reference in piece.Mesh.MaterialReferences.Values)
+                Console.WriteLine($"  {piece.ObjectName}: {reference.Material.Path}" + (reference.Replaces is null ? " (added slot)" : $" in place of {reference.Replaces}"));
+        foreach (var edit in looks)
+            Console.WriteLine($"  Look {Path.GetFileNameWithoutExtension(edit.Entry.Split('/')[^1])} slot {edit.Slot}: " +
+                              $"{OutfitLooks.ObjectName(edit.Material)} (dyed {OutfitLooks.ObjectName(edit.DyeMaterial)})" +
+                              (edit.Added ? " (added)" : $" in place of {OutfitLooks.ObjectName(edit.OriginalMaterial!)}"));
+        foreach (var note in report.Notes.Concat(lookNotes)) Console.WriteLine($"  Note: {note}");
+        Console.WriteLine($"  Saved: {file}");
     }
     return 0;
 }
@@ -2744,7 +2915,13 @@ static CliModEnvironment CreateModEnvironment(string projectRoot)
     else
         composer = CreateComposer(reader, provider, bridge, crunchPath, nativeTextures, materialEdit);
     var apply = new ArkiveModApplyService(context, materializer, composer);
-    return new CliModEnvironment(context, new ArkiveModAuthoringService(library, edits), apply, limitations);
+    return new CliModEnvironment(context, new ArkiveModAuthoringService(library, edits)
+    {
+        CleanPackageResolver = (path, token) => apply.ResolveCleanPackageAsync(path, token),
+    }, apply, limitations)
+    {
+        Materializer = materializer,
+    };
 }
 
 static UnifiedPackageComposerService CreateComposer(
@@ -3658,7 +3835,8 @@ static void PrintUsage()
     Console.WriteLine("  arkive dds-rgb-view <dxt5.dds> [--out FILE] [--json]");
     Console.WriteLine("  arkive texture-export-native <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive texture-project-create <arkive-native-texture.json> --edited FILE --workspace DIR [--name TEXT] [--alpha preserve-original|use-edited|force-opaque] [--json]");
-    Console.WriteLine("  arkive outfit-swap <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR [--cache DIR] [--bakes DIR] [--json]");
+    Console.WriteLine("  arkive outfit-swap-mod <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --root Arkive-project-root --name TEXT [--game PACKAGES_DIR] [--cache DIR] [--upscale UPSCALE.arkive] [--json]");
+    Console.WriteLine("  arkive outfit-swap <Packages-directory> --index DIR --wear PIECE[,PIECE] --replace PIECE[,PIECE] --out DIR [--cache DIR] [--bakes DIR] [--lit-bakes DIR] [--surface-bakes DIR] [--target-bakes DIR] [--target-surface-bakes DIR] [--clean-backups DIR] [--upscale UPSCALE.arkive] [--json]");
     Console.WriteLine("  arkive model-viewer-scene <package.upk> --object NAME [--alias NAME] [--cache DIR] [--edits EDITS.json] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
     Console.WriteLine("  arkive static-mesh-recon <package.upk> --object NAME [--alias NAME] [--out DIR] [--json]");
@@ -3758,7 +3936,10 @@ sealed record CliModEnvironment(
     ArkiveModApplyContext Context,
     ArkiveModAuthoringService Authoring,
     ArkiveModApplyService Apply,
-    IReadOnlyList<string> Limitations);
+    IReadOnlyList<string> Limitations)
+{
+    public required ArkiveModMaterializationService Materializer { get; init; }
+}
 
 sealed class InlineProgress<T>(Action<T> handler) : IProgress<T>
 {

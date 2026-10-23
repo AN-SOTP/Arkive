@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Text.Json.Nodes;
+using Arkive.Core.Meshes;
 using Arkive.Core.Proportions;
 
 namespace Arkive.Core.Outfits;
@@ -28,13 +29,32 @@ public sealed class OutfitSwapMesh
     public required IReadOnlyList<OutfitSwapSection> Sections { get; init; }
     /// <summary>Material names as the GLB stores them (MaterialInstanceConstant'group.name').</summary>
     public required IReadOnlyList<string> Materials { get; init; }
+
+    /// <summary>
+    /// Skin materials (by index) whose sections keep the outfit's own skin picture rather than taking the new body's
+    /// skin material: bare feet and hands, which keep the outfit's own shape (toes, nails) and so cannot take the new
+    /// body's skin picture layout.
+    /// </summary>
+    public IReadOnlySet<int> OwnPictureSkin { get; init; } = new HashSet<int>();
     /// <summary>Bone names without Arkive's numbering suffix, lowercase.</summary>
     public required string[] BoneNames { get; init; }
     /// <summary>Each bone's rest position in the model.</summary>
     public required Vector3[] BonePositions { get; init; }
     public required int[] BoneParents { get; init; }
 
+    /// <summary>Materials (by index in <see cref="Materials"/>) that are another package's material, drawn as it is there.</summary>
+    public IReadOnlyDictionary<int, SkeletalMeshMaterialReference> MaterialReferences { get; init; } =
+        new Dictionary<int, SkeletalMeshMaterialReference>();
+
     public int VertexCount => Positions.Length;
+
+    /// <summary>The same mesh with other normals and tangents.</summary>
+    public OutfitSwapMesh WithFrames(Vector3[] normals, Vector4[] tangents) => new()
+    {
+        Positions = Positions, Normals = normals, Tangents = tangents, Uv0 = Uv0, Uv1 = Uv1, Colours = Colours, Joints = Joints,
+        Weights = Weights, Sections = Sections, Materials = Materials, BoneNames = BoneNames, BonePositions = BonePositions,
+        BoneParents = BoneParents, MaterialReferences = MaterialReferences, OwnPictureSkin = OwnPictureSkin,
+    };
 
     public bool HasBodySkeleton => Array.IndexOf(BoneNames, "bip001-pelvis") >= 0;
 
@@ -119,6 +139,14 @@ public sealed class OutfitSwapMesh
             }
 
         var materials = (json["materials"]?.AsArray() ?? []).Select(item => (string?)item?["name"] ?? "").ToArray();
+        var references = new Dictionary<int, SkeletalMeshMaterialReference>();
+        var materialIndex = 0;
+        foreach (var item in json["materials"]?.AsArray() ?? [])
+        {
+            if (item is not null && SkeletalMeshMaterialReferences.Read(System.Text.Json.JsonSerializer.SerializeToElement(item)) is { } reference)
+                references[materialIndex] = reference;
+            materialIndex++;
+        }
         var sections = new List<OutfitSwapSection>();
         foreach (var primitive in primitives)
         {
@@ -129,13 +157,20 @@ public sealed class OutfitSwapMesh
         }
 
         var (names, positions, parents) = ReadSkeleton(container);
+        // A piece with one picture layout carries Arkive's vertex numbers in TEXCOORD_1 (the number, then a fixed
+        // 0.375 or 0.625); its second layout is its first.
+        var uv0 = Vec2("TEXCOORD_0");
+        var uv1 = attributes["TEXCOORD_1"] is null ? uv0 : Vec2("TEXCOORD_1");
+        if (uv1 != uv0 && uv1.Length > 0 && uv1.All(uv => Math.Abs(uv.Y - 0.375f) < 1e-3f || Math.Abs(uv.Y - 0.625f) < 1e-3f) &&
+            uv1.All(uv => Math.Abs(uv.X - MathF.Round(uv.X)) < 1e-3f))
+            uv1 = uv0;
         return new OutfitSwapMesh
         {
             Positions = Vec3("POSITION"),
             Normals = attributes["NORMAL"] is null ? new Vector3[count] : Vec3("NORMAL"),
             Tangents = tangents,
-            Uv0 = Vec2("TEXCOORD_0"),
-            Uv1 = attributes["TEXCOORD_1"] is null ? Vec2("TEXCOORD_0") : Vec2("TEXCOORD_1"),
+            Uv0 = uv0,
+            Uv1 = uv1,
             Colours = colours,
             Joints = joints,
             Weights = weights,
@@ -144,6 +179,7 @@ public sealed class OutfitSwapMesh
             BoneNames = names,
             BonePositions = positions,
             BoneParents = parents,
+            MaterialReferences = references,
         };
     }
 
@@ -185,6 +221,8 @@ public sealed class OutfitSwapMesh
     {
         var container = GlbContainer.Parse(target);
         var json = container.Json;
+        // Tells Arkive's mesh checks that this mesh is another outfit on the same skeleton (its bone use differs by design).
+        if (json["asset"] is JsonObject asset) asset["extras"] = new JsonObject { ["arkiveOutfitSwap"] = true };
         var bin = new List<byte>(container.Bin);
         var views = json["bufferViews"]!.AsArray();
         var accessors = json["accessors"]!.AsArray();
@@ -253,6 +291,16 @@ public sealed class OutfitSwapMesh
                 ["material"] = section.Material,
                 ["mode"] = 4,
             });
+        }
+        // Materials of other packages follow the target's own, each naming the material it draws with.
+        if (mesh.Materials.Count > 0 || mesh.MaterialReferences.Count > 0)
+        {
+            if (json["materials"] is not JsonArray materials) json["materials"] = materials = [];
+            for (var index = materials.Count; index < mesh.Materials.Count; index++)
+                materials.Add(new JsonObject { ["name"] = mesh.Materials[index] });
+            foreach (var (index, reference) in mesh.MaterialReferences)
+                if (materials[index] is JsonObject material)
+                    material["extras"] = new JsonObject { [SkeletalMeshMaterialReferences.ExtrasKey] = SkeletalMeshMaterialReferences.ToJson(reference) };
         }
         foreach (var item in json["meshes"]!.AsArray())
         {

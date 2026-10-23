@@ -180,7 +180,8 @@ public sealed class SkeletalMeshEditPreflightService
             lodStructureMatches = sourceDocument.Lods.Keys.Order().SequenceEqual(
                 topologyCandidate.Lods.Keys.Order());
             materialsMatch = topology.CandidateMaterials.All(material =>
-                sourceDocument.MaterialNames.Contains(material, StringComparer.OrdinalIgnoreCase));
+                sourceDocument.MaterialNames.Contains(material, StringComparer.OrdinalIgnoreCase) ||
+                topologyCandidate.MaterialReferences.ContainsKey(material));
             var candidateLod = topologyCandidate.Lods.GetValueOrDefault(0);
             if (candidateLod is not null)
             {
@@ -291,10 +292,35 @@ public sealed class SkeletalMeshEditPreflightService
                 AddWarning("SMI011", $"Ignored {ignoredUnskinned:N0} unskinned helper mesh(es) added by the editor.");
 
             var allowedMaterials = original.MaterialNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var unknownMaterials = lod.UsedMaterials.Where(material => !allowedMaterials.Contains(material)).ToArray();
+            var references = candidate.MaterialReferences;
+            var unknownMaterials = lod.UsedMaterials.Where(material => !allowedMaterials.Contains(material) &&
+                                                                       !references.ContainsKey(material)).ToArray();
             if (unknownMaterials.Length > 0)
                 AddError("SMT013", "Candidate uses material names that do not map to original slots: " +
                     string.Join(", ", unknownMaterials.Order()));
+            var used = references.Where(pair => lod.UsedMaterials.Contains(pair.Key)).ToDictionary(StringComparer.OrdinalIgnoreCase);
+            if (used.Count > 0)
+            {
+                try
+                {
+                    var (_, added, replaced) = SkeletalMeshMaterialReferences.Plan(original.MaterialNames,
+                        candidate.MaterialNames.Where(used.ContainsKey).ToArray(), used);
+                    var clash = replaced.Keys.Select(slot => original.MaterialNames[slot]).Where(lod.UsedMaterials.Contains).ToArray();
+                    if (clash.Length > 0)
+                        AddError("SMT016", "These slots are drawn both with their own material and with the material taking their place: " +
+                                           string.Join(", ", clash.Order()));
+                    if (original.MaterialNames.Count + added.Count > 256)
+                        AddError("SMT016", $"The mesh would have {original.MaterialNames.Count + added.Count} material slots; at most 256 are supported.");
+                    AddInfo("SMT017", $"{used.Count:N0} slot(s) are drawn with other packages' materials " +
+                                      $"({replaced.Count:N0} in place of game slots, {added.Count:N0} added): " +
+                                      string.Join(", ", used.Values.Select(reference => reference.Material.Path).Distinct().Order()) +
+                                      ". The package gets the imports it needs when the mod is built.");
+                }
+                catch (InvalidDataException exception)
+                {
+                    AddError("SMT016", exception.Message);
+                }
+            }
             var unused = allowedMaterials.Where(material => !lod.UsedMaterials.Contains(material)).ToArray();
             if (unused.Length > 0)
                 AddWarning("SMT015", $"Candidate does not use {unused.Length:N0} original material slot name(s); their package references will remain available.");
@@ -337,7 +363,10 @@ public sealed class SkeletalMeshEditPreflightService
             // Measured against the game mesh, which can have opposed faces of its own (double-sided parts).
             var sourceOpposedPercent = sourceLod0.FaceOrientationTriangleCount == 0 ? 0d :
                 100d * sourceLod0.OpposedFaceNormalTriangleCount / sourceLod0.FaceOrientationTriangleCount;
-            if (opposedPercent > sourceOpposedPercent + 1d)
+            // An outfit swap draws another outfit, whose own thin details (toenails, folded hems) can face against
+            // their normals by design; a few percent of those is only worth a look.
+            var opposedAllowance = candidate.OutfitSwap ? 4d : 1d;
+            if (opposedPercent > sourceOpposedPercent + opposedAllowance)
                 AddError("SMT031",
                     $"Candidate winding opposes its vertex normals on {lod.OpposedFaceNormalTriangleCount:N0} of " +
                     $"{lod.FaceOrientationTriangleCount:N0} checked triangles ({opposedPercent:N3}%; the game mesh has {sourceOpposedPercent:N3}%). Recalculate normals outside, or flip the faces that point inward.");

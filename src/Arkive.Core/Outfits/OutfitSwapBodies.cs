@@ -6,7 +6,9 @@ namespace Arkive.Core.Outfits;
 
 /// <summary>What Arkive needs to know about each player body for outfit swaps.</summary>
 /// <param name="AvatarCode">The class code of the body's shared costumes (pc_wr_f_av_103_dress_sk → wr_f).</param>
-/// <param name="BaseBody">The game's bare base body meshes, used to keep cloth off the skin; empty when the game has none.</param>
+/// <param name="BaseBody">The game's bare base body meshes, used to keep cloth off the skin and to lay skin on; empty when the
+/// game has none. They must share the skin picture layout of the class's outfits (some only ship in the Chinese build's
+/// _chn meshes, which the global client still carries).</param>
 /// <param name="Head">The face and hair shown with a swap preview.</param>
 public sealed record OutfitSwapBodyInfo(BodyProfile Profile, string AvatarCode, IReadOnlyList<string> BaseBody, IReadOnlyList<string> Head)
 {
@@ -20,8 +22,8 @@ public static partial class OutfitSwapBodies
         Info("female-warrior", "wr_f", ["pc_wr_f_basebody_upper_sk", "pc_wr_f_basebody_lower_sk", "pc_wr_f_basebody_arm_sk"]),
         Info("female-assassin", "dl", ["pc_dk_av_base_upper_sk", "pc_dk_av_base_lower_sk"]),
         Info("guardianknight", "dl", ["pc_dk_av_base_upper_sk", "pc_dk_av_base_lower_sk"]),
-        Info("female-mage", "mg", []),
-        Info("female-martial-artist", "ft", ["pc_ft_base_sk"]),
+        Info("female-mage", "mg", ["pc_mg_av_basebody_sk_chn"]),
+        Info("female-martial-artist", "ft", ["pc_ft_av_body_sk_chn"]),
         Info("female-specialist", "sp", ["pc_sp_00_body_sk"]),
         Info("male-warrior", "wr", ["pc_wr_basebody_upper_00_sk", "pc_wr_basebody_lower_00_sk", "pc_wr_basebody_arm_00_sk"]),
         Info("male-gunner", "gn", ["pc_ft_m_av_base_upper_sk", "pc_ft_m_av_base_lower_sk"]),
@@ -51,6 +53,21 @@ public static partial class OutfitSwapBodies
 
     /// <summary>Lower-body skin (legs) or upper-body skin (chest, arms).</summary>
     public static bool IsLowerSkin(string material) => OutfitSwapMesh.ShortMaterialName(material).Contains("lower", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether a picture belongs to the piece's own class (pc_wbk_f_… for a Slayer piece), so repainting it changes nothing
+    /// of another class's outfits that happen to share it. Pictures shared with the whole game do not start with pc_.
+    /// </summary>
+    public static bool OwnsPicture(string objectName, string texture) =>
+        ClassPrefix().Match(StripLocale(objectName)) is { Success: true } match &&
+        texture.StartsWith(match.Value, StringComparison.OrdinalIgnoreCase);
+
+    [GeneratedRegex(@"^pc_[a-z]{2,3}(_[mf])?_", RegexOptions.IgnoreCase)]
+    private static partial Regex ClassPrefix();
+
+    /// <summary>The class prefix of an object or material name (pc_gn_f_ for pc_gn_f_av_base_upper_mi), or null.</summary>
+    public static string? ClassOf(string name) =>
+        ClassPrefix().Match(OutfitSwapMesh.ShortMaterialName(StripLocale(name))) is { Success: true } match ? match.Value.ToLowerInvariant() : null;
 
     /// <summary>The pieces of one outfit by their part (upper, lower, dress…), from object names.</summary>
     public static string? OutfitStem(string objectName) => BodyProfiles.OutfitStem(StripLocale(objectName));

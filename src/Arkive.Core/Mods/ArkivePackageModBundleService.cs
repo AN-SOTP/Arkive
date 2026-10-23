@@ -25,6 +25,19 @@ public sealed record ArkivePackageModBundleRequest(
     public int VariableSizeMeshCount { get; init; }
 
     public bool VariableSizeDeploymentGatePassed { get; init; }
+
+    /// <summary>Names the composition added to the package's name table (after all of its own).</summary>
+    public int AddedNames { get; init; }
+
+    /// <summary>Imports the composition added to the package's import table (after all of its own).</summary>
+    public int AddedImports { get; init; }
+
+    /// <summary>
+    /// Other packages' materials each mesh (by object name) is drawn with: validation refuses unless the game folder
+    /// gives every one of them to the mesh.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<PackageObjectReference>> ReferencedMaterials { get; init; } =
+        new Dictionary<string, IReadOnlyList<PackageObjectReference>>(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class ArkivePackageModBundleRefusalException : NotSupportedException
@@ -129,12 +142,22 @@ public sealed class ArkivePackageModBundleService
                               sourceSummary.LicenseeVersion == payloadSummary.LicenseeVersion &&
                               sourceSummary.EngineVersion == payloadSummary.EngineVersion &&
                               sourceSummary.CookerVersion == payloadSummary.CookerVersion &&
-                              sourceSummary.NameCount == payloadSummary.NameCount &&
-                              sourceSummary.ImportCount == payloadSummary.ImportCount &&
+                              sourceSummary.NameCount + request.AddedNames == payloadSummary.NameCount &&
+                              sourceSummary.ImportCount + request.AddedImports == payloadSummary.ImportCount &&
                               sourceSummary.ExportCount == payloadSummary.ExportCount &&
                               sourceSummary.CompressedChunks.Count == payloadSummary.CompressedChunks.Count;
         if (!summaryIdentity)
             Refuse("CPB011", "The combined payload did not retain package identity and catalogue shape.");
+        if (request.AddedNames > 0 || request.AddedImports > 0)
+        {
+            // Added entries only ever follow the package's own, which keep their places.
+            var reader = new AssetCatalogReader(_reader, _protectionProvider);
+            var sourceCatalogue = reader.Read(sourceSummary);
+            var payloadCatalogue = reader.Read(payloadSummary);
+            if (!payloadCatalogue.Names.Take(sourceCatalogue.Names.Count).SequenceEqual(sourceCatalogue.Names) ||
+                !payloadCatalogue.Imports.Take(sourceCatalogue.Imports.Count).SequenceEqual(sourceCatalogue.Imports))
+                Refuse("CPB011", "The combined payload moved or changed one of the package's own names or imports.");
+        }
         var structural = PackageValidator.Validate(payloadSummary)
             .All(issue => issue.Severity != ValidationSeverity.Error);
         if (!structural)
@@ -169,9 +192,16 @@ public sealed class ArkivePackageModBundleService
             }
             try
             {
-                externalResults.Add(await _externalValidator.ValidateInPackageRootAsync(
+                var result = await _externalValidator.ValidateInPackageRootAsync(
                         payloadPath, packageRoot, asset.ClassName, asset.ObjectName, cancellationToken)
-                    .ConfigureAwait(false));
+                    .ConfigureAwait(false);
+                // The game resolves another package's material by that package's name; UModel, loading the mesh from
+                // the game folder, exports each one it found under PACKAGE/Class/name.
+                if (request.ReferencedMaterials.TryGetValue(asset.ObjectName, out var materials) &&
+                    materials.FirstOrDefault(material => !result.ExportedFiles.Any(file => Exports(file, material))) is { } missing)
+                    Refuse("CPB022", $"The game folder does not give {asset.ObjectName} the material {missing.Path}. " +
+                                     "Its package may have changed or be missing; check the outfit after a game update.");
+                externalResults.Add(result);
             }
             catch (External.UmodelBridgeException exception) when (
                 request.VariableSizeMeshCount == 0 && asset.ClassName.Contains("Mesh", StringComparison.OrdinalIgnoreCase))
@@ -467,6 +497,14 @@ public sealed class ArkivePackageModBundleService
         return new ModExternalValidationResult(validator, 1, 1,
             CataloguePassed: true, NativeLoadPassed: true, ExpectedObjectFound: true,
             [$"{asset.ObjectName}: property stream reads through to the end of the export."], TimeSpan.Zero);
+    }
+
+    private static bool Exports(string file, PackageObjectReference material)
+    {
+        var parts = file.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return parts.Length >= 2 && parts[0].Equals(material.PackageName, StringComparison.OrdinalIgnoreCase) &&
+               Path.GetFileNameWithoutExtension(parts[^1]).Equals(material.ObjectName, StringComparison.OrdinalIgnoreCase) &&
+               Path.GetExtension(parts[^1]).Equals(".mat", StringComparison.OrdinalIgnoreCase);
     }
 
     [DoesNotReturn]

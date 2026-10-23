@@ -910,6 +910,9 @@
                                 <Button x:Name="OutfitSwapPreviewButton" Content="Preview swap…" IsEnabled="False"
                                         Style="{StaticResource PrimaryButtonStyle}" Click="OutfitSwapPreviewButton_Click"
                                         ToolTip="Fit the chosen outfit onto the other one and show it in the viewer, with animations. Nothing is saved until you choose Save as mod there." />
+                                <CheckBox x:Name="OutfitSwapOwnMaterialsCheckBox" Content="Keep the outfit's own materials (experimental)"
+                                          VerticalAlignment="Center" Margin="12,0,0,0"
+                                          ToolTip="Draw the outfit with its own game materials, exactly as on its own body (sheen, see-through cloth and glow included), instead of painting it into the replaced outfit's pictures. The mod then makes the replaced outfit's package use the other outfit's materials, so that outfit's package must stay in the game." />
                                 <TextBlock x:Name="OutfitSwapChoiceText" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"
                                            Text="Choose an outfit to wear on the left and the outfit it replaces on the right." />
                             </WrapPanel>

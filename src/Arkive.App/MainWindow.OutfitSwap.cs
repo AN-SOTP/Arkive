@@ -267,6 +267,7 @@ public partial class MainWindow
             {
                 Animations = FindViewerAnimationsAsync,
                 Environments = FindViewerEnvironmentsAsync,
+                OwnMaterials = OutfitSwapOwnMaterialsCheckBox.IsChecked == true,
                 Owner = this,
             };
             window.Show();
@@ -282,20 +283,24 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// The body shapes offered for a swap: none, the player's Simple upscale mods that reshape the outfit being replaced
-    /// (so the swapped outfit keeps the same shape), and the saved presets of its body.
+    /// The body shapes offered for a swap: the player's Simple upscale mods that reshape the outfit being replaced (so the
+    /// swapped outfit keeps the same shape), none, and the saved presets of its body. The upscale applied in game comes
+    /// first, so a swap follows it unless the player picks otherwise: the swap replaces those pieces, and without it the
+    /// body would go back to the game's shape.
     /// </summary>
     private async Task<IReadOnlyList<OutfitSwapUpscaleChoice>> OutfitSwapUpscaleChoicesAsync(OutfitSwapRow replace)
     {
-        var choices = new List<OutfitSwapUpscaleChoice> { new("Game body (no reshaping)", null) };
+        var choices = new List<OutfitSwapUpscaleChoice>();
         var pieces = replace.Pieces.Select(piece => piece.ObjectName).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var library = await _arkiveModLibrary.LoadAsync();
         foreach (var mod in library.Mods.OrderByDescending(mod => mod.Enabled).ThenByDescending(mod => mod.Priority))
         {
+            if (!mod.Enabled && !choices.Any(choice => choice.Settings is null)) choices.Add(new("Game body (no reshaping)", null));
             if (!mod.Manifest.Assets.Any(asset => pieces.Contains(asset.Target.ObjectName))) continue;
             if (BodyProportionModTags.Read(mod.Manifest.Tags, mod.Manifest.Description) is { } settings && settings.Profile.Id == replace.Profile.Id)
                 choices.Add(new OutfitSwapUpscaleChoice($"Your mod: {mod.Manifest.Name}" + (mod.Enabled ? "" : " (off)"), settings));
         }
+        if (!choices.Any(choice => choice.Settings is null)) choices.Add(new("Game body (no reshaping)", null));
         foreach (var preset in BodyProportionPresets().Load(replace.Profile.Id))
             choices.Add(new OutfitSwapUpscaleChoice($"Preset: {preset.Name}",
                 new BodyProportionModSettings(replace.Profile, preset.Settings, preset.Follow)));
@@ -319,10 +324,14 @@ public partial class MainWindow
         }, busyTitle: null);
         if (failure is not null) throw failure;
         if (saved is null) throw new InvalidOperationException(AuthoringStatusText.Text);
+        // The swap replaces whole pieces that other mods (a Simple upscale over every outfit) may change too: it goes above
+        // them, or the game would show theirs instead. The chosen upscale is already in its shape.
+        var overlapping = await _arkiveModLibrary.LoadAsync();
+        await _arkiveModLibrary.SetPriorityAsync(saved.ModId, ArkiveModConflictResolver.Resolve(overlapping.Mods).PriorityToWinAll(saved.ModId));
         await RefreshArkiveModsAsync("outfit swap saved", saved.ModId);
         var text = $"Saved {saved.FileName}. Enable it in Mods to apply it to the game; it is also open in Edit mods.";
         if (request.Upscale.Settings is not null && request.Upscale.Label.StartsWith("Your mod:", StringComparison.Ordinal))
-            text += " It reshapes the same pieces as your Simple upscale mod, so give it the higher priority in Mods (or turn that one off).";
+            text += " It is shaped by your Simple upscale mod and placed above it in Mods, so keep that one where it is or turn it off.";
         return text;
     }
 
@@ -332,9 +341,12 @@ public partial class MainWindow
         var report = request.Report;
         var description = $"Outfit swap: {string.Join(", ", request.Donors)} ({report.From.DisplayName}) worn in place of " +
                           $"{string.Join(", ", request.Targets.Select(target => target.ObjectName))} ({report.To.DisplayName})" +
-                          (request.Upscale.Settings is null ? "." : $", shaped by {request.Upscale.Label}.");
+                          (request.Upscale.Settings is null ? "" : $", shaped by {request.Upscale.Label}") +
+                          (request.OwnMaterials ? ", with the outfit's own materials." : ".");
         _authoringDraft = await _modAuthoringWorkspace.CreateAsync(new ArkiveModMetadata(request.ModName, "1.0.0", "", description,
-            Tags: ["outfit-swap", $"outfit-swap:from={report.From.Id}", $"outfit-swap:to={report.To.Id}"]));
+            Tags: request.OwnMaterials
+                ? ["outfit-swap", "outfit-swap:own-materials", $"outfit-swap:from={report.From.Id}", $"outfit-swap:to={report.To.Id}"]
+                : ["outfit-swap", $"outfit-swap:from={report.From.Id}", $"outfit-swap:to={report.To.Id}"]));
         LoadAuthoringMetadata();
 
         // Every asset the swap changes: the replaced pieces, their repainted pictures and their materials.
@@ -375,6 +387,23 @@ public partial class MainWindow
         var saved = await SaveAuthoringAsync();
         Log($"Outfit swap mod saved: name={request.ModName}, from={report.From.Id}, to={report.To.Id}, pieces={request.Targets.Count}, " +
             $"pictures={request.Pictures.Pictures.Count}, materials={request.Pictures.Materials.Count}, shape={request.Upscale.Label}.");
+        if (request.OwnMaterials && request.TargetPieces.Count == request.Meshes.Count)
+        {
+            // The game draws the pieces with their item looks' materials, so the looks name the outfit's own materials too.
+            request.Progress?.Report("Pointing the pieces' item looks at the outfit's own materials");
+            var library = await _arkiveModLibrary.LoadAsync();
+            if (_arkiveModContext.LooksFor(library) is { } looks)
+            {
+                var notes = new List<string>();
+                var edits = await Task.Run(() => OutfitSwapLooks.Edits(looks.Archive, request.Donors,
+                    request.TargetPieces.Select((piece, index) => new OutfitSwapLookPiece(piece.ObjectName, piece.Mesh.Materials, request.Meshes[index])).ToArray(),
+                    notes));
+                saved = await OutfitSwapLooks.AttachAsync(_arkiveModLibrary, saved.ModId, edits);
+                Log($"Outfit swap item looks: {edits.Count} slot change(s) in " +
+                    $"{edits.Select(edit => edit.Entry).Distinct(StringComparer.OrdinalIgnoreCase).Count()} look(s). {string.Join(" ", notes)}");
+            }
+            else Log("Outfit swap item looks: the game folder has no data4.lpk, so the looks were left as they are.");
+        }
         return saved;
     }
 
