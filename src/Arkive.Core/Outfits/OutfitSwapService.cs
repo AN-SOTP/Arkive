@@ -211,26 +211,34 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             fitted.Add(moved);
             shaded.Add(OwnPictureFeetAndHands(donor with { Mesh = finished }, feet));
         }
-        // Layers of one piece (a dress over its underskirt, an overlay over a bodice) stay in their order: each large
-        // connected part of a piece's cloth keeps the piece's other cloth that lay under it, under it.
+        // Layers of one piece (a dress over its underskirt, an overlay over a bodice, a sleeve over the arm) stay in their
+        // order: each large connected part of a piece's cloth keeps the piece's other cloth and its bare skin that lay
+        // under it, under it (wrist skin that keeps the hand's shape would otherwise show through a sleeve).
         for (var k = 0; k < donors.Count; k++)
         {
             var mesh = donors[k].Mesh;
             var count = mesh.VertexCount;
-            foreach (var layer in Layers(mesh))
-            {
-                var inner = new bool[count];
-                foreach (var section in mesh.Sections)
-                    if (!OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
-                        foreach (var v in section.Triangles) inner[v] = true;
-                foreach (var v in layer.SelectMany(section => section.Triangles)) inner[v] = false;
-                // Shoes and toenails keep their own shape (see the fit), so layering leaves the feet alone.
-                var feetShares = OutfitSwapFitting.FootShares(mesh);
-                for (var v = 0; v < count; v++) if (feetShares[v] >= 0.1f) inner[v] = false;
-                if (OutfitSwapClearance.Surface(mesh, mesh.Positions, layer) is { } before &&
-                    OutfitSwapClearance.Surface(mesh, fitted[k][..count], layer) is { } after)
-                    Array.Copy(OutfitSwapClearance.KeepUnder(mesh.Positions, fitted[k][..count], inner, before, after), fitted[k], count);
-            }
+            // Shoes and toenails keep their own shape (see the fit), so layering leaves the feet alone.
+            var feetShares = OutfitSwapFitting.FootShares(mesh);
+            var skin = new bool[count];
+            foreach (var section in mesh.Sections)
+                if (OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
+                    foreach (var v in section.Triangles) skin[v] = feetShares[v] < 0.1f;
+            var layers = Layers(mesh).ToArray();
+            // Cloth first, then the skin under where the cloth ended up.
+            foreach (var skinTurn in new[] { false, true })
+                foreach (var layer in layers)
+                {
+                    var inner = new bool[count];
+                    foreach (var section in mesh.Sections)
+                        foreach (var v in section.Triangles) inner[v] = skin[v] == skinTurn && feetShares[v] < 0.1f;
+                    foreach (var v in layer.SelectMany(section => section.Triangles)) inner[v] = false;
+                    if (OutfitSwapClearance.Surface(mesh, mesh.Positions, layer) is { } before &&
+                        OutfitSwapClearance.Surface(mesh, fitted[k][..count], layer) is { } after)
+                        Array.Copy(skinTurn
+                            ? OutfitSwapClearance.KeepUnder(mesh, fitted[k][..count], inner, before, after, exact: true, rounds: 1)
+                            : OutfitSwapClearance.KeepUnder(mesh, fitted[k][..count], inner, before, after), fitted[k], count);
+                }
         }
         // Cloth hidden behind the outfit's own bare skin (a hem tucked in at the waist) stays behind it: the skin now
         // lies on the new body, the cloth went with the body-shape correction, and the two can part.
@@ -248,7 +256,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 foreach (var section in mesh.Sections)
                     if (!OutfitSwapBodies.IsSkin(mesh.Materials[section.Material]))
                         foreach (var v in section.Triangles) clothOnly[v] = shares[v] < 0.1f;
-                Array.Copy(OutfitSwapClearance.KeepUnder(mesh.Positions, fitted[k][..count], clothOnly, skinBefore, skinAfter, reach: 0.02f),
+                Array.Copy(OutfitSwapClearance.KeepUnder(mesh, fitted[k][..count], clothOnly, skinBefore, skinAfter, reach: 0.02f),
                     fitted[k], count);
             }
         }
@@ -267,7 +275,7 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 foreach (var section in innerMesh.Sections)
                     if (!OutfitSwapBodies.IsSkin(innerMesh.Materials[section.Material]))
                         foreach (var v in section.Triangles) innerCloth[v] = true;
-                var kept = OutfitSwapClearance.KeepUnder(innerMesh.Positions, fitted[inner][..count], innerCloth, before, after);
+                var kept = OutfitSwapClearance.KeepUnder(innerMesh, fitted[inner][..count], innerCloth, before, after);
                 Array.Copy(kept, fitted[inner], count);
             }
         progress?.Report("Placing the outfit in the new materials");
