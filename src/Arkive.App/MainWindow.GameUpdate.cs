@@ -245,7 +245,7 @@ public partial class MainWindow
         var unsaved = new List<string>();
         if (modIds.Count == 0) return unsaved;
         await RefreshArkiveModsAsync("mods rebased for game update");
-        foreach (var row in ModLibraryGrid.Items.OfType<ModLibraryRow>()
+        foreach (var row in _modLibraryRows
                      .Where(row => modIds.Contains(row.Entry.ModId, StringComparer.OrdinalIgnoreCase) && row.Status.ModifiedLocally).ToArray())
         {
             // Edits the user made in Edit mods are theirs to save, so the rebase does not save them on their behalf.

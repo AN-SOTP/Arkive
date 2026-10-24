@@ -62,7 +62,7 @@ public partial class MainWindow : Window
             group.Warning = outside.Length == 0 ? string.Empty : $"⚠ Changes the same assets as {NameList(outside)}";
         }
 
-        var view = new ListCollectionView(listed);
+        var view = new ListCollectionView(listed) { Filter = ShowsInModSearch };
         view.GroupDescriptions.Add(new ModListGrouping());
         return view;
     }
@@ -154,7 +154,7 @@ public partial class MainWindow : Window
     private void OpenModPackWindow(ArkiveModPack? pack, string name, Func<ModLibraryRow, bool> include)
     {
         if (!ModLibraryIdle) return;
-        var rows = ModLibraryGrid.Items.OfType<ModLibraryRow>()
+        var rows = _modLibraryRows
             .OrderBy(row => row.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray();
         if (rows.Length < 2)
         {
@@ -312,7 +312,7 @@ public partial class MainWindow : Window
 
     private async Task MakeModWinAsync(string modId)
     {
-        if (ModLibraryGrid.Items.OfType<ModLibraryRow>().FirstOrDefault(row =>
+        if (_modLibraryRows.FirstOrDefault(row =>
                 row.Entry.ModId.Equals(modId, StringComparison.OrdinalIgnoreCase)) is not { } row) return;
         await SetModPriorityAsync(row, ArkiveModConflictResolver.Resolve(_arkiveModLibraryManifest.Mods).PriorityToWinAll(modId));
     }
@@ -321,8 +321,9 @@ public partial class MainWindow : Window
     private void ModOverlapShow_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not ModOverlapRow overlap ||
-            ModLibraryGrid.Items.OfType<ModLibraryRow>().FirstOrDefault(row =>
+            _modLibraryRows.FirstOrDefault(row =>
                 row.Entry.ModId.Equals(overlap.Other.ModId, StringComparison.OrdinalIgnoreCase)) is not { } row) return;
+        if (!ShowsInModSearch(row)) ModLibrarySearchTextBox.Clear();
         if (row.Group is { IsPack: true, IsExpanded: false } group)
         {
             group.IsExpanded = true;

@@ -71,7 +71,7 @@ public partial class MainWindow
             .AppendLine($"  Simple upscale: {ProportionStatusText.Text}");
 
         var mods = new StringBuilder();
-        foreach (var row in ModLibraryGrid.Items.OfType<ModLibraryRow>())
+        foreach (var row in _modLibraryRows)
             mods.AppendLine($"{(row.Enabled ? "[on] " : "[off]")} {row.DisplayName} {row.Version} · {row.State} · {row.AssetSummary} · {row.FileName}" +
                              (row.Group?.Pack is { } pack ? $" · pack {pack.Name}" : string.Empty));
 

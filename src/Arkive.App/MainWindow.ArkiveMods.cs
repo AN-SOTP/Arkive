@@ -131,13 +131,22 @@ public partial class MainWindow : Window
                 .ThenByDescending(row => row.Priority)
                 .ThenBy(row => row.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            ModLibraryGrid.ItemsSource = GroupModRows(rows, ArkiveModConflictResolver.Resolve(library.Mods));
+            _modLibraryRows = rows;
+            var view = GroupModRows(rows, ArkiveModConflictResolver.Resolve(library.Mods));
+            ModLibraryGrid.ItemsSource = view;
+            // A mod just imported, created or renamed is shown even when the search would hide it.
+            if (selectModId is not null && rows.FirstOrDefault(row => row.Entry.ModId.Equals(
+                    selectModId, StringComparison.OrdinalIgnoreCase)) is { } wanted && !ShowsInModSearch(wanted))
+                ModLibrarySearchTextBox.Clear();
             ShowModOverlapWarning();
-            var selected = rows.FirstOrDefault(row => row.Entry.ModId.Equals(
-                               previous, StringComparison.OrdinalIgnoreCase)) ?? rows.FirstOrDefault();
+            ShowModSearchCount(view.Count);
+            // Only mods the search box shows can be chosen.
+            var shown = view.Cast<ModLibraryRow>().ToArray();
+            var selected = shown.FirstOrDefault(row => row.Entry.ModId.Equals(
+                               previous, StringComparison.OrdinalIgnoreCase)) ?? shown.FirstOrDefault();
             ModLibraryGrid.SelectedItem = selected;
             if (previousGroup.Count > 1 && selected is not null && previousGroup.Contains(selected.Entry.ModId))
-                foreach (var row in rows.Where(row => row != selected && previousGroup.Contains(row.Entry.ModId)))
+                foreach (var row in shown.Where(row => row != selected && previousGroup.Contains(row.Entry.ModId)))
                     ModLibraryGrid.SelectedItems.Add(row);
             if (selected is not null) ModLibraryGrid.ScrollIntoView(selected);
             ApplySelectedModLibraryRow();
@@ -254,7 +263,7 @@ public partial class MainWindow : Window
         ModLibraryApplyButton.IsEnabled = idle;
         ModLibraryProgressBar.Visibility = _modLibraryBusy ? Visibility.Visible : Visibility.Collapsed;
         ModLibraryNewButton.IsEnabled = idle;
-        ModLibraryNewPackButton.IsEnabled = idle && ModLibraryGrid.Items.Count > 1;
+        ModLibraryNewPackButton.IsEnabled = idle && _modLibraryRows.Length > 1;
         ModLibraryEditButton.IsEnabled = idle && hasRow;
         ModLibraryPrepareButton.IsEnabled = idle && hasRow;
         ModLibraryGameTablesButton.IsEnabled = idle;
@@ -640,6 +649,47 @@ public partial class MainWindow : Window
         await ImportModFilesAsync(dialog.FileNames);
     }
 
+    /// <summary>The .arkive files among the files dragged onto the window; other files and folders are left out.</summary>
+    private static IReadOnlyList<string> DroppedModFiles(IDataObject data) =>
+        data.GetDataPresent(DataFormats.FileDrop) && data.GetData(DataFormats.FileDrop) is string[] paths
+            ? App.ModFileArguments(paths.Where(File.Exists))
+            : [];
+
+    private void Window_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        // Text dragged inside a box is left to the box; files are only taken when they are mods to import.
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        e.Effects = ModLibraryIdle && DroppedModFiles(e.Data).Count > 0 ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void Window_PreviewDrop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        e.Handled = true;
+        await ImportDroppedModFilesAsync(DroppedModFiles(e.Data));
+    }
+
+    /// <summary>
+    /// Dropped mods are imported as with Import…, after the same question. It is asked once the drop has finished, so
+    /// the folder the files came from is not held up while the question is open.
+    /// </summary>
+    private async Task ImportDroppedModFilesAsync(IReadOnlyList<string> paths)
+    {
+        await Dispatcher.Yield();
+        if (paths.Count == 0) return;
+        Log($"Mod files dropped on the window: {string.Join(", ", paths)}.");
+        if (!ModLibraryIdle)
+        {
+            StatusText.Text = "Arkive is busy with the mod list. Drop the files again when it has finished.";
+            return;
+        }
+        await ImportModFilesAsync(paths);
+    }
+
+    /// <summary>The UI tests answer the import question here instead of in a message box.</summary>
+    private Func<string, bool>? AnswerImportQuestion { get; set; }
+
     private async Task ImportModFilesAsync(IReadOnlyList<string> paths)
     {
         if (paths.Count == 0 || !ModLibraryIdle) return;
@@ -647,14 +697,19 @@ public partial class MainWindow : Window
         ModLibraryTab.IsSelected = true;
         // Asked before anything is imported, so No leaves the library as it was.
         var names = paths.Select(path => Path.GetFileNameWithoutExtension(path)).ToArray();
-        if (MessageBox.Show(this,
-                (paths.Count == 1 ? $"Import {names[0]}?" : $"Import these {paths.Count:N0} mods?\n\n" +
-                    string.Join("\n", names.Take(12).Select(name => "  • " + name)) +
-                    (names.Length > 12 ? $"\n  …and {names.Length - 12:N0} more" : string.Empty)) +
-                "\n\nNew mods are turned on. Nothing changes in the game until you choose Apply changes, " +
-                "and you can turn them off or set priorities first.",
-                "Import .arkive", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes)
+        var question =
+            (paths.Count == 1 ? $"Import {names[0]}?" : $"Import these {paths.Count:N0} mods?\n\n" +
+                string.Join("\n", names.Take(12).Select(name => "  • " + name)) +
+                (names.Length > 12 ? $"\n  …and {names.Length - 12:N0} more" : string.Empty)) +
+            "\n\nNew mods are turned on. Nothing changes in the game until you choose Apply changes, " +
+            "and you can turn them off or set priorities first.";
+        var yes = AnswerImportQuestion?.Invoke(question) ?? MessageBox.Show(this, question,
+            "Import .arkive", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) == MessageBoxResult.Yes;
+        if (!yes)
+        {
+            Log($"Mod import cancelled at the question: {string.Join(", ", paths)}.");
             return;
+        }
         string? lastImported = null;
         await RunModLibraryOperationAsync("Import .arkive", async () =>
         {
