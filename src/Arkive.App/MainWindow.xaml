@@ -11,7 +11,11 @@
         Foreground="{DynamicResource TextPrimaryBrush}"
         FontFamily="Segoe UI Variable Text, Segoe UI"
         FontSize="13"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        AllowDrop="True"
+        PreviewDragEnter="Window_PreviewDragOver"
+        PreviewDragOver="Window_PreviewDragOver"
+        PreviewDrop="Window_PreviewDrop">
     <DockPanel Background="{DynamicResource AppBackgroundBrush}">
         <StatusBar DockPanel.Dock="Bottom">
             <StatusBarItem HorizontalAlignment="Stretch">
@@ -2981,6 +2985,18 @@
                                                Text="The mod library has not been loaded yet." />
                                     <ProgressBar x:Name="ModLibraryProgressBar" Height="8"
                                                  Minimum="0" Maximum="1" Value="0" Margin="0,7,0,0" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
+                                        <TextBlock Text="Search Mods" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                        <TextBox x:Name="ModLibrarySearchTextBox" Width="280"
+                                                 AutomationProperties.Name="Search Mods"
+                                                 TextChanged="ModLibrarySearchTextBox_TextChanged"
+                                                 KeyDown="ModLibrarySearchTextBox_KeyDown"
+                                                 ToolTip="Show only the mods whose name, author or pack contains every word you type. Start a word with - to leave out mods that contain it. Esc clears the search." />
+                                        <Button x:Name="ModLibrarySearchClearButton" Content="Clear" Margin="6,0,0,0" IsEnabled="False"
+                                                Click="ModLibrarySearchClearButton_Click" />
+                                        <TextBlock x:Name="ModLibrarySearchCountText" VerticalAlignment="Center" Margin="10,0,0,0"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </StackPanel>
                                 </StackPanel>
                                 <Grid x:Name="ModLibraryPaneGrid" SizeChanged="WorkflowPaneGrid_SizeChanged" ClipToBounds="True">
                                     <Grid.RowDefinitions>

@@ -12,6 +12,7 @@ internal static class ArkiveModSmokeTests
         new("resolves .arkive conflicts by priority, merges disjoint assets, and blocks ties", TestArkiveConflictResolution),
         new("warns about enabled mods that change the same assets and names the winner", TestArkiveEnabledOverlaps),
         new("switches mod packs as one and keeps them beside an unchanged library", TestArkiveModPacks),
+        new("finds mods in the Mods list search by name, author or pack", TestArkiveModSearch),
         new("applies the higher-priority .arkive mod and rebuilds when priorities change", TestArkiveApplyPriorityEndToEnd),
         new("rebuilds and installs several packages in one apply", TestArkiveApplySeveralPackages),
         new("saves an applied mod again by reading its originals from the clean backup", TestArkiveSaveAfterApply),
@@ -285,6 +286,25 @@ internal static class ArkiveModSmokeTests
             "the overlap signature did not ignore order or notice a changed winner");
         Assert(ArkiveModConflictResolver.Resolve([red, holy with { Enabled = false }]).EnabledOverlaps().Count == 0,
             "a disabled mod was reported as overlapping");
+    }
+
+    private static void TestArkiveModSearch()
+    {
+        static ArkiveModFileManifest Mod(string name, string? author) => ArkiveModAuthoringService.CreateManifest(
+            NewId(), new ArkiveModMetadata(name, "1.0.0", author), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var serca = Mod("Venom Serca - hair", "Awse");
+        var sky = Mod("Holy golden sky", null);
+        var pack = new ArkiveModPack(NewId(), "Venom Serca", [serca.ModId]);
+        Assert(ArkiveModSearch.Matches("", sky) && ArkiveModSearch.Matches("   ", sky), "an empty search hid a mod");
+        Assert(ArkiveModSearch.Matches("GOLDEN", sky) && ArkiveModSearch.Matches("sky holy", sky),
+            "a mod was not found by the words of its name in any order or case");
+        Assert(ArkiveModSearch.Matches("awse", serca) && !ArkiveModSearch.Matches("awse", sky),
+            "the search did not find a mod by its author, or matched a mod without one");
+        Assert(ArkiveModSearch.Matches("venom", Mod("Teeth", null), pack) && !ArkiveModSearch.Matches("venom", sky),
+            "a mod was not found by its pack's name");
+        Assert(!ArkiveModSearch.Matches("serca -hair", serca) && ArkiveModSearch.Matches("-hair", sky),
+            "a word starting with - did not leave out the mods that contain it");
+        Assert(!ArkiveModSearch.Matches("sky awse", sky), "a mod matching only some of the words was shown");
     }
 
     private static void TestArkiveModPacks()

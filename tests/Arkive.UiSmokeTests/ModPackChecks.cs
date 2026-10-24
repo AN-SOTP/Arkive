@@ -238,7 +238,7 @@ internal static class ModPackChecks
         return null;
     }
 
-    private static void WriteMod(string path, string name)
+    internal static void WriteMod(string path, string name)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var material = new ArkiveModFileAsset(

@@ -225,6 +225,7 @@ internal static class Program
         WorkflowLayoutChecks.VerifyRestored(window, root);
         await ModLibraryRowChecks.VerifyAsync(window, root);
         await ModPackChecks.VerifyAsync(window, root, screenshotDirectory);
+        await ModSearchDropChecks.VerifyAsync(window, root, screenshotDirectory);
         await ZoneViewerChecks.VerifyAsync(root, screenshotDirectory);
         await FontChecks.VerifyAsync(root, screenshotDirectory);
         if (screenshotDirectory is not null)
