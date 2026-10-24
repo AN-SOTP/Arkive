@@ -1,6 +1,10 @@
-Importing asks first, and Outfit Swap fits wrists and upscaled bodies better.
+A search box and drag-and-drop import for the Mods page, a message instead of a silent close on unexpected errors, and Outfit Swap fixes.
 
 - Import: Arkive asks before importing a .arkive file, and No cancels. Before, the question came after the mod was already imported. New mods are turned on, and nothing reaches the game until you choose Apply changes. Importing no longer holds the window for half a minute on a large library.
+- Mods: a Search Mods box filters the list by name, author or pack.
+- Drag .arkive files onto Arkive to import them; it asks first, as Import… does.
+- An unexpected error no longer closes Arkive without warning: it shows what went wrong and offers to create a problem report.
+- Saving the mod library retries for a moment when another program (such as antivirus) briefly holds the file.
 - Outfit Swap: the wrist closes where the new body's own hands meet the outfit's sleeve, and bends with the body's own hand weights and shading.
 - Outfit Swap: with a Simple Upscale body shape, cloth stays outside the reshaped skin.
 - Outfit Swap with the outfit's own materials: swaps onto inner outfits such as Slayer's Sympathetic Eternity no longer show wrong leg materials in the open world when installed alongside another swap (such as Unity on Cold Fury). Meshes that gain material slots also get matching per-material entries.

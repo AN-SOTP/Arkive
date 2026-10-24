@@ -223,9 +223,10 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 
 ### Import, priorities and deployment
 
-Use **Mods → Import**, or open a `.arkive` file with Arkive. Arkive asks before importing, and new mods are turned on, but nothing reaches the game until you apply. Review, set priority, preview the plan, then confirm **Apply changes**.
+Use **Mods → Import**, drag `.arkive` files onto Arkive, or open one with Arkive. Arkive asks before importing, and new mods are turned on, but nothing reaches the game until you apply. Review, set priority, preview the plan, then confirm **Apply changes**.
 
 - Higher priority wins for the **same asset**. Edits to different assets in one package are combined into one package. Equal-priority competing edits block Apply: change priority or use **Make this mod win**.
+- **Search Mods** filters the list by name, author or pack.
 - Ctrl- or Shift-click several mods to enable, disable, update or pack them together. Right-click a mod to rename it, change its author, update it or delete it.
 - When enabled mods change the same assets, a warning above the list names each pair and which mod wins. **Hide** keeps it out of the way until the overlaps change; ties cannot be hidden.
 - **New pack…** (or right-click → **Add to pack**) groups mods under one heading whose box turns them all on or off. Each mod keeps its own priority.
@@ -410,7 +411,7 @@ Steam reinstall changes game bytes but does not clear Arkive's library. If a mod
 
 ## Reporting a problem
 
-**Report a problem** (top bar, or **Open session logs**' menu in Asset library) packs what's needed to find a problem into one zip: a summary (Arkive and Windows versions, data and game folders, whether the game is running, the last messages shown), the three most recent session logs, the mod list with each mod's state, and the checks of the meshes in the mod being edited. It copies the zip so it can be pasted straight into Discord, an email or a GitHub issue, and shows it in Explorer (it is kept in the data folder's `reports`). It holds file paths on your PC but no game files and no settings.
+If something goes wrong unexpectedly, Arkive shows what happened instead of closing, and offers to create a problem report. **Report a problem** (top bar, or **Open session logs**' menu in Asset library) packs what's needed to find a problem into one zip: a summary (Arkive and Windows versions, data and game folders, whether the game is running, the last messages shown), the three most recent session logs, the mod list with each mod's state, and the checks of the meshes in the mod being edited. It copies the zip so it can be pasted straight into Discord, an email or a GitHub issue, and shows it in Explorer (it is kept in the data folder's `reports`). It holds file paths on your PC but no game files and no settings.
 
 ## Application updates
 
