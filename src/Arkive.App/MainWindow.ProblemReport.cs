@@ -18,7 +18,9 @@ namespace Arkive.App;
 /// </summary>
 public partial class MainWindow
 {
-    private async void ReportProblemButton_Click(object sender, RoutedEventArgs e)
+    private async void ReportProblemButton_Click(object sender, RoutedEventArgs e) => await ReportProblemAsync();
+
+    internal async Task ReportProblemAsync()
     {
         try
         {
@@ -63,6 +65,8 @@ public partial class MainWindow
             .AppendLine($"Game running: {(_modDeploymentService.FindBlockingProcesses() is { Count: > 0 } running ? string.Join(", ", running) : "no")}")
             .AppendLine($"Open tab: {(MainTabControl.SelectedItem as System.Windows.Controls.TabItem)?.Header}")
             .AppendLine($"Mod being edited: {_authoringDraft?.Metadata.Name ?? "none"}")
+            .AppendLine($"Unexpected errors this session: {UnexpectedErrors.Gate.Count}" +
+                        (UnexpectedErrors.Gate.LastReason is { } last ? $" (last: {last})" : string.Empty))
             .AppendLine()
             .AppendLine("Last messages shown:")
             .AppendLine($"  Status: {StatusText.Text}")

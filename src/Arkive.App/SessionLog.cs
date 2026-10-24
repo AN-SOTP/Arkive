@@ -33,7 +33,8 @@ internal sealed class SessionLog
         return line;
     }
 
-    public static void WriteUnhandled(string source, Exception exception)
+    /// <summary>Logs an unhandled exception and returns the log file it went to, or null when it could not be written.</summary>
+    public static string? WriteUnhandled(string source, Exception exception)
     {
         try
         {
@@ -41,7 +42,7 @@ internal sealed class SessionLog
             if (Current is not null)
             {
                 Current.Write(message);
-                return;
+                return Current.FilePath;
             }
 
             var root = ArkiveRuntimePaths.ResolveDataRoot();
@@ -52,10 +53,12 @@ internal sealed class SessionLog
                 path,
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}",
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            return path;
         }
         catch
         {
             // Crash logging must never mask the original exception.
+            return null;
         }
     }
 }
