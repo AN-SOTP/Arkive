@@ -26,6 +26,7 @@ internal static class Program
         app.Resources.MergedDictionaries.Add(new ResourceDictionary
         { Source = new Uri("pack://application:,,,/Arkive.App;component/Themes/Base.xaml") });
         app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        UnexpectedErrorChecks.Install();
         app.Startup += async (_, _) =>
         {
             try
@@ -38,6 +39,7 @@ internal static class Program
                     await FontChecks.VerifyAsync(root, args.ElementAtOrDefault(1));
                 else
                     await RunAsync(root, args.FirstOrDefault());
+                UnexpectedErrorChecks.ThrowIfAny();
                 Console.WriteLine(args is ["--public-screenshots", _]
                     ? "Arkive public GUI screenshots rendered with fictional data."
                     : "All Arkive authoring UI smoke tests passed.");
@@ -92,6 +94,7 @@ internal static class Program
             "Edit mods does not offer the moddable asset types: " + string.Join(", ", kinds));
         Check(Control<Button>(window, "ModLibraryNewButton").IsVisible, "The initial mod library has no visible content.");
         GameUpdateChecks.Verify(window);
+        await UnexpectedErrorChecks.VerifyAsync(window);
         SkillPreviewEditChecks.Verify();
         OutfitSwapClassChecks.Verify(window, root);
         // Without the game's EFGame folder the Login screen tab says what it needs instead of failing.

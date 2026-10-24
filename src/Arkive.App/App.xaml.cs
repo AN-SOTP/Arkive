@@ -45,20 +45,27 @@ public partial class App : Application
         TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
     }
 
+    // Errors on the UI thread (async void event handlers included) are shown and Arkive keeps running; an error on
+    // another thread always ends the process, so it is logged and explained before Windows closes Arkive.
     private static void App_DispatcherUnhandledException(
         object sender,
-        DispatcherUnhandledExceptionEventArgs e) =>
-        SessionLog.WriteUnhandled("WPF dispatcher", e.Exception);
+        DispatcherUnhandledExceptionEventArgs e)
+    {
+        e.Handled = true;
+        UnexpectedErrors.OnUiThreadError(e.Exception);
+    }
 
     private static void CurrentDomain_UnhandledException(
         object? sender,
         UnhandledExceptionEventArgs e) =>
-        SessionLog.WriteUnhandled(
-            e.IsTerminating ? "AppDomain, terminating" : "AppDomain",
-            e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject?.ToString()));
+        UnexpectedErrors.OnOtherThreadError(
+            e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject?.ToString()), e.IsTerminating);
 
     private static void TaskScheduler_UnobservedTaskException(
         object? sender,
-        UnobservedTaskExceptionEventArgs e) =>
+        UnobservedTaskExceptionEventArgs e)
+    {
         SessionLog.WriteUnhandled("unobserved task", e.Exception);
+        e.SetObserved();
+    }
 }

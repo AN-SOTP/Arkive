@@ -31,6 +31,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     FontSmokeTests.Cases,
     LanguageSmokeTests.Cases,
     GameDataSmokeTests.Cases,
+    UnexpectedErrorSmokeTests.Cases,
 ];
 
 var filter = args.Length > 0 ? args[0] : null;
