@@ -606,7 +606,19 @@ public sealed class ArkiveModLibrary
                 await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
-            File.Move(temporary, ManifestPath, overwrite: true);
+            // A reader (another Arkive window, antivirus, a backup tool) can hold the library file for a moment.
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    File.Move(temporary, ManifestPath, overwrite: true);
+                    break;
+                }
+                catch (Exception exception) when (attempt < 10 && exception is IOException or UnauthorizedAccessException)
+                {
+                    await Task.Delay(100 * attempt, cancellationToken).ConfigureAwait(false);
+                }
+            }
             _loaded = new LoadedManifest(SHA256.HashData(bytes), Freeze(manifest));
         }
         finally
