@@ -10,7 +10,39 @@ internal static class TweakSmokeTests
         new("reads and writes ActionScript 3 code and movie tags byte for byte", TestAbcRoundTrip),
         new("hooks a movie method: keeps the original under a new name and calls the tweak handler after it", TestHookInjection),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
+        new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
     ];
+
+    /// <summary>
+    /// The game's player froze on Haxe's typed nulls (pushnull then coerce/astype); the game's own code never has
+    /// them. Every block Arkive adds must be free of astype and of pushnull followed by coerce.
+    /// </summary>
+    private static void TestShippedTweakCode()
+    {
+        var settings = new Arkive.Core.Tweaks.TweakSettings();
+        settings.Enabled["lobbycp"] = [];
+        var blocks = Arkive.Core.Tweaks.TweakCode.ForSettings(Arkive.Core.Tweaks.TweakCode.LoadSwf(), settings);
+        Assert(blocks.Count > 0 && blocks.All(block => block.AbcName.StartsWith(Arkive.Core.Tweaks.TweakCode.AbcName + "/")),
+            "the tweak code blocks are missing or unnamed");
+        var withSettings = 0;
+        foreach (var block in blocks)
+        {
+            var abc = AbcFile.Read(block.AbcData);
+            if (abc.Pool.Strings.Contains(settings.ToGameJson())) withSettings++;
+            foreach (var body in abc.Bodies)
+            {
+                var previous = -1;
+                foreach (var start in AbcInstructions.Starts(body.Code))
+                {
+                    Assert(body.Code[start] != 0x86, $"{block.AbcName} still has an astype instruction");
+                    Assert(!(previous >= 0 && body.Code[previous] == 0x20 && body.Code[start] == 0x80),
+                        $"{block.AbcName} still has a typed null");
+                    previous = start;
+                }
+            }
+        }
+        Assert(withSettings == 1, "the settings were not written into exactly one block");
+    }
 
     private static void TestIntroMovies()
     {
