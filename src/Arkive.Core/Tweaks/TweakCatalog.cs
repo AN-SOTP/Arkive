@@ -246,6 +246,20 @@ public static class TweakCatalog
             H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "configUI", "arkive.tweaks.LobbyCp.onConfigUI"),
             H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "memberData", "arkive.tweaks.LobbyCp.onMemberData"),
         ]),
+        new("autopullup", "Auto Pull Up", "Adds an \"Auto Pull Up\" tick box beside the Pull up button of a lobby you host. While it is ticked and the Find Party window is open, Pull up is pressed again 1 to 4 seconds after each wait ends. It unticks itself when the party is full or the time limit runs out.", TweakRisk.Automation,
+        [
+            H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewContent", "configUI", "arkive.tweaks.AutoPullUp.onContentConfigUI"),
+        ],
+        [
+            new("minutes", "Stop after", false,
+            [
+                new TweakChoice("15", "15 minutes"),
+                new TweakChoice("30", "30 minutes", Default: true),
+                new TweakChoice("60", "1 hour"),
+                new TweakChoice("120", "2 hours"),
+                new TweakChoice("0", "No limit"),
+            ], Single: true),
+        ], Note: "This presses a game button for you with no click, which the game's terms may count as automation. The tick box starts unticked each time the game starts."),
         new("markettweaks", "Market Tweaks", "Buttons on the market's listing page that set the quantity to everything you have and the price to the lowest listed price.", TweakRisk.Batch,
         [
             H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.childPage.ExchangeShopItemRegistrationPage", "configUI", "arkive.tweaks.MarketTweaks.onConfigUI"),
