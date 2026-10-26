@@ -65,7 +65,7 @@ public sealed class TweakModService(
 
     /// <summary>
     /// The settings the tweak code gets: the saved ones, plus the folder the Logs tab reads its answers from and the
-    /// game's Combat Power rows and gem table (left out when there is no data2.lpk, so that tweak shows nothing).
+    /// game's Combat Power tables (left out when there is no data2.lpk, so that tweak shows nothing).
     /// </summary>
     private TweakSettings ForGame(TweakSettings settings, string packagesDirectory)
     {
@@ -74,11 +74,12 @@ public sealed class TweakModService(
             copy.Enabled[PlayerLogsTweak] = new(logs) { ["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/')) };
         var data2 = GameDataFile ?? Path.GetFullPath(Path.Combine(packagesDirectory, "..", "..", "data2.lpk"));
         if (settings.Enabled.TryGetValue(CombatPowerTweak, out var power) && File.Exists(data2))
-            copy.Enabled[CombatPowerTweak] = new(power)
-            {
-                ["rows"] = JsonSerializer.SerializeToElement(CombatPowerTable.Rows(data2, Path.Combine(root, "cache"))),
-                ["gemBase"] = JsonSerializer.SerializeToElement(CombatPowerTable.GemBasicAttack(data2, Path.Combine(root, "cache"))),
-            };
+        {
+            var options = new Dictionary<string, JsonElement>(power);
+            foreach (var (key, value) in CombatPowerTable.Options(data2, Path.Combine(root, "cache")))
+                options[key] = value;
+            copy.Enabled[CombatPowerTweak] = options;
+        }
         return copy;
     }
 

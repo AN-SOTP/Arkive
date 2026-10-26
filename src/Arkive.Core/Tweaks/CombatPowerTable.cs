@@ -62,6 +62,107 @@ public static class CombatPowerTable
         });
 
     /// <summary>
+    /// Everything the Combat Power tweak reads, as its options: "rows" and "gemBase" (above), "engravings" (one text per
+    /// engraving and role, "Name|key|v0,v1,…,v93": the value at index 20 × stone level + 1 + 4 × (grade − 1) + level, grade
+    /// 1 heroic to 3 relic; the penalty Atk. Power Reduction by its level) and "bracelet" (one text per bracelet effect,
+    /// "text|dps|support", the text with whitespace, slashes and commas removed and lower-cased, as <see cref="Plain"/>).
+    /// Kept in <paramref name="workDirectory"/> per data2.lpk size and time, since reading the game's text takes a while.
+    /// </summary>
+    public static Dictionary<string, System.Text.Json.JsonElement> Options(string data2Path, string workDirectory)
+    {
+        var file = new FileInfo(data2Path);
+        var cache = Path.Combine(workDirectory, $"combat-power-{file.Length}-{file.LastWriteTimeUtc.Ticks}.json");
+        if (File.Exists(cache))
+        {
+            var kept = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(File.ReadAllText(cache));
+            if (kept is not null) return kept;
+        }
+        var options = new Dictionary<string, object>
+        {
+            ["rows"] = Rows(data2Path, workDirectory),
+            ["gemBase"] = GemBasicAttack(data2Path, workDirectory),
+        };
+        WithDatabases(data2Path, workDirectory,
+            ["EFTable_BattlePoint.db", "EFTable_Ability.db", "EFTable_CombatEffect.db", "EFTable_GameMsg.db"], connection =>
+            {
+                options["engravings"] = Engravings(connection);
+                options["bracelet"] = Bracelet(connection);
+                return 0;
+            });
+        Directory.CreateDirectory(workDirectory);
+        foreach (var stale in Directory.EnumerateFiles(workDirectory, "combat-power-*.json")) File.Delete(stale);
+        var json = System.Text.Json.JsonSerializer.Serialize(options);
+        File.WriteAllText(cache, json);
+        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json)!;
+    }
+
+    /// <summary>Game text as the tweak compares it: tags, whitespace, slashes and commas removed, lower-cased.</summary>
+    public static string Plain(string text) =>
+        new(System.Text.RegularExpressions.Regex.Replace(text, "<[^>]*>", "")
+            .Where(c => !char.IsWhiteSpace(c) && c != '/' && c != ',').Select(char.ToLowerInvariant).ToArray());
+
+    private static string? Text(SqliteConnection connection, string key)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT MSG FROM db3.GameMsg_English WHERE KEY = $key";
+        command.Parameters.AddWithValue("$key", key.ToLowerInvariant());
+        return command.ExecuteScalar() as string;
+    }
+
+    private static string[] Engravings(SqliteConnection connection)
+    {
+        var values = new Dictionary<(int Ability, int Key), int[]>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT PrimaryKey, ValueA, ValueB, ValueC FROM BattlePoint WHERE Type IN (10, 11)";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var at = (reader.GetInt32(1), reader.GetInt32(0));
+                if (!values.TryGetValue(at, out var row)) values[at] = row = new int[94];
+                var index = reader.GetInt32(2);
+                if (index is >= 0 and < 94) row[index] = reader.GetInt32(3);
+            }
+        }
+        var found = new List<string>();
+        foreach (var ((ability, key), row) in values.OrderBy(pair => pair.Key))
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT Name FROM db1.Ability WHERE PrimaryKey = $id ORDER BY SecondaryKey LIMIT 1";
+            command.Parameters.AddWithValue("$id", ability);
+            var name = command.ExecuteScalar() is string nameKey ? Text(connection, nameKey) : null;
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            name = System.Text.RegularExpressions.Regex.Replace(name, "<[^>]*>", "").Trim();
+            found.Add($"{name}|{key}|{string.Join(',', row)}");
+        }
+        return found.ToArray();
+    }
+
+    /// <summary>Bracelet effects: type 20 (DPS) and 21 (support); ValueA 4 names a CombatEffect, 3 an Ability.</summary>
+    private static string[] Bracelet(SqliteConnection connection)
+    {
+        var effects = new Dictionary<string, int[]>();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT PrimaryKey, ValueA, ValueB, ValueC FROM BattlePoint WHERE Type IN (20, 21)";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var key = reader.GetInt32(0);
+            using var lookup = connection.CreateCommand();
+            lookup.CommandText = reader.GetInt32(1) == 4
+                ? "SELECT Desc FROM db2.CombatEffect WHERE PrimaryKey = $id LIMIT 1"
+                : "SELECT Desc FROM db1.Ability WHERE PrimaryKey = $id ORDER BY SecondaryKey LIMIT 1";
+            lookup.Parameters.AddWithValue("$id", reader.GetInt32(2));
+            var text = lookup.ExecuteScalar() is string descKey ? Text(connection, descKey) : null;
+            if (string.IsNullOrWhiteSpace(text) || key is not (1 or 2)) continue;
+            var plain = Plain(text);
+            if (!effects.TryGetValue(plain, out var value)) effects[plain] = value = new int[2];
+            value[key - 1] = reader.GetInt32(3);
+        }
+        return effects.Select(effect => $"{effect.Key}|{effect.Value[0]}|{effect.Value[1]}").ToArray();
+    }
+
+    /// <summary>
     /// Extracts the named databases from data2.lpk, opens the first and attaches the rest as db1, db2…, runs
     /// <paramref name="read"/>, then deletes the copies.
     /// </summary>
