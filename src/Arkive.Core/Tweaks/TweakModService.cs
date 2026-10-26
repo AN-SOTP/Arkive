@@ -57,7 +57,21 @@ public sealed class TweakModService(
     /// <summary>When set, each built movie is also written here (for decompiling while developing tweaks).</summary>
     public string? KeepMoviesIn { get; init; }
 
+    /// <summary>The settings the tweak code gets: the saved ones, plus the folder the Logs tab reads its answers from.</summary>
+    private TweakSettings ForGame(TweakSettings settings)
+    {
+        if (!settings.Enabled.TryGetValue(PlayerLogsTweak, out var options)) return settings;
+        var copy = new TweakSettings { Enabled = new(settings.Enabled) };
+        copy.Enabled[PlayerLogsTweak] = new(options) { ["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/')) };
+        return copy;
+    }
+
     private string StatePath => Path.Combine(root, "state.json");
+
+    /// <summary>The tweak whose tab reads the logs Arkive fetches, and the folder it reads them from.</summary>
+    public const string PlayerLogsTweak = "logs";
+
+    public string PlayerLogsFolder => Path.Combine(root, "player-logs");
 
     public TweakState LoadState()
     {
@@ -106,7 +120,7 @@ public sealed class TweakModService(
             return new TweakBuildResult(null, [], [], packages);
         }
 
-        var tweakCode = TweakCode.ForSettings(tweakSwf, settings);
+        var tweakCode = TweakCode.ForSettings(tweakSwf, ForGame(settings));
         var gamePackages = FindPackages(packagesDirectory);
         var staging = Path.Combine(root, "staging");
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);

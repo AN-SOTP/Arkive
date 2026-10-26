@@ -354,6 +354,7 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--filter"), json),
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
+            "player-logs" => PlayerLogs(target, ReadTextOption(arguments, "--out"), json),
             "tweaks-mod" => TweaksMod(target, ReadTextOption(arguments, "--root"), ReadTextOption(arguments, "--tweaks"),
                 ReadTextOption(arguments, "--options"), ReadTextOption(arguments, "--movies"), ReadTextOption(arguments, "--code"),
                 arguments.Contains("--diagnostic", StringComparer.OrdinalIgnoreCase), json),
@@ -3159,6 +3160,28 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
 /// Builds the "Arkive Tweaks" mod for the given tweaks from a Packages folder (read only) into a project root's library,
 /// as the Tweaks tab does; --movies DIR also writes each built movie there for decompiling.
 /// </summary>
+static int PlayerLogs(string name, string? outDirectory, bool json)
+{
+    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Arkive/1 (+https://github.com/AN-SOTP/Arkive)");
+    var lookup = new Arkive.Core.Tweaks.PlayerLogsService(client).FetchAsync(name).GetAwaiter().GetResult();
+    var summary = Arkive.Core.Tweaks.PlayerLogsService.Summary(lookup);
+    string? path = null;
+    if (!string.IsNullOrWhiteSpace(outDirectory))
+    {
+        Directory.CreateDirectory(outDirectory);
+        path = Path.Combine(Path.GetFullPath(outDirectory), Arkive.Core.Tweaks.PlayerLogsService.SummaryFileName(name));
+        File.WriteAllText(path, summary);
+    }
+    if (json) WriteJson(new { lookup.Name, lookup.Region, Status = lookup.Status.ToString(), lookup.Logs, File = path });
+    else
+    {
+        Console.Write(summary);
+        if (path is not null) Console.WriteLine($"Written: {path}");
+    }
+    return 0;
+}
+
 static int TweaksMod(string packagesRoot, string? projectRoot, string? tweaks, string? optionsJson, string? moviesOut, string? codePath, bool diagnostic, bool json)
 {
     if (string.IsNullOrWhiteSpace(projectRoot) || string.IsNullOrWhiteSpace(tweaks))
@@ -3957,6 +3980,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
+    Console.WriteLine("  arkive player-logs <character-name> [--out DIR] [--json]");
     Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf] [--diagnostic] [--json]");
     Console.WriteLine("  arkive game-data-mod <Arkive-project-root> [--sql PATCH.sql [--name NAME | --mod ID|NAME]] [--mod ID|NAME] [--json]");
     Console.WriteLine("  arkive language <EFGAME_DIR> --data DIR [--use LANGUAGE | --restore] [--json]");

@@ -15,7 +15,42 @@ internal static class TweakSmokeTests
         new("exposes a private field to tweak code through a public getter and setter", TestExposeField),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
+        new("reads a player's logs from a lostark.bible page and writes the summary the Logs tab draws", TestPlayerLogs),
     ];
+
+    /// <summary>
+    /// The Logs tab draws Arkive's summary file. The page data is "devalue" encoded (objects hold indexes into one flat
+    /// array); a page for a name that isn't in that region has no logs node but suggests the character's region.
+    /// </summary>
+    private static void TestPlayerLogs()
+    {
+        const string page = """
+            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},null,
+            {"type":"data","data":[{"logsEnabled":1,"isOwner":2,"isPublic":1,"logs":3},true,false,[4],
+            {"boss":5,"difficulty":6,"class":7,"spec":8,"dps":9,"percentile":10,"duration":11,"timestamp":12,"isDead":1},
+            "Archbishop Arcenos","Level 3","Slayer","Punisher",1681234567.5,0.888,327000,1792875478152]}]}
+            """;
+        using var document = System.Text.Json.JsonDocument.Parse(page);
+        var lookup = Arkive.Core.Tweaks.PlayerLogsService.Read("Chillidari", "CE", document.RootElement);
+        Assert(lookup is { Status: Arkive.Core.Tweaks.PlayerLogsStatus.Found, Logs.Count: 1 } &&
+               lookup.Logs[0] is { Boss: "Archbishop Arcenos", Difficulty: "Level 3", ClassName: "Slayer", Died: true },
+            "the logs page was not read");
+        var summary = Arkive.Core.Tweaks.PlayerLogsService.Summary(lookup!, "123x45").Split('\n');
+        Assert(summary[0] == "found\tEU Central\tChillidari\t1\t123x45", $"summary head: {summary[0]}");
+        Assert(summary[1].StartsWith("Archbishop Arcenos\tLevel 3\tSlayer\t1.68b\t89\t", StringComparison.Ordinal) &&
+               summary[1].EndsWith("\t5:27\tdied", StringComparison.Ordinal), $"summary row: {summary[1]}");
+        // The tab builds the same name: four lowercase hex digits per character of the lowercased name.
+        Assert(Arkive.Core.Tweaks.PlayerLogsService.SummaryFileName("Chi") == "006300680069.txt", "summary file name");
+
+        const string missing = """
+            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},{"type":"data","data":[
+            {"header":-1,"redirectedFrom":1,"suggestions":2},null,[3],{"name":4,"region":5},"Chillidari","CE"]}]}
+            """;
+        using var other = System.Text.Json.JsonDocument.Parse(missing);
+        Assert(Arkive.Core.Tweaks.PlayerLogsService.Read("Chillidari", "NA", other.RootElement) is null &&
+               Arkive.Core.Tweaks.PlayerLogsService.SuggestedRegion("Chillidari", other.RootElement) == "CE",
+            "a page without the character should give no logs and suggest its region");
+    }
 
     /// <summary>
     /// The game's player froze on Haxe's typed nulls (pushnull then coerce/astype); the game's own code never has
