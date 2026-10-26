@@ -181,9 +181,33 @@ class SlotTweaks {
 		for (line in lines.split("<BR>")) {
 			if (Text.trim(line) == "")
 				continue;
-			found.push(line.indexOf(OPEN_TEXT) >= 0 ? OPEN : statColor(line));
+			found.push(line.indexOf(OPEN_TEXT) >= 0 ? OPEN : gradeColor(line));
 		}
 		return found.length == 0 ? null : found;
+	}
+
+	/**
+		A bonus line's pip colour: the colour the tooltip gives its value, which shows the bonus's grade (blue, purple,
+		orange …); the stat's own colour when the line has none.
+	**/
+	static function gradeColor(line:String):Int {
+		var at = line.toUpperCase().lastIndexOf("COLOR=");
+		if (at < 0)
+			return statColor(line);
+		var start = at + 6;
+		while (start < line.length && (StringTools.fastCodeAt(line, start) == "'".code || StringTools.fastCodeAt(line, start) == "\"".code
+			|| StringTools.fastCodeAt(line, start) == "#".code))
+			start++;
+		var value = 0;
+		for (i in 0...6) {
+			var c = StringTools.fastCodeAt(line, start + i);
+			var digit = c >= "0".code && c <= "9".code ? c - "0".code
+				: (c >= "a".code && c <= "f".code ? c - "a".code + 10 : (c >= "A".code && c <= "F".code ? c - "A".code + 10 : -1));
+			if (digit < 0)
+				return statColor(line);
+			value = value * 16 + digit;
+		}
+		return value;
 	}
 
 	static function statColor(line:String):Int {

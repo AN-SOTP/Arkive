@@ -516,6 +516,7 @@ class CombatPower {
 		var leap = 0;
 		var stone:Dynamic = {};
 		var paradise:Float = 0;
+		var braceletPart = false;
 		var title = false;
 		var parts:Array<String> = [];
 		for (box in boxes) {
@@ -567,6 +568,7 @@ class CombatPower {
 							refine.push(factor);
 					}
 				} else if (heading.indexOf("Bracelet") >= 0) {
+					braceletPart = true;
 					for (line in body) {
 						var mainLine = false;
 						for (stat in STATS)
@@ -624,8 +626,13 @@ class CombatPower {
 				slot = ARMOUR_SLOTS[i];
 		if (slot == "" && weapon > 0 && !hasStat && quality >= 0)
 			slot = "weapon";
-		// Armour and accessories always have a main stat; a name word alone (a quest item "Ring") isn't gear.
+		// Armour and accessories always have a main stat; a name word alone (a quest item "Ring") isn't gear. A bracelet
+		// has its Bracelet Bonus, an ability stone its engravings, an orb its paradise power: a "Destruction Stone Pouch"
+		// or a material named after a bracelet is none of them.
 		if (slot != "weapon" && slot != "bracelet" && slot != "stone" && slot != "orb" && !hasStat)
+			slot = "";
+		var engraved:Array<String> = untyped __keys__(stone);
+		if ((slot == "stone" && engraved.length == 0) || (slot == "bracelet" && !braceletPart) || (slot == "orb" && paradise <= 0))
 			slot = "";
 		return {slot: slot, name: name, text: name + "|" + parts.join("|"), stats: stats, weapon: weapon, weaponPct: weaponPct,
 			flat: flat, basicPct: basicPct, quality: slot == "weapon" ? quality : -1, refine: refine, effects: effects,
