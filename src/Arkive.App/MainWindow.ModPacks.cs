@@ -192,7 +192,8 @@ public partial class MainWindow : Window
             var ids = group.Rows.Select(row => row.Entry.ModId).ToArray();
             var library = await _arkiveModLibrary.SetEnabledAsync(ids, enabled);
             Log($"Mod pack {(enabled ? "turned on" : "turned off")}: pack={group.Pack!.PackId}, name={group.Title}, mods={string.Join(", ", ids)}.");
-            await SynchronizeModSelectionsAsync(enabled ? "mod pack turned on" : "mod pack turned off", onlyIfChanged: true, deferWorkspace: true);
+            await SynchronizeModSelectionsAsync(enabled ? "mod pack turned on" : "mod pack turned off", onlyIfChanged: true,
+                deferWorkspace: true, changedModIds: ids);
             return enabled
                 ? $"Turned on the pack {group.Title} ({ids.Length:N0} mods).{OverlapNotice(library.Mods, ids)} Choose Apply changes to update the game."
                 : $"Turned off the pack {group.Title} ({ids.Length:N0} mods). Choose Apply changes to update the game.";
@@ -231,7 +232,8 @@ public partial class MainWindow : Window
         {
             await _arkiveModLibrary.RaisePrioritiesAsync(pack.ModIds, raise);
             Log($"Mod pack priorities raised: pack={pack.PackId}, name={pack.Name}, by={raise}.");
-            await SynchronizeModSelectionsAsync("mod pack priority raised", onlyIfChanged: true, deferWorkspace: true);
+            await SynchronizeModSelectionsAsync("mod pack priority raised", onlyIfChanged: true, deferWorkspace: true,
+                changedModIds: pack.ModIds);
             return $"Raised every mod in {pack.Name} by {raise:N0} priority, so the pack wins its overlaps. Choose Apply changes to update the game.";
         }, (ModLibraryGrid.SelectedItem as ModLibraryRow)?.Entry.ModId);
     }

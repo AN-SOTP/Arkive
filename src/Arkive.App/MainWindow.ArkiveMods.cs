@@ -188,6 +188,7 @@ public partial class MainWindow : Window
                 foreach (var line in state.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)) Log(line);
             }
             if (scan.Released.Count > 0) await RefreshGuidedTextureModsAsync("mod file updated");
+            _lastEditSnapshot = scan.Released.Count > 0 ? null : snapshot;
             await RefreshModAuthoringAsync(snapshot: scan.Released.Count > 0 ? null : snapshot);
             Lap("edit mods");
             Log($"Mod library refresh took: {string.Join(", ", stages)}.");
@@ -338,9 +339,16 @@ public partial class MainWindow : Window
     /// a view that shows it is opened or mods are applied. Enabling, disabling and priorities only change which
     /// working files are selected, which nothing in the Mods list reads from that workspace.
     /// </param>
-    private async Task SynchronizeModSelectionsAsync(string trigger, bool onlyIfChanged = false, bool deferWorkspace = false)
+    /// <param name="changedModIds">
+    /// The only mods turned on or off or moved in priority: only the working files competing with them are read again
+    /// (see ArkiveModSelectionService.SynchronizeChangedAsync). Apply still synchronizes every working file.
+    /// </param>
+    private async Task SynchronizeModSelectionsAsync(string trigger, bool onlyIfChanged = false, bool deferWorkspace = false,
+        IReadOnlyCollection<string>? changedModIds = null)
     {
-        var (changes, snapshot) = await ArkiveModSelectionService.SynchronizeWithSnapshotAsync(_arkiveModLibrary, _arkiveModEdits);
+        var (changes, snapshot) = changedModIds is not null && _lastEditSnapshot is { } known
+            ? await ArkiveModSelectionService.SynchronizeChangedAsync(_arkiveModLibrary, _arkiveModEdits, known, changedModIds)
+            : await ArkiveModSelectionService.SynchronizeWithSnapshotAsync(_arkiveModLibrary, _arkiveModEdits);
         if (changes.Count > 0)
             Log($"Mod selection synchronized: trigger={trigger}, changes={changes.Count:N0}, " +
                 string.Join("; ", changes.Take(20).Select(change =>
@@ -365,6 +373,9 @@ public partial class MainWindow : Window
     /// SynchronizeModSelectionsAsync): the working files as that left them, for the refresh that follows it.
     /// </summary>
     private ArkiveModEditSnapshot? _selectionOnlyChange;
+
+    /// <summary>The working files as the last Mods list refresh saw them; a toggle re-reads only those it can change.</summary>
+    private ArkiveModEditSnapshot? _lastEditSnapshot;
 
     /// <summary>Reloads the package workspace if a deferred change left it behind (see SynchronizeModSelectionsAsync).</summary>
     private async Task RefreshStalePackageWorkspaceAsync(string trigger)
@@ -421,7 +432,8 @@ public partial class MainWindow : Window
             var ids = rows.Select(row => row.Entry.ModId).ToArray();
             var library = await _arkiveModLibrary.SetEnabledAsync(ids, enabled);
             Log($"Mods {(enabled ? "enabled" : "disabled")}: mods={string.Join(", ", ids)}.");
-            await SynchronizeModSelectionsAsync(enabled ? "mods enabled" : "mods disabled", onlyIfChanged: true, deferWorkspace: true);
+            await SynchronizeModSelectionsAsync(enabled ? "mods enabled" : "mods disabled", onlyIfChanged: true, deferWorkspace: true,
+                changedModIds: ids);
             return enabled
                 ? $"Enabled {ids.Length:N0} mods.{OverlapNotice(library.Mods, ids)} Choose Apply changes to update the game."
                 : $"Disabled {ids.Length:N0} mods. Choose Apply changes to update the game.";
@@ -432,7 +444,8 @@ public partial class MainWindow : Window
         {
             var library = await _arkiveModLibrary.SetEnabledAsync(row.Entry.ModId, enabled);
             Log($"Mod {(enabled ? "enabled" : "disabled")}: mod={row.Entry.ModId}, name={row.DisplayName}.");
-            await SynchronizeModSelectionsAsync(enabled ? "mod enabled" : "mod disabled", onlyIfChanged: true, deferWorkspace: true);
+            await SynchronizeModSelectionsAsync(enabled ? "mod enabled" : "mod disabled", onlyIfChanged: true, deferWorkspace: true,
+                changedModIds: [row.Entry.ModId]);
             return enabled
                 ? $"{row.DisplayName} enabled.{OverlapNotice(library.Mods, [row.Entry.ModId])} Choose Apply changes to update the game."
                 : $"{row.DisplayName} disabled. Choose Apply changes to update the game.";
@@ -632,7 +645,8 @@ public partial class MainWindow : Window
             await _arkiveModLibrary.SetPriorityAsync(row.Entry.ModId, priority);
             Log($"Mod priority changed: mod={row.Entry.ModId}, name={row.DisplayName}, " +
                 $"from={row.Priority}, to={priority}.");
-            await SynchronizeModSelectionsAsync("mod priority changed", onlyIfChanged: true, deferWorkspace: true);
+            await SynchronizeModSelectionsAsync("mod priority changed", onlyIfChanged: true, deferWorkspace: true,
+                changedModIds: [row.Entry.ModId]);
             return $"{row.DisplayName} now has priority {priority:N0}. Choose Apply changes to update the game.";
         }, row.Entry.ModId);
 
@@ -1144,11 +1158,17 @@ public partial class MainWindow : Window
             ModLibraryStatusText.Text = "Checking enabled mods, priorities, and installed packages...";
             ModLibraryProgressBar.IsIndeterminate = true;
             var clock = Stopwatch.StartNew();
-            await RefreshStalePackageWorkspaceAsync("before applying mods");
+            // A package workspace reload left pending by enabling or disabling mods is not needed here: the plan reads
+            // the library, working files and package projects itself, and the workspace is reloaded after applying.
+            // Before Apply it cost 30-50 s, with the working files no longer in memory.
             await EnsureGamePackagesDirectoryAsync();
-            if (!previewOnly) await SaveEnabledModChangesAsync();
+            // Without a save in between, the plan reuses the working files read to look for unsaved changes.
+            var unsavedChecked = previewOnly ? null : await SaveEnabledModChangesAsync();
+            var modsSaved = !previewOnly && unsavedChecked is null;
             var planStarted = clock.Elapsed;
-            var plan = previewModId is null ? await _arkiveModApply.PlanAsync() : await _arkiveModApply.PreviewModAsync(previewModId);
+            var plan = previewModId is not null ? await _arkiveModApply.PreviewModAsync(previewModId)
+                : unsavedChecked is not null ? await _arkiveModApply.PlanAsync(unsavedChecked)
+                : await _arkiveModApply.PlanAsync();
             var planSeconds = (clock.Elapsed - planStarted).TotalSeconds;
             ModLibraryProgressBar.IsIndeterminate = false;
             _lastModApplyPlan = plan;
@@ -1160,7 +1180,10 @@ public partial class MainWindow : Window
             foreach (var modId in plan.ModsNeedingClientUpdate)
                 if (_arkiveModLibraryManifest.Find(modId) is { } mod)
                     _modsNeedingGameUpdate[mod.ModId] = mod.FileSha256;
-            await RefreshArkiveModsAsync("apply plan reviewed");
+            // A plan that needs an answer asks first and the Mods list is refreshed after (3-5 s), unless mods were
+            // just saved: then the list behind the question shows them as saved.
+            var asks = plan.CanApply && plan.HasChanges && !previewOnly;
+            if (!asks || modsSaved) await RefreshArkiveModsAsync("apply plan reviewed");
             Log($"Mod apply plan: canApply={plan.CanApply}, changes={plan.HasChanges}, packages={plan.Packages.Count}, " +
                 $"summary={plan.Summary}, problems={string.Join(" | ", plan.BlockingProblems)}, " +
                 $"warnings={string.Join(" | ", plan.Warnings)}, took={clock.Elapsed.TotalSeconds:N1}s (plan {planSeconds:N1}s).");
@@ -1196,7 +1219,15 @@ public partial class MainWindow : Window
                     "Installed packages are restored first, every rebuilt package passes Arkive's native validation, and all installs happen in one transaction that rolls back on failure. " +
                     "Close Lost Ark, its launcher, and Easy Anti-Cheat before continuing.",
                     "Apply mod changes", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) !=
-                MessageBoxResult.Yes) return;
+                MessageBoxResult.Yes)
+            {
+                if (!modsSaved)
+                {
+                    await RefreshArkiveModsAsync("apply plan reviewed");
+                    ModLibraryStatusText.Text = plan.Summary;
+                }
+                return;
+            }
 
             changedGame = true;
             var progress = new Progress<ArkiveModApplyProgress>(update =>
@@ -1237,6 +1268,7 @@ public partial class MainWindow : Window
             UpdateGuidedTextureModActionState();
             if (changedGame)
             {
+                _packageWorkspaceStale = false;
                 await RefreshGuidedTextureModsAsync("mods applied");
                 await RefreshMaterialProjectsAsync("mods applied");
                 await RefreshModSetsAsync("mods applied");

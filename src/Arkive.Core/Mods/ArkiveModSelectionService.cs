@@ -46,6 +46,62 @@ public static class ArkiveModSelectionService
                 if (local.Included != include) pending.Add((mod, local, include));
             }
         }
+        return await WriteAsync(edits, snapshot, pending, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// <see cref="SynchronizeWithSnapshotAsync"/> after only <paramref name="changedModIds"/> were turned on or off or
+    /// moved in priority. Only the targets those mods change can get another winner, so only the working files of
+    /// the mods competing there are read again (from disk, not taken from <paramref name="known"/>) and rewritten; the
+    /// rest of <paramref name="known"/> is handed on. When one of those working files is not in
+    /// <paramref name="known"/> or can no longer be read, every working file is read, as the full pass does.
+    /// </summary>
+    public static async Task<ArkiveModSelectionResult> SynchronizeChangedAsync(
+        ArkiveModLibrary modLibrary,
+        ArkiveModEditWorkspaces edits,
+        ArkiveModEditSnapshot known,
+        IReadOnlyCollection<string> changedModIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(modLibrary);
+        ArgumentNullException.ThrowIfNull(edits);
+        ArgumentNullException.ThrowIfNull(known);
+        ArgumentNullException.ThrowIfNull(changedModIds);
+        var library = await modLibrary.LoadAsync(cancellationToken).ConfigureAwait(false);
+        var resolution = ArkiveModConflictResolver.Resolve(library.Mods);
+        var changed = changedModIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var affected = library.Mods.Where(mod => changed.Contains(mod.ModId))
+            .SelectMany(mod => mod.Bindings.Select(binding => (Mod: mod, Binding: binding)))
+            .Concat(resolution.Targets
+                .Where(target => target.Contenders.Any(contender => changed.Contains(contender.ModId)))
+                .SelectMany(target => target.Contenders)
+                .Select(contender => library.Find(contender.ModId) is { } mod &&
+                                     mod.BindingFor(contender.Asset.AssetId) is { } binding
+                    ? (Mod: mod, Binding: binding)
+                    : default)
+                .Where(item => item.Mod is not null))
+            .DistinctBy(item => item.Binding.EditId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var reloaded = new List<ArkiveModLocalEdit>(affected.Length);
+        var pending = new List<(ArkiveModLibraryEntry Mod, ArkiveModLocalEdit Local, bool Include)>();
+        foreach (var (mod, binding) in affected)
+        {
+            if (known.Find(binding.EditId) is not { } cached ||
+                await ArkiveModEditSnapshot.ReloadAsync(edits, cached, cancellationToken).ConfigureAwait(false) is not { } local)
+                return await SynchronizeWithSnapshotAsync(modLibrary, edits, cancellationToken).ConfigureAwait(false);
+            reloaded.Add(local);
+            var include = resolution.OutcomeFor(mod.ModId, binding.AssetId) == ArkiveModAssetOutcome.Winning;
+            if (local.Included != include) pending.Add((mod, local, include));
+        }
+        return await WriteAsync(edits, known.Replace(reloaded), pending, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<ArkiveModSelectionResult> WriteAsync(
+        ArkiveModEditWorkspaces edits,
+        ArkiveModEditSnapshot snapshot,
+        IReadOnlyList<(ArkiveModLibraryEntry Mod, ArkiveModLocalEdit Local, bool Include)> pending,
+        CancellationToken cancellationToken)
+    {
         // Each change rewrites one working file's own record, so they are written side by side: turning a pack of
         // large mods on or off changes over a thousand.
         var written = new ArkiveModLocalEdit[pending.Count];

@@ -56,6 +56,8 @@ public partial class MainWindow
         {
             try
             {
+                // The check reads the package projects, which the plan above does not reload.
+                await RefreshStalePackageWorkspaceAsync("check after game update");
                 audit = await RunClientUpdateAuditAsync("check after game update", showResult: false, (done, total, _) =>
                 {
                     ModLibraryProgressBar.Maximum = Math.Max(1, total);
