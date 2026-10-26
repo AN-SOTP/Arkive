@@ -25,6 +25,7 @@ class ExtraCurrency {
 	static inline var ICON_SCALE = 0.75;
 
 	static var container:Dynamic;
+	static var itemClass:Dynamic;
 	static var entries:Array<Dynamic> = [];
 	static var timer:Timer;
 
@@ -38,7 +39,7 @@ class ExtraCurrency {
 		var list:Dynamic = self.currencyList;
 		if (list == null)
 			return;
-		var itemClass:Dynamic = GameUi.definition("TopHUDCurrencyListItem");
+		itemClass = GameUi.definition("TopHUDCurrencyListItem");
 		if (itemClass == null)
 			return;
 		container = self;
@@ -66,15 +67,21 @@ class ExtraCurrency {
 		}
 	}
 
-	/** TopHUDContentsContainer.getTotalW: count our items in, so the bar's background reaches past them. */
+	/**
+		TopHUDContentsContainer.getTotalW: count our shown items in the way the game counts its own (each item's
+		background), so the bar's background ends after them as it does after the game's currencies.
+	**/
 	public static function onGetTotalW(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Dynamic {
 		if (self != container)
 			return null;
-		var list:Dynamic = self.currencyList;
 		var total:Float = result;
 		for (entry in entries) {
-			if (entry.count != -1)
-				total += list.margin + entry.view.listWidth;
+			if (entry.count == -1 || entry.view.visible != true)
+				continue;
+			var background:Dynamic = entry.view.background;
+			var width:Float = background != null ? background.width : entry.view.listWidth + 15;
+			if (width > 0)
+				total += width;
 		}
 		return {value: total};
 	}
@@ -143,26 +150,52 @@ class ExtraCurrency {
 		layout();
 	}
 
-	/** Places the shown items one after another after the game's currency list, and hides the rest. */
+	/**
+		Places the shown items after the game's currency list with the list's own spacing (an item's listWidth, then the
+		margin), and hides the rest. When an item shows or hides, the bar's background is resized to match.
+	**/
 	static function layout():Void {
 		var list:Dynamic = container == null ? null : container.currencyList;
 		if (list == null)
 			return;
-		var x:Float = list.x + list.getTotalW();
+		var x:Float = list.x + nextX(list);
+		var resized = false;
 		for (entry in entries) {
 			var view:Dynamic = entry.view;
 			var shown = list.visible == true && entry.count != -1;
-			if (view.visible != shown)
+			if (view.visible != shown) {
 				view.visible = shown;
+				resized = true;
+			}
 			if (entry.count == -1)
 				continue;
-			x += list.margin;
 			if (view.x != x || view.y != list.y) {
 				view.x = x;
 				view.y = list.y;
 			}
-			x += view.listWidth;
+			x += view.listWidth + list.margin;
 		}
+		if (resized && container.callUpdateBgSizeFunction != null)
+			container.callUpdateBgSizeFunction();
+	}
+
+	/** Where the list would put one more item: after its last shown item and the margin (its getTotalW when unsure). */
+	static function nextX(list:Dynamic):Float {
+		var end:Float = -1;
+		try {
+			var count:Int = list.numChildren;
+			for (i in 0...count) {
+				var item:Dynamic = list.getChildAt(i);
+				if (item == null || item.visible != true || !(untyped __is__(item, itemClass)))
+					continue;
+				var right:Float = item.x + item.listWidth;
+				if (right > end)
+					end = right;
+			}
+		} catch (error:Dynamic) {
+			end = -1;
+		}
+		return end < 0 ? list.getTotalW() : end + list.margin;
 	}
 
 	/** The data a TopHUDCurrencyListItem takes, marked as ours, with the material's icon when known. */
