@@ -178,13 +178,19 @@ internal static class TweakSmokeTests
                !live.Contains("\\u", StringComparison.Ordinal),
             "live.json does not hold the switches, options and answered request, or has \\u escapes: " + live);
 
-        // A pick-list changes one choice per message: every raid starts picked, "-" takes one out, "+" puts it back.
-        Assert(service.ApplyInGameChange("0007\tfavoriteraids\traids\t-Corrupt Lord's Pandemonium") is not null &&
-               service.ApplyInGameChange("0008\tfavoriteraids\traids\t+Nowhere") is null, "a pick-list change was refused, or a made-up choice accepted");
-        var raids = service.LoadState().Kept["favoriteraids"]["raids"].EnumerateArray().Select(item => item.GetString()).ToArray();
-        Assert(raids.Length == 36 && !raids.Contains("Corrupt Lord's Pandemonium") && raids.Contains("Behemoth, the Storm Commander") &&
-               !File.ReadAllText(service.LivePath).Contains("\\u", StringComparison.Ordinal),
-            "taking one raid out of the pick-list did not leave the other 36, or live.json escaped them");
+        // A pick-list message ("+" or "-" a choice) is refused for an option that is not a pick-list.
+        Assert(service.ApplyInGameChange("0007\tboxtweaks\tconfirm\t-tick") is null, "a pick-list change to a single choice was accepted");
+
+        // Choices saved for a tweak Arkive no longer has are dropped when the state is read, and left out of live.json.
+        state = service.LoadState();
+        state.Settings.Enabled["retired"] = new() { ["a"] = System.Text.Json.JsonSerializer.SerializeToElement(true) };
+        state.Kept["retired2"] = [];
+        service.SaveState(state);
+        state = service.LoadState();
+        Assert(!state.Settings.Enabled.ContainsKey("retired") && !state.Kept.ContainsKey("retired2") && state.Settings.Enabled.ContainsKey("extracurrency"),
+            "a removed tweak's saved choices were kept, or a real one was dropped");
+        service.SaveState(state);
+        Assert(!File.ReadAllText(service.LivePath).Contains("retired", StringComparison.Ordinal), "live.json lists a removed tweak");
     }
 
     /// <summary>

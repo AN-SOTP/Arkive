@@ -321,16 +321,24 @@ public sealed class TweakModService(
     /// <summary>The bracelet reroll judge, which prices with the Combat Power tweak's tables (kept under its id).</summary>
     public const string BraceletJudgeTweak = "braceletjudge";
 
+    /// <summary>The saved choices, without tweaks Arkive no longer has (a removed tweak's saved options are dropped).</summary>
     public TweakState LoadState()
     {
+        TweakState state;
         try
         {
-            return File.Exists(StatePath) ? JsonSerializer.Deserialize<TweakState>(File.ReadAllText(StatePath)) ?? new() : new();
+            state = File.Exists(StatePath) ? JsonSerializer.Deserialize<TweakState>(File.ReadAllText(StatePath)) ?? new() : new();
         }
         catch (JsonException)
         {
             return new();
         }
+        foreach (var id in state.Settings.Enabled.Keys.Concat(state.Kept.Keys).Where(id => TweakCatalog.Find(id) is null).ToArray())
+        {
+            state.Settings.Enabled.Remove(id);
+            state.Kept.Remove(id);
+        }
+        return state;
     }
 
     /// <summary>Saves the choices, and writes live.json so a running game follows them (<paramref name="ack"/>: see WriteLive).</summary>

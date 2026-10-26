@@ -389,7 +389,7 @@ class SettingsPanel {
 		return y + OPTION_ROW + 2;
 	}
 
-	/** A pick-list (such as Favorite Raids' raids): one tick box per choice, ticked when it's in the saved list. */
+	/** A pick-list: one tick box per choice, ticked when it's in the saved list. */
 	static function listRows(id:String, option:Dynamic, y:Float):Float {
 		var key:String = option.key;
 		var chosen:Array<Dynamic> = picked(id, key);

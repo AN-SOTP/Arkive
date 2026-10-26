@@ -1,5 +1,4 @@
 using Arkive.Core.Interface.Abc;
-using static Arkive.Core.Interface.Abc.AbcHookKind;
 
 namespace Arkive.Core.Tweaks;
 
@@ -295,33 +294,7 @@ public static class TweakCatalog
         [
             new("skipIntro", "Skip intro logos", true),
         ]),
-        new("favoriteraids", "Favorite Raids", "Adds a Favorites section to the top of the party finder with the raids you mark as favorites.", TweakRisk.Display,
-        [
-            H(Components, "components", "ark.controls.RollingTreeList", "draw", "arkive.tweaks.FavoriteRaids.onDraw", Before),
-            H(Components, "components", "ark.controls.RollingTreeList", "getFilteredParentData", "arkive.tweaks.FavoriteRaids.onGetFilteredParentData", Before),
-            H(Components, "components", "ark.controls.RollingTreeList", "pushRootIndex", "arkive.tweaks.FavoriteRaids.onPushRootIndex",
-                expose: ["_filteredIndexDataArray", "_nextIndex"]),
-            H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewContent", "configUI", "arkive.tweaks.FavoriteRaids.onConfigUI"),
-        ],
-        [
-            new("raids", "Favorite raids", false, Raids(
-                "Raid Level 1", "Raid Level 2", "Raid Level 3", "Raid Level 4", "Raid Level 5", "Raid Level 6", "Raid Level 7",
-                "Raid Level 8", "Shade", "Trial Guardian Raid", "Argos", "Behemoth, the Storm Commander",
-                "Resurrected Demon Beast Lair", "Garden of Crimson Delight", "Midnight Circus", "Phantom Astalgia",
-                "Corrupt Lord's Pandemonium", "Dark Baratron", "Overture: Spiral of the Crimson Midnight Sun",
-                "Act 1: Earth-Shattering Hellfire", "Act 2: Requiem of the Floating Nightmare", "Act 3: Night of Storms and Darkness",
-                "Act 4: Fortress of Destruction", "Denouement: Final Day", "Witch of Agony, Serca", "Belgardin, Arbiter of Death",
-                "Ancient Elveria", "Phantom Palace", "Ark of Arrogance", "Gate of Paradise", "Oreha's Well", "Kayangel",
-                "Ivory Tower of Chaos", "Horizon Cathedral", "Ebony Cube", "Haal's Hourglass", "Other")),
-        ], Note: "Raids are matched by the name the party finder shows, so this works with the English game client."),
     ];
-
-    /// <summary>
-    /// The party finder's raid categories as Mari lists them (by the English titles the tree shows, which is what the
-    /// tweak code matches), all picked to start with, as in Mari.
-    /// </summary>
-    private static IReadOnlyList<TweakChoice> Raids(params string[] titles) =>
-        [.. titles.Select(title => new TweakChoice(title, title, Default: true))];
 
     public static TweakDefinition? Find(string id) => All.FirstOrDefault(tweak => tweak.Id == id);
 }

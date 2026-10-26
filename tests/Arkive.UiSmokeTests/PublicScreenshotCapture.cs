@@ -132,7 +132,7 @@ internal static class PublicScreenshotCapture
         tabs.SelectedItem = Control<TabItem>(window, "TweaksTab");
         await UntilAsync(() => Control<ItemsControl>(window, "TweakList").Items.Count > 0);
         foreach (var row in Control<ItemsControl>(window, "TweakList").Items.OfType<TweakRow>())
-            row.Enabled = row.Tweak.Id is "logs" or "lobbycp" or "extracurrency" or "boxtweaks" or "favoriteraids" or "slottweaks";
+            row.Enabled = row.Tweak.Id is "logs" or "lobbycp" or "extracurrency" or "boxtweaks" or "markettweaks" or "slottweaks";
         Control<TextBlock>(window, "TweaksStatusText").Text = "Installed 6 tweak(s). They show the next time you start Lost Ark.";
         DemoStatus(window);
         await CaptureAsync(window, destination, "tweaks.png");
