@@ -41,6 +41,12 @@ public sealed record AbcHook(string ClassName, string MethodName, string Handler
     /// </summary>
     public IReadOnlyList<string> Expose { get; init; } = [];
 
+    /// <summary>
+    /// The tweak the hook belongs to. When set, the wrapper runs the handler only while
+    /// <c>arkive.tweaks.Options.on(Gate)</c> is true, so a tweak switched off in game leaves the game's method alone.
+    /// </summary>
+    public string? Gate { get; init; }
+
     public string Id => ClassName + (Static ? "::" : ".") + MethodName;
 }
 
@@ -175,7 +181,8 @@ public static class AbcHookInjector
     /// AfterValue: <c>… try { o = Handler(this, args, result); } catch {} if (o) result = o.value; return result;</c>
     /// Before: <c>args = [p1..pn]; try { o = Handler(this, args); } catch {} if (o &amp;&amp; o["return"]) return o.value;
     /// return this.original(args[0]..args[n-1]);</c>
-    /// Diagnostic hooks also guard the game's call, and note every error.
+    /// Diagnostic hooks also guard the game's call, and note every error. A gated hook calls the handler only while
+    /// <c>Options.on(gate)</c> is true; the check sits inside the guard.
     /// </summary>
     private static (byte[] Code, AbcException[] Handlers) WrapperCode(
         AbcConstantPool pool, AbcHook hook, int parameters, int renamed, bool returnsVoid)
@@ -190,6 +197,8 @@ public static class AbcHookInjector
         var method = pool.AddQName(publicNs, handler[(split + 1)..]);
         var diag = hook.Diagnostic ? pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, "arkive.tweaks"), "Diag") : 0;
         var note = hook.Diagnostic ? pool.AddQName(publicNs, "note") : 0;
+        var options = hook.Gate is null ? 0 : pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, "arkive.tweaks"), "Options");
+        var on = hook.Gate is null ? 0 : pool.AddQName(publicNs, "on");
         var args = parameters + 1;
         var result = parameters + 2;
         var error = parameters + 3;
@@ -239,11 +248,18 @@ public static class AbcHookInjector
 
         void Handler(AbcCode c)
         {
+            var off = -1;
+            if (hook.Gate is { } gate)
+            {
+                c.Op(0x60).U30(options).Op(0x2C).U30(pool.AddString(gate)).Op(0x46).U30(on).U30(1); // Options.on(gate)
+                off = c.Branch(0x12); // iffalse
+            }
             c.Op(0x60).U30(ownerName).Op(0xD0).GetLocal(args);
             if (!before) c.GetLocal(result);
             var count = before ? 2 : 3;
             if (hook.Kind == AbcHookKind.After) c.Op(0x4F).U30(method).U30(count);
             else c.Op(0x46).U30(method).U30(count).SetLocal(answer);
+            if (off >= 0) c.Land(off);
         }
 
         void Return(AbcCode c)

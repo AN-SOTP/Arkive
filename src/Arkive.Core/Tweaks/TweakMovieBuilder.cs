@@ -26,7 +26,10 @@ public static class TweakCode
     /// The code blocks to add to a movie, one per class as the Haxe compiler's SWC holds them, with the chosen tweaks
     /// and options (JSON) written into Options, and every typed null made untyped (see AbcInstructions.UntypeNulls).
     /// </summary>
-    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, TweakSettings settings)
+    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, TweakSettings settings) => ForSettings(swf, settings.ToGameJson());
+
+    /// <summary>The code blocks with this settings JSON (the shape Options.hx reads) written in.</summary>
+    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, string gameJson)
     {
         var blocks = ReadSwfBlocks(swf);
         var configured = 0;
@@ -37,7 +40,7 @@ public static class TweakCode
             var index = abc.Pool.Strings.IndexOf(ConfigPlaceholder);
             if (index >= 0)
             {
-                abc.Pool.Strings[index] = settings.ToGameJson();
+                abc.Pool.Strings[index] = gameJson;
                 configured++;
             }
             foreach (var body in abc.Bodies) AbcInstructions.UntypeNulls(body);
