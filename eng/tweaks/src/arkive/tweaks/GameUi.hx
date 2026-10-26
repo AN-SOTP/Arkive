@@ -28,6 +28,46 @@ class GameUi {
 		return made;
 	}
 
+	/** A new button of the first of these library symbols that a loaded movie has, with this label; null when none. */
+	public static function buttonOf(label:String, symbols:Array<String>):Dynamic {
+		for (symbol in symbols) {
+			var type:Dynamic = definition(symbol);
+			if (type != null) {
+				var made:Dynamic = untyped __new__(type);
+				made.label = label;
+				return made;
+			}
+		}
+		return null;
+	}
+
+	/** True when the object is an instance of the named class or of a class that extends it. */
+	public static function isA(o:Dynamic, className:String):Bool {
+		if (o == null)
+			return false;
+		var type:Dynamic = definition(className);
+		return type != null && (untyped __is__(o, type));
+	}
+
+	/** The object itself or its nearest parent that is an instance of the named class; null when none is. */
+	public static function ancestor(o:Dynamic, className:String):Dynamic {
+		var type:Dynamic = definition(className);
+		if (type == null)
+			return null;
+		var at:Dynamic = o;
+		while (at != null) {
+			if (untyped __is__(at, type))
+				return at;
+			at = at.parent;
+		}
+		return null;
+	}
+
+	/** Sends a plain mouse click to a display object, as the game's check boxes and dialog buttons receive one. */
+	public static function click(target:Dynamic):Void {
+		target.dispatchEvent(new scaleform.gfx.MouseEventEx(flash.events.MouseEvent.CLICK));
+	}
+
 	/** A new button of the same kind as one of the window's own, with this label. */
 	public static function copy(like:Dynamic, label:String):Dynamic {
 		var type:Dynamic = like.constructor;

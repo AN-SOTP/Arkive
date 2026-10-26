@@ -38,9 +38,9 @@ public sealed record TweakHookTarget(string Package, string Movie, string ClassN
 
 /// <summary>
 /// An option of a tweak: an on/off switch, or with <see cref="Choices"/> a set of things to pick (saved as the list of
-/// chosen values, for example raid ids).
+/// chosen values, for example raid ids). With <see cref="Single"/> exactly one choice is picked, saved as its value.
 /// </summary>
-public sealed record TweakOption(string Key, string Label, bool Default, IReadOnlyList<TweakChoice>? Choices = null);
+public sealed record TweakOption(string Key, string Label, bool Default, IReadOnlyList<TweakChoice>? Choices = null, bool Single = false);
 
 /// <summary>One thing to pick in a <see cref="TweakOption"/> with choices.</summary>
 public sealed record TweakChoice(string Value, string Label, bool Default = false);
@@ -75,11 +75,20 @@ public static class TweakCatalog
     [
         new("boxtweaks", "Chest Opening Tweaks", "Various tweaks for the chest opening window.", TweakRisk.Display,
         [
-            H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData"),
-            H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemItemContent", "configUI"),
-            H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRandomItem", "configUI"),
-            H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemSelectItem", "configUI"),
-            H(Base, "main", "ark.ui.dialogSystem.contents.MiddleContentGroup", "addComponent"),
+            H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData", "arkive.tweaks.BoxTweaks.onSetData"),
+            H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemItemContent", "configUI", "arkive.tweaks.BoxTweaks.onItemConfigUI"),
+            H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRandomItem", "configUI", "arkive.tweaks.BoxTweaks.onRandomConfigUI"),
+            H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemSelectItem", "configUI", "arkive.tweaks.BoxTweaks.onSelectConfigUI"),
+            H(Base, "main", "ark.ui.dialogSystem.contents.MiddleContentGroup", "addComponent", "arkive.tweaks.BoxTweaks.onAddComponent", AbcHookKind.AfterValue),
+        ],
+        [
+            new("openAllButton", "\"Open All\" button (sets the most you can open, then opens)", true),
+            new("confirm", "Open confirmation (the check box some chests ask you to tick)", false,
+            [
+                new TweakChoice("normal", "Normal", Default: true),
+                new TweakChoice("tick", "Auto-Tick"),
+                new TweakChoice("accept", "Auto-Accept (tick and press OK)"),
+            ], Single: true),
         ]),
         new("buffstack", "Buff Icon Stacking", "Places support buff icons in a separate row above other buffs.", TweakRisk.Display,
         [
@@ -116,16 +125,20 @@ public static class TweakCatalog
             new("showGracedShards", "Graced shards", true),
             new("showCoreEssence", "Core essence", true),
         ]),
-        new("fastadvhone", "Fast Advanced Honing", "Lets advanced honing be clicked again straight away.", TweakRisk.Speed,
+        new("fastadvhone", "Fast Advanced Honing", "Skips the result animation of advanced honing, so it can be clicked again straight away.", TweakRisk.Speed,
         [
-            H("efui_itemamp", "itemamp", "ark.ui.itemAmp.ItemAmpContent", "successEffectState"),
+            H("efui_itemamp", "itemamp", "ark.ui.itemAmp.ItemAmpContent", "successEffectState", "arkive.tweaks.FastAdvHone.onSuccessEffectState",
+                AbcHookKind.Before, expose: ["checkAmpComplete"]),
         ]),
         new("fastfacet", "Auto-Dismiss Stone Faceting Results", "Closes the result of automatic stone faceting by itself, so cutting stones in a row is a little faster. Stones you cut by hand still show their result.", TweakRisk.Automation,
-        []),
+        [
+            H("efui_interaction", "interactionmarble", "ark.ui.interaction.marble.MarbleContent", "addedToStage", "arkive.tweaks.FastFacet.onAddedToStage"),
+            H("efui_interaction", "interactionmarble", "ark.ui.interaction.marble.MarbleContent", "marbleStoneComplete", "arkive.tweaks.FastFacet.onStoneComplete"),
+        ]),
         new("fastpp", "Fast Paradise", "Lets paradise enhancing and resonance be clicked again straight away.", TweakRisk.Speed,
         [
-            H("efui_trinityorbmanagement", "trinityorbmanagement", "ark.ui.trinityOrbManagement.TrinityOrbManagement_Child_AlterationGrade", "configUI"),
-            H("efui_trinityorbmanagement", "trinityorbmanagement", "ark.ui.trinityOrbManagement.TrinityOrbManagement_Child_Enhance", "resultData"),
+            H("efui_trinityorbmanagement", "trinityorbmanagement", "ark.ui.trinityOrbManagement.TrinityOrbManagement_Child_AlterationGrade", "configUI", "arkive.tweaks.FastPp.onConfigUI"),
+            H("efui_trinityorbmanagement", "trinityorbmanagement", "ark.ui.trinityOrbManagement.TrinityOrbManagement_Child_Enhance", "resultData", "arkive.tweaks.FastPp.onResultData", AbcHookKind.Before),
         ]),
         new("lobbycp", "Lobby CP", "Shows party members' combat power in the party finder, without hovering over them: green with the support mark for supports, red for damage dealers.", TweakRisk.Display,
         [
@@ -140,10 +153,11 @@ public static class TweakCatalog
             new("maxCount", "\"Max\" button beside the quantity", true),
             new("prices", "\"Lowest\" and \"-1\" buttons beside the price", true),
         ]),
-        new("nextbutton", "Next Item Button", "Adds a \"Next Item\" button to accessory refining and bracelet refining that picks the next item in the list.", TweakRisk.Display,
+        new("nextbutton", "Next Item Button", "Adds a \"Next Item\" button to accessory refining, ability stone faceting and bracelet refining that picks the next item in the list.", TweakRisk.Display,
         [
-            H("efui_itemaccupgrade", "itemaccupgrade", "ark.ui.itemAccUpgrade.ItemAccUpgradeContent", "configUI"),
-            H("efui_itembraceletenchant", "itembraceletenchant", "ark.ui.itemBraceletEnchant.ItemBEWndContent", "configUI"),
+            H("efui_itemaccupgrade", "itemaccupgrade", "ark.ui.itemAccUpgrade.ItemAccUpgradeContent", "configUI", "arkive.tweaks.NextButton.onAccUpgradeConfigUI"),
+            H("efui_itembraceletenchant", "itembraceletenchant", "ark.ui.itemBraceletEnchant.ItemBEWndContent", "configUI", "arkive.tweaks.NextButton.onBraceletConfigUI"),
+            H("efui_interaction", "interactionmarble", "ark.ui.interaction.marble.MarbleContent", "configUI", "arkive.tweaks.NextButton.onMarbleConfigUI"),
         ]),
         new("readycheck", "Ready Check Tweaks", "Warns in the entrance prompt of raids and matchmade content when fewer than 11 gems are equipped or no feast is active.", TweakRisk.Display,
         [
