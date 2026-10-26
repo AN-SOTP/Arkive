@@ -93,7 +93,7 @@ public static class TweakCatalog
 
     public static IReadOnlyList<TweakDefinition> All { get; } =
     [
-        new("logs", "Logs Tab", "Adds a \"Logs\" tab to the character profile and inspect windows with the player's recent lostark.bible logs, by raid (EU Central first, then North America). Keep Arkive running while you play: it fetches the logs for the tab.", TweakRisk.Display,
+        new("logs", "Logs Tab", "Adds a \"Logs\" tab to the character profile and inspect windows with the player's recent lostark.bible logs, by raid. Keep Arkive running while you play: it fetches the logs for the tab.", TweakRisk.Display,
         [
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsTab.onWndConfigUI"),
         ]),

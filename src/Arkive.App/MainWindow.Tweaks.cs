@@ -18,10 +18,10 @@ public sealed class TweakRow(TweakDefinition tweak, bool? on)
     public string? Note => Tweak.Note;
     public Visibility NoteVisibility => string.IsNullOrEmpty(Note) ? Visibility.Collapsed : Visibility.Visible;
     public bool? On { get; } = on;
-    public string StateLabel => On == true ? "On" : "Off";
+    public string StateLabel => On == true ? "Enabled" : "Disabled";
     public string StateDetail => On == true
-        ? "Installed and switched on. Switch it off in game from Arkive Tweaks in the escape menu."
-        : "Installed and switched off. Switch it on in game from Arkive Tweaks in the escape menu.";
+        ? "Installed and enabled. Disable it in game from Arkive Tweaks in the escape menu."
+        : "Installed and disabled. Enable it in game from Arkive Tweaks in the escape menu.";
     public Visibility StateVisibility => On is null ? Visibility.Collapsed : Visibility.Visible;
 
     public System.Windows.Media.Brush StateBackground => (System.Windows.Media.Brush)Application.Current.FindResource(
@@ -71,20 +71,20 @@ public partial class MainWindow
         var on = rows.Count(row => row.On == true);
         TweaksStatusText.Text = status ?? (!installed
             ? "No tweaks are installed."
-            : $"{on:N0} of {rows.Length:N0} tweaks are on. Switch them in game, or use the buttons above.");
+            : $"All tweaks are installed; {on:N0} of {rows.Length:N0} are enabled. Enable, disable and change them in game.");
         UpdateTweakActions();
     }
 
     private void UpdateTweakActions()
     {
-        TweaksEnableAllButton.IsEnabled = !_tweaksBusy && ModLibraryIdle;
-        TweaksDisableAllButton.IsEnabled = !_tweaksBusy && ModLibraryIdle &&
+        TweaksInstallAllButton.IsEnabled = !_tweaksBusy && ModLibraryIdle;
+        TweaksRemoveAllButton.IsEnabled = !_tweaksBusy && ModLibraryIdle &&
                                            (Tweaks.LoadState().ModId is not null || _arkiveModLibraryManifest?.Mods.Any(TweakModService.IsTweakMod) == true);
     }
 
-    private async void TweaksEnableAllButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(Tweaks.EveryTweak());
+    private async void TweaksInstallAllButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(Tweaks.EveryTweak());
 
-    private async void TweaksDisableAllButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(new TweakSettings());
+    private async void TweaksRemoveAllButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(new TweakSettings());
 
     /// <summary>
     /// Installs exactly these tweaks (none takes them all out), like the Login Screen and Fonts tabs: Arkive rebuilds its
@@ -163,11 +163,11 @@ public partial class MainWindow
             if (MessageBox.Show(this,
                     $"Other mods have changes waiting too:\n\n{names}{more}\n\nInstall them together with the tweaks? " +
                     "No leaves the game as it is; the tweaks go in the next time you apply.",
-                    removing ? "Remove tweaks" : "Install tweaks", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) !=
+                    removing ? "Remove All Tweaks" : "Install All Tweaks", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) !=
                 MessageBoxResult.Yes)
-                return "Nothing was changed in the game yet, because other mods have changes waiting. Apply tweaks again, or apply from the Mods tab.";
+                return "Nothing was changed in the game yet, because other mods have changes waiting. Click the button again, or apply from the Mods tab.";
         }
-        if (!plan.HasChanges) return removing ? "No tweaks are in the game." : "These tweaks are already in the game.";
+        if (!plan.HasChanges) return removing ? "No tweaks are in the game." : "All tweaks are already in the game.";
 
         ArkiveModApplyResult result;
         using (ShowBusy(title, "Arkive is writing the game's interface files. Please wait until it finishes."))
@@ -186,7 +186,7 @@ public partial class MainWindow
             return "Some interface files could not be changed: " +
                    string.Join(" ", result.Packages.Where(item => !item.Succeeded).Take(2).Select(item => item.Message));
         if (removing) return "Tweaks removed. The game's own windows are back as they were.";
-        var status = $"Installed {settings.Enabled.Count:N0} tweak(s). They show the next time you start Lost Ark.";
+        var status = "All tweaks are installed. Start Lost Ark, press Esc and click Arkive Tweaks to enable the ones you want.";
         if (built.MissingHooks.Count > 0)
             status += $" This game version is missing {built.MissingHooks.Count:N0} place(s) some tweaks hook, so those may not work: " +
                       string.Join(", ", built.MissingHooks.Take(4)) + (built.MissingHooks.Count > 4 ? "…" : string.Empty);

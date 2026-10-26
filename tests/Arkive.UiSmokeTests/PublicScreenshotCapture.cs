@@ -135,8 +135,8 @@ internal static class PublicScreenshotCapture
             .Select(row => new TweakRow(row.Tweak, row.Tweak.Id is not ("readycheck" or "fastfacet" or "exchangemax"))).ToArray();
         Control<ItemsControl>(window, "TweakList").ItemsSource = tweakRows;
         Control<TextBlock>(window, "TweaksStatusText").Text =
-            $"{tweakRows.Count(row => row.On == true):N0} of {tweakRows.Length:N0} tweaks are on. Switch them in game, or use the buttons above.";
-        Control<Button>(window, "TweaksDisableAllButton").IsEnabled = true;
+            $"All tweaks are installed; {tweakRows.Count(row => row.On == true):N0} of {tweakRows.Length:N0} are enabled. Enable, disable and change them in game.";
+        Control<Button>(window, "TweaksRemoveAllButton").IsEnabled = true;
         DemoStatus(window);
         await CaptureAsync(window, destination, "tweaks.png");
         window.Close();

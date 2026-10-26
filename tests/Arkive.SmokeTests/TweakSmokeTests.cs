@@ -167,8 +167,8 @@ internal static class TweakSmokeTests
         Assert(state.Settings.Enabled["extracurrency"]["showLeapstones"].GetBoolean() == false && state.Kept.Count == 1 &&
                state.Kept["boxtweaks"]["confirm"].GetString() == "tick", "switching back on lost the options, or a choice was not kept");
         Assert(service.ApplyInGameChange("0004\tboxtweaks\tconfirm\tnonsense") is null &&
-               service.ApplyInGameChange("0005\tfastlaunch\t\t0") is null && service.ApplyInGameChange("0006\tnope\t\t1") is null,
-            "a bad choice, a game-file tweak or an unknown tweak was accepted");
+               service.ApplyInGameChange("0005\tfastlaunch\tskipIntro\t0") is null && service.ApplyInGameChange("0006\tnope\t\t1") is null,
+            "a bad choice, a game-file tweak's option or an unknown tweak was accepted");
         var live = File.ReadAllText(service.LivePath);
         using var parsed = System.Text.Json.JsonDocument.Parse(live);
         Assert(parsed.RootElement.GetProperty("ack").GetString() == "0003" &&
@@ -192,16 +192,28 @@ internal static class TweakSmokeTests
         service.SaveState(state);
         Assert(!File.ReadAllText(service.LivePath).Contains("retired", StringComparison.Ordinal), "live.json lists a removed tweak");
 
-        // Enable All Tweaks turns every tweak on with the options chosen before; Disable All Tweaks keeps them for next time.
+        // Install All Tweaks builds every tweak but switches on only the ones the player has on, with their options; a first
+        // install has them all off. Remove All Tweaks keeps the options and which were on, for the next install.
         var all = service.EveryTweak();
-        Assert(all.Enabled.Count == Arkive.Core.Tweaks.TweakCatalog.All.Count(tweak => tweak.Available) &&
+        Assert(all.Enabled.Keys.Order().SequenceEqual(["extracurrency", Arkive.Core.Tweaks.TweakModService.SettingsTweak]) &&
                all.Enabled[Arkive.Core.Tweaks.TweakModService.SettingsTweak]["everything"].GetBoolean() &&
-               all.Enabled["extracurrency"]["showLeapstones"].GetBoolean() == false && all.Enabled["boxtweaks"]["confirm"].GetString() == "tick",
-            "Enable All Tweaks should turn every tweak on with the options chosen before");
+               all.Enabled["extracurrency"]["showLeapstones"].GetBoolean() == false,
+            "Install All Tweaks should keep the player's switches and options: " + string.Join(", ", all.Enabled.Keys));
+        var fresh = new Arkive.Core.Tweaks.TweakModService(library, Path.Combine(root, "fresh"), NoChunkProtectionProvider.Instance);
+        Assert(fresh.EveryTweak().Enabled.Keys.SequenceEqual([Arkive.Core.Tweaks.TweakModService.SettingsTweak]),
+            "a first Install All Tweaks should start with every tweak off");
+        service.BuildAsync(new Arkive.Core.Tweaks.TweakSettings(), root, []).GetAwaiter().GetResult();
         service.BuildAsync(new Arkive.Core.Tweaks.TweakSettings(), root, []).GetAwaiter().GetResult();
         state = service.LoadState();
-        Assert(state.Settings.Enabled.Count == 0 && state.Kept["extracurrency"]["showLeapstones"].GetBoolean() == false,
-            "Disable All Tweaks lost the options of the tweaks it took out");
+        Assert(state.Settings.Enabled.Count == 0 && state.Kept["extracurrency"]["showLeapstones"].GetBoolean() == false &&
+               service.EveryTweak().Enabled.ContainsKey("extracurrency"),
+            "Remove All Tweaks lost the options of the tweaks it took out, or which of them were on");
+
+        // Faster Launch can be switched in game; the switch is saved and shown as on in live.json.
+        Assert(service.ApplyInGameChange("0008\tfastlaunch\t\t1") is not null && service.LoadState().Settings.Enabled.ContainsKey("fastlaunch"),
+            "switching Faster Launch in game was not saved");
+        using var withLaunch = System.Text.Json.JsonDocument.Parse(File.ReadAllText(service.LivePath));
+        Assert(withLaunch.RootElement.GetProperty("on").TryGetProperty("fastlaunch", out _), "live.json does not show Faster Launch on");
     }
 
     /// <summary>

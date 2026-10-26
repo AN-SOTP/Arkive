@@ -30,6 +30,9 @@ public sealed class TweakState
     public string? ModId { get; set; }
     public Dictionary<string, Dictionary<string, JsonElement>> Kept { get; set; } = [];
     public List<string> Built { get; set; } = [];
+
+    /// <summary>The tweaks that were on when Remove All Tweaks took them out, switched on again by Install All Tweaks.</summary>
+    public List<string> OnBeforeRemove { get; set; } = [];
 }
 
 /// <summary>
@@ -103,7 +106,8 @@ public sealed class TweakModService(
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["tweaks"] = tweaks,
-            ["on"] = settings.Enabled.Keys.Where(tweaks.ContainsKey).ToDictionary(id => id, _ => true),
+            ["on"] = settings.Enabled.Keys.Where(id => tweaks.ContainsKey(id) || TweakCatalog.Find(id) is { RestartOnly: true })
+                .ToDictionary(id => id, _ => true),
             ["home"] = Path.GetFullPath(root).Replace('\\', '/'),
             ["live"] = live,
             ["panel"] = live ? Panel(built) : null,
@@ -127,17 +131,18 @@ public sealed class TweakModService(
     }
 
     /// <summary>
-    /// Every tweak on, each with its saved (or kept) options and defaults for the rest, and In-game Tweak Settings set to
-    /// install everything: what the Tweaks tab's Enable All Tweaks installs.
+    /// What the Tweaks tab's Install All Tweaks installs: In-game Tweak Settings set to build every tweak, and switched on
+    /// only the tweaks the player has on (or had on before Remove All Tweaks), each with its saved options. A first
+    /// install has every tweak off; the player switches them on in game.
     /// </summary>
     public TweakSettings EveryTweak()
     {
         var state = LoadState();
+        var on = state.Settings.Enabled.Keys.Concat(state.OnBeforeRemove).Append(SettingsTweak).ToHashSet();
         var settings = new TweakSettings();
-        foreach (var tweak in TweakCatalog.All.Where(tweak => tweak.Available))
+        foreach (var tweak in TweakCatalog.All.Where(tweak => tweak.Available && on.Contains(tweak.Id)))
             settings.Enabled[tweak.Id] = OptionsOf(state, tweak);
-        if (settings.Enabled.TryGetValue(SettingsTweak, out var panel))
-            panel[EverythingOption] = JsonSerializer.SerializeToElement(true);
+        settings.Enabled[SettingsTweak][EverythingOption] = JsonSerializer.SerializeToElement(true);
         return settings;
     }
 
@@ -186,7 +191,9 @@ public sealed class TweakModService(
         var tweaks = TweakCatalog.All.Where(tweak => tweak.Available && !tweak.RestartOnly).ToArray();
         var json = JsonSerializer.Serialize(new Dictionary<string, object>
         {
-            ["on"] = tweaks.Where(tweak => state.Settings.Enabled.ContainsKey(tweak.Id)).ToDictionary(tweak => tweak.Id, _ => true),
+            // Game-file tweaks (Faster Launch) are listed too, so the panel shows their switch as saved.
+            ["on"] = TweakCatalog.All.Where(tweak => tweak.Available && state.Settings.Enabled.ContainsKey(tweak.Id))
+                .ToDictionary(tweak => tweak.Id, _ => true),
             ["tweaks"] = tweaks.ToDictionary(tweak => tweak.Id, tweak => OptionsOf(state, tweak)),
             ["ack"] = ack,
         }, GameJsonOptions);
@@ -202,14 +209,17 @@ public sealed class TweakModService(
     /// <summary>
     /// Saves a change made in the escape menu panel: "request&lt;tab&gt;tweak&lt;tab&gt;&lt;tab&gt;1|0" switches a tweak,
     /// "request&lt;tab&gt;tweak&lt;tab&gt;option&lt;tab&gt;value" sets an option (1|0 for a switch, the choice's value for a single
-    /// choice). Updates the saved state and live.json; returns what changed, or null for a message it can't take.
+    /// choice). Updates the saved state and live.json; returns what changed, or null for a message it can't take. A
+    /// game-file tweak (Faster Launch) can only be switched, and its switch takes effect at the next Install All Tweaks.
     /// </summary>
     public string? ApplyInGameChange(string text)
     {
         var parts = text.Split('\t');
-        if (parts.Length != 4 || TweakCatalog.Find(parts[1]) is not { Available: true, RestartOnly: false } tweak || tweak.Id == SettingsTweak)
+        if (parts.Length != 4 || TweakCatalog.Find(parts[1]) is not { Available: true } tweak || tweak.Id == SettingsTweak)
             return null;
         var (request, key, value) = (parts[0], parts[2], parts[3]);
+        if (tweak.RestartOnly && key.Length > 0)
+            return null;
         var state = LoadState();
         var enabled = state.Settings.Enabled;
         string change;
@@ -390,10 +400,15 @@ public sealed class TweakModService(
         }
         state.ModId = null;
         state.Built = [];
-        // Tweaks taken out keep their options, so enabling them again brings the player's choices back.
+        // Tweaks taken out keep their options, and Remove All remembers which were on, so installing again brings the
+        // player's choices back.
         foreach (var (id, options) in state.Settings.Enabled)
             if (!settings.Enabled.ContainsKey(id))
                 state.Kept[id] = options;
+        if (settings.Enabled.Count > 0)
+            state.OnBeforeRemove = [];
+        else if (state.Settings.Enabled.Count > 0)
+            state.OnBeforeRemove = [.. state.Settings.Enabled.Keys];
         state.Settings = settings;
         foreach (var id in settings.Enabled.Keys)
             state.Kept.Remove(id);

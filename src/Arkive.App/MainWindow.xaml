@@ -1224,7 +1224,7 @@
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                             <TextBlock Text="Tweaks" FontSize="20" Margin="0,0,0,6" />
                             <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
-                                       Text="Small changes to the game's own windows: extra information, extra buttons and quicker steps. Enable All Tweaks installs every tweak; after that, switch each one on or off and change its options in game. Disable All Tweaks takes them all out again. Close Lost Ark before enabling or disabling them." />
+                                       Text="Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install All Tweaks puts every tweak into the game; Remove All Tweaks takes them all out again. Close Lost Ark before installing or removing them." />
                             <Border Padding="10,5" Background="{DynamicResource WarningSurfaceBrush}"
                                     BorderBrush="{DynamicResource WarningBorderBrush}" BorderThickness="1">
                                 <TextBlock TextWrapping="Wrap" FontSize="12"
@@ -1239,19 +1239,19 @@
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                 <StackPanel Width="600">
                                     <UniformGrid Columns="2">
-                                        <Button x:Name="TweaksEnableAllButton" Height="76" Margin="0,0,6,0" Style="{StaticResource PrimaryButtonStyle}"
-                                                Click="TweaksEnableAllButton_Click"
-                                                ToolTip="Installs every tweak, all switched on. Options you chose before are kept.">
+                                        <Button x:Name="TweaksInstallAllButton" Height="76" Margin="0,0,6,0" Style="{StaticResource PrimaryButtonStyle}"
+                                                Click="TweaksInstallAllButton_Click"
+                                                ToolTip="Puts every tweak into the game. A first install has them all switched off; switch them on in game. Your switches and options from before are kept.">
                                             <StackPanel>
-                                                <TextBlock Text="Enable All Tweaks" FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                                                <TextBlock Text="Install Every Tweak" FontSize="12" Opacity="0.85" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                                                <TextBlock Text="Install All Tweaks" FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                                <TextBlock Text="Switch Them On In Game" FontSize="12" Opacity="0.85" HorizontalAlignment="Center" Margin="0,2,0,0" />
                                             </StackPanel>
                                         </Button>
-                                        <Button x:Name="TweaksDisableAllButton" Height="76" Margin="6,0,0,0" Click="TweaksDisableAllButton_Click"
-                                                ToolTip="Takes every tweak out of the game; the game's own windows come back exactly as they were. Your options are kept for next time.">
+                                        <Button x:Name="TweaksRemoveAllButton" Height="76" Margin="6,0,0,0" Click="TweaksRemoveAllButton_Click"
+                                                ToolTip="Takes every tweak out of the game; the game's own windows come back exactly as they were. Your switches and options are kept for next time.">
                                             <StackPanel>
-                                                <TextBlock Text="Disable All Tweaks" FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                                                <TextBlock Text="Take Every Tweak Out" FontSize="12" Opacity="0.85" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                                                <TextBlock Text="Remove All Tweaks" FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                                <TextBlock Text="Back To The Game's Own Windows" FontSize="12" Opacity="0.85" HorizontalAlignment="Center" Margin="0,2,0,0" />
                                             </StackPanel>
                                         </Button>
                                     </UniformGrid>
@@ -1259,9 +1259,9 @@
                                             BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                                         <TextBlock x:Name="TweaksStatusText" TextWrapping="Wrap" Text="No tweaks are installed." />
                                     </Border>
-                                    <TextBlock Text="Change Tweaks In Game" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,4" />
+                                    <TextBlock Text="Enable, Disable And Change Tweaks In Game" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,4" />
                                     <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
-                                               Text="In Lost Ark, press Esc and click Arkive Tweaks in the bar at the bottom of the menu. There you can switch each tweak on or off and change its options while you play. Keep Arkive running to save those changes for your next session." />
+                                               Text="Once installed, every tweak is enabled, disabled and changed in game, not here. In Lost Ark, press Esc and click Arkive Tweaks in the bar at the bottom of the menu: tick a tweak to enable it, untick it to disable it, and change its options below it. Changes act straight away. Keep Arkive running so they are kept for your next session." />
                                     <Border CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderStrongBrush}" Background="#FF07080A">
                                         <Viewbox Stretch="Uniform">
                                             <!-- A drawing of the escape menu (placeholder names and values) with the Arkive Tweaks button marked. -->

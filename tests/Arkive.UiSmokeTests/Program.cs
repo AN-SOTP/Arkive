@@ -122,9 +122,9 @@ internal static class Program
         Check(tweakRows.Length == Arkive.Core.Tweaks.TweakCatalog.All.Count(tweak => tweak.Available) &&
               tweakRows.All(row => row.On is null && !string.IsNullOrWhiteSpace(row.Description)),
             "The Tweaks tab does not list every finished tweak, with its description and no on/off state while none is installed.");
-        await UntilAsync(() => Control<Button>(window, "TweaksEnableAllButton").IsVisible, () => "The Tweaks tab shows no Enable All Tweaks button.");
-        Check(!Control<Button>(window, "TweaksDisableAllButton").IsEnabled, "The Tweaks tab offers Disable All Tweaks with nothing installed.");
-        Console.WriteLine($"PASS: the Tweaks tab lists {tweakRows.Length} tweaks with Enable All and Disable All");
+        await UntilAsync(() => Control<Button>(window, "TweaksInstallAllButton").IsVisible, () => "The Tweaks tab shows no Install All Tweaks button.");
+        Check(!Control<Button>(window, "TweaksRemoveAllButton").IsEnabled, "The Tweaks tab offers Remove All Tweaks with nothing installed.");
+        Console.WriteLine($"PASS: the Tweaks tab lists {tweakRows.Length} tweaks with Install All and Remove All");
         tabs.SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");
         tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");
