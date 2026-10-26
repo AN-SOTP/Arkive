@@ -16,8 +16,11 @@ import scaleform.clik.events.ButtonEvent;
 	taking just that part of theirs would do to your Combat Power, priced with Combat Power on Tooltips' model. The top
 	of the page prices their whole build on you.
 
-	The page never makes item slots of its own: a new ARKNewSlot binds itself to the game engine (ARKDataBinding) and
-	the engine froze and crashed on one. Items are read only through the windows' own slots, as Combat Power reads
+	The page never makes item slots of its own (a new ARKNewSlot binds itself to the game engine, ARKDataBinding), and
+	never makes symbols of the profile's own movie: the game froze and crashed (an access violation in the UI engine,
+	EFEngine.dll+0x1138318) making the profile's title art, CharInfo_Equip_AbilityPage_BasicAbilityTitleBG, by its class.
+	Only the shared component library's pieces are made (as Logs Tab copies the shared tab button); the title rules are
+	drawn. Items are read only through the windows' own slots, as Combat Power reads
 	them: theirs from the inspect window when the page draws, yours from your profile while it shows (kept, with its
 	lists and labels, for later; Combat Power's model keeps your gear and totals from the same reading).
 
@@ -35,9 +38,8 @@ class Compare {
 	static inline var SLOT_COUNT = 15;
 	static inline var GEM_COUNT = 11;
 
-	/** The profile's section title (the art behind "Basic Stats"), and its native size. */
-	static inline var TITLE_ART = "CharInfo_Equip_AbilityPage_BasicAbilityTitleBG";
-	static inline var TITLE_ART_WIDTH = 194;
+	/** The rule under a section title, in the profile's gold. */
+	static inline var RULE = 0x8A7346;
 	/** The profile's slots are this wide unscaled (a 64 px icon in a 3 px frame). */
 	static inline var SLOT_ART = 70;
 	static inline var ICON = 64;
@@ -101,11 +103,11 @@ class Compare {
 	/**
 		Test steps (option "steps"): each click on the tab builds one more stage of the page, so the click that froze the
 		game names the stage. 1 the empty page, 2 names, labels and lists, 3 items and gems read through their slots'
-		tooltips, with prices, 4 the slot and title art, 5 item icons (the whole page).
+		tooltips, with prices, 4 the slot art and title rules, 5 item icons (the whole page).
 	**/
 	static inline var STEPS = 5;
 	static var STEP_NAMES:Array<String> = ["the empty page", "names, labels and lists", "reading items and gems, with prices",
-		"slot and title art", "item icons"];
+		"slot art and title rules", "item icons"];
 	static var step = 0;
 	static var level = STEPS;
 
@@ -637,8 +639,6 @@ class Compare {
 			var y:Float = at.y;
 			var theirItem:Dynamic = theirs[i];
 			var mineItem:Dynamic = mineItems[i];
-			emptyBack(i, x, y + 2, SLOT);
-			emptyBack(i, x + COLUMN_WIDTH - SLOT, y + 2, SLOT);
 			itemPicture(model, theirItem == null ? null : theirItem.data, x, y + 2, SLOT);
 			itemPicture(model, mineItem == null ? null : mineItem.data, x + COLUMN_WIDTH - SLOT, y + 2, SLOT);
 		}
@@ -1041,12 +1041,18 @@ class Compare {
 	**/
 	static function sectionTitle(x:Float, y:Float, title:String, sides:Bool, ?width:Float):Float {
 		var wide:Float = width == null ? COLUMN_WIDTH : width;
-		var art:Dynamic = level >= 4 ? make(TITLE_ART) : null;
-		if (art != null) {
-			art.x = x + (wide - TITLE_ART_WIDTH) / 2;
-			art.y = y;
-			art.mouseEnabled = false;
-			under.addChild(art);
+		if (level >= 4) {
+			var rule = new Shape();
+			var g = rule.graphics;
+			g.lineStyle(1, RULE, 0.9);
+			g.moveTo(x + 24, y + 45);
+			g.lineTo(x + wide - 24, y + 45);
+			g.moveTo(x + wide / 2 - 4, y + 45);
+			g.lineTo(x + wide / 2, y + 41);
+			g.lineTo(x + wide / 2 + 4, y + 45);
+			g.lineTo(x + wide / 2, y + 49);
+			g.lineTo(x + wide / 2 - 4, y + 45);
+			under.addChild(rule);
 		}
 		content.addChild(text(x, y + 20, wide, 16, TITLE, title, "center", bigFont));
 		if (sides) {
@@ -1056,29 +1062,10 @@ class Compare {
 		return y + TITLE_BLOCK;
 	}
 
-	/** The profile's empty-slot picture for an equipment slot (helm, weapon …), as it draws one under each slot. */
-	static function emptyBack(index:Int, x:Float, y:Float, size:Float):Void {
-		if (level < 4)
-			return;
-		var manager:Dynamic = gearSlots(window);
-		var back:Dynamic = manager == null ? null : manager.getChildByName("slotBgMc" + index);
-		if (back == null)
-			return;
-		var made:Dynamic = untyped __new__(back.constructor);
-		made.mouseEnabled = false;
-		made.mouseChildren = false;
-		var natural:Float = made.width;
-		var scale = natural > 0 ? size / natural : 1;
-		made.scaleX = scale;
-		made.scaleY = scale;
-		made.x = x;
-		made.y = y;
-		under.addChild(made);
-	}
-
 	/**
 		The art a profile slot is made of, taken from one of the window's own slots: its background, grade background and
-		frame (their classes), and where its 64 px icon sits. Null when the window has no slot to copy.
+		frame (the shared component library's classes, ARKSlotBackgroundV2, GradeIcon_00V2, arkSlot_renew_basic_Frame_V2),
+		and where its 64 px icon sits. Null when the window has no slot to copy.
 	**/
 	static function slotModel():Dynamic {
 		var manager:Dynamic = gearSlots(window);
@@ -1205,11 +1192,6 @@ class Compare {
 
 	static function isNaN(value:Float):Bool {
 		return untyped __global__["isNaN"](value);
-	}
-
-	static function make(symbol:String):Dynamic {
-		var type:Dynamic = GameUi.definition(symbol);
-		return type == null ? null : untyped __new__(type);
 	}
 
 	/** A text field in the window's own font (or `face`), set the way game fonts draw: embedded, .text and textColor. */
