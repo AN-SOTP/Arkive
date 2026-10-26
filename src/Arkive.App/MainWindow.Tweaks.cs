@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -7,83 +6,29 @@ using Arkive.Core.Tweaks;
 
 namespace Arkive.App;
 
-/// <summary>One thing to pick in a tweak option with choices; <paramref name="group"/> names the set when only one may be picked.</summary>
-public sealed class TweakChoiceRow(TweakChoice choice, bool selected, string? group = null)
+/// <summary>
+/// One tweak in the Tweaks tab's list: what it does, and whether it acts in game (<paramref name="on"/> is null while no
+/// tweaks are installed).
+/// </summary>
+public sealed class TweakRow(TweakDefinition tweak, bool? on)
 {
-    public TweakChoice Choice { get; } = choice;
-    public string Label => Choice.Label;
-    public bool Selected { get; set; } = selected;
-    public string? Group { get; } = group;
-    public Visibility CheckVisibility => Group is null ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility RadioVisibility => Group is null ? Visibility.Collapsed : Visibility.Visible;
-}
-
-/// <summary>One option of a tweak: a switch, or a set of choices.</summary>
-public sealed class TweakOptionRow
-{
-    public TweakOptionRow(TweakOption option, JsonElement? saved, string tweakId = "")
-    {
-        Option = option;
-        if (option.Choices is { } single && option.Single)
-        {
-            var chosen = saved is { ValueKind: JsonValueKind.String } text && single.Any(choice => choice.Value == text.GetString())
-                ? text.GetString()
-                : (single.FirstOrDefault(choice => choice.Default) ?? single[0]).Value;
-            Choices = single.Select(choice => new TweakChoiceRow(choice, choice.Value == chosen, tweakId + "." + option.Key)).ToArray();
-        }
-        else if (option.Choices is { } choices)
-        {
-            var chosen = saved is { ValueKind: JsonValueKind.Array } list
-                ? list.EnumerateArray().Select(item => item.ToString()).ToHashSet()
-                : null;
-            Choices = choices.Select(choice => new TweakChoiceRow(choice, chosen?.Contains(choice.Value) ?? choice.Default)).ToArray();
-        }
-        else
-        {
-            Value = saved is { ValueKind: JsonValueKind.True or JsonValueKind.False } flag ? flag.GetBoolean() : option.Default;
-        }
-    }
-
-    public TweakOption Option { get; }
-    public string Label => Option.Label;
-    public bool Value { get; set; }
-    public IReadOnlyList<TweakChoiceRow> Choices { get; } = [];
-    public Visibility SwitchVisibility => Option.Choices is null ? Visibility.Visible : Visibility.Collapsed;
-
-    /// <summary>Short sets of choices show inline; long pick-lists (such as raids) fold into an expander to keep cards compact.</summary>
-    private bool LongList => Option.Choices is { Count: > 6 } && !Option.Single;
-
-    public Visibility InlineChoicesVisibility => Option.Choices is not null && !LongList ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility ListVisibility => LongList ? Visibility.Visible : Visibility.Collapsed;
-    public string ListHeader => $"{Label} ({Choices.Count:N0})";
-
-    /// <summary>The value saved and written into the game: true/false, the chosen value (single), or the chosen values.</summary>
-    public JsonElement ToJson() => Option.Choices is null
-        ? JsonSerializer.SerializeToElement(Value)
-        : Option.Single
-            ? JsonSerializer.SerializeToElement((Choices.FirstOrDefault(choice => choice.Selected) ?? Choices[0]).Choice.Value)
-            : JsonSerializer.SerializeToElement(Choices.Where(choice => choice.Selected).Select(choice => choice.Choice.Value).ToArray());
-}
-
-/// <summary>One tweak in the Tweaks tab.</summary>
-public sealed class TweakRow(TweakDefinition tweak, bool enabled, IReadOnlyList<TweakOptionRow> options) : INotifyPropertyChanged
-{
-    private bool _enabled = enabled;
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-
     public TweakDefinition Tweak { get; } = tweak;
     public string Name => Tweak.Name;
     public string Description => Tweak.Description;
     public string? Note => Tweak.Note;
     public Visibility NoteVisibility => string.IsNullOrEmpty(Note) ? Visibility.Collapsed : Visibility.Visible;
-    public IReadOnlyList<TweakOptionRow> Options { get; } = options;
+    public bool? On { get; } = on;
+    public string StateLabel => On == true ? "On" : "Off";
+    public string StateDetail => On == true
+        ? "Installed and switched on. Switch it off in game from Arkive Tweaks in the escape menu."
+        : "Installed and switched off. Switch it on in game from Arkive Tweaks in the escape menu.";
+    public Visibility StateVisibility => On is null ? Visibility.Collapsed : Visibility.Visible;
 
-    /// <summary>A tweak's options show once it is ticked, which keeps the cards small.</summary>
-    public Visibility OptionsVisibility => Enabled && Options.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public System.Windows.Media.Brush StateBackground => (System.Windows.Media.Brush)Application.Current.FindResource(
+        On == true ? "SuccessSurfaceBrush" : "SurfaceAltBrush");
 
-    public System.Windows.Media.Brush CardBorder => (System.Windows.Media.Brush)Application.Current.FindResource(
-        Enabled ? "AccentBrush" : "BorderStrongBrush");
+    public System.Windows.Media.Brush StateForeground => (System.Windows.Media.Brush)Application.Current.FindResource(
+        On == true ? "SuccessTextBrush" : "TextSecondaryBrush");
 
     public string RiskLabel => Tweak.Risk switch
     {
@@ -100,18 +45,6 @@ public sealed class TweakRow(TweakDefinition tweak, bool enabled, IReadOnlyList<
         TweakRisk.Automation => "Acts without a click, or turns a key into clicks.",
         _ => "Only changes what you see.",
     };
-
-    public bool Enabled
-    {
-        get => _enabled;
-        set
-        {
-            _enabled = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(OptionsVisibility)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CardBorder)));
-        }
-    }
 }
 
 public partial class MainWindow
@@ -129,38 +62,29 @@ public partial class MainWindow
     private void RefreshTweaks(string? status = null)
     {
         var state = Tweaks.LoadState();
-        TweakList.ItemsSource = TweakCatalog.All.Where(tweak => tweak.Available).Select(tweak =>
-        {
-            // A tweak switched off in game keeps its options, ready for when it's switched on again.
-            var saved = state.Settings.Enabled.GetValueOrDefault(tweak.Id) ?? state.Kept.GetValueOrDefault(tweak.Id);
-            var options = tweak.OptionList.Select(option => new TweakOptionRow(option,
-                saved is not null && saved.TryGetValue(option.Key, out var value) ? value : null, tweak.Id)).ToArray();
-            return new TweakRow(tweak, state.Settings.Enabled.ContainsKey(tweak.Id), options);
-        }).ToArray();
-        var on = state.Settings.Enabled.Count;
-        TweaksStatusText.Text = status ?? (on == 0
-            ? "No tweaks are on. Turn on the ones you want, then apply."
-            : $"{on:N0} tweak(s) saved. After changing them, apply again; a game update may need Apply tweaks too.");
+        var installed = state.ModId is not null;
+        var rows = TweakCatalog.All.Where(tweak => tweak.Available)
+            .Select(tweak => new TweakRow(tweak, installed ? state.Settings.Enabled.ContainsKey(tweak.Id) : null))
+            .ToArray();
+        TweakList.ItemsSource = rows;
+        TweakListHeader.Text = $"All Tweaks ({rows.Length:N0})";
+        var on = rows.Count(row => row.On == true);
+        TweaksStatusText.Text = status ?? (!installed
+            ? "No tweaks are installed."
+            : $"{on:N0} of {rows.Length:N0} tweaks are on. Switch them in game, or use the buttons above.");
         UpdateTweakActions();
     }
 
     private void UpdateTweakActions()
     {
-        TweaksApplyButton.IsEnabled = !_tweaksBusy && ModLibraryIdle;
-        TweaksRemoveButton.IsEnabled = !_tweaksBusy && ModLibraryIdle &&
-                                       (Tweaks.LoadState().ModId is not null || _arkiveModLibraryManifest?.Mods.Any(TweakModService.IsTweakMod) == true);
+        TweaksEnableAllButton.IsEnabled = !_tweaksBusy && ModLibraryIdle;
+        TweaksDisableAllButton.IsEnabled = !_tweaksBusy && ModLibraryIdle &&
+                                           (Tweaks.LoadState().ModId is not null || _arkiveModLibraryManifest?.Mods.Any(TweakModService.IsTweakMod) == true);
     }
 
-    private async void TweaksApplyButton_Click(object sender, RoutedEventArgs e)
-    {
-        var settings = new TweakSettings();
-        foreach (var row in TweakList.ItemsSource?.OfType<TweakRow>() ?? [])
-            if (row.Enabled)
-                settings.Enabled[row.Tweak.Id] = row.Options.ToDictionary(option => option.Option.Key, option => option.ToJson());
-        await BuildTweaksAsync(settings);
-    }
+    private async void TweaksEnableAllButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(Tweaks.EveryTweak());
 
-    private async void TweaksRemoveButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(new TweakSettings());
+    private async void TweaksDisableAllButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(new TweakSettings());
 
     /// <summary>
     /// Installs exactly these tweaks (none takes them all out), like the Login Screen and Fonts tabs: Arkive rebuilds its

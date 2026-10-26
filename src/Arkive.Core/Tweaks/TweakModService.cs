@@ -126,6 +126,21 @@ public sealed class TweakModService(
         return [.. TweakCatalog.All.Where(tweak => tweak.Available && !tweak.RestartOnly && (everything || settings.Enabled.ContainsKey(tweak.Id)))];
     }
 
+    /// <summary>
+    /// Every tweak on, each with its saved (or kept) options and defaults for the rest, and In-game Tweak Settings set to
+    /// install everything: what the Tweaks tab's Enable All Tweaks installs.
+    /// </summary>
+    public TweakSettings EveryTweak()
+    {
+        var state = LoadState();
+        var settings = new TweakSettings();
+        foreach (var tweak in TweakCatalog.All.Where(tweak => tweak.Available))
+            settings.Enabled[tweak.Id] = OptionsOf(state, tweak);
+        if (settings.Enabled.TryGetValue(SettingsTweak, out var panel))
+            panel[EverythingOption] = JsonSerializer.SerializeToElement(true);
+        return settings;
+    }
+
     /// <summary>A tweak's options: as saved (or kept while it is switched off), with defaults for the ones never saved.</summary>
     private static Dictionary<string, JsonElement> OptionsOf(TweakState state, TweakDefinition tweak)
     {
@@ -375,6 +390,10 @@ public sealed class TweakModService(
         }
         state.ModId = null;
         state.Built = [];
+        // Tweaks taken out keep their options, so enabling them again brings the player's choices back.
+        foreach (var (id, options) in state.Settings.Enabled)
+            if (!settings.Enabled.ContainsKey(id))
+                state.Kept[id] = options;
         state.Settings = settings;
         foreach (var id in settings.Enabled.Keys)
             state.Kept.Remove(id);

@@ -120,13 +120,11 @@ internal static class Program
             () => "The Tweaks tab listed no tweaks.");
         var tweakRows = Control<ItemsControl>(window, "TweakList").Items.OfType<TweakRow>().ToArray();
         Check(tweakRows.Length == Arkive.Core.Tweaks.TweakCatalog.All.Count(tweak => tweak.Available) &&
-              tweakRows.All(row => !row.Enabled) &&
-              tweakRows.Any(row => row.Options.Any(option => option.Choices.Count > 0)) &&
-              tweakRows.Any(row => row.Options.Any(option => option.Choices.Count == 0)),
-            "The Tweaks tab does not list every finished tweak, off, with its switches and pick-lists.");
-        await UntilAsync(() => Control<Button>(window, "TweaksApplyButton").IsVisible, () => "The Tweaks tab shows no Apply button.");
-        Check(!Control<Button>(window, "TweaksRemoveButton").IsEnabled, "The Tweaks tab offers Remove with nothing applied.");
-        Console.WriteLine($"PASS: the Tweaks tab lists {tweakRows.Length} tweaks with their switches and pick-lists");
+              tweakRows.All(row => row.On is null && !string.IsNullOrWhiteSpace(row.Description)),
+            "The Tweaks tab does not list every finished tweak, with its description and no on/off state while none is installed.");
+        await UntilAsync(() => Control<Button>(window, "TweaksEnableAllButton").IsVisible, () => "The Tweaks tab shows no Enable All Tweaks button.");
+        Check(!Control<Button>(window, "TweaksDisableAllButton").IsEnabled, "The Tweaks tab offers Disable All Tweaks with nothing installed.");
+        Console.WriteLine($"PASS: the Tweaks tab lists {tweakRows.Length} tweaks with Enable All and Disable All");
         tabs.SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");
         tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");

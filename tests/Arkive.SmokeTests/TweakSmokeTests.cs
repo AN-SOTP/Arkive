@@ -191,6 +191,17 @@ internal static class TweakSmokeTests
             "a removed tweak's saved choices were kept, or a real one was dropped");
         service.SaveState(state);
         Assert(!File.ReadAllText(service.LivePath).Contains("retired", StringComparison.Ordinal), "live.json lists a removed tweak");
+
+        // Enable All Tweaks turns every tweak on with the options chosen before; Disable All Tweaks keeps them for next time.
+        var all = service.EveryTweak();
+        Assert(all.Enabled.Count == Arkive.Core.Tweaks.TweakCatalog.All.Count(tweak => tweak.Available) &&
+               all.Enabled[Arkive.Core.Tweaks.TweakModService.SettingsTweak]["everything"].GetBoolean() &&
+               all.Enabled["extracurrency"]["showLeapstones"].GetBoolean() == false && all.Enabled["boxtweaks"]["confirm"].GetString() == "tick",
+            "Enable All Tweaks should turn every tweak on with the options chosen before");
+        service.BuildAsync(new Arkive.Core.Tweaks.TweakSettings(), root, []).GetAwaiter().GetResult();
+        state = service.LoadState();
+        Assert(state.Settings.Enabled.Count == 0 && state.Kept["extracurrency"]["showLeapstones"].GetBoolean() == false,
+            "Disable All Tweaks lost the options of the tweaks it took out");
     }
 
     /// <summary>

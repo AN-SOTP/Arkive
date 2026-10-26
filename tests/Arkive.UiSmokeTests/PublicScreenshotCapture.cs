@@ -131,9 +131,12 @@ internal static class PublicScreenshotCapture
 
         tabs.SelectedItem = Control<TabItem>(window, "TweaksTab");
         await UntilAsync(() => Control<ItemsControl>(window, "TweakList").Items.Count > 0);
-        foreach (var row in Control<ItemsControl>(window, "TweakList").Items.OfType<TweakRow>())
-            row.Enabled = row.Tweak.Id is "logs" or "lobbycp" or "extracurrency" or "boxtweaks" or "markettweaks" or "slottweaks";
-        Control<TextBlock>(window, "TweaksStatusText").Text = "Installed 6 tweak(s). They show the next time you start Lost Ark.";
+        var tweakRows = Control<ItemsControl>(window, "TweakList").Items.OfType<TweakRow>()
+            .Select(row => new TweakRow(row.Tweak, row.Tweak.Id is not ("readycheck" or "fastfacet" or "exchangemax"))).ToArray();
+        Control<ItemsControl>(window, "TweakList").ItemsSource = tweakRows;
+        Control<TextBlock>(window, "TweaksStatusText").Text =
+            $"{tweakRows.Count(row => row.On == true):N0} of {tweakRows.Length:N0} tweaks are on. Switch them in game, or use the buttons above.";
+        Control<Button>(window, "TweaksDisableAllButton").IsEnabled = true;
         DemoStatus(window);
         await CaptureAsync(window, destination, "tweaks.png");
         window.Close();
