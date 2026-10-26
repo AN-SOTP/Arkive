@@ -1190,12 +1190,16 @@ class Compare {
 			shade = !shade;
 			y += TEXT_ROW;
 		}
+		// The game prices combat stats together, one factor on their sum: each row swaps just that stat into your sum.
 		var each = CombatPower.combatPerPoint();
 		var priced = dps && CombatPower.otherCombat >= 0;
+		var mineTotal = combatSum(myCombat);
 		for (label in CombatPower.COMBAT_LABELS) {
 			var mine:Float = myCombat != null && Text.has(myCombat, label) ? untyped myCombat[label] : -1;
 			var their:Float = theirCombat != null && Text.has(theirCombat, label) ? untyped theirCombat[label] : -1;
-			var change:Float = priced && their >= 0 && mine >= 0 ? (1 + mine * each) / (1 + their * each) - 1 : nothing();
+			var change:Float = priced && their >= 0 && mine >= 0
+				? (1 + mineTotal * each) / (1 + (mineTotal - mine + their) * each) - 1
+				: nothing();
 			numberRow(x, y, label, mine, their, change, shade);
 			shade = !shade;
 			y += TEXT_ROW;
@@ -1304,6 +1308,19 @@ class Compare {
 		var grade:Int = core.grade;
 		var points:Float = core.points;
 		return CombatPower.coreValue(name, family, grade, CombatPower.coreSteps(points));
+	}
+
+	/** Crit + Specialization + Swiftness, or 0 when unknown. */
+	static function combatSum(combat:Dynamic):Float {
+		var sum:Float = 0;
+		if (combat == null)
+			return sum;
+		for (label in CombatPower.COMBAT_LABELS) {
+			var points:Float = Text.has(combat, label) ? untyped combat[label] : 0;
+			if (points > 0)
+				sum += points;
+		}
+		return sum;
 	}
 
 	static function numberRow(x:Float, y:Float, label:String, mine:Float, their:Float, change:Float, shade:Bool):Void {
