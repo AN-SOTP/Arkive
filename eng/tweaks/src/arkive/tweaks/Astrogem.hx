@@ -1,6 +1,7 @@
 package arkive.tweaks;
 
 import flash.events.Event;
+import flash.filters.GlowFilter;
 import flash.net.URLLoader;
 import flash.net.URLRequest;
 import flash.text.TextField;
@@ -42,7 +43,6 @@ class Astrogem {
 
 	static var panel:Dynamic;
 	static var box:TextField;
-	static var dump:TextField;
 	static var frames = 0;
 	static var shown = "";
 	static var listening = false;
@@ -55,7 +55,7 @@ class Astrogem {
 	/** ArkGridGemProgressPanel.configUI (after): the box, and a check a few times a second while the panel shows. */
 	public static function onConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
 		panel = self;
-		box = field(self, BOX_WIDTH, BOX_HEIGHT);
+		box = field(BOX_WIDTH, BOX_HEIGHT);
 		box.x = BOX_X;
 		box.y = BOX_Y;
 		self.addChild(box);
@@ -94,7 +94,7 @@ class Astrogem {
 			if (key == shown && !data)
 				return;
 			shown = key;
-			show(advice(state), data ? describe() : null);
+			show(advice(state), data ? describe(state) : null);
 		} catch (error:Dynamic) {}
 	}
 
@@ -222,7 +222,7 @@ class Astrogem {
 		var levels:Array<Int> = [];
 		var names:Array<String> = [];
 		var key = "";
-		for (i in 0...4) {
+		for (i in ordered(rows)) {
 			var html:String = text(rows[i], "optionStr");
 			key += html + "|";
 			var level = lastNumber(Text.stripTags(html));
@@ -252,7 +252,27 @@ class Astrogem {
 		};
 	}
 
-	/** What an offered effect does: {stat (0-3, or -1), delta, cost (in percent), rerolls}. */
+	/**
+		The rows in the order Willpower Efficiency, Points, first option, second option. The panel lists them in that
+		order; as a check, the option rows are the two whose value line has a word ("Lv. 2") before the number.
+	**/
+	static function ordered(rows:Array<Dynamic>):Array<Int> {
+		var plain:Array<Int> = [];
+		var options:Array<Int> = [];
+		for (i in 0...4) {
+			var value = Text.stripTags(text(rows[i], "optionStr"));
+			var cut = value.indexOf("\n");
+			if (cut >= 0)
+				value = value.substr(cut + 1);
+			if (letters(value).length > 0)
+				options.push(i);
+			else
+				plain.push(i);
+		}
+		return plain.length == 2 && options.length == 2 ? plain.concat(options) : [0, 1, 2, 3];
+	}
+
+	/** What an offered effect does: {stat (0-3, or -1), delta, cost (in percent), rerolls, change}. */
 	static function effect(html:String, names:Array<String>):Dynamic {
 		var plain = Text.stripTags(html);
 		var head = letters(firstLine(plain));
@@ -264,7 +284,7 @@ class Astrogem {
 		for (i in 0...4) {
 			var name = names[i];
 			if (name.length > 0 && (head.indexOf(name) == 0 || name.indexOf(head) == 0) && head.length > 0)
-				return number < 0 ? {stat: -1, delta: 0, cost: 0, rerolls: 0} : {stat: i, delta: sign * number, cost: 0, rerolls: 0};
+				return number < 0 ? {stat: -1, delta: 0, cost: 0, rerolls: 0, change: true} : {stat: i, delta: sign * number, cost: 0, rerolls: 0};
 		}
 		if (number >= 0 && plain.indexOf("%") >= 0)
 			return {stat: -1, delta: 0, cost: sign * number, rerolls: 0};
@@ -412,47 +432,42 @@ class Astrogem {
 	}
 
 	static function show(html:String, data:String):Void {
-		box.htmlText = html;
-		if (data == null) {
-			if (dump != null)
-				dump.visible = false;
-			return;
-		}
-		if (dump == null || dump.parent != panel) {
-			dump = field(panel, 560, 330);
-			dump.x = 0;
-			dump.y = 0;
-			dump.background = true;
-			dump.backgroundColor = 0x000000;
-			panel.addChild(dump);
-			Options.own(TWEAK, dump);
-		}
-		dump.visible = true;
-		dump.text = data;
+		box.htmlText = data == null ? html : html + BR + "<font color='" + DIM + "'>" + data + "</font>";
 	}
 
-	/** showData: what the tweak reads from the panel, as the game wrote it. */
-	static function describe():String {
-		var out = "rows:\n";
-		for (item in items(panel.progressGemOptionList)) {
-			var effectType:Int = item.effectType;
-			out += "  " + clean(text(item, "optionStr")) + "  [effectType " + effectType + "]\n";
+	/**
+		showData: what the tweak made of the panel, in a few short lines under the advice: levels (Willpower, Points,
+		first and second option), attempts left/in all, rerolls and resets left, cost, and each offer as the stat it
+		changes (W, P, O1, O2; "chg" an option change, "$" a cost change, "rr" extra rerolls, "=" no change).
+	**/
+	static function describe(state:Dynamic):String {
+		if (state == null)
+			return "read: no rows";
+		var levels:Array<Int> = state.levels;
+		var left:Int = state.left;
+		var all:Int = state.all;
+		var rerolls:Int = state.rerolls;
+		var resets:Int = state.resets;
+		var cost:Int = state.cost;
+		var out = "read: " + levels.join(" ") + BR + "left " + left + "/" + all + ", rr " + rerolls + ", reset " + resets + ", cost " + cost;
+		var stats = ["W", "P", "O1", "O2"];
+		var effects:Array<Dynamic> = state.effects;
+		var offers:Array<String> = [];
+		for (e in effects) {
+			var stat:Int = e.stat;
+			var delta:Int = e.delta;
+			var percent:Int = e.cost;
+			var extra:Int = e.rerolls;
+			if (stat >= 0)
+				offers.push(stats[stat] + (delta > 0 ? "+" : "") + delta);
+			else if (percent != 0)
+				offers.push("$" + (percent > 0 ? "+" : "") + percent + "%");
+			else if (extra != 0)
+				offers.push("rr+" + extra);
+			else
+				offers.push(e.change == true ? "chg" : "=");
 		}
-		out += "offers:\n";
-		for (item in items(panel.progressGemChoiceOptionList)) {
-			var optionType:Int = item.optionType;
-			var effectType:Int = item.effectType;
-			out += "  " + clean(text(item, "optionStr")) + "  [optionType " + optionType + ", effectType " + effectType + "]\n";
-		}
-		out += "process: " + clean(label(panel.progressGemOkButton)) + "\n";
-		out += "complete: " + clean(label(panel.progressGemCompleteButton)) + "\n";
-		out += "reroll: " + clean(label(panel.progressGemRetryButton)) + "\n";
-		out += "reset: " + clean(label(panel.progressGemResetButton)) + "\n";
-		out += "cost: " + clean(labelText(panel.progressGemCostLabel)) + "\n";
-		out += "tries: " + clean(labelText(panel.progressGemTryCountLabel)) + "\n";
-		out += "ability: " + clean(labelText(panel.progressGemAbilityLabel)) + "\n";
-		out += "table: " + tableFile;
-		return out;
+		return out + BR + offers.join(" · ");
 	}
 
 	// ---- Reading game objects ----
@@ -520,22 +535,14 @@ class Astrogem {
 		return "";
 	}
 
-	static function field(owner:Dynamic, width:Int, height:Int):TextField {
+	/** The box, in the game font the other tweaks' labels use ($YG760, not embedded; the panel's own labels drew boxes). */
+	static function field(width:Int, height:Int):TextField {
 		var format = new TextFormat();
-		var embed = false;
-		var like:Dynamic = owner.progressGemTryCountLabel;
-		var source:Dynamic = like == null ? null : like.textField;
-		if (source != null) {
-			var own:Dynamic = source.getTextFormat();
-			if (own != null && own.font != null)
-				format.font = own.font;
-			if (own != null && own.size != null)
-				format.size = own.size;
-			embed = source.embedFonts;
-		}
+		format.font = "$YG760";
+		format.size = 13;
 		var made = new TextField();
-		made.embedFonts = embed;
 		made.defaultTextFormat = format;
+		made.filters = [new GlowFilter(0, 1, 2, 2, 4, 1)];
 		made.textColor = 0xE6E6E6;
 		made.selectable = false;
 		made.mouseEnabled = false;
@@ -612,13 +619,6 @@ class Astrogem {
 				pieces.push(lower.charAt(i));
 		}
 		return pieces.join("");
-	}
-
-	static function clean(html:String):String {
-		var plain = Text.stripTags(html);
-		var pieces = plain.split("\n");
-		var joined = pieces.join(" / ");
-		return joined.split("\r").join("");
 	}
 
 	static function whole(text:String):Int {
