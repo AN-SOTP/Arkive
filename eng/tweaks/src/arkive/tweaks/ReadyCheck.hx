@@ -136,11 +136,11 @@ class ReadyCheck {
 		for (slot in slots) {
 			if (slot == null || slot.data == null)
 				continue;
-			var parts = tooltip(slot.binding, slot);
+			var parts = Tooltips.boxes(slot.binding, slot);
 			if (parts == null)
 				continue;
 			for (part in parts) {
-				var html = part == null ? null : textOf(part.value);
+				var html = part == null ? null : Tooltips.htmlOf(part.value);
 				if (html == null)
 					continue;
 				for (text in plain(html).split("\n")) {
@@ -151,32 +151,6 @@ class ReadyCheck {
 			}
 		}
 		return false;
-	}
-
-	/** The parts of a buff slot's tooltip from the game's own tooltip call, or null. */
-	static function tooltip(binding:Dynamic, owner:Dynamic):Array<Dynamic> {
-		var type:Dynamic = GameUi.definition("ark.managers.TooltipManager");
-		var manager:Dynamic = type == null ? null : type.getInstance();
-		if (manager == null || manager.nativeGetTooltip == null)
-			return null;
-		var pages:Array<Dynamic> = manager.nativeGetTooltip(binding, owner);
-		if (pages == null || pages.length == 0 || pages[0] == null)
-			return null;
-		return pages[0];
-	}
-
-	/** The text a tooltip part holds: the part itself, or the first of its text fields that is a string. */
-	static function textOf(value:Dynamic):String {
-		if (value == null)
-			return null;
-		if (untyped __typeof__(value) == "string")
-			return value;
-		for (field in ["contentStr", "text", "htmlText", "string", "value", "leftStr", "title"]) {
-			var text:Dynamic = untyped value[field];
-			if (untyped __typeof__(text) == "string")
-				return text;
-		}
-		return null;
 	}
 
 	/** Game HTML as plain text, with <br> as a line break. */
