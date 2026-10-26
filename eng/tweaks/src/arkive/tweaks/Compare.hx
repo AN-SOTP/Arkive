@@ -68,8 +68,7 @@ class Compare {
 	static var RIGHT_SLOTS:Array<Int> = [6, 7, 8, 9, 10, 11, 12];
 	static var PASSIVES:Array<String> = ["Evolution", "Enlightenment", "Leap"];
 
-	/** Engraving grades as the profile's list numbers them (1 rare … 4 relic), with their names and colours. */
-	static var GRADE_WORDS:Array<String> = ["", "Rare", "Heroic", "Legendary", "Relic"];
+	/** Engraving grade colours by the profile list's grade numbers (1 rare … 4 relic). */
 	static var GRADE_COLORS:Array<Int> = [TEXT, 0x00B0FA, 0xCE43FC, 0xF99200, 0xFA5D00];
 
 	/** Your own profile window, and what it last showed. */
@@ -658,11 +657,11 @@ class Compare {
 		var right = COLUMNS[2];
 		var name = labelText(nameLabel(window));
 		content.addChild(text(left, 2, COLUMN_WIDTH, 18, NAME, name, "left"));
-		content.addChild(text(left, 28, COLUMN_WIDTH, 13, DIM, details(labelText(classLabel(window)), labelText(levelLabel(window)),
+		content.addChild(text(left, 28, COLUMN_WIDTH, 12, DIM, details(labelText(classLabel(window)), labelText(levelLabel(window)),
 			theirRole < 0 ? "" : labelText(powerLabel(window))), "left"));
 		var you = myName.length > 0 ? "You  ·  " + myName : "You";
 		content.addChild(text(right, 2, COLUMN_WIDTH, 18, NAME, you, "right"));
-		content.addChild(text(right, 28, COLUMN_WIDTH, 13, DIM, details(myClass, myLevel, myPower), "right"));
+		content.addChild(text(right, 28, COLUMN_WIDTH, 12, DIM, details(myClass, myLevel, myPower), "right"));
 
 		var middle = COLUMNS[1];
 		var lead:TextField;
@@ -695,7 +694,7 @@ class Compare {
 			parts.push("Item Lv. " + level);
 		if (power.length > 0)
 			parts.push("Combat Power " + power);
-		return parts.join("  ·  ");
+		return parts.join(" · ");
 	}
 
 	/**
@@ -928,7 +927,7 @@ class Compare {
 		return null;
 	}
 
-	/** "Relic 4" in the grade's colour, with the stone's levels for it in grey ("+2"). */
+	/** "Lv. 4" in the grade's colour (as the profile colours grades), with the stone's levels for it ("+2"). */
 	static function engravingCell(engraving:Dynamic, stone:Dynamic, name:String, x:Float, y:Float):Void {
 		if (engraving == null) {
 			content.addChild(text(x, y + 2, 70, 13, DIM, "—", "center"));
@@ -936,12 +935,11 @@ class Compare {
 		}
 		var grade:Int = engraving.grade;
 		var level:Int = engraving.level;
-		var word = grade >= 0 && grade < GRADE_WORDS.length ? GRADE_WORDS[grade] : "";
 		var shown:String = untyped __global__["String"](level);
 		var stoneLevel = CombatPower.stoneLevel(stone, name);
 		var extra:String = untyped __global__["String"](stoneLevel);
 		content.addChild(text(x, y + 2, 70, 13, grade >= 0 && grade < GRADE_COLORS.length ? GRADE_COLORS[grade] : TEXT,
-			(word.length > 0 ? word + " " : "Lv. ") + shown + (stoneLevel > 0 ? " +" + extra : ""), "center"));
+			"Lv. " + shown + (stoneLevel > 0 ? "  +" + extra : ""), "center"));
 	}
 
 	/** An engraving's value in the model (hundredths of a percent) at its grade, level and the stone's levels. */
@@ -1014,7 +1012,7 @@ class Compare {
 			art.mouseEnabled = false;
 			under.addChild(art);
 		}
-		content.addChild(text(x, y + 20, wide, 16, TITLE, title, "center"));
+		content.addChild(text(x, y + 20, wide, 16, TITLE, title, "center", bigFont));
 		if (sides) {
 			content.addChild(text(x + 2, y + 30, 60, 12, DIM, "Theirs", "left"));
 			content.addChild(text(x + wide - 62, y + 30, 60, 12, DIM, "Yours", "right"));
