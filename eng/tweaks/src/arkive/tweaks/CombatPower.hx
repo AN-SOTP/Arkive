@@ -9,7 +9,11 @@ import flash.text.TextFormat;
 	took the place of your weakest equipped gem of the same kind (or filled an empty slot), green for a gain, red for a
 	loss. The game prices a gem by its tier and level alone (its BattlePoint rows, which Arkive copies from data2.lpk
 	into the "gems" option as tier, level, DPS value, support value; values are hundredths of a percent that multiply
-	the rest), and a tier 4 gem's Basic Attack Power % raises the base the factors multiply.
+	the rest), and a tier 4 gem's Basic Attack Power % (the "gemBase" option, level and hundredths of a percent, from
+	the gem table: the equipped-gem slot tooltips don't carry it where the tweak looks) raises the base they multiply.
+
+	With the "showData" option every item tooltip also lists what the tweak can read from it, and the profile's
+	figures, so the other gear types can be priced from real tooltips.
 
 	Your Combat Power, whether it counts as DPS or support, and your equipped gems are read from your own Character
 	Profile (an inspected player's window is ignored), so the line asks you to open it once. When the profile shows a
@@ -20,7 +24,6 @@ import flash.text.TextFormat;
 class CombatPower {
 	static inline var TWEAK = "cpgems";
 	static inline var GEM_SLOTS = 11;
-	static inline var BASE_ATTACK = "Basic Attack Power +";
 	static inline var GAIN = "#7EE08F";
 	static inline var LOSS = "#FF8A80";
 	static inline var DIM = "#A9A9A9";
@@ -41,6 +44,9 @@ class CombatPower {
 	/** Your equipped gems when the profile last showed your Combat Power ({tier, level, kind, base}), or null. */
 	static var equipped:Array<Dynamic>;
 	static var prices:Array<Int>;
+	static var basics:Array<Int>;
+	/** What the profile showed last, for the showData listing. */
+	static var profileData:String = "";
 
 	static var pendingLabel:Dynamic;
 	static var pendingText:String = "";
@@ -52,6 +58,8 @@ class CombatPower {
 		if (boxes == null || !(untyped __is__(boxes, Array)))
 			return null;
 		var list:Array<Dynamic> = boxes;
+		if (showData())
+			addData(list);
 		var gem = gemOf(list);
 		if (gem == null)
 			return null;
@@ -107,6 +115,8 @@ class CombatPower {
 		if (shown <= 0)
 			return;
 		var gems = readEquipped();
+		if (showData())
+			profileData = readProfile(label, gems);
 		if (power > 0 && equipped != null && signature(gems) != signature(equipped))
 			showCheck(label, power * ratio(equipped, gems), shown);
 		power = shown;
@@ -145,38 +155,24 @@ class CombatPower {
 		var level = Tooltips.leadingInt(name.substr(at + 3), 0);
 		if (level < 1)
 			return null;
-		var base:Float = 0;
-		for (box in boxes) {
-			var found = box == null ? 0 : baseAttack(box.value, 0);
-			if (found > base)
-				base = found;
-		}
-		return {tier: TIERS[kind], level: level, kind: KINDS[kind], base: base, name: name};
+		return {tier: TIERS[kind], level: level, kind: KINDS[kind], base: basicAttack(TIERS[kind], level), name: name};
 	}
 
-	/** The largest "Basic Attack Power +N%" found in a tooltip value (strings, arrays and objects a few levels deep). */
-	static function baseAttack(value:Dynamic, depth:Int):Float {
-		if (value == null || depth > 6)
+	/** A gem's Basic Attack Power in percent (0.8 for +0.80%), from the gem table; only tier 4 gems have it. */
+	static function basicAttack(tier:Int, level:Int):Float {
+		if (tier != 4)
 			return 0;
-		var type:String = untyped __typeof__(value);
-		if (type == "string") {
-			var text:String = value;
-			var at = text.indexOf(BASE_ATTACK);
-			if (at < 0)
-				return 0;
-			var shown = Text.numberAfter(text, at + BASE_ATTACK.length);
-			return shown == null ? 0 : number(shown);
-		}
-		if (type != "object")
+		if (basics == null)
+			basics = Options.get(TWEAK, "gemBase", null);
+		if (basics == null)
 			return 0;
-		var best:Float = 0;
-		var keys:Array<String> = untyped __keys__(value);
-		for (key in keys) {
-			var found = baseAttack(untyped value[key], depth + 1);
-			if (found > best)
-				best = found;
+		var at = 0;
+		while (at + 1 < basics.length) {
+			if (basics[at] == level)
+				return basics[at + 1] / 100;
+			at += 2;
 		}
-		return best;
+		return 0;
 	}
 
 	/** Your equipped gems, read through the equipped-gem slots' tooltips. */
@@ -286,7 +282,10 @@ class CombatPower {
 		return parts.join(";");
 	}
 
-	/** The check line under your Combat Power figure: Arkive's prediction from the gem change and the game's figure. */
+	/**
+		The check beside your Combat Power figure, at its left on two small lines: what Arkive predicted from the gem
+		change, green when it equals the game's figure and amber when it doesn't.
+	**/
 	static function showCheck(label:Dynamic, predicted:Float, shown:Float):Void {
 		var page:Dynamic = label.parent;
 		if (page == null)
@@ -301,24 +300,24 @@ class CombatPower {
 					format.font = own.font;
 				embed = field.embedFonts;
 			}
-			format.size = 12;
-			format.align = flash.text.TextFormatAlign.CENTER;
+			format.size = 11;
 			check = new TextField();
 			check.embedFonts = embed;
 			check.defaultTextFormat = format;
 			check.selectable = false;
 			check.mouseEnabled = false;
-			check.multiline = false;
+			check.multiline = true;
 			check.wordWrap = false;
 			page.addChild(check);
 		}
-		check.x = label.x - 40;
-		check.width = label.width + 80;
-		check.y = label.y + label.height;
-		check.height = 20;
+		check.x = label.x + 6;
+		check.y = label.y + 2;
+		check.width = 90;
+		check.height = 34;
 		var off = Math.abs(predicted - shown);
 		check.textColor = off < MATCH ? CHECK_OK : CHECK_OFF;
-		check.text = "Arkive predicted " + money(predicted) + " from the gem change" + (off < MATCH ? " (matches)" : "");
+		check.text = (off < MATCH ? "Arkive: match" : "Arkive predicted") + "
+" + money(predicted);
 	}
 
 	/** A number shown by the game ("2,345.67"): commas skipped, one decimal point; -1 when there are no digits. */
@@ -362,6 +361,137 @@ class CombatPower {
 	static function hundredths(value:Float):String {
 		var cents:Int = Math.round(value * 100);
 		return untyped __global__["String"](cents);
+	}
+
+	static function showData():Bool {
+		return Options.get(TWEAK, "showData", false) == true;
+	}
+
+	/** For showData: one grey box at the end of an item tooltip listing each box's type and contents, then the profile's figures. */
+	static function addData(list:Array<Dynamic>):Void {
+		var item = false;
+		var lines:Array<String> = [];
+		for (i in 0...list.length) {
+			var box:Dynamic = list[i];
+			if (box == null)
+				continue;
+			var type:String = box.type;
+			if (type == "ItemTitle")
+				item = true;
+			if (type == "SingleTextBox" && Tooltips.isString(box.value) && (box.value : String).indexOf("Arkive data") >= 0)
+				return;
+			var index:String = untyped __global__["String"](i);
+			lines.push("[" + index + "] " + type + ": " + describe(box.value, 0));
+		}
+		if (!item)
+			return;
+		var text = "Arkive data
+" + lines.join("
+") + (profileData == "" ? "
+(profile not read yet)" : "
+" + profileData);
+		if (text.length > 3500)
+			text = text.substr(0, 3500) + " …";
+		list.push({type: "SingleTextBox", value: "<FONT SIZE='10' COLOR='#9A9A9A'>" + escape(text).split("
+").join("<BR>") + "</FONT>", dirty: true});
+	}
+
+	/** A tooltip value as short text: strings without tags, arrays as a | b, objects as key=value for a few levels. */
+	static function describe(value:Dynamic, depth:Int):String {
+		if (value == null)
+			return "null";
+		var type:String = untyped __typeof__(value);
+		if (type == "string") {
+			var plain:String = Text.stripTags((value : String).split("<BR>").join(" / ").split("<br>").join(" / "));
+			return plain.length > 160 ? plain.substr(0, 160) + "…" : plain;
+		}
+		if (type != "object" || depth > 3) {
+			var shown:String = untyped __global__["String"](value);
+			return shown;
+		}
+		var parts:Array<String> = [];
+		if (untyped __is__(value, Array)) {
+			var items:Array<Dynamic> = value;
+			for (item in items)
+				parts.push(describe(item, depth + 1));
+			return "[" + parts.join(" | ") + "]";
+		}
+		var keys:Array<String> = untyped __keys__(value);
+		for (key in keys)
+			if (key != "slotData" || depth > 0)
+				parts.push(key + "=" + describe(untyped value[key], depth + 1));
+		if (Text.has(value, "slotData") && value.slotData != null) {
+			var slot:Dynamic = value.slotData;
+			var icon:String = describe(slot.iconPath, 3);
+			parts.push("slotData.iconPath=" + icon);
+		}
+		return "{" + parts.join(", ") + "}";
+	}
+
+	/** For showData: your role, Combat Power, the profile's stat lists, your equipment slots and the gems read. */
+	static function readProfile(label:Dynamic, gems:Array<Dynamic>):String {
+		var lines:Array<String> = [];
+		var shownRole:String = untyped __global__["String"](role);
+		lines.push("Profile: role " + shownRole + " (0 DPS, 1 support), Combat Power " + money(power));
+		var page:Dynamic = label.parent;
+		var basic:Dynamic = page == null || page.abilityDefaultList == null ? null : page.abilityDefaultList.dataProvider;
+		lines.push("Basic: " + rows(basic, "titleStr", "valueStr"));
+		var window:Dynamic = GameUi.ancestor(label, "ark.ui.charInfo.CharInfoWndContent");
+		var stats:Dynamic = window == null || window.detailPanel == null || window.detailPanel.statPage == null ? null
+			: window.detailPanel.statPage.detailStatList.dataProvider;
+		lines.push("Detail: " + rows(stats, "statName", "value"));
+		var slots:Dynamic = window == null || window.equipPanel == null || window.equipPanel.itemPage == null ? null
+			: window.equipPanel.itemPage.equipItemSlotManager;
+		if (slots != null) {
+			var count:Int = slots.slotLength;
+			var shown:Array<String> = [];
+			for (i in 0...count) {
+				var slot:Dynamic = slots.getSlotAtIndex(i);
+				if (slot == null)
+					continue;
+				var boxes = Tooltips.boxes(slot.binding, slot);
+				var name = "";
+				if (boxes != null)
+					for (box in boxes)
+						if (box != null && box.type == "NameTagBox") {
+							name = Text.stripTags(Tooltips.htmlOf(box.value));
+							break;
+						}
+				var index:String = untyped __global__["String"](i);
+				var kind:String = untyped __global__["String"](slot.slotType);
+				var id:String = untyped __global__["String"](slot.bindID);
+				shown.push(index + ":" + kind + "/" + id + " " + name);
+			}
+			lines.push("Equipment slots: " + shown.join("; "));
+		}
+		var names:Array<String> = [];
+		for (gem in gems) {
+			var name:String = gem.name;
+			names.push(name);
+		}
+		lines.push("Gems read: " + names.join(", "));
+		var probe = Slots.tooltip(Slots.GEMS, 0);
+		lines.push("Gem slot 0 probe: " + (probe == null ? "null" : describe(probe, 0)));
+		return lines.join("
+");
+	}
+
+	static function rows(list:Dynamic, name:String, value:String):String {
+		if (list == null)
+			return "none";
+		var shown:Array<String> = [];
+		var count:Int = list.length;
+		for (i in 0...count) {
+			var row:Dynamic = list[i];
+			if (row == null)
+				continue;
+			shown.push(describe(untyped row[name], 3) + "=" + describe(untyped row[value], 3));
+		}
+		return shown.join("; ");
+	}
+
+	static function escape(text:String):String {
+		return text.split("&").join("&amp;").split("<").join("&lt;").split(">").join("&gt;");
 	}
 
 	static function font(color:String, text:String):String {

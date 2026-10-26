@@ -77,6 +77,7 @@ public sealed class TweakModService(
             copy.Enabled[CombatPowerTweak] = new(power)
             {
                 ["gems"] = JsonSerializer.SerializeToElement(CombatPowerTable.Gems(data2, Path.Combine(root, "cache"))),
+                ["gemBase"] = JsonSerializer.SerializeToElement(CombatPowerTable.GemBasicAttack(data2, Path.Combine(root, "cache"))),
             };
         return copy;
     }
