@@ -30,9 +30,11 @@ class ExchangeMax {
 		if (bound != null) {
 			bound.name = BOUND_NAME;
 			GameUi.addAbove(bound, ok);
+			Options.own("exchangemax", bound);
 			bound.addEventListener(scaleform.clik.events.ButtonEvent.CLICK, function(event:Dynamic) start(self, true));
 		}
 		GameUi.addAbove(plain, ok);
+		Options.own("exchangemax", plain);
 		plain.addEventListener(scaleform.clik.events.ButtonEvent.CLICK, function(event:Dynamic) start(self, false));
 		plain.addEventListener("enterFrame", function(event:Dynamic) {
 			var ready:Bool = !running && ok.enabled;
@@ -64,9 +66,9 @@ class ExchangeMax {
 		var bound:Dynamic = parent.getChildByName(BOUND_NAME);
 		var background:Dynamic = self.bg_mc;
 		var both:Bool = bound != null && hasBoundCheckBox(self);
-		plain.visible = ok.visible;
+		plain.visible = ok.visible && Options.on("exchangemax");
 		if (bound != null)
-			bound.visible = ok.visible && both;
+			bound.visible = ok.visible && both && Options.on("exchangemax");
 		if (ok.visible != true)
 			return;
 		var divider:Dynamic = self.line_2;

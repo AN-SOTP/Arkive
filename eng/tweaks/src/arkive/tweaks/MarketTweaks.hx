@@ -81,6 +81,7 @@ class MarketTweaks {
 		button.x = x;
 		button.y = beside.y;
 		GameUi.addAbove(button, beside);
+		Options.own("markettweaks", button);
 	}
 
 	/** The listed price the game marks as lowest, else the smallest one; 0 when nothing is listed. */

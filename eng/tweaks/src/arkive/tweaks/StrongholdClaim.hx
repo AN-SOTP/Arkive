@@ -46,11 +46,12 @@ class StrongholdClaim {
 		claim.width = get.width;
 		claim.height = half;
 		GameUi.addAbove(claim, get);
+		Options.own("strongholdclaim", claim);
 		claim.addEventListener(scaleform.clik.events.ButtonEvent.CLICK, function(event:Dynamic) start(self));
 		claim.addEventListener("enterFrame", function(event:Dynamic) {
 			GameUi.enable(claim, !running && nextLine(self, 0) != -1);
-			if (claim.visible != get.visible)
-				claim.visible = get.visible;
+			if (claim.visible != (get.visible && Options.on("strongholdclaim")))
+				claim.visible = get.visible && Options.on("strongholdclaim");
 		});
 	}
 
