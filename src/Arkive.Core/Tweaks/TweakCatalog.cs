@@ -207,7 +207,7 @@ public static class TweakCatalog
             new("profile", "\"Unequip All\" on the character profile's gem page", true),
             new("storage", "\"Unequip Gems\" in roster storage (gems bound to the character stay)", true),
         ]),
-        new("logsprobe", "Logs Test (diagnostic)", "Adds a \"Logs Test\" button to the character profile and inspect windows that checks what a lostark.bible Logs tab would need, and shows the results in a panel.", TweakRisk.Display,
+        new("logsprobe", "Logs Test (diagnostic)", "Adds a \"Logs\" tab to the character profile and inspect windows that checks what a lostark.bible Logs tab would need, and shows the results in a panel.", TweakRisk.Display,
         [
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsProbe.onWndConfigUI"),
         ]),
