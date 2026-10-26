@@ -157,18 +157,6 @@ public sealed class PlayerLogsService(HttpClient client)
         Resolve(data, owner, property) is { ValueKind: JsonValueKind.Number } value ? value.GetDouble() : null;
 
     /// <summary>
-    /// The file the Logs tab reads for a character, under Arkive's data folder. The name is written as hex character
-    /// codes, which the tab's code builds the same way, so names with accents never reach the game's file reader.
-    /// </summary>
-    public static string SummaryFileName(string name)
-    {
-        var builder = new StringBuilder(name.Length * 4 + 4);
-        foreach (var character in name.ToLowerInvariant())
-            builder.Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
-        return builder.Append(".txt").ToString();
-    }
-
-    /// <summary>
     /// The summary the Logs tab shows, one line per row with tab-separated fields, already formatted so the tab's code
     /// only splits and draws. First line: status, region, name, count, and the tab's request id (so it never shows an
     /// answer to an earlier click). Then: boss, difficulty, class, DPS, percentile, date, duration, died.

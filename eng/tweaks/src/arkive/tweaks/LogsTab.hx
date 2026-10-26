@@ -12,9 +12,10 @@ import scaleform.clik.events.ButtonEvent;
 
 /**
 	Logs Tab: a "Logs" tab after Ark Grid in the character profile and inspect windows, listing the player's recent
-	logs from lostark.bible. The game's interface can't go online, so the tab copies the player's link (marked with a
-	request id) to the clipboard; Arkive, running alongside, sees it, fetches the logs (EU Central first, then North
-	America) and writes a summary file named after the player, which the tab polls for by its full path. Only absolute
+	logs from lostark.bible. The game's interface can't go online, write files or reach the Windows clipboard; it can
+	read files by their full path. So the tab spells the click's request id and the player's name to Arkive by reading
+	Arkive's small signal files in order ("go", one file per hex digit, "end"; Arkive notices each read), then polls
+	for Arkive's answer, "<request>.txt". Arkive fetches the logs: EU Central first, then North America. Only absolute
 	paths: the game froze loading a file by a relative path.
 **/
 @:keep
@@ -23,6 +24,10 @@ class LogsTab {
 	static inline var POLLS = 50;
 	static inline var GOLD = 0xD8B46A;
 	static inline var GREY = 0xB4B4B4;
+	/** Arkive's signal file sets, cycled so a file is read again only sixteen reads later. */
+	static inline var SETS = "abcdefghijklmnop";
+	/** Polls (about 3 s) after which the click is spelled once more, in case Arkive missed a read. */
+	static inline var RESPELL_AFTER = 10;
 
 	/** Column x positions and widths: boss, difficulty, class, DPS, percentile, date, time, died. */
 	static var LEFTS:Array<Int> = [16, 396, 516, 646, 746, 816, 896, 966];
@@ -38,7 +43,14 @@ class LogsTab {
 	static var request:String = "";
 	static var file:String = "";
 	static var name:String = "";
-	static var link:String = "";
+	static var folder:String = "";
+	/** The signal files still to read for this click, and when spelling started. */
+	static var spelling:Array<String> = [];
+	static var spelled = 0;
+	static var started = 0;
+	static var signalMs = 0;
+	static var signalErrors = 0;
+	static var respelled = false;
 
 	/** CharInfoWndContent.configUI: a copy of the last tab, placed right after it. */
 	public static function onWndConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
@@ -129,27 +141,58 @@ class LogsTab {
 		return text;
 	}
 
-	/** Copies the player's marked link for Arkive and starts polling for its answer. */
+	/** Spells the click to Arkive through its signal files, then polls for the answer. */
 	static function ask(self:Dynamic):Void {
 		name = labelText(self.equipPanel.infoPage.equipInfoCharacterNameLabel);
 		clear();
+		stop();
 		if (name == null || name.length == 0) {
 			say("No character name in this window.");
 			return;
 		}
-		var stamp:String = untyped __global__["flash.utils.getTimer"]();
-		var random:String = untyped Math.floor(Math.random() * 1000000);
-		request = stamp + "x" + random;
-		link = "https://lostark.bible/character/CE/" + name + "/logs#arkive-" + request;
-		var folder:String = Options.get("logs", "folder", "");
-		file = folder + "/" + hexName(name) + ".txt";
-		flash.system.System.setClipboard(link);
+		folder = Options.get("logs", "folder", "");
+		var code:Int = untyped Math.floor(Math.random() * 65536);
+		request = hex4(code);
+		file = folder + "/" + request + ".txt";
+		var message:String = request + hexName(name);
+		message = message + hex4(checksum(message));
+		spelling = ["go"];
+		for (i in 0...message.length)
+			spelling.push(message.charAt(i));
+		spelling.push("end");
+		spelled = 0;
+		signalErrors = 0;
+		respelled = false;
+		started = untyped __global__["flash.utils.getTimer"]();
 		say("Looking up " + name + " on lostark.bible...");
-		stop();
-		polls = 0;
-		poller = new Timer(POLL_MS);
-		poller.addEventListener(TimerEvent.TIMER, poll);
-		poller.start();
+		spellNext();
+	}
+
+	/** Reads the next signal file once the previous read has finished, so Arkive sees them in order. */
+	static function spellNext():Void {
+		if (spelled >= spelling.length) {
+			var now:Int = untyped __global__["flash.utils.getTimer"]();
+			signalMs = now - started;
+			polls = 0;
+			poller = new Timer(POLL_MS);
+			poller.addEventListener(TimerEvent.TIMER, poll);
+			poller.start();
+			return;
+		}
+		var set:String = SETS.charAt(spelled % SETS.length);
+		var path:String = folder + "/signal/" + set + "-" + spelling[spelled] + ".txt";
+		spelled++;
+		var loader = new URLLoader();
+		loader.addEventListener(Event.COMPLETE, function(e:Dynamic) spellNext());
+		loader.addEventListener("ioError", function(e:Dynamic) {
+			signalErrors++;
+			spellNext();
+		});
+		loader.addEventListener("securityError", function(e:Dynamic) {
+			signalErrors++;
+			spellNext();
+		});
+		loader.load(new URLRequest(path));
 	}
 
 	static function stop():Void {
@@ -162,10 +205,21 @@ class LogsTab {
 
 	static function poll(event:Dynamic):Void {
 		polls++;
+		if (polls == RESPELL_AFTER && !respelled) {
+			respelled = true;
+			stop();
+			spelled = 0;
+			started = untyped __global__["flash.utils.getTimer"]();
+			spellNext();
+			return;
+		}
 		if (polls > POLLS) {
 			stop();
-			say("No answer from Arkive. Keep Arkive open with the Logs Tab tweak on, then click Logs again.\nThe player's link is on your clipboard: "
-				+ "https://lostark.bible/character/CE/" + name + "/logs");
+			var reads:String = untyped spelling.length;
+			var errors:String = untyped signalErrors;
+			var ms:String = untyped signalMs;
+			say("No answer from Arkive. Keep Arkive open with the Logs Tab tweak on, then click Logs again.\n"
+				+ "(signal: " + reads + " reads, " + errors + " failed, " + ms + " ms)");
 			return;
 		}
 		var loader = new URLLoader();
@@ -228,15 +282,29 @@ class LogsTab {
 			header.text = text;
 	}
 
-	/** The name as four-digit hex character codes, lowercased first: the file name Arkive writes. */
+	/** The name as four lowercase hex digits per character. */
 	static function hexName(text:String):String {
-		var lower:String = text.toLowerCase();
 		var parts:Array<String> = [];
-		for (i in 0...lower.length) {
-			var hex:String = StringTools.hex(StringTools.fastCodeAt(lower, i), 4);
-			parts.push(hex.toLowerCase());
-		}
+		for (i in 0...text.length)
+			parts.push(hex4(StringTools.fastCodeAt(text, i)));
 		return parts.join("");
+	}
+
+	static function hex4(value:Int):String {
+		var hex:String = StringTools.hex(value & 0xFFFF, 4);
+		return hex.toLowerCase();
+	}
+
+	/** The sum of the message's 4-digit groups, wrapped to 16 bits (Arkive checks the same). */
+	static function checksum(message:String):Int {
+		var sum = 0;
+		var at = 0;
+		while (at + 4 <= message.length) {
+			var group:Int = untyped __global__["parseInt"](message.substr(at, 4), 16);
+			sum = (sum + group) & 0xFFFF;
+			at += 4;
+		}
+		return sum;
 	}
 
 	static function labelText(label:Dynamic):String {

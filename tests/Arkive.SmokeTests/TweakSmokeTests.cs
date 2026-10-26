@@ -40,8 +40,20 @@ internal static class TweakSmokeTests
         Assert(summary[0] == "found\tEU Central\tChillidari\t1\t123x45", $"summary head: {summary[0]}");
         Assert(summary[1].StartsWith("Archbishop Arcenos\tLevel 3\tSlayer\t1.68b\t89\t", StringComparison.Ordinal) &&
                summary[1].EndsWith("\t5:27\tdied", StringComparison.Ordinal), $"summary row: {summary[1]}");
-        // The tab builds the same name: four lowercase hex digits per character of the lowercased name.
-        Assert(Arkive.Core.Tweaks.PlayerLogsService.SummaryFileName("Chi") == "006300680069.txt", "summary file name");
+        // The tab spells request id, name (4 hex digits per character) and a checksum; Arkive reads it back and
+        // rejects a message with a missed or extra read.
+        var spelled = Arkive.Core.Tweaks.PlayerLogsSignal.Encode("0a1f", "Améthyst");
+        Assert(Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled, out var request, out var name) && request == "0a1f" && name == "Améthyst",
+            $"the signal message did not decode: {spelled}");
+        Assert(!Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled.Remove(9, 1) + "0", out _, out _) &&
+               !Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled[..^4] + "0000", out _, out _),
+            "a damaged signal message was accepted");
+        var signal = new Arkive.Core.Tweaks.PlayerLogsSignal(Path.GetTempPath());
+        string? heard = null;
+        signal.Requested += (who, _) => heard = who;
+        foreach (var symbol in (string[])["5", "go", .. spelled.Select(digit => digit.ToString()), "end"])
+            signal.Receive(symbol);
+        Assert(heard == "Améthyst", "the reads between go and end were not put together");
 
         const string missing = """
             {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},{"type":"data","data":[
