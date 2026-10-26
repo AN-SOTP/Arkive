@@ -1,3 +1,5 @@
+using Arkive.Core.Interface.Abc;
+
 namespace Arkive.Core.Tweaks;
 
 /// <summary>How far a tweak goes beyond changing what the interface shows.</summary>
@@ -80,10 +82,8 @@ public static class TweakCatalog
         ]),
         new("buffstack", "Buff Icon Stacking", "Places support buff icons in a separate row above other buffs.", TweakRisk.Display,
         [
-            H(Components, "components", "ark.controls.ARKSlotManager", "setSlotCount"),
-            H(Components, "components", "ark.controls.BaseList", "updateAlign"),
-            H("efui_quickslot", "quickslot", "ark.ui.quickSlot.QuickSlotFrame", "configUI"),
-            H("efui_quickslot", "quickslot", "ark.ui.quickSlot.QuickSLotBuffSlotManager", "configUI"),
+            H(Components, "components", "ark.controls.BaseList", "updateAlign", "arkive.tweaks.BuffStack.onUpdateAlign", AbcHookKind.Before),
+            H("efui_quickslot", "quickslot", "ark.ui.quickSlot.QuickSLotBuffSlotManager", "configUI", "arkive.tweaks.BuffStack.onBarConfigUI"),
         ], Note: "This doesn't raise how many buffs show at once. If icons get hidden, raise the number of shown buffs in the game's settings."),
         new("exchangemax", "Exchange Max Button", "Adds \"Exchange Max\" buttons to the event shop and other exchange windows.", TweakRisk.Batch,
         [
@@ -95,17 +95,17 @@ public static class TweakCatalog
         ]),
         new("extendedescapemenu", "Extended Escape Menu", "Adds separate rows for paradise power and hourglass status to the content status tables in the escape menu.", TweakRisk.Display,
         [
-            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMenuChildContentsPage", "configUI"),
-            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMenuChildContentsPage", "contentsStatusInfo"),
-            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMenuChildContentsPage", "updateTextPosition"),
-            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMEnuContentsGroup", "configUI"),
-            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMEnuContentsGroup", "setLoading"),
+            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMenuChildContentsPage", "configUI", "arkive.tweaks.EscapeMenu.onPageConfigUI"),
+            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMenuChildContentsPage", "contentsStatusInfo", "arkive.tweaks.EscapeMenu.onPageUpdate"),
+            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMenuChildContentsPage", "updateTextPosition", "arkive.tweaks.EscapeMenu.onPageUpdate"),
+            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMEnuContentsGroup", "configUI", "arkive.tweaks.EscapeMenu.onGroupConfigUI"),
+            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.ExitMEnuContentsGroup", "setLoading", "arkive.tweaks.EscapeMenu.onGroupLoading"),
         ]),
         new("extracurrency", "Additional Top Currencies", "Shows how many of certain progression materials you have in the top bar's currency list.", TweakRisk.Display,
         [
-            H("efui_tophud", "tophud", "ark.ui.topHUD.TopHUDContentsContainer", "configUI"),
-            H("efui_tophud", "tophud", "ark.ui.topHUD.TopHUDContentsContainer", "getTotalW"),
-            H("efui_tophud", "tophud", "ark.ui.topHUD.renderers.TopHUDCurrencyListItem", "setData"),
+            H("efui_tophud", "tophud", "ark.ui.topHUD.TopHUDContentsContainer", "configUI", "arkive.tweaks.ExtraCurrency.onConfigUI"),
+            H("efui_tophud", "tophud", "ark.ui.topHUD.TopHUDContentsContainer", "getTotalW", "arkive.tweaks.ExtraCurrency.onGetTotalW", AbcHookKind.AfterValue),
+            H("efui_tophud", "tophud", "ark.ui.topHUD.renderers.TopHUDCurrencyListItem", "setData", "arkive.tweaks.ExtraCurrency.onSetData"),
         ],
         [
             new("showLeapstones", "Leapstones", true),
@@ -153,10 +153,16 @@ public static class TweakCatalog
         ]),
         new("slottweaks", "Slot Tweaks", "Marks item icons so their properties show at a glance, and shows full stack counts instead of \"9999+\".", TweakRisk.Display,
         [
-            H(Base, "main", "ark.controls.ARKNewSlot", "draw"),
-            H(Base, "main", "ark.controls.ARKNewSlot", "clearContentData"),
-            H(Base, "main", "ark.controls.ARKNewSlot", "addedToStage"),
-            H(Base, "main", "ark.controls.ARKIcon", "applyDisableFilter"),
+            H(Base, "main", "ark.controls.ARKNewSlot", "draw", "arkive.tweaks.SlotTweaks.onDraw"),
+            H(Base, "main", "ark.controls.ARKNewSlot", "clearContentData", "arkive.tweaks.SlotTweaks.onClearContentData"),
+            H(Base, "main", "ark.controls.ARKIcon", "applyDisableFilter", "arkive.tweaks.SlotTweaks.onApplyDisableFilter"),
+            H(Components, "components", "ark.controls.ARKSlotManager", "setSlotCount", "arkive.tweaks.SlotTweaks.onSetSlotCount"),
+        ],
+        [
+            new("showQuality", "Quality glow on accessories and ability stones", true),
+            new("showPips", "Bonus pips on bracelets", true),
+            new("showPoints", "Engraving levels on ability stones", true),
+            new("fullCounts", "Full stack counts instead of \"9999+\"", true),
         ]),
         new("storageclaim", "Universal Storage Claim", "Adds \"Claim Page\" and \"Claim All\" buttons to the universal storage window.", TweakRisk.Batch,
         [
