@@ -7,12 +7,44 @@ using Arkive.Core.Tweaks;
 
 namespace Arkive.App;
 
-/// <summary>One on/off option of a tweak.</summary>
-public sealed class TweakOptionRow(TweakOption option, bool value)
+/// <summary>One thing to pick in a tweak option with choices.</summary>
+public sealed class TweakChoiceRow(TweakChoice choice, bool selected)
 {
-    public TweakOption Option { get; } = option;
+    public TweakChoice Choice { get; } = choice;
+    public string Label => Choice.Label;
+    public bool Selected { get; set; } = selected;
+}
+
+/// <summary>One option of a tweak: a switch, or a set of choices.</summary>
+public sealed class TweakOptionRow
+{
+    public TweakOptionRow(TweakOption option, JsonElement? saved)
+    {
+        Option = option;
+        if (option.Choices is { } choices)
+        {
+            var chosen = saved is { ValueKind: JsonValueKind.Array } list
+                ? list.EnumerateArray().Select(item => item.ToString()).ToHashSet()
+                : null;
+            Choices = choices.Select(choice => new TweakChoiceRow(choice, chosen?.Contains(choice.Value) ?? choice.Default)).ToArray();
+        }
+        else
+        {
+            Value = saved is { ValueKind: JsonValueKind.True or JsonValueKind.False } flag ? flag.GetBoolean() : option.Default;
+        }
+    }
+
+    public TweakOption Option { get; }
     public string Label => Option.Label;
-    public bool Value { get; set; } = value;
+    public bool Value { get; set; }
+    public IReadOnlyList<TweakChoiceRow> Choices { get; } = [];
+    public Visibility SwitchVisibility => Option.Choices is null ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ChoicesVisibility => Option.Choices is null ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>The value saved and written into the game: true/false, or the chosen values.</summary>
+    public JsonElement ToJson() => Option.Choices is null
+        ? JsonSerializer.SerializeToElement(Value)
+        : JsonSerializer.SerializeToElement(Choices.Where(choice => choice.Selected).Select(choice => choice.Choice.Value).ToArray());
 }
 
 /// <summary>One tweak in the Tweaks tab.</summary>
@@ -72,9 +104,7 @@ public partial class MainWindow
         {
             var saved = state.Settings.Enabled.GetValueOrDefault(tweak.Id);
             var options = tweak.OptionList.Select(option => new TweakOptionRow(option,
-                saved is not null && saved.TryGetValue(option.Key, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
-                    ? value.GetBoolean()
-                    : option.Default)).ToArray();
+                saved is not null && saved.TryGetValue(option.Key, out var value) ? value : null)).ToArray();
             return new TweakRow(tweak, saved is not null, options);
         }).ToArray();
         var on = state.Settings.Enabled.Count;
@@ -95,8 +125,7 @@ public partial class MainWindow
         var settings = new TweakSettings();
         foreach (var row in TweakList.ItemsSource?.OfType<TweakRow>() ?? [])
             if (row.Enabled)
-                settings.Enabled[row.Tweak.Id] = row.Options.ToDictionary(
-                    option => option.Option.Key, option => JsonSerializer.SerializeToElement(option.Value));
+                settings.Enabled[row.Tweak.Id] = row.Options.ToDictionary(option => option.Option.Key, option => option.ToJson());
         await BuildTweaksAsync(settings);
     }
 

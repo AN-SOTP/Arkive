@@ -26,7 +26,14 @@ public sealed record TweakHookTarget(string Package, string Movie, string ClassN
         Handler ?? throw new InvalidOperationException($"{ClassName}.{Method} has no handler yet."));
 }
 
-public sealed record TweakOption(string Key, string Label, bool Default);
+/// <summary>
+/// An option of a tweak: an on/off switch, or with <see cref="Choices"/> a set of things to pick (saved as the list of
+/// chosen values, for example raid ids).
+/// </summary>
+public sealed record TweakOption(string Key, string Label, bool Default, IReadOnlyList<TweakChoice>? Choices = null);
+
+/// <summary>One thing to pick in a <see cref="TweakOption"/> with choices.</summary>
+public sealed record TweakChoice(string Value, string Label, bool Default = false);
 
 public sealed record TweakDefinition(
     string Id,
