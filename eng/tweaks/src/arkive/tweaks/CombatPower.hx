@@ -117,19 +117,8 @@ class CombatPower {
 		if (showData())
 			addData(list);
 		var line = lineFor(list);
-		if (line == null)
-			return null;
-		var at = 0;
-		for (i in 0...list.length) {
-			var box:Dynamic = list[i];
-			if (box == null)
-				continue;
-			if (box.type == "SingleTextBox" && box.value == line)
-				return null;
-			if (box.type == "NameTagBox" || box.type == "ItemTitle")
-				at = i + 1;
-		}
-		untyped boxes.splice(at, 0, {type: "SingleTextBox", value: line, dirty: true});
+		if (line != null)
+			TooltipLines.add(list, TWEAK, line, TooltipLines.COMBAT_POWER);
 		return null;
 	}
 
