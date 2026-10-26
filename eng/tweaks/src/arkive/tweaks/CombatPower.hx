@@ -650,46 +650,43 @@ class CombatPower {
 			if (leaped >= 0)
 				otherLeap = Math.max(0, leaped - gearLeap);
 		}
-		var total = combatTotal(page, 0);
+		var total = combatTotal(window);
 		if (total >= 0)
 			otherCombat = Math.max(0, total - gearCombat);
 	}
 
-	/** Crit + Specialization + Swiftness from the first list under the page that names all three, or -1. */
-	static function combatTotal(container:Dynamic, depth:Int):Float {
-		if (container == null || depth > 4 || !(untyped __is__(container, flash.display.DisplayObjectContainer)))
+	/**
+		Crit + Specialization + Swiftness from the gear page's combat stat list (equipItemAbilityList: titleStr "Crit",
+		valueStr "75"), or -1 when it doesn't show all three.
+	**/
+	static function combatTotal(window:Dynamic):Float {
+		var list:Dynamic = combatList(window);
+		if (list == null)
 			return -1;
-		var data:Dynamic = (untyped __in__("dataProvider", container)) ? container.dataProvider : null;
-		if (data != null && (untyped __is__(data, Array))) {
-			var sum:Float = 0;
-			var seen = 0;
-			var count:Int = data.length;
-			for (i in 0...count) {
-				var texts = strings(data[i], [], 3);
-				for (label in COMBAT_LABELS) {
-					var at = -1;
-					for (j in 0...texts.length)
-						if (Text.trim(Text.stripTags(texts[j])) == label)
-							at = j;
-					if (at >= 0)
-						for (j in 0...texts.length)
-							if (j != at && number(Text.stripTags(texts[j])) >= 0) {
-								sum += number(Text.stripTags(texts[j]));
-								seen++;
-								break;
-							}
+		var sum:Float = 0;
+		var seen = 0;
+		var count:Int = list.length;
+		for (i in 0...count) {
+			var row:Dynamic = list[i];
+			if (row == null || row.titleStr == null || row.valueStr == null)
+				continue;
+			var title = Text.trim(Text.stripTags(row.titleStr));
+			var shown:String = untyped __global__["String"](row.valueStr);
+			if (COMBAT_LABELS.indexOf(title) >= 0) {
+				var points = number(Text.stripTags(shown));
+				if (points >= 0) {
+					sum += points;
+					seen++;
 				}
 			}
-			if (seen == COMBAT_LABELS.length)
-				return sum;
 		}
-		var children:Int = container.numChildren;
-		for (i in 0...children) {
-			var found = combatTotal(container.getChildAt(i), depth + 1);
-			if (found >= 0)
-				return found;
-		}
-		return -1;
+		return seen == COMBAT_LABELS.length ? sum : -1;
+	}
+
+	static function combatList(window:Dynamic):Dynamic {
+		return window == null || window.equipPanel == null || window.equipPanel.itemPage == null
+			|| window.equipPanel.itemPage.equipItemAbilityList == null ? null
+			: window.equipPanel.itemPage.equipItemAbilityList.dataProvider;
 	}
 
 	/**
@@ -1284,6 +1281,7 @@ class CombatPower {
 			read.push(name + " " + grade + "/" + level);
 		}
 		lines.push("Engravings read: " + read.join(", "));
+		lines.push("Combat stats: " + rowsOf(combatList(window), "titleStr", "valueStr", "tooltip"));
 		lines.push("Page lists: " + pageLists(page, 0));
 		lines.push("Ark Grid: " + (window == null ? "none" : pageLists(window.arkGridPanel, 0)));
 		var stat:Float = 0;
