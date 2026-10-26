@@ -107,6 +107,15 @@ public static class TweakCatalog
         [
             new("showData", "Show the tooltip data Arkive reads (for testing)", false),
         ], Note: "Open your Character Profile once after logging in: the tweak reads your Combat Power, DPS or support, and your gems from it."),
+        new("astrogem", "Astrogem Processing Advisor", "In astrogem processing, a box beside the gem's levels shows your chance to reach your target and the gold it takes if you process the offered effects, reroll them or reset the gem, worked out from the game's own odds tables, and suggests the best move. Advice only: it never presses anything.", TweakRisk.Display,
+        [
+            H("efui_arkgridgem", "arkgridgem", "ark.ui.arkGridGem.ArkGridGemProgressPanel", "configUI", "arkive.tweaks.Astrogem.onConfigUI"),
+        ],
+        [
+            new("target", "Target", false,
+                [.. AstrogemOdds.Targets.Select((target, i) => new TweakChoice(target.Id, target.Label, Default: i == 0))], Single: true),
+            new("showData", "Show what the tweak reads from the panel (for testing)", false),
+        ], Note: "Arkive works the odds out for every target when it installs the tweak, which takes several seconds the first time after a game update."),
         new("boxtweaks", "Chest Opening Tweaks", "Various tweaks for the chest opening window.", TweakRisk.Display,
         [
             H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData", "arkive.tweaks.BoxTweaks.onSetData"),

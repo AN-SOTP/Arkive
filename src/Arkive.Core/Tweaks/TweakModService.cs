@@ -85,6 +85,10 @@ public sealed class TweakModService(
         if (tweaks.TryGetValue(CombatPowerTweak, out var power) && File.Exists(data2))
             foreach (var (key, value) in CombatPowerTable.Options(data2, Path.Combine(root, "cache")))
                 power[key] = value;
+        if (tweaks.TryGetValue(AstrogemTweak, out var astrogem) && File.Exists(data2))
+            astrogem["tables"] = JsonSerializer.SerializeToElement(
+                AstrogemOdds.WriteTables(data2, Path.Combine(root, "cache"), Path.Combine(root, "astrogem"))
+                    .ToDictionary(table => table.Key, table => table.Value.Replace('\\', '/')));
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
@@ -278,6 +282,9 @@ public sealed class TweakModService(
     public const string PlayerLogsTweak = "logs";
 
     public string PlayerLogsFolder => Path.Combine(root, "player-logs");
+
+    /// <summary>The tweak that advises astrogem processing, from odds tables Arkive writes for every target.</summary>
+    public const string AstrogemTweak = "astrogem";
 
     /// <summary>The tweak that prices gems in Combat Power, from the game's own table.</summary>
     public const string CombatPowerTweak = "cpgems";

@@ -99,21 +99,28 @@ public static class AstrogemOdds
             });
 
     /// <summary>
-    /// Writes the target's table for the tweak (see <see cref="Encode"/>) into <paramref name="folder"/> and returns its
-    /// path. Kept per data2.lpk size and time and per target, since working it out takes a few seconds.
+    /// Writes every target's table for the tweak (see <see cref="Encode"/>) into <paramref name="folder"/> and returns
+    /// the files by target id. Kept per data2.lpk size and time, since working one out takes a second or two.
     /// </summary>
-    public static string WriteTable(string data2Path, string workDirectory, string folder, AstrogemTarget target)
+    public static IReadOnlyDictionary<string, string> WriteTables(string data2Path, string workDirectory, string folder)
     {
         var file = new FileInfo(data2Path);
-        var path = Path.Combine(folder, $"{target.Id}-{file.Length}-{file.LastWriteTimeUtc.Ticks}.txt");
-        if (File.Exists(path)) return path;
-        var table = Compute(Read(data2Path, workDirectory), target);
+        var stamp = $"{file.Length}-{file.LastWriteTimeUtc.Ticks}";
+        var files = Targets.ToDictionary(target => target.Id, target => Path.Combine(folder, $"{target.Id}-{stamp}.txt"));
+        if (files.Values.All(File.Exists)) return files;
         Directory.CreateDirectory(folder);
-        foreach (var stale in Directory.EnumerateFiles(folder, $"{target.Id}-*.txt")) File.Delete(stale);
-        var temporary = path + ".tmp";
-        File.WriteAllText(temporary, Encode(table), new UTF8Encoding(false));
-        File.Move(temporary, path, overwrite: true);
-        return path;
+        foreach (var stale in Directory.EnumerateFiles(folder, "*.txt").Where(path => !path.Contains(stamp, StringComparison.Ordinal)))
+            File.Delete(stale);
+        var rules = Read(data2Path, workDirectory);
+        foreach (var target in Targets)
+        {
+            var path = files[target.Id];
+            if (File.Exists(path)) continue;
+            var temporary = path + ".tmp";
+            File.WriteAllText(temporary, Encode(Compute(rules, target)), new UTF8Encoding(false));
+            File.Move(temporary, path, overwrite: true);
+        }
+        return files;
     }
 
     /// <summary>The chance and gold for one target. Index a table with <see cref="AstrogemTable.Index"/>.</summary>
