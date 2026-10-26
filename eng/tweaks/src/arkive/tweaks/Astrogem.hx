@@ -43,6 +43,7 @@ class Astrogem {
 
 	static var panel:Dynamic;
 	static var box:TextField;
+	static var fontSet = false;
 	static var frames = 0;
 	static var shown = "";
 	static var listening = false;
@@ -56,6 +57,7 @@ class Astrogem {
 	public static function onConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
 		panel = self;
 		box = field(BOX_WIDTH, BOX_HEIGHT);
+		fontSet = false;
 		box.x = BOX_X;
 		box.y = BOX_Y;
 		self.addChild(box);
@@ -432,6 +434,8 @@ class Astrogem {
 	}
 
 	static function show(html:String, data:String):Void {
+		if (!fontSet)
+			fontSet = fontFrom(panel, box);
 		box.htmlText = data == null ? html : html + BR + "<font color='" + DIM + "'>" + data + "</font>";
 	}
 
@@ -535,12 +539,13 @@ class Astrogem {
 		return "";
 	}
 
-	/** The box, in the game font the other tweaks' labels use ($YG760, not embedded; the panel's own labels drew boxes). */
+	/** The box; its font is set from the panel's own text once that shows (see fontFrom). */
 	static function field(width:Int, height:Int):TextField {
 		var format = new TextFormat();
 		format.font = "$YG760";
 		format.size = 13;
 		var made = new TextField();
+		made.embedFonts = true;
 		made.defaultTextFormat = format;
 		made.filters = [new GlowFilter(0, 1, 2, 2, 4, 1)];
 		made.textColor = 0xE6E6E6;
@@ -551,6 +556,40 @@ class Astrogem {
 		made.width = width;
 		made.height = height;
 		return made;
+	}
+
+	/**
+		Gives the box the font of a text field in the panel that shows text ("Processing Cost", the gem's name), with
+		its embedFonts: a field in a font the movie doesn't carry draws boxes, and an empty field reports no font.
+		False until one is found.
+	**/
+	static function fontFrom(owner:Dynamic, target:TextField):Bool {
+		var fields:Array<Dynamic> = [];
+		var count:Int = owner.numChildren;
+		for (i in 0...count) {
+			var child:Dynamic = owner.getChildAt(i);
+			if (child != target && untyped __is__(child, TextField))
+				fields.push(child);
+		}
+		for (label in [owner.progressGemNameLabel, owner.progressGemTryCountLabel, owner.progressGemAbilityLabel])
+			if (label != null && label.textField != null)
+				fields.push(label.textField);
+		for (source in fields) {
+			var text:String = source.text;
+			if (text == null || text.length == 0)
+				continue;
+			var own:Dynamic = source.getTextFormat(0, 1);
+			var name:String = own == null ? null : own.font;
+			if (name == null || name == "")
+				continue;
+			var format = new TextFormat();
+			format.font = name;
+			format.size = 13;
+			target.embedFonts = source.embedFonts;
+			target.defaultTextFormat = format;
+			return true;
+		}
+		return false;
 	}
 
 	// ---- Text ----
