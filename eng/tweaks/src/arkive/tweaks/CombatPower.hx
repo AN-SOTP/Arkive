@@ -23,9 +23,9 @@ import flash.text.TextFormat;
 
 	Your Combat Power, DPS or support, equipment, gems, engravings and Ark Passive points are read from your own
 	Character Profile (an inspected player's window is ignored), so the lines ask you to open it once. When the profile
-	shows a new figure and your gear has changed since the last one, a note at the left of the figure shows what
-	Arkive predicted. Tooltip text is matched in English. With the "showData" option every item tooltip also lists what
-	the tweak can read from it and from the profile.
+	shows a new figure and your gear has changed since the last one, the "showData" option (for testing) puts a note at
+	the left of the figure with what Arkive predicted, and lists under every item tooltip what the tweak can read from it
+	and from the profile. Tooltip text is matched in English.
 **/
 @:keep
 class CombatPower {
@@ -185,7 +185,10 @@ class CombatPower {
 		var window:Dynamic = GameUi.ancestor(label, "ark.ui.charInfo.CharInfoWndContent");
 		var items = readGear(window);
 		var gems = readEquipped();
-		if (power > 0 && gear != null && equipped != null
+		// The prediction check is for testing only: it shows with the showData option and nowhere else.
+		if (!showData() && check != null && check.parent != null)
+			check.parent.removeChild(check);
+		if (showData() && power > 0 && gear != null && equipped != null
 			&& (signature(gems) != signature(equipped) || gearSignature(items) != gearSignature(gear)))
 			showCheck(label, power * value(items, gems) / value(gear, equipped), shown);
 		power = shown;
