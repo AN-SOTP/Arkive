@@ -10,6 +10,11 @@ class LobbyCp {
 			var power = combatPower(Std.string(data.memberTooltip));
 			if (power != null)
 				self.itemLevel_txt.htmlText = Std.string(data.itemLevel) + "  <font color='#ffd200'>" + power + "</font>";
+			#if arkive_diag
+			else
+				self.itemLevel_txt.htmlText = Std.string(data.itemLevel) + "  <font color='#ff5050'>no CP in: "
+					+ Text.stripTags(Std.string(data.memberTooltip)).substr(0, 80) + "</font>";
+			#end
 			return result;
 		});
 	}

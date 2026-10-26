@@ -10,6 +10,7 @@ class Tweaks {
 		try {
 			settings = haxe.Json.parse(config);
 		} catch (error:Dynamic) {
+			Hooks.note(error);
 			return;
 		}
 		var tweaks:Dynamic = settings == null ? null : settings.tweaks;
@@ -21,7 +22,9 @@ class Tweaks {
 				continue;
 			try {
 				register(Reflect.field(tweaks, name));
-			} catch (error:Dynamic) {}
+			} catch (error:Dynamic) {
+				Hooks.note(error);
+			}
 		}
 	}
 
