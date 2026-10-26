@@ -3170,7 +3170,7 @@ static int PlayerLogs(string name, string? outDirectory, bool json)
     if (!string.IsNullOrWhiteSpace(outDirectory))
     {
         Directory.CreateDirectory(outDirectory);
-        path = Path.Combine(Path.GetFullPath(outDirectory), Arkive.Core.Tweaks.PlayerLogsService.SummaryFileName(name));
+        path = Path.Combine(Path.GetFullPath(outDirectory), name + ".txt");
         File.WriteAllText(path, summary);
     }
     if (json) WriteJson(new { lookup.Name, lookup.Region, Status = lookup.Status.ToString(), lookup.Logs, File = path });
