@@ -7,13 +7,14 @@ class LobbyCp {
 			var data:Dynamic = args[0];
 			if (data == null || self.itemLevel_txt == null)
 				return result;
-			var power = combatPower(Std.string(data.memberTooltip));
+			var tooltip:Dynamic = data.memberTooltip;
+			var power = untyped __is__(tooltip, String) ? combatPower(tooltip) : null;
+			var level:String = untyped __is__(data.itemLevel, String) ? data.itemLevel : "";
 			if (power != null)
-				self.itemLevel_txt.htmlText = Std.string(data.itemLevel) + "  <font color='#ffd200'>" + power + "</font>";
+				self.itemLevel_txt.htmlText = level + "  <font color='#ffd200'>" + power + "</font>";
 			#if arkive_diag
 			else
-				self.itemLevel_txt.htmlText = Std.string(data.itemLevel) + "  <font color='#ff5050'>no CP in: "
-					+ Text.stripTags(Std.string(data.memberTooltip)).substr(0, 80) + "</font>";
+				self.itemLevel_txt.htmlText = level + "  <font color='#ff5050'>no CP</font>";
 			#end
 			return result;
 		});
@@ -21,18 +22,7 @@ class LobbyCp {
 
 	/** The number after "Power:" in the member tooltip ("Combat Power: <font color='#ffd200'>1757.50</font>"). */
 	public static function combatPower(tooltip:String):Null<String> {
-		if (tooltip == null)
-			return null;
 		var at = tooltip.indexOf("Power:");
-		if (at < 0)
-			return null;
-		var text = Text.stripTags(tooltip.substr(at + 6));
-		var start = 0;
-		while (start < text.length && " \t\r\n".indexOf(text.charAt(start)) >= 0)
-			start++;
-		var end = start;
-		while (end < text.length && "0123456789.,".indexOf(text.charAt(end)) >= 0)
-			end++;
-		return end > start ? text.substring(start, end) : null;
+		return at < 0 ? null : Text.numberAfter(tooltip, at + 6);
 	}
 }

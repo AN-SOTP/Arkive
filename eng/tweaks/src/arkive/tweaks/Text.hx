@@ -1,20 +1,57 @@
 package arkive.tweaks;
 
-/** Small text helpers that avoid regular expressions, which Scaleform's player may not have. */
+/**
+	Text helpers for game HTML. Scaleform's player builds strings slowly, so these never add one character at a time
+	(a long tooltip done that way froze the game); they find positions with indexOf and copy whole pieces. No regular
+	expressions either, which the player may not have.
+**/
 class Text {
 	/** Removes <tags> from game HTML text. */
 	public static function stripTags(html:String):String {
-		var out = new StringBuf();
-		var inTag = false;
-		for (i in 0...html.length) {
-			var c = html.charAt(i);
-			if (c == "<")
-				inTag = true;
-			else if (c == ">")
-				inTag = false;
-			else if (!inTag)
-				out.add(c);
+		if (html == null)
+			return "";
+		var pieces:Array<String> = [];
+		var at = 0;
+		while (at < html.length) {
+			var open = html.indexOf("<", at);
+			if (open < 0) {
+				pieces.push(html.substr(at));
+				break;
+			}
+			if (open > at)
+				pieces.push(html.substring(at, open));
+			var close = html.indexOf(">", open);
+			if (close < 0)
+				break;
+			at = close + 1;
 		}
-		return out.toString();
+		return pieces.join("");
+	}
+
+	/** The number (digits, '.' and ',') that starts at or after `from`, skipping spaces and tags; null when none. */
+	public static function numberAfter(html:String, from:Int):Null<String> {
+		var i = from;
+		while (i < html.length) {
+			var c = StringTools.fastCodeAt(html, i);
+			if (c == "<".code) {
+				var close = html.indexOf(">", i);
+				if (close < 0)
+					return null;
+				i = close + 1;
+			} else if (c == " ".code || c == "\t".code || c == "\r".code || c == "\n".code) {
+				i++;
+			} else {
+				break;
+			}
+		}
+		var end = i;
+		while (end < html.length) {
+			var c = StringTools.fastCodeAt(html, end);
+			if ((c >= "0".code && c <= "9".code) || c == ".".code || c == ",".code)
+				end++;
+			else
+				break;
+		}
+		return end > i ? html.substring(i, end) : null;
 	}
 }
