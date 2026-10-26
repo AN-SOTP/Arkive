@@ -195,6 +195,7 @@ class BraceletJudge {
 		var worn:Dynamic = gear[BRACELET_SLOT];
 		var effects:Array<Float> = [];
 		var combat:Float = 0;
+		var mainOff:Float = 0;
 		if (worn != null) {
 			var wornEffects:Array<Float> = worn.effects;
 			var wornCombat:Float = worn.combat;
@@ -212,14 +213,17 @@ class BraceletJudge {
 				}
 				left.splice(at, 1);
 			}
-			if (wearing && (oldEffects.length > 0 || oldCombat > 0)) {
+			var oldMain:Float = old.main;
+			if (wearing && (oldEffects.length > 0 || oldCombat > 0 || oldMain > 0)) {
 				effects = left;
 				combat = wornCombat - oldCombat;
+				// Combat Power on Tooltips counts a bracelet's bonus main stat in its stats; take the judged one out.
+				mainOff = oldMain;
 			} else {
 				combat = wornCombat;
 			}
 		}
-		return {worn: worn, effects: effects, combat: combat};
+		return {worn: worn, effects: effects, combat: combat, mainOff: mainOff};
 	}
 
 	/** How much the side adds to your Combat Power (0.021 for +2.1%), or -1 when it can't be priced. */
@@ -255,7 +259,8 @@ class BraceletJudge {
 			effects.push(factor);
 		for (factor in factors)
 			effects.push(factor);
-		// The worn bracelet's own main stat (its Basic Effect) plus the main stat on the judged lines.
+		// The worn bracelet's main stat (with its bonus lines, less the judged ones when it's the rerolled bracelet) plus
+		// the main stat on the judged lines.
 		var stats:Dynamic = {};
 		var wornStats:Dynamic = worn == null ? null : worn.stats;
 		var key:String = CombatPower.mainStat;
@@ -265,13 +270,15 @@ class BraceletJudge {
 				if (key == "")
 					key = stat;
 			}
-		if (main > 0) {
+		var mainOff:Float = rest.mainOff;
+		var added = main - mainOff;
+		if (added != 0) {
 			if (key == "")
 				key = CombatPower.STATS[0];
 			var had:Float = 0;
 			if (Text.has(stats, key))
 				had = untyped stats[key];
-			untyped stats[key] = had + main;
+			untyped stats[key] = Math.max(0, had + added);
 		}
 		items[BRACELET_SLOT] = {
 			slot: "bracelet",
