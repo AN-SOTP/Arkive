@@ -73,6 +73,10 @@ public static class TweakCatalog
 
     public static IReadOnlyList<TweakDefinition> All { get; } =
     [
+        new("logs", "Logs Tab", "Adds a \"Logs\" tab to the character profile and inspect windows with the player's recent lostark.bible logs, by raid (EU Central first, then North America). Keep Arkive running while you play: it fetches the logs for the tab.", TweakRisk.Display,
+        [
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsTab.onWndConfigUI"),
+        ]),
         new("boxtweaks", "Chest Opening Tweaks", "Various tweaks for the chest opening window.", TweakRisk.Display,
         [
             H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData", "arkive.tweaks.BoxTweaks.onSetData"),
@@ -206,10 +210,6 @@ public static class TweakCatalog
         [
             new("profile", "\"Unequip All\" on the character profile's gem page", true),
             new("storage", "\"Unequip Gems\" in roster storage (gems bound to the character stay)", true),
-        ]),
-        new("logs", "Logs Tab", "Adds a \"Logs\" tab to the character profile and inspect windows with the player's recent logs from lostark.bible (EU Central first, then North America). Arkive must be running: the tab copies the player's lostark.bible link, Arkive fetches the logs and puts your clipboard back.", TweakRisk.Display,
-        [
-            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsTab.onWndConfigUI"),
         ]),
         new("fastlaunch", "Faster Launch", "Makes the game start faster by skipping the publisher logos and the seizure warning before the login screen.", TweakRisk.Speed,
         [],
