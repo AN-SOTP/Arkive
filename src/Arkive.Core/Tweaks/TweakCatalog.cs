@@ -147,6 +147,11 @@ public static class TweakCatalog
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoGemPanel", "configUI"),
             H("efui_interaction", "windowgo", "ark.ui.windowGo.ExpeditionWindowGoContent", "configUI"),
         ]),
+        new("fastlaunch", "Faster Launch", "Makes the game start faster by skipping the publisher logos and the seizure warning before the login screen.", TweakRisk.Speed,
+        [],
+        [
+            new("skipIntro", "Skip intro logos", true),
+        ]),
         new("favoriteraids", "Favorite Raids", "Adds a Favorites section to the top of the party finder with the raids you mark as favorites.", TweakRisk.Display,
         [
             H(Components, "components", "ark.controls.RollingTreeList", "draw"),

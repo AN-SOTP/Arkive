@@ -9,7 +9,27 @@ internal static class TweakSmokeTests
     [
         new("reads and writes ActionScript 3 code and movie tags byte for byte", TestAbcRoundTrip),
         new("routes a movie method through the tweak dispatcher and keeps the original under a new name", TestHookInjection),
+        new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
     ];
+
+    private static void TestIntroMovies()
+    {
+        var root = Path.Combine(fixtureDirectory, "tweak-intro");
+        var packages = Path.Combine(root, "client", "EFGame", "ReleasePC", "Packages");
+        var movies = Path.Combine(root, "client", "EFGame", "Movies");
+        Directory.CreateDirectory(packages);
+        Directory.CreateDirectory(movies);
+        var english = Path.Combine(movies, Arkive.Core.Tweaks.TweakIntroMovies.IntroMovie + ".English.ipk");
+        var login = Path.Combine(movies, "LOGIN.English.ipk");
+        File.WriteAllBytes(english, [1, 2, 3]);
+        File.WriteAllBytes(login, [4]);
+        var intro = new Arkive.Core.Tweaks.TweakIntroMovies(Path.Combine(root, "backups"));
+        Assert(intro.Apply(packages, skip: true) == 1 && !File.Exists(english) && File.Exists(login) && intro.Skipping,
+            "skipping the intro did not move only the intro movie aside");
+        Assert(intro.Apply(packages, skip: true) == 0, "skipping twice moved files again");
+        Assert(intro.Apply(packages, skip: false) == 1 && File.ReadAllBytes(english).SequenceEqual(new byte[] { 1, 2, 3 }) && !intro.Skipping,
+            "bringing the intro back did not restore the exact file");
+    }
 
     private static void TestAbcRoundTrip()
     {

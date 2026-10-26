@@ -119,8 +119,16 @@ public partial class MainWindow
                 return;
             }
             TweakBuildResult result;
+            var skipIntro = settings.Enabled.TryGetValue("fastlaunch", out var launch) &&
+                            (!launch.TryGetValue("skipIntro", out var skip) || skip.ValueKind == JsonValueKind.True);
+            int introFiles;
             using (ShowBusy("Building tweaks…", "Arkive is adding the tweaks to the game's own windows. Please wait until it finishes."))
+            {
+                introFiles = await Task.Run(() => new TweakIntroMovies(Path.Combine(_projectRoot, "backups", "tweaks"), new LostArkProcessGuard())
+                    .Apply(packages, skipIntro));
                 result = await Task.Run(() => Tweaks.BuildAsync(settings, packages, TweakCode.LoadSwf()));
+            }
+            if (introFiles > 0) Log($"Tweaks: {(skipIntro ? "moved" : "restored")} {introFiles} intro movie file(s).");
             Log($"Tweaks built: tweaks={string.Join(",", settings.Enabled.Keys)}, mod={result.Mod?.ModId ?? "-"}, " +
                 $"movies={string.Join(",", result.Movies)}, missing={string.Join(" | ", result.MissingHooks)}");
             status = settings.Enabled.Count == 0
