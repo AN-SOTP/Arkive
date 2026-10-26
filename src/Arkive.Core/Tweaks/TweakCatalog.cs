@@ -97,6 +97,16 @@ public static class TweakCatalog
         [
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsTab.onWndConfigUI"),
         ]),
+        new(TweakModService.CompareTweak, "Compare With Me", "Adds a \"Compare\" tab to the inspect window: the player's equipment, accessories, gems, engravings, Ark Passive and combat stats beside yours, in the game's own slots (hover one for its usual tooltip). Each difference says what taking just that part of theirs would do to your Combat Power, and the top of the page prices their whole build on you, with the same model as Combat Power on Tooltips.", TweakRisk.Display,
+        [
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.Compare.onWndConfigUI"),
+            // Your Combat Power, role and gear, read the same way as Combat Power on Tooltips (each gated by its own tweak).
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "configUI", "arkive.tweaks.CombatPower.onAbilityConfigUI"),
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "combatType", "arkive.tweaks.CombatPower.onCombatType"),
+        ],
+        [
+            new("showCheck", "Show Arkive's model figure beside the game's (for testing)", false),
+        ], Note: "Open your own Character Profile once after logging in (and its Gems and Engravings tabs): Compare reads your side from it. DPS characters get every line; supports get gems and engravings for now."),
         new(TweakModService.SettingsTweak, "In-game Tweak Settings", "An \"Arkive\" button in the escape menu opens a list of your tweaks: switch them on or off and change their options while you play. Keep Arkive running to save those changes; without it they last until you close the game.", TweakRisk.Display,
         [
             H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.MenuWndContent", "configUI", "arkive.tweaks.SettingsPanel.onMenuConfigUI"),
