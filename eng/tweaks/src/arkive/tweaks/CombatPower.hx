@@ -60,10 +60,18 @@ class CombatPower {
 	static var SLOTS:Array<String> = ["weapon", "helm", "chest", "pants", "gloves", "shoulder", "necklace", "earring", "earring",
 		"ring", "ring", "bracelet", "stone", "orb", "vambrace"];
 	/** Words in an item's name that say which slot it goes in (English), checked in this order. */
-	static var WORDS:Array<String> = ["Vambrace", "Necklace", "Earring", "Ring", "Bracelet", "Stone", "Orb", "Helm", "Chestpiece",
-		"Pants", "Gloves", "Pauldrons"];
-	static var WORD_SLOTS:Array<String> = ["vambrace", "necklace", "earring", "ring", "bracelet", "stone", "orb", "helm", "chest",
-		"pants", "gloves", "shoulder"];
+	static var WORDS:Array<String> = ["Vambrace", "Necklace", "Earring", "Ring", "Bracelet", "Stone", "Orb"];
+	static var WORD_SLOTS:Array<String> = ["vambrace", "necklace", "earring", "ring", "bracelet", "stone", "orb"];
+	/**
+		The last word of armour names (English), by slot: every ending the game's item table uses (Bards and other
+		classes wear a Headpiece or Hat and a Shoulderpiece, for example).
+	**/
+	static var ARMOUR_ENDINGS:Array<String> = ["Headpiece", "Helm", "Hat", "Headguard", "Bandana", "Chestpiece", "Tunic", "Chestguard",
+		"Breastplate", "Robe", "Mail", "Armor", "Pants", "Greaves", "Legguards", "Chausses", "Gloves", "Armguards", "Pauldrons",
+		"Shoulderpiece", "Amice", "Spaulders", "Shoulderguards", "Shoulders", "Mantle"];
+	static var ARMOUR_SLOTS:Array<String> = ["helm", "helm", "helm", "helm", "helm", "chest", "chest", "chest", "chest", "chest", "chest",
+		"chest", "pants", "pants", "pants", "pants", "gloves", "gloves", "shoulder", "shoulder", "shoulder", "shoulder", "shoulder",
+		"shoulder", "shoulder"];
 	/** Slots the tweak doesn't price yet. */
 	static var UNPRICED:Array<String> = [];
 	static var STATS:Array<String> = ["Strength", "Dexterity", "Intelligence"];
@@ -304,6 +312,9 @@ class CombatPower {
 
 	/** "Combat Power +12.34 (+0.53%)" in green or red; "~" in front when it rests on summed main stat and weapon power. */
 	static function changeText(change:Float, rough:Bool):String {
+		// A change that rounds to 0.00% is no change: a grey 0, without sign or "~".
+		if (Math.abs(change) < 0.00005)
+			return font(DIM, "Combat Power 0");
 		var lead:String = rough ? "Combat Power ~" : "Combat Power ";
 		var text:String = power <= 0 ? lead + signed(change * 100, "%")
 			: lead + signed(power * change, "") + " (" + signed(change * 100, "%") + ")";
@@ -389,9 +400,10 @@ class CombatPower {
 				var body = splitLines(part[1]);
 				parts.push(heading + ":" + body.join(","));
 				for (line in body) {
-					var at = line.indexOf("Paradise Power:");
-					if (at >= 0)
-						paradise = number(line.substr(at + 15));
+					// "Final Season 3 Paradise Power: 25,660,633", "Season 4 Max Achieved Paradise Power 34,413,883".
+					var at = line.indexOf("Paradise Power");
+					if (at >= 0 && number(line.substr(at + 14)) > 0)
+						paradise = number(line.substr(at + 14));
 				}
 				if (heading.indexOf("Refinement") >= 0) {
 					for (line in body) {
@@ -446,10 +458,13 @@ class CombatPower {
 		for (i in 0...WORDS.length)
 			if (slot == "" && name.indexOf(WORDS[i]) >= 0)
 				slot = WORD_SLOTS[i];
+		for (i in 0...ARMOUR_ENDINGS.length)
+			if (slot == "" && StringTools.endsWith(name, " " + ARMOUR_ENDINGS[i]))
+				slot = ARMOUR_SLOTS[i];
 		if (slot == "" && weapon > 0 && !hasStat && quality >= 0)
 			slot = "weapon";
 		// Armour and accessories always have a main stat; a name word alone (a quest item "Ring") isn't gear.
-		if (slot != "weapon" && slot != "bracelet" && slot != "stone" && UNPRICED.indexOf(slot) < 0 && !hasStat)
+		if (slot != "weapon" && slot != "bracelet" && slot != "stone" && slot != "orb" && !hasStat)
 			slot = "";
 		return {slot: slot, name: name, text: name + "|" + parts.join("|"), stats: stats, weapon: weapon, weaponPct: weaponPct,
 			flat: flat, basicPct: basicPct, quality: slot == "weapon" ? quality : -1, refine: refine, effects: effects,
@@ -1283,7 +1298,12 @@ class CombatPower {
 		lines.push("Engravings read: " + read.join(", "));
 		lines.push("Combat stats: " + rowsOf(combatList(window), "titleStr", "valueStr", "tooltip"));
 		lines.push("Page lists: " + pageLists(page, 0));
-		lines.push("Ark Grid: " + (window == null ? "none" : pageLists(window.arkGridPanel, 0)));
+		var grid:Dynamic = window == null ? null : window.arkGridPanel;
+		var cores:Dynamic = grid == null || grid.arkGridList == null ? null : grid.arkGridList.dataProvider;
+		var info:Dynamic = grid == null || grid.imageView == null ? null : grid.imageView.preResource;
+		lines.push("Ark Grid cores: " + listOf(cores));
+		lines.push("Ark Grid effects: " + listOf(info == null || info.arkGridEffectList == null ? null : info.arkGridEffectList.dataProvider));
+		lines.push("Ark Grid levels: " + listOf(info == null || info.arkGridAbilityList == null ? null : info.arkGridAbilityList.dataProvider));
 		var stat:Float = 0;
 		var weapon:Float = 0;
 		for (item in items) {
@@ -1325,6 +1345,17 @@ class CombatPower {
 				found.push(inner);
 		}
 		return found.join("; ");
+	}
+
+	/** For showData: each row of a list, a few levels deep. */
+	static function listOf(list:Dynamic):String {
+		if (list == null)
+			return "none";
+		var shown:Array<String> = [];
+		var count:Int = list.length;
+		for (i in 0...count)
+			shown.push(describe(list[i], 1));
+		return shown.join("; ");
 	}
 
 	static function rowsOf(list:Dynamic, name:String, value:String, extra:String):String {
