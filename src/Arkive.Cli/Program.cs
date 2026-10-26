@@ -355,6 +355,7 @@ static int Run(string[] arguments)
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
             "player-logs" => PlayerLogs(target, ReadTextOption(arguments, "--out"), json),
+            "game-crashes" => GameCrashes(target, ReadPositiveIntOption(arguments, "--last") ?? 3, json),
             "astrogem-odds" => AstrogemOdds(target, ReadTextOption(arguments, "--target"), ReadTextOption(arguments, "--out"), json),
             "tweaks-install" => TweaksInstall(target, arguments.Contains("--saved", StringComparer.OrdinalIgnoreCase),
                 arguments.Contains("--include-other-mods", StringComparer.OrdinalIgnoreCase)),
@@ -3186,6 +3187,25 @@ static int PlayerLogs(string name, string? outDirectory, bool json)
 }
 
 /// <summary>
+/// What the game's own crash dumps (EFGame\Logs\*.dmp, newest first) say: the exception, where, and the names on the
+/// crashed thread's stack, with this build's tweak code named where the stack points into it.
+/// </summary>
+static int GameCrashes(string target, int last, bool json)
+{
+    var dumps = File.Exists(target) ? [Path.GetFullPath(target)] : Arkive.Core.Tweaks.GameCrashReader.FindDumps(target).Take(last).ToArray();
+    if (dumps.Length == 0)
+    {
+        Console.Error.WriteLine($"No crash dumps under {target}.");
+        return 1;
+    }
+    var blocks = Arkive.Core.Tweaks.TweakCode.ReadSwfBlocks(Arkive.Core.Tweaks.TweakCode.LoadSwf());
+    var crashes = dumps.Select(dump => Arkive.Core.Tweaks.GameCrashReader.Read(dump, blocks)).ToArray();
+    if (json) WriteJson(crashes);
+    else foreach (var crash in crashes) Console.WriteLine(Arkive.Core.Tweaks.GameCrashReader.Describe(crash));
+    return 0;
+}
+
+/// <summary>
 /// The Astrogem Processing Advisor's odds for a target (all targets when none is given), from a data2.lpk: the chance and
 /// gold from a fresh gem of each grade without a reset, the time it took, and with --out the table file the tweak reads.
 /// </summary>
@@ -4088,6 +4108,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive player-logs <character-name> [--out DIR] [--json]");
+    Console.WriteLine("  arkive game-crashes <Lost-Ark-folder | EFGame\\Logs | file.dmp> [--last N] [--json]");
     Console.WriteLine("  arkive astrogem-odds <data2.lpk> [--target ID] [--out DIR] [--json]");
     Console.WriteLine("  arkive tweaks-install <Arkive-data-root> --saved [--include-other-mods]");
     Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf] [--diagnostic] [--data2 data2.lpk] [--json]");

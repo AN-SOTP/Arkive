@@ -20,7 +20,69 @@ internal static class TweakSmokeTests
         new("reads Data Bus messages and saves tweak switches and options changed in game", TestInGameSettings),
         new("keeps the market prices Market Price sends, the newest per item, for the next session", TestMarketPrices),
         new("works out astrogem processing odds from the game's weights and writes the table the advisor reads", TestAstrogemOdds),
+        new("reads a game crash dump: the exception, where, the names on the stack and the tweak code it points into", TestGameCrash),
     ];
+
+    /// <summary>
+    /// A minidump shaped like the game's: an access violation in EFEngine.dll whose stack holds a return address and a
+    /// pointer to a heap object that points at a symbol name inside a tweak class's loaded bytecode.
+    /// </summary>
+    private static void TestGameCrash()
+    {
+        const ulong engine = 0x1_8000_0000, stack = 0x15_0000, heap = 0x10_0000_0000;
+        var symbol = "CharInfo_Equip_AbilityPage_BasicAbilityTitleBG"u8.ToArray();
+        var abc = new byte[256];
+        symbol.CopyTo(abc, 100);
+        var heapBytes = new byte[512];
+        BitConverter.GetBytes(heap + 0x100).CopyTo(heapBytes, 16); // object -> string inside the loaded code
+        abc.AsSpan(100, 120).CopyTo(heapBytes.AsSpan(0x100));
+        var stackBytes = new byte[0x200];
+        BitConverter.GetBytes(engine + 0x113eb02).CopyTo(stackBytes, 0x28);
+        BitConverter.GetBytes(heap).CopyTo(stackBytes, 0x40);
+
+        var file = new List<byte>();
+        var body = new byte[0x1000];
+        void Put(int at, params ulong[] values) { foreach (var value in values) { BitConverter.GetBytes(value).CopyTo(body, at); at += 8; } }
+        "MDMP"u8.CopyTo(body);
+        BitConverter.GetBytes(4u).CopyTo(body, 8);
+        BitConverter.GetBytes(0x20u).CopyTo(body, 12);
+        BitConverter.GetBytes(1_793_000_000u).CopyTo(body, 20);
+        uint[] directory = [3, 48 + 4, 0x100, 4, 108 + 4, 0x200, 6, 168, 0x300, 9, 16 + 32, 0x500];
+        for (var index = 0; index < directory.Length; index++) BitConverter.GetBytes(directory[index]).CopyTo(body, 0x20 + index * 4);
+        BitConverter.GetBytes(1u).CopyTo(body, 0x100); // one thread, its stack
+        Put(0x104 + 24, stack);
+        BitConverter.GetBytes((uint)stackBytes.Length).CopyTo(body, 0x104 + 32);
+        BitConverter.GetBytes(1u).CopyTo(body, 0x200); // one module named at 0x280
+        Put(0x204, engine);
+        BitConverter.GetBytes(0x200_0000u).CopyTo(body, 0x204 + 8);
+        BitConverter.GetBytes(0x280u).CopyTo(body, 0x204 + 20);
+        var name = System.Text.Encoding.Unicode.GetBytes(@"D:\Lost Ark\Binaries\Win64\EFEngine.dll");
+        BitConverter.GetBytes((uint)name.Length).CopyTo(body, 0x280);
+        name.CopyTo(body, 0x284);
+        BitConverter.GetBytes(0xC0000005u).CopyTo(body, 0x308); // exception: read of 0xffffffff7c3e5439
+        Put(0x308 + 16, engine + 0x1138318);
+        BitConverter.GetBytes(2u).CopyTo(body, 0x308 + 24);
+        Put(0x308 + 32, 0, 0xffff_ffff_7c3e_5439);
+        BitConverter.GetBytes(0x4D0u).CopyTo(body, 0x300 + 160);
+        BitConverter.GetBytes(0x600u).CopyTo(body, 0x300 + 164);
+        Put(0x600 + 0x98, stack); // context rsp
+        Put(0x500, 2, 0x1000, stack, (ulong)stackBytes.Length, heap, (ulong)heapBytes.Length);
+        file.AddRange(body);
+        file.AddRange(stackBytes);
+        file.AddRange(heapBytes);
+        var path = Path.Combine(fixtureDirectory, "game-crash.dmp");
+        File.WriteAllBytes(path, file.ToArray());
+
+        var crash = Arkive.Core.Tweaks.GameCrashReader.Read(path, [("arkive/tweaks/Compare", abc)]);
+        Assert(crash.Code == 0xC0000005 && crash.Where == "EFEngine.dll+0x1138318" && crash.Access == "read" &&
+               crash.BadAddress == 0xffff_ffff_7c3e_5439, $"read the exception as {crash.CodeName} at {crash.Where}");
+        Assert(crash.Frames.FirstOrDefault() == "EFEngine.dll+0x113eb02", "missed the return address: " + string.Join(" ", crash.Frames));
+        Assert(crash.Tweaks.SequenceEqual(["Compare"]) &&
+               crash.Clues.Contains("CharInfo_Equip_AbilityPage_BasicAbilityTitleBG (Compare)"),
+            "missed the tweak code on the stack: " + string.Join(", ", crash.Clues));
+        Assert(Arkive.Core.Tweaks.GameCrashReader.Describe(crash).Contains("Arkive tweak code on the stack: Compare", StringComparison.Ordinal),
+            "the description leaves out the tweak");
+    }
 
     /// <summary>
     /// Market Price sends "name|lowest|avg|last|bundle|source" lines (hundredths of a gold per bundle) on the "prices"
