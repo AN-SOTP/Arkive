@@ -355,7 +355,8 @@ static int Run(string[] arguments)
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
             "tweaks-mod" => TweaksMod(target, ReadTextOption(arguments, "--root"), ReadTextOption(arguments, "--tweaks"),
-                ReadTextOption(arguments, "--options"), ReadTextOption(arguments, "--movies"), ReadTextOption(arguments, "--code"), json),
+                ReadTextOption(arguments, "--options"), ReadTextOption(arguments, "--movies"), ReadTextOption(arguments, "--code"),
+                ReadTextOption(arguments, "--diagnostic"), json),
             "game-data-mod" => GameDataMod(target, ReadTextOption(arguments, "--sql"), ReadTextOption(arguments, "--name"),
                 ReadTextOption(arguments, "--mod"), json),
             "language" => Language(target, ReadTextOption(arguments, "--data"), ReadTextOption(arguments, "--use"),
@@ -3158,7 +3159,7 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
 /// Builds the "Arkive Tweaks" mod for the given tweaks from a Packages folder (read only) into a project root's library,
 /// as the Tweaks tab does; --movies DIR also writes each built movie there for decompiling.
 /// </summary>
-static int TweaksMod(string packagesRoot, string? projectRoot, string? tweaks, string? optionsJson, string? moviesOut, string? codePath, bool json)
+static int TweaksMod(string packagesRoot, string? projectRoot, string? tweaks, string? optionsJson, string? moviesOut, string? codePath, string? diagnosticField, bool json)
 {
     if (string.IsNullOrWhiteSpace(projectRoot) || string.IsNullOrWhiteSpace(tweaks))
         throw new ArgumentException("tweaks-mod requires --root DIR --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf].");
@@ -3175,7 +3176,11 @@ static int TweaksMod(string packagesRoot, string? projectRoot, string? tweaks, s
         settings.Enabled[id] = options.GetValueOrDefault(id) ?? [];
     }
     var service = new Arkive.Core.Tweaks.TweakModService(library, Path.Combine(root, "tweaks"),
-        ChunkProtectionProviderFactory.CreateWesternGlobal()) { KeepMoviesIn = moviesOut is null ? null : Path.GetFullPath(moviesOut) };
+        ChunkProtectionProviderFactory.CreateWesternGlobal())
+    {
+        KeepMoviesIn = moviesOut is null ? null : Path.GetFullPath(moviesOut),
+        DiagnosticField = diagnosticField,
+    };
     var code = codePath is null ? Arkive.Core.Tweaks.TweakCode.LoadSwf() : File.ReadAllBytes(Path.GetFullPath(codePath));
     var result = service.BuildAsync(settings, Path.GetFullPath(packagesRoot), code)
         .GetAwaiter().GetResult();
@@ -3945,7 +3950,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
-    Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf] [--json]");
+    Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf] [--diagnostic FIELD] [--json]");
     Console.WriteLine("  arkive game-data-mod <Arkive-project-root> [--sql PATCH.sql [--name NAME | --mod ID|NAME]] [--mod ID|NAME] [--json]");
     Console.WriteLine("  arkive language <EFGAME_DIR> --data DIR [--use LANGUAGE | --restore] [--json]");
     Console.WriteLine("  arkive umodel-list <package.upk> [--filter TEXT] [--json]");

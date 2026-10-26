@@ -7,6 +7,12 @@ namespace Arkive.Core.Interface.Abc;
 /// </summary>
 public sealed record AbcHook(string ClassName, string MethodName, string Handler, bool Static = false)
 {
+    /// <summary>
+    /// Developer builds only: the name of a text field on the hooked object. The wrapper then catches any error from the
+    /// game's method or the handler and writes it into that field ("ORIG: …" / "TWEAK: …") instead of throwing.
+    /// </summary>
+    public string? DiagnosticField { get; init; }
+
     public string Id => ClassName + (Static ? "::" : ".") + MethodName;
 }
 
@@ -61,6 +67,15 @@ public static class AbcHookInjector
                 MaxScopeDepth = body.InitScopeDepth + 1,
                 Code = WrapperCode(pool, hook.Handler, parameters, renamed, pool.NameOf(method.ReturnType) == "void"),
             });
+            if (hook.DiagnosticField is { } field)
+            {
+                var diagnostic = abc.Bodies[^1];
+                (diagnostic.Code, var handlers) = DiagnosticCode(pool, hook.Handler, parameters, renamed,
+                    pool.NameOf(method.ReturnType) == "void", field);
+                diagnostic.Exceptions.AddRange(handlers);
+                diagnostic.LocalCount = parameters + 4;
+                diagnostic.MaxStack = parameters + 6;
+            }
 
             // The game's trait stays where it is (keeping its attributes, such as override) and now runs the wrapper; the
             // original body moves to a new plain trait, which nothing above it overrides.
@@ -96,6 +111,61 @@ public static class AbcHookInjector
         if (returnsVoid) code.Op(0x4F).U30(method).U30(3).Op(0x47); // Handler(this, args, result); returnvoid
         else code.Op(0x46).U30(method).U30(3).Op(0x48); // return Handler(this, args, result)
         return code.ToArray();
+    }
+
+    /// <summary>The wrapper with each call in a try block whose handler writes the error into this[field].text.</summary>
+    private static (byte[] Code, AbcException[] Handlers) DiagnosticCode(
+        AbcConstantPool pool, string handler, int parameters, int renamed, bool returnsVoid, string field)
+    {
+        var split = handler.LastIndexOf('.');
+        var owner = handler[..split];
+        var dot = owner.LastIndexOf('.');
+        var publicNs = pool.AddNamespace(AbcNamespace.PackageNamespace, "");
+        var ownerName = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, dot < 0 ? "" : owner[..dot]), owner[(dot + 1)..]);
+        var method = pool.AddQName(publicNs, handler[(split + 1)..]);
+        var fieldName = pool.AddQName(publicNs, field);
+        var text = pool.AddQName(publicNs, "text");
+        var args = parameters + 1;
+        var result = parameters + 2;
+        var error = parameters + 3;
+        var code = new AbcCode();
+        var handlers = new List<AbcException>();
+        code.Op(0xD0).Op(0x30);
+        for (var local = 1; local <= parameters; local++) code.GetLocal(local);
+        code.Op(0x56).U30(parameters).SetLocal(args);
+        code.Op(0x21).SetLocal(result);
+
+        void Guarded(Action<AbcCode> body, string label)
+        {
+            var start = code.Position;
+            body(code);
+            var end = code.Position;
+            var over = code.Branch(0x10);
+            var target = code.Position;
+            code.SetLocal(error).Op(0xD0).Op(0x30); // keep the error; getlocal_0; pushscope
+            code.Op(0xD0).Op(0x66).U30(fieldName); // this[field]
+            code.Op(0x2C).U30(pool.AddString(label)).GetLocal(error).Op(0xA0); // label + error
+            code.Op(0x61).U30(text); // .text = …
+            code.Land(over);
+            handlers.Add(new AbcException(start, end, target, 0, 0));
+        }
+
+        Guarded(c =>
+        {
+            c.Op(0xD0);
+            for (var local = 1; local <= parameters; local++) c.GetLocal(local);
+            if (returnsVoid) c.Op(0x4F).U30(renamed).U30(parameters);
+            else c.Op(0x46).U30(renamed).U30(parameters).SetLocal(result);
+        }, "ORIG: ");
+        Guarded(c =>
+        {
+            c.Op(0x60).U30(ownerName).Op(0xD0).GetLocal(args).GetLocal(result);
+            if (returnsVoid) c.Op(0x4F).U30(method).U30(3);
+            else c.Op(0x46).U30(method).U30(3).SetLocal(result);
+        }, "TWEAK: ");
+        if (returnsVoid) code.Op(0x47);
+        else code.GetLocal(result).Op(0x48);
+        return (code.ToArray(), handlers.ToArray());
     }
 }
 
