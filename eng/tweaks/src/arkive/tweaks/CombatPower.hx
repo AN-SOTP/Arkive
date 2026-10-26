@@ -85,6 +85,12 @@ class CombatPower {
 	static var BRACELET_STATS:Array<Int> = [50, 74, 76];
 	/** The table's stat for flat Atk. Power, which a refinement line without % adds. */
 	static inline var FLAT_ATTACK_STAT = 124;
+	/** Astrogem options (English) and their ids in the game's table (type 31: by the grid's total level). */
+	static var ASTRO_NAMES:Array<String> = ["Atk. Power", "Additional Damage", "Boss Damage", "Ally Damage Enh.", "Brand Power",
+		"Ally Attack Enh."];
+	static var ASTRO_IDS:Array<Int> = [2001, 2002, 2003, 2011, 2012, 2013];
+	static inline var ASTROGEM_OPTION = 31;
+
 	/** Engraving book grades by the word they start with. */
 	static var BOOK_GRADES:Array<String> = ["Heroic", "Epic", "Legendary", "Relic"];
 	static var BOOK_GRADE_VALUES:Array<Int> = [1, 1, 2, 3];
@@ -110,6 +116,8 @@ class CombatPower {
 	static var braceletTexts:Array<String>;
 	static var braceletValues:Array<Float>;
 	static var orbRows:Array<String>;
+	/** Your Ark Grid's total level per astrogem option, from the profile's Ark Grid tab; null until it was read. */
+	static var gridLevels:Dynamic;
 	/** What the profile showed last, for the showData listing. */
 	static var profileData:String = "";
 
@@ -178,6 +186,7 @@ class CombatPower {
 		equipped = gems;
 		readEngravings(window);
 		readTotals(label.parent, window, items);
+		readGrid(window);
 		if (showData())
 			profileData = readProfile(label, window, items, gems);
 	}
@@ -225,6 +234,9 @@ class CombatPower {
 		var book = bookOf(list);
 		if (book != null)
 			return bookPrice(book);
+		var grid = gridItemOf(list);
+		if (grid != null)
+			return gridPrice(grid);
 		var item = itemOf(list);
 		if (item == null || item.slot == "" || UNPRICED.indexOf(item.slot) >= 0)
 			return null;
@@ -415,6 +427,14 @@ class CombatPower {
 					}
 				} else if (heading.indexOf("Bracelet") >= 0) {
 					for (line in body) {
+						var mainLine = false;
+						for (stat in STATS)
+							if (StringTools.startsWith(line, stat + " +"))
+								mainLine = true;
+						if (mainLine) {
+							basic.push(line);
+							continue;
+						}
 						var points = combatStat(line);
 						if (points > 0) {
 							combat += points;
@@ -948,6 +968,111 @@ class CombatPower {
 	static function copyOf(items:Array<Dynamic>):Array<Dynamic> {
 		var raw:Dynamic = items;
 		return raw.concat();
+	}
+
+	// ---- Ark Grid ----
+
+	/** An Ark Grid core or astrogem: {kind "core"|"astrogem", name, levels {option: level}}, or null. */
+	static function gridItemOf(boxes:Array<Dynamic>):Dynamic {
+		var name:String = null;
+		for (box in boxes)
+			if (box != null && box.type == "NameTagBox") {
+				name = Text.trim(Text.stripTags(Tooltips.htmlOf(box.value)));
+				break;
+			}
+		if (name == null)
+			return null;
+		var kind = name.indexOf(" Core:") > 0 ? "core" : (name.indexOf("Astrogem:") >= 0 ? "astrogem" : "");
+		if (kind == "")
+			return null;
+		var levels:Dynamic = {};
+		for (box in boxes)
+			if (box != null && box.type == "ItemPartBox")
+				for (text in strings(box.value, [], 0))
+					for (line in splitLines(text))
+						addLevel(levels, line);
+		return {kind: kind, name: name, levels: levels};
+	}
+
+	/** Reads "[Atk. Power] Lv. 3" (an astrogem) or "Atk. Power Lv.12" (the grid's totals) into levels. */
+	static function addLevel(levels:Dynamic, line:String):Void {
+		var at = line.indexOf("Lv.");
+		if (at <= 0)
+			return;
+		var option = Text.trim(line.substring(0, at).split("[").join("").split("]").join(""));
+		if (ASTRO_NAMES.indexOf(option) < 0)
+			return;
+		var level = number(line.substr(at + 3));
+		if (level > 0) {
+			var had:Float = Text.has(levels, option) ? untyped levels[option] : 0;
+			untyped levels[option] = had + level;
+		}
+	}
+
+	/**
+		An astrogem: what its options add on top of your grid's totals (the table prices each option by the grid's total
+		level). A core's worth depends on how many of its point steps your astrogems light up, which the tweak can't read
+		yet, so cores say what's missing.
+	**/
+	static function gridPrice(grid:Dynamic):Dynamic {
+		if (table() == null)
+			return unpriced("Arkive couldn't read the game's table", false);
+		if (role < 0)
+			return unpriced("open your Character Profile once to compare", false);
+		var kind:String = grid.kind;
+		if (kind == "core")
+			return unpriced("cores aren't priced yet: Arkive still needs to learn how your profile shows each core's points", false);
+		if (gridLevels == null)
+			return unpriced("open your profile's Ark Grid tab once to compare", false);
+		var change:Float = 1;
+		var levels:Dynamic = grid.levels;
+		var keys:Array<String> = untyped __keys__(levels);
+		for (option in keys) {
+			var id = ASTRO_IDS[ASTRO_NAMES.indexOf(option)];
+			var have:Float = Text.has(gridLevels, option) ? untyped gridLevels[option] : 0;
+			var adds:Float = untyped levels[option];
+			var before = astroValue(id, Math.floor(have));
+			var after = astroValue(id, Math.floor(have + adds));
+			change *= (1 + after / 10000) / (1 + before / 10000);
+		}
+		return {change: change - 1, note: null, book: false, rough: true, against: "on top of your Ark Grid"};
+	}
+
+	/** An astrogem option's value at a total level for your role (type 31), or 0. */
+	static function astroValue(id:Int, level:Int):Float {
+		var found = table();
+		if (found == null || level <= 0)
+			return 0;
+		var key = role == 1 ? 2 : 1;
+		var best:Float = 0;
+		var bestLevel = 0;
+		var at = 0;
+		while (at + 4 < found.length) {
+			if (found[at] == key && found[at + 1] == ASTROGEM_OPTION && found[at + 2] == id && found[at + 3] <= level
+				&& found[at + 3] > bestLevel) {
+				best = found[at + 4];
+				bestLevel = found[at + 3];
+			}
+			at += 5;
+		}
+		return best;
+	}
+
+	/** Your grid's option totals from the Ark Grid tab's level list ("Atk. Power Lv.12"). */
+	static function readGrid(window:Dynamic):Void {
+		var grid:Dynamic = window == null ? null : window.arkGridPanel;
+		var info:Dynamic = grid == null || grid.imageView == null ? null : grid.imageView.preResource;
+		var list:Dynamic = info == null || info.arkGridAbilityList == null ? null : info.arkGridAbilityList.dataProvider;
+		if (list == null || list.length == 0)
+			return;
+		var levels:Dynamic = {};
+		var count:Int = list.length;
+		for (i in 0...count) {
+			var row:Dynamic = list[i];
+			if (row != null && row.label != null)
+				addLevel(levels, Text.trim(Text.stripTags(row.label)));
+		}
+		gridLevels = levels;
 	}
 
 	// ---- Engraving books ----

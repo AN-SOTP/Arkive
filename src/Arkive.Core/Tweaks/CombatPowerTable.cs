@@ -17,9 +17,9 @@ public static class CombatPowerTable
     /// The row types the Combat Power tweak prices with: 4 weapon quality (ValueA quality, ValueB its bonus),
     /// 5-7 Ark Passive points (Evolution, Enlightenment, Leap: ValueA per point), 15 refinement stats (ValueA 1, ValueB
     /// stat, ValueC weight), 19 bracelet stats (same shape), 22 gems (ValueA tier, ValueB level, ValueC value) and 26
-    /// combat stats (ValueA stat, ValueB per point).
+    /// combat stats (ValueA stat, ValueB per point) and 31 astrogem options (ValueA option, ValueB total level, ValueC value).
     /// </summary>
-    public static readonly int[] PricedTypes = [4, 5, 6, 7, 15, 19, 22, 26];
+    public static readonly int[] PricedTypes = [4, 5, 6, 7, 15, 19, 22, 26, 31];
 
     /// <summary>The stat a tier 4 gem's bonus effect raises: Basic Attack Power, in hundredths of a percent.</summary>
     private const int BasicAttackStat = 150;
@@ -99,7 +99,7 @@ public static class CombatPowerTable
     }
 
     /// <summary>Bumped when <see cref="Options"/> gains a table, so caches from older builds are read again.</summary>
-    private const int CacheVersion = 2;
+    private const int CacheVersion = 3;
 
     /// <summary>Paradise orbs (types 33 and 34) by their item names: ValueA is the orb, B and C its values.</summary>
     private static string[] Orbs(SqliteConnection connection)
