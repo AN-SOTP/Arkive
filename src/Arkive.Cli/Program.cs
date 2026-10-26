@@ -355,6 +355,8 @@ static int Run(string[] arguments)
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
             "player-logs" => PlayerLogs(target, ReadTextOption(arguments, "--out"), json),
+            "tweaks-install" => TweaksInstall(target, arguments.Contains("--saved", StringComparer.OrdinalIgnoreCase),
+                arguments.Contains("--include-other-mods", StringComparer.OrdinalIgnoreCase)),
             "tweaks-mod" => TweaksMod(target, ReadTextOption(arguments, "--root"), ReadTextOption(arguments, "--tweaks"),
                 ReadTextOption(arguments, "--options"), ReadTextOption(arguments, "--movies"), ReadTextOption(arguments, "--code"),
                 arguments.Contains("--diagnostic", StringComparer.OrdinalIgnoreCase), json),
@@ -3182,6 +3184,67 @@ static int PlayerLogs(string name, string? outDirectory, bool json)
     return 0;
 }
 
+/// <summary>
+/// What the Tweaks tab's Apply tweaks does, for an Arkive data root: installs the saved tweak choices (--saved, from
+/// tweaks\state.json), cleaning up earlier tweak mods and their working edits, and applies only the game packages the
+/// tweaks touch. Other mods' waiting changes stop it unless --include-other-mods.
+/// </summary>
+static int TweaksInstall(string projectRoot, bool saved, bool includeOtherMods)
+{
+    if (!saved) throw new ArgumentException("tweaks-install needs --saved (it installs the choices saved by the Tweaks tab).");
+    if (new LostArkProcessGuard().FindBlockingProcesses() is { Count: > 0 } running)
+        throw new InvalidOperationException($"Close {string.Join(", ", running)} first.");
+    var root = Path.GetFullPath(projectRoot);
+    var environment = CreateModEnvironment(root);
+    environment.Authoring.ScanAsync().GetAwaiter().GetResult();
+    var library = environment.Context.Library;
+    var packages = library.LoadAsync().GetAwaiter().GetResult().GamePackagesDirectory
+                   ?? throw new InvalidOperationException("This Arkive data root has no game folder set.");
+    var service = new Arkive.Core.Tweaks.TweakModService(library, Path.Combine(root, "tweaks"),
+        ChunkProtectionProviderFactory.CreateWesternGlobal(),
+        (path, token) => environment.Apply.ResolveCleanPackageAsync(path, token))
+    {
+        Edits = environment.Context.Edits,
+    };
+    var settings = service.LoadState().Settings;
+    var skipIntro = settings.Enabled.TryGetValue("fastlaunch", out var launch) &&
+                    (!launch.TryGetValue("skipIntro", out var skip) || skip.ValueKind == JsonValueKind.True);
+    var intro = new Arkive.Core.Tweaks.TweakIntroMovies(Path.Combine(root, "backups", "tweaks"), new LostArkProcessGuard())
+        .Apply(packages, skipIntro);
+    var built = service.BuildAsync(settings, packages, Arkive.Core.Tweaks.TweakCode.LoadSwf()).GetAwaiter().GetResult();
+    Console.WriteLine($"Tweaks:   {(settings.Enabled.Count == 0 ? "none (removing)" : string.Join(", ", settings.Enabled.Keys))}");
+    Console.WriteLine($"Movies:   {string.Join(", ", built.Movies)}");
+    Console.WriteLine($"Packages: {string.Join(", ", built.Packages)}");
+    Console.WriteLine($"Missing:  {(built.MissingHooks.Count == 0 ? "none" : string.Join(", ", built.MissingHooks))}");
+    if (intro > 0) Console.WriteLine($"Intro movies {(skipIntro ? "moved aside" : "restored")}: {intro}");
+    var plan = environment.Apply.PlanAsync().GetAwaiter().GetResult();
+    if (!plan.CanApply)
+    {
+        Console.WriteLine("BLOCKED: " + plan.Summary);
+        return 1;
+    }
+    var others = plan.Packages.Where(package => package.Action != ArkiveModPackageAction.None &&
+                                                !built.Packages.Contains(package.PhysicalPackageName)).ToArray();
+    if (others.Length > 0 && !includeOtherMods)
+    {
+        Console.WriteLine("Other mods have changes waiting; nothing was applied (pass --include-other-mods to apply them too):");
+        foreach (var package in others) Console.WriteLine($"  {package.PackageAlias}: {package.Describe}");
+        return 1;
+    }
+    if (!plan.HasChanges)
+    {
+        Console.WriteLine("Already in the game.");
+        return 0;
+    }
+    var result = environment.Apply.ApplyAsync(plan.Fingerprint,
+            new InlineProgress<ArkiveModApplyProgress>(update => Console.Error.WriteLine(
+                $"[{update.Step:N0}/{update.TotalSteps:N0}] {update.Package}: {update.Message}")))
+        .GetAwaiter().GetResult();
+    foreach (var package in result.Packages)
+        Console.WriteLine($"  {(package.Succeeded ? "ok  " : "FAIL")} {package.PhysicalPackageName}: {package.Message}");
+    return result.Succeeded ? 0 : 1;
+}
+
 static int TweaksMod(string packagesRoot, string? projectRoot, string? tweaks, string? optionsJson, string? moviesOut, string? codePath, bool diagnostic, bool json)
 {
     if (string.IsNullOrWhiteSpace(projectRoot) || string.IsNullOrWhiteSpace(tweaks))
@@ -3981,6 +4044,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive player-logs <character-name> [--out DIR] [--json]");
+    Console.WriteLine("  arkive tweaks-install <Arkive-data-root> --saved [--include-other-mods]");
     Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf] [--diagnostic] [--json]");
     Console.WriteLine("  arkive game-data-mod <Arkive-project-root> [--sql PATCH.sql [--name NAME | --mod ID|NAME]] [--mod ID|NAME] [--json]");
     Console.WriteLine("  arkive language <EFGAME_DIR> --data DIR [--use LANGUAGE | --restore] [--json]");
