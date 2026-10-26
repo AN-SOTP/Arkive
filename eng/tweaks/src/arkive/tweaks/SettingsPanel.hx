@@ -4,6 +4,7 @@ import flash.display.Shape;
 import flash.display.Sprite;
 import flash.events.MouseEvent;
 import flash.events.TimerEvent;
+import flash.geom.Point;
 import flash.text.TextField;
 import flash.text.TextFormat;
 import flash.utils.Timer;
@@ -11,58 +12,69 @@ import scaleform.clik.events.ButtonEvent;
 
 /**
 	In-game Tweak Settings: an "Arkive Tweaks" button in the escape menu's bottom bar, beside Store and made from the
-	bar's own button, opens a panel over the content status list. Each tweak has a switch, and a click on its name folds its options out. A change acts at once
-	(Options' live store, which every window shares) and is sent to Arkive on the Data Bus to keep; the panel says
-	"Saved" once Arkive's live.json answers the change, or that the change lasts only until the game closes.
-	The panel draws its own rows and switches rather than using the menu's controls, which report to the game.
+	bar's own button, opens a window laid out like the game's Settings: the game's window frame, title and close button,
+	then one section per tweak going down, with the game's tick boxes for switches and its Settings drop-down for single
+	choices, and the game's scroll bar. The controls come from the shared component movies (componentsV2), the ones
+	Settings is built from; where one is missing a plain drawn stand-in is used.
+
+	A change acts at once (Options' live store, which every window shares) and is sent to Arkive on the Data Bus to
+	keep; the window says "Saved" once Arkive's live.json answers, or that the change lasts until the game closes.
+	These controls report only to us: none of them is bound to the game the way Settings' own rows are.
 **/
 @:keep
 class SettingsPanel {
-	static inline var TITLE = 0xE3C27F;
-	static inline var TEXT = 0xE6E6E6;
+	static inline var WIDTH = 640;
+	static inline var HEIGHT = 680;
+	static inline var BODY_TOP = 60;
+	static inline var BODY_BOTTOM = 46;
+	static inline var SIDE = 28;
+	static inline var ROW = 32;
+	static inline var INDENT = 30;
+	static inline var COMBO_WIDTH = 190;
+
+	static inline var WHITE = 0xFFFFFF;
+	static inline var TEXT = 0xD8D8D8;
 	static inline var DIM = 0x8C8C8C;
 	static inline var GOLD = 0xFFD200;
-	static inline var LINE = 0x6E6250;
-	static inline var ROW = 26;
-	static inline var OPTION_ROW = 22;
-	static inline var LIST_TOP = 52;
+
 	/** Checks of live.json after a change (300 ms apart) before saying Arkive didn't answer. */
 	static inline var ACK_CHECKS = 20;
-
-	static var panel:Sprite;
-	static var list:Sprite;
-	static var listHeight:Float = 300;
-	static var width:Float = 400;
-	static var scroll:Float = 0;
-	static var status:TextField;
-	static var opened:Dynamic = {};
-	static var font:String = "$YG760";
-	static var embed = false;
-	static var listening = false;
-
-	static var request:String = "";
-	static var checks = 0;
-	static var checker:Timer;
 
 	/** The bottom bar's buttons (Store, Settings, Quit...): the game's renderer symbol and class. */
 	static inline var BAR_SYMBOL = "ExitMenuBottomBtinListRenderer";
 	static inline var BAR_ITEM = "ark.ui.systemMenu_new.ExitMenuBottomBtnListItem";
 
+	static var shade:Sprite;
+	static var window:Sprite;
+	static var body:Sprite;
+	static var bodyHeight:Float = 500;
+	static var scrollBar:Dynamic;
+	static var scroll:Float = 0;
+	static var status:TextField;
+	static var font:String = "$YG760";
+	static var titleFont:String = "$YoonGasiIIM";
+	static var embed = false;
+	static var listening = false;
+	static var pending = false;
+
 	static var placedX:Float = -1;
 	static var placedY:Float = -1;
 	static var frames = 0;
 
+	static var request:String = "";
+	static var checks = 0;
+	static var checker:Timer;
+
 	/**
 		MenuWndContent.configUI: an "Arkive Tweaks" button made from the bottom bar's own button symbol (an "A" for its
-		icon), placed beside Store once the game has filled the bar, and the (hidden) panel.
+		icon), placed beside Store once the game has filled the bar, and the (hidden) window.
 	**/
 	public static function onMenuConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
-		var group:Dynamic = self.contentsGroup;
 		var bar:Dynamic = self.bottomBtnList;
 		var type:Dynamic = GameUi.definition(BAR_SYMBOL);
-		if (group == null || bar == null || type == null)
+		if (bar == null || type == null)
 			return;
-		gameFont(group);
+		gameFont(self.contentsGroup);
 		var item:Dynamic = untyped __new__(type);
 		try {
 			item.setData({nameStr: "Arkive Tweaks", isSpacial: false, iconType: -1, isNew: false});
@@ -73,7 +85,7 @@ class SettingsPanel {
 		item.name = "arkiveTweaksButton";
 		self.addChild(item);
 		placedX = -1;
-		build(group);
+		build(self);
 		item.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) {
 			event.stopPropagation();
 			toggle();
@@ -82,8 +94,8 @@ class SettingsPanel {
 		if (!listening) {
 			listening = true;
 			Options.listen(function(tweak:String, key:String) {
-				if (panel != null && panel.visible)
-					render();
+				if (window != null && window.visible)
+					later();
 			});
 		}
 	}
@@ -97,8 +109,8 @@ class SettingsPanel {
 		var item:Dynamic = event.currentTarget;
 		var self:Dynamic = item.parent;
 		var bar:Dynamic = self == null ? null : self.bottomBtnList;
-		var window:Dynamic = self == null ? null : self.parent;
-		if (bar == null || self.visible != true || (window != null && window.visible != true))
+		var frame:Dynamic = self == null ? null : self.parent;
+		if (bar == null || self.visible != true || (frame != null && frame.visible != true))
 			return;
 		// Once placed, look again only every half second or so.
 		frames++;
@@ -110,7 +122,7 @@ class SettingsPanel {
 			item.visible = false;
 			return;
 		}
-		var origin = new flash.geom.Point(0, 0);
+		var origin = new Point(0, 0);
 		var xs:Array<Float> = [];
 		for (button in buttons) {
 			var at:Dynamic = self.globalToLocal(button.localToGlobal(origin));
@@ -132,7 +144,7 @@ class SettingsPanel {
 			store = first;
 		var anchor:Dynamic = buttons[store];
 		var spot:Dynamic = self.globalToLocal(anchor.localToGlobal(origin));
-		var far:Dynamic = self.globalToLocal(anchor.localToGlobal(new flash.geom.Point(100, 0)));
+		var far:Dynamic = self.globalToLocal(anchor.localToGlobal(new Point(100, 0)));
 		var scale:Float = (far.x - spot.x) / 100;
 		var pitch:Float = 0;
 		for (i in 0...buttons.length) {
@@ -144,7 +156,7 @@ class SettingsPanel {
 			pitch = anchor.width * scale + 4;
 		var x:Float = spot.x - pitch;
 		var y:Float = spot.y;
-		// Store hasn't moved since the last frame: nothing to do.
+		// Store hasn't moved since the last look: nothing to do.
 		if (spot.x == placedX && spot.y == placedY && item.visible == true)
 			return;
 		var itemWidth:Float = anchor.width * scale;
@@ -239,175 +251,409 @@ class SettingsPanel {
 		item.iconMc = mark;
 	}
 
-	/** The panel covers the content status list (the roster tree and its scroll bar). */
-	static function build(group:Dynamic):Void {
-		if (panel != null && panel.parent != null)
-			panel.parent.removeChild(panel);
-		var tree:Dynamic = group.contentsTreeList;
-		var bar:Dynamic = group.contentsScrollBar;
-		var left:Float = tree == null ? 30 : tree.x - 4;
-		var top:Float = tree == null ? 112 : tree.y - 4;
-		var right:Float = bar == null ? left + 400 : bar.x + bar.width + 4;
-		var height:Float = tree == null ? 420 : tree.height + 8;
-		if (height < 240)
-			height = 420;
-		width = right - left;
-		panel = new Sprite();
-		panel.x = left;
-		panel.y = top;
-		var g = panel.graphics;
-		g.lineStyle(1, LINE, 0.9);
-		g.beginFill(0x0B0D11, 0.97);
-		g.drawRect(0, 0, width, height);
-		g.endFill();
-		panel.addChild(text(12, 6, width - 24, 16, TITLE, "Arkive tweaks"));
-		status = text(12, 28, width - 24, 12, DIM, "");
-		panel.addChild(status);
+	/** A new instance of a symbol from the shared component movies, or null when none is loaded. */
+	static function make(symbol:String):Dynamic {
+		var type:Dynamic = GameUi.definition(symbol);
+		return type == null ? null : untyped __new__(type);
+	}
+
+	/**
+		The window: a dark shade over the menu (a click on it closes the window), the game's window frame with a title
+		and its close button, a scrolling body and a status line along the bottom. Hidden until the button is pressed.
+	**/
+	static function build(self:Dynamic):Void {
+		if (shade != null && shade.parent != null)
+			shade.parent.removeChild(shade);
+		shade = new Sprite();
+		shade.visible = false;
+		shade.addEventListener(MouseEvent.CLICK, function(event:Dynamic) {
+			if (event.target == shade)
+				hide();
+		});
+		window = new Sprite();
+		var frame:Dynamic = make("WindowBG_V2");
+		if (frame != null) {
+			frame.width = WIDTH;
+			frame.height = HEIGHT;
+			frame.mouseEnabled = false;
+			window.addChild(frame);
+		} else {
+			var g = window.graphics;
+			g.lineStyle(1, 0x4A4F57, 1);
+			g.beginFill(0x15181D, 0.98);
+			g.drawRect(0, 0, WIDTH, HEIGHT);
+			g.endFill();
+		}
+		// Keeps clicks inside the window from reaching the shade.
+		var back = new Shape();
+		back.graphics.beginFill(0x000000, 0.01);
+		back.graphics.drawRect(0, 0, WIDTH, HEIGHT);
+		back.graphics.endFill();
+		window.addChildAt(back, 0);
+		var title = text(SIDE, 14, WIDTH - 2 * SIDE - 40, 18, WHITE, "Arkive Tweaks", titleFont);
+		window.addChild(title);
 		var rule = new Shape();
-		rule.graphics.lineStyle(1, LINE, 0.8);
-		rule.graphics.moveTo(10, LIST_TOP - 4);
-		rule.graphics.lineTo(width - 10, LIST_TOP - 4);
-		panel.addChild(rule);
-		list = new Sprite();
-		list.y = LIST_TOP;
-		listHeight = height - LIST_TOP - 6;
+		rule.graphics.lineStyle(1, 0xFFFFFF, 0.12);
+		rule.graphics.moveTo(SIDE - 8, BODY_TOP - 8);
+		rule.graphics.lineTo(WIDTH - SIDE + 8, BODY_TOP - 8);
+		window.addChild(rule);
+		var close:Dynamic = make("s_closeBtn_V2");
+		if (close == null) {
+			close = new Sprite();
+			var x = text(0, 0, 24, 16, TEXT, "X", font);
+			close.addChild(x);
+			close.buttonMode = true;
+			close.addEventListener(MouseEvent.CLICK, function(event:Dynamic) hide());
+		} else {
+			close.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) {
+				event.stopPropagation();
+				hide();
+			});
+		}
+		close.x = WIDTH - 18 - (close.width > 0 ? close.width : 24);
+		close.y = 14;
+		window.addChild(close);
+
+		body = new Sprite();
+		body.y = BODY_TOP;
+		bodyHeight = HEIGHT - BODY_TOP - BODY_BOTTOM;
 		var mask = new Shape();
 		mask.graphics.beginFill(0xFFFFFF);
-		mask.graphics.drawRect(0, LIST_TOP, width, listHeight);
+		mask.graphics.drawRect(0, BODY_TOP, WIDTH, bodyHeight);
 		mask.graphics.endFill();
-		panel.addChild(mask);
-		panel.addChild(list);
-		list.mask = mask;
-		panel.addEventListener(MouseEvent.MOUSE_WHEEL, wheel);
-		panel.visible = false;
-		group.addChild(panel);
+		window.addChild(mask);
+		window.addChild(body);
+		body.mask = mask;
+		scrollBar = make("DefaultScrollBar_V2");
+		if (scrollBar != null) {
+			scrollBar.x = WIDTH - 22;
+			scrollBar.y = BODY_TOP;
+			scrollBar.height = bodyHeight;
+			scrollBar.addEventListener("scroll", function(event:Dynamic) {
+				var position:Float = scrollBar.position;
+				scrollTo(position, false);
+			});
+			window.addChild(scrollBar);
+		}
+		var footer = new Shape();
+		footer.graphics.lineStyle(1, 0xFFFFFF, 0.12);
+		footer.graphics.moveTo(SIDE - 8, HEIGHT - BODY_BOTTOM + 4);
+		footer.graphics.lineTo(WIDTH - SIDE + 8, HEIGHT - BODY_BOTTOM + 4);
+		window.addChild(footer);
+		status = text(SIDE, HEIGHT - BODY_BOTTOM + 14, WIDTH - 2 * SIDE, 13, DIM, "", font);
+		window.addChild(status);
+		window.addEventListener(MouseEvent.MOUSE_WHEEL, wheel);
+		shade.addChild(window);
+		self.addChild(shade);
 	}
 
 	static function toggle():Void {
-		if (panel == null)
+		if (shade == null)
 			return;
-		panel.visible = !panel.visible;
-		if (panel.visible) {
-			Options.readLive(null);
-			say(Options.home() == "" ? "" : "Changes act straight away. Arkive keeps them while it's running.");
+		if (shade.visible) {
+			hide();
+			return;
+		}
+		layout();
+		shade.visible = true;
+		Options.readLive(null);
+		say("Changes act straight away. Arkive keeps them while it's running.");
+		render();
+	}
+
+	static function hide():Void {
+		if (shade != null)
+			shade.visible = false;
+	}
+
+	/** The shade covers the screen and the window sits in its middle, in the menu's own coordinates. */
+	static function layout():Void {
+		var parent:Dynamic = shade.parent;
+		var stage:Dynamic = parent == null ? null : parent.stage;
+		if (stage == null)
+			return;
+		var topLeft:Dynamic = parent.globalToLocal(new Point(0, 0));
+		var bottomRight:Dynamic = parent.globalToLocal(new Point(stage.stageWidth, stage.stageHeight));
+		var g = shade.graphics;
+		g.clear();
+		g.beginFill(0x000000, 0.45);
+		g.drawRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+		g.endFill();
+		window.x = Std.int((topLeft.x + bottomRight.x - WIDTH) / 2);
+		window.y = Std.int((topLeft.y + bottomRight.y - HEIGHT) / 2);
+	}
+
+	/** Redraws on the next frame, never from inside a control's own click. */
+	static function later():Void {
+		if (pending)
+			return;
+		pending = true;
+		var timer = new Timer(1, 1);
+		timer.addEventListener(TimerEvent.TIMER, function(event:Dynamic) {
+			pending = false;
 			render();
-		}
+		});
+		timer.start();
 	}
 
-	/** Draws every tweak row, and the options of the ones folded out. */
+	/** One section per tweak, top to bottom, with the options of the ones that are on. */
 	static function render():Void {
-		while (list.numChildren > 0)
-			list.removeChildAt(0);
-		var y:Float = 0;
-		var tweaks = Options.panel();
-		for (tweak in tweaks) {
-			var id:String = tweak.id;
-			var name:String = tweak.name;
-			if (tweak.restart == true) {
-				list.addChild(text(36, y + 4, width - 48, 13, DIM, name + " (needs the game closed: change it in Arkive)"));
-				y += ROW;
-				continue;
+		if (body == null)
+			return;
+		try {
+			while (body.numChildren > 0)
+				body.removeChildAt(0);
+			var y:Float = 6;
+			var tweaks = Options.panel();
+			var first = true;
+			for (tweak in tweaks) {
+				if (!first)
+					y = divider(y);
+				first = false;
+				y = section(tweak, y);
 			}
-			var on = Options.on(id);
-			var options:Array<Dynamic> = tweak.options;
-			var open = untyped opened[id] == true;
-			var row = new Sprite();
-			row.y = y;
-			row.addChild(check(12, 6, on));
-			var arrow = options.length == 0 ? "" : (open ? "- " : "+ ");
-			row.addChild(text(36, 3, width - 48, 14, on ? TEXT : DIM, arrow + name));
-			hit(row, width, ROW);
-			row.name = id;
-			row.addEventListener(MouseEvent.CLICK, tweakClicked);
-			list.addChild(row);
-			y += ROW;
-			if (!open)
-				continue;
-			for (option in options)
-				y = optionRow(id, option, y);
+			var content:Float = y + 8;
+			if (scrollBar != null) {
+				var most:Float = content - bodyHeight;
+				scrollBar.visible = most > 0;
+				scrollBar.setScrollProperties(bodyHeight, 0, most > 0 ? most : 0, ROW);
+			}
+			scrollTo(scroll, true);
+		} catch (error:Dynamic) {
+			say("Arkive couldn't draw this list.");
 		}
-		scrollTo(scroll);
 	}
 
-	/** One option under its tweak: a switch, a row of choices, or a note for long pick-lists. */
+	static function divider(y:Float):Float {
+		var line = new Shape();
+		line.graphics.lineStyle(1, 0xFFFFFF, 0.08);
+		line.graphics.moveTo(SIDE - 8, y + 6);
+		line.graphics.lineTo(WIDTH - SIDE - 16, y + 6);
+		body.addChild(line);
+		return y + 14;
+	}
+
+	/** A tweak's tick box with its name, then its options, indented, while it is on. */
+	static function section(tweak:Dynamic, y:Float):Float {
+		var id:String = tweak.id;
+		var name:String = tweak.name;
+		if (tweak.restart == true) {
+			body.addChild(text(SIDE, y + 6, WIDTH - 2 * SIDE - 20, 14, DIM, name, font));
+			body.addChild(text(SIDE, y + 28, WIDTH - 2 * SIDE - 20, 12, DIM, "Changes the game's files: switch it in Arkive with the game closed.", font));
+			return y + 52;
+		}
+		var on = Options.on(id);
+		var box = tickBox(name, on, SIDE, y, WIDTH - 2 * SIDE - 20, id, "");
+		body.addChild(box);
+		y += ROW + 4;
+		if (!on)
+			return y;
+		var options:Array<Dynamic> = tweak.options;
+		for (option in options)
+			y = optionRow(id, option, y);
+		return y;
+	}
+
+	/** One option: a tick box, a Settings drop-down for a single choice, or a tick box per choice for a pick-list. */
 	static function optionRow(id:String, option:Dynamic, y:Float):Float {
 		var key:String = option.key;
 		var label:String = option.label;
 		var kind:String = option.kind;
 		if (kind == "switch") {
 			var on = Options.get(id, key, false) == true;
-			var row = new Sprite();
-			row.y = y;
-			row.addChild(check(40, 5, on));
-			var field = text(62, 2, width - 76, 12, TEXT, label);
+			body.addChild(tickBox(label, on, SIDE + INDENT, y, WIDTH - 2 * SIDE - INDENT - 20, id, key));
+			return y + ROW;
+		}
+		var choices:Array<Dynamic> = option.choices;
+		if (kind == "single") {
+			var labelWidth:Float = WIDTH - 2 * SIDE - INDENT - COMBO_WIDTH - 36;
+			var field = text(SIDE + INDENT, y + 6, labelWidth, 14, TEXT, label, font);
 			field.multiline = true;
 			field.wordWrap = true;
-			field.height = field.textHeight + 6;
-			row.addChild(field);
-			var height:Float = field.height > OPTION_ROW ? field.height + 2 : OPTION_ROW;
-			hit(row, width, height);
-			row.name = id + "\t" + key;
-			row.addEventListener(MouseEvent.CLICK, switchClicked);
-			list.addChild(row);
-			return y + height;
+			field.height = field.textHeight + 8;
+			body.addChild(field);
+			var chosen:Dynamic = Options.get(id, key, "");
+			var combo = dropDown(choices, chosen, WIDTH - SIDE - 20 - COMBO_WIDTH, y + 2, id, key);
+			body.addChild(combo);
+			var height:Float = field.height + 8;
+			return y + (height > ROW + 4 ? height : ROW + 4);
 		}
-		var heading = text(40, y + 2, width - 54, 12, DIM, label);
-		heading.multiline = true;
-		heading.wordWrap = true;
-		heading.height = heading.textHeight + 6;
-		list.addChild(heading);
-		y += heading.height;
-		if (kind == "list")
-			return listRows(id, option, y);
-		if (kind != "single")
-			return y + 2;
-		var chosen:Dynamic = Options.get(id, key, "");
-		var x:Float = 40;
-		var choices:Array<Dynamic> = option.choices;
-		for (choice in choices) {
-			var value:String = choice.value;
-			var picked = chosen == value;
-			var name:String = choice.label;
-			var item = new Sprite();
-			item.addChild(radio(0, 5, picked));
-			var field = text(18, 0, 400, 12, picked ? GOLD : TEXT, name);
-			field.width = field.textWidth + 10;
-			item.addChild(field);
-			var itemWidth:Float = field.x + field.width;
-			hit(item, itemWidth, OPTION_ROW);
-			if (x + itemWidth > width - 12) {
-				x = 40;
-				y += OPTION_ROW;
-			}
-			item.x = x;
-			item.y = y;
-			item.name = id + "\t" + key + "\t" + value;
-			item.addEventListener(MouseEvent.CLICK, choiceClicked);
-			list.addChild(item);
-			x += itemWidth + 10;
-		}
-		return y + OPTION_ROW + 2;
-	}
-
-	/** A pick-list: one tick box per choice, ticked when it's in the saved list. */
-	static function listRows(id:String, option:Dynamic, y:Float):Float {
-		var key:String = option.key;
-		var chosen:Array<Dynamic> = picked(id, key);
-		var choices:Array<Dynamic> = option.choices;
+		var heading = text(SIDE + INDENT, y + 6, WIDTH - 2 * SIDE - INDENT - 20, 14, TEXT, label, font);
+		body.addChild(heading);
+		y += ROW;
+		var chosenList = picked(id, key);
 		for (choice in choices) {
 			var value:String = choice.value;
 			var name:String = choice.label;
-			var row = new Sprite();
-			row.y = y;
-			row.addChild(check(52, 4, contains(chosen, value)));
-			row.addChild(text(74, 1, width - 88, 12, TEXT, name));
-			hit(row, width, OPTION_ROW - 2);
-			row.name = id + "\t" + key + "\t" + value;
-			row.addEventListener(MouseEvent.CLICK, pickClicked);
-			list.addChild(row);
-			y += OPTION_ROW - 2;
+			body.addChild(tickBox(name, contains(chosenList, value), SIDE + 2 * INDENT, y, WIDTH - 2 * SIDE - 2 * INDENT - 20, id, key + "\t" + value));
+			y += ROW - 4;
 		}
 		return y + 4;
+	}
+
+	/**
+		The game's tick box (DefaultCheckBox_V2) with this label; its name holds what it switches ("id\tkey", "" key for
+		the tweak itself, "id\tkey\tvalue" for a pick-list choice). A drawn box stands in when the symbol isn't loaded.
+	**/
+	static function tickBox(label:String, on:Bool, x:Float, y:Float, width:Float, id:String, key:String):Dynamic {
+		var box:Dynamic = make("DefaultCheckBox_V2");
+		if (box != null) {
+			box.autoSize = "none";
+			box.label = label;
+			box.width = width;
+			box.selected = on;
+			box.x = x;
+			box.y = y + 4;
+			box.name = id + "\t" + key;
+			box.addEventListener(ButtonEvent.CLICK, ticked);
+			return box;
+		}
+		var row = new Sprite();
+		row.x = x;
+		row.y = y;
+		var mark = new Shape();
+		var g = mark.graphics;
+		g.lineStyle(1, 0xA59C8E, 1);
+		g.beginFill(0x1A1C21, 1);
+		g.drawRect(0, 7, 14, 14);
+		g.endFill();
+		if (on) {
+			g.lineStyle(2, GOLD, 1);
+			g.moveTo(3, 14);
+			g.lineTo(6, 17);
+			g.lineTo(11, 10);
+		}
+		row.addChild(mark);
+		row.addChild(text(22, 4, width - 22, 14, on ? WHITE : TEXT, label, font));
+		row.graphics.beginFill(0x000000, 0.01);
+		row.graphics.drawRect(0, 0, width, ROW);
+		row.graphics.endFill();
+		row.buttonMode = true;
+		row.mouseChildren = false;
+		row.name = id + "\t" + key;
+		// A Sprite takes no new fields: the drawn box keeps its state here.
+		untyped drawnOn[row] = on;
+		row.addEventListener(MouseEvent.CLICK, ticked);
+		return row;
+	}
+
+	static var drawnOn = new flash.utils.Dictionary(true);
+
+	/** A tick box was clicked: switch the tweak, an option, or a pick-list choice, as its name says. */
+	static function ticked(event:Dynamic):Void {
+		var box:Dynamic = event.currentTarget;
+		var drawn:Dynamic = untyped drawnOn[box];
+		var on:Bool = drawn == null ? box.selected == true : drawn != true;
+		var name:String = box.name;
+		var parts:Array<String> = name.split("\t");
+		var id = parts[0];
+		var key = parts[1];
+		if (key == "") {
+			Options.setOn(id, on);
+			save(id, "", on ? "1" : "0");
+		} else if (parts.length > 2) {
+			var value = parts[2];
+			var next:Array<Dynamic> = [];
+			for (item in picked(id, key))
+				if (item != value)
+					next.push(item);
+			if (on)
+				next.push(value);
+			Options.set(id, key, next);
+			// Only the change goes to Arkive ("+value" or "-value"): the whole list would take seconds to spell.
+			save(id, key, (on ? "+" : "-") + value);
+		} else {
+			Options.set(id, key, on);
+			save(id, key, on ? "1" : "0");
+		}
+		later();
+	}
+
+	/**
+		The Settings drop-down (SystemOptionComboBox_V2) set up as Settings sets up its own; its name holds "id\tkey" and
+		its choices' values sit in the same order as its rows. A row of round marks stands in when the symbol isn't loaded.
+	**/
+	static function dropDown(choices:Array<Dynamic>, chosen:Dynamic, x:Float, y:Float, id:String, key:String):Dynamic {
+		var rows:Array<Dynamic> = [];
+		var index = 0;
+		for (i in 0...choices.length) {
+			var label:String = choices[i].label;
+			rows.push({label: label, labelHtml: label});
+			if (choices[i].value == chosen)
+				index = i;
+		}
+		var combo:Dynamic = make("SystemOptionComboBox_V2");
+		if (combo == null)
+			combo = make("DefaultDropdownMenu_V2");
+		if (combo != null) {
+			try {
+				combo.dropdown = "DefaultEFDropdownList_V2";
+				combo.itemRenderer = "ComboBoxListRendererV2";
+				combo.scrollBar = "DefaultEFScrollBarSmall_V2";
+				combo.menuDirection = "down";
+				combo.menuRowCount = 5;
+				combo.menuMargin = 1;
+				combo.autoSize = "none";
+				combo.width = COMBO_WIDTH;
+				combo.x = x;
+				combo.y = y;
+				combo.name = id + "\t" + key;
+				combo.dataProviderArray = rows;
+				combo.selectedIndex = index;
+				combo.addEventListener("listIndexChange", function(event:Dynamic) {
+					var at:Int = combo.selectedIndex;
+					if (at < 0 || at >= choices.length)
+						return;
+					var value:String = choices[at].value;
+					if (Options.get(id, key, "") == value)
+						return;
+					Options.set(id, key, value);
+					save(id, key, value);
+				});
+				return combo;
+			} catch (error:Dynamic) {}
+		}
+		var row = new Sprite();
+		row.x = x;
+		row.y = y + 4;
+		var left:Float = 0;
+		for (i in 0...choices.length) {
+			var value:String = choices[i].value;
+			var label:String = choices[i].label;
+			var item = new Sprite();
+			var mark = new Shape();
+			mark.graphics.lineStyle(1, 0xA59C8E, 1);
+			mark.graphics.beginFill(0x1A1C21, 1);
+			mark.graphics.drawCircle(6, 10, 6);
+			mark.graphics.endFill();
+			if (i == index) {
+				mark.graphics.lineStyle(0, GOLD, 0);
+				mark.graphics.beginFill(GOLD, 1);
+				mark.graphics.drawCircle(6, 10, 3);
+				mark.graphics.endFill();
+			}
+			item.addChild(mark);
+			var field = text(16, 2, 200, 13, i == index ? GOLD : TEXT, label, font);
+			field.width = field.textWidth + 8;
+			item.addChild(field);
+			item.x = left;
+			item.buttonMode = true;
+			item.mouseChildren = false;
+			item.name = id + "\t" + key + "\t" + value;
+			item.addEventListener(MouseEvent.CLICK, picked1);
+			row.addChild(item);
+			left += field.x + field.width + 8;
+		}
+		return row;
+	}
+
+	/** A round mark of the drop-down's stand-in was clicked ("id\tkey\tvalue" in its name). */
+	static function picked1(event:Dynamic):Void {
+		var name:String = event.currentTarget.name;
+		var parts = name.split("\t");
+		Options.set(parts[0], parts[1], parts[2]);
+		save(parts[0], parts[1], parts[2]);
+		later();
 	}
 
 	/** The saved values of a pick-list, as a new array. */
@@ -422,61 +668,11 @@ class SettingsPanel {
 		return values;
 	}
 
-	/** Ticks or unticks one choice of a pick-list. */
-	static function pickClicked(event:Dynamic):Void {
-		var parts:Array<String> = event.currentTarget.name.split("\t");
-		var values = picked(parts[0], parts[1]);
-		var next:Array<Dynamic> = [];
-		var found = false;
-		for (value in values) {
-			if (value == parts[2])
-				found = true;
-			else
-				next.push(value);
-		}
-		if (!found)
-			next.push(parts[2]);
-		Options.set(parts[0], parts[1], next);
-		// Only the change goes to Arkive ("+value" or "-value"): the whole list would take seconds to spell.
-		save(parts[0], parts[1], (found ? "-" : "+") + parts[2]);
-		render();
-	}
-
 	static function contains(values:Array<Dynamic>, value:String):Bool {
 		for (item in values)
 			if (item == value)
 				return true;
 		return false;
-	}
-
-	/** A click on the switch flips the tweak; a click on the name folds its options in or out. */
-	static function tweakClicked(event:Dynamic):Void {
-		var row:Dynamic = event.currentTarget;
-		var id:String = row.name;
-		if (row.mouseX < 32) {
-			var on = !Options.on(id);
-			Options.setOn(id, on);
-			save(id, "", on ? "1" : "0");
-		} else {
-			var open = untyped opened[id] == true;
-			untyped opened[id] = !open;
-		}
-		render();
-	}
-
-	static function switchClicked(event:Dynamic):Void {
-		var parts:Array<String> = event.currentTarget.name.split("\t");
-		var on = Options.get(parts[0], parts[1], false) != true;
-		Options.set(parts[0], parts[1], on);
-		save(parts[0], parts[1], on ? "1" : "0");
-		render();
-	}
-
-	static function choiceClicked(event:Dynamic):Void {
-		var parts:Array<String> = event.currentTarget.name.split("\t");
-		Options.set(parts[0], parts[1], parts[2]);
-		save(parts[0], parts[1], parts[2]);
-		render();
 	}
 
 	/** Sends the change to Arkive and waits for live.json to answer it. */
@@ -514,72 +710,27 @@ class SettingsPanel {
 			status.text = message;
 	}
 
-	/** A switch drawn like the game's check boxes: a dark box with a gold tick when on. */
-	static function check(x:Float, y:Float, on:Bool):Shape {
-		var box = new Shape();
-		var g = box.graphics;
-		g.lineStyle(1, 0xA59C8E, 1);
-		g.beginFill(0x1A1C21, 1);
-		g.drawRect(0, 0, 14, 14);
-		g.endFill();
-		if (on) {
-			g.lineStyle(2, GOLD, 1);
-			g.moveTo(3, 7);
-			g.lineTo(6, 10);
-			g.lineTo(11, 3);
-		}
-		box.x = x;
-		box.y = y;
-		return box;
-	}
-
-	/** A round choice mark, filled gold when picked. */
-	static function radio(x:Float, y:Float, picked:Bool):Shape {
-		var mark = new Shape();
-		var g = mark.graphics;
-		g.lineStyle(1, 0xA59C8E, 1);
-		g.beginFill(0x1A1C21, 1);
-		g.drawCircle(6, 6, 6);
-		g.endFill();
-		if (picked) {
-			g.lineStyle(0, GOLD, 0);
-			g.beginFill(GOLD, 1);
-			g.drawCircle(6, 6, 3);
-			g.endFill();
-		}
-		mark.x = x;
-		mark.y = y;
-		return mark;
-	}
-
-	/** Makes a row take clicks everywhere, not only on its text. */
-	static function hit(item:Sprite, width:Float, height:Float):Void {
-		var g = item.graphics;
-		g.beginFill(0x000000, 0.01);
-		g.drawRect(0, 0, width, height);
-		g.endFill();
-		item.buttonMode = true;
-		item.mouseChildren = false;
-	}
-
 	static function wheel(event:Dynamic):Void {
 		var delta:Float = event.delta;
-		scrollTo(scroll - delta * ROW);
+		scrollTo(scroll - delta * ROW, true);
 	}
 
-	static function scrollTo(value:Float):Void {
-		var most:Float = list.height - listHeight;
+	/** Moves the body; `moveBar` also moves the scroll bar's thumb (false when the bar itself was dragged). */
+	static function scrollTo(value:Float, moveBar:Bool):Void {
+		var most:Float = body.height + 14 - bodyHeight;
 		if (value > most)
 			value = most;
 		if (value < 0)
 			value = 0;
 		scroll = value;
-		list.y = LIST_TOP - scroll;
+		body.y = BODY_TOP - scroll;
+		if (moveBar && scrollBar != null)
+			scrollBar.position = value;
 	}
 
-	/** The font of the content group's name label, so the panel's text looks like the rest of the menu. */
+	/** The font of the content group's name label, the menu's own body font. */
 	static function gameFont(group:Dynamic):Void {
-		var label:Dynamic = group.contentsCharacterNameLabel;
+		var label:Dynamic = group == null ? null : group.contentsCharacterNameLabel;
 		var field:Dynamic = label == null ? null : label.textField;
 		if (field == null)
 			return;
@@ -590,9 +741,9 @@ class SettingsPanel {
 		}
 	}
 
-	static function text(x:Float, y:Float, width:Float, size:Int, color:Int, value:String):TextField {
+	static function text(x:Float, y:Float, width:Float, size:Int, color:Int, value:String, face:String):TextField {
 		var format = new TextFormat();
-		format.font = font;
+		format.font = face;
 		format.size = size;
 		var field = new TextField();
 		field.embedFonts = embed;
