@@ -16,6 +16,7 @@ class MarketPrice {
 	static inline var TWEAK = "marketprice";
 	static inline var PRICE = "#FFD200";
 	static inline var DIM = "#A9A9A9";
+	static inline var RECENT_MINUTES = 10;
 
 	/** What the last market row held, for showData. */
 	static var lastRow:String = "";
@@ -41,8 +42,9 @@ class MarketPrice {
 			return;
 		var name = Prices.key(row.itemName);
 		var old:Dynamic = Prices.get(name);
-		// A search row seen just as recently knows the lowest price too; don't drop it.
-		if (old != null && old.lowest > 0)
+		// A search row seen in the last few minutes also knows the lowest price; keep that one. An older lowest is
+		// out of date, so the recent search's prices replace it.
+		if (old != null && old.lowest > 0 && Prices.minutesSince(old) < RECENT_MINUTES)
 			return;
 		Prices.note(name, -1, Prices.parse(row.avgPrice), Prices.parse(row.lastPrice), bundleOf(row.packStr), "market");
 	}
@@ -80,8 +82,14 @@ class MarketPrice {
 			return null;
 		var entry:Dynamic = Prices.get(name);
 		var count = hoveredCount();
-		if (entry != null)
+		if (entry != null) {
 			TooltipLines.add(boxes, TWEAK, lineFor(entry, count), TooltipLines.MARKET_PRICE);
+		} else {
+			var where = Prices.place(name);
+			if (where != "")
+				TooltipLines.add(boxes, TWEAK, font(DIM, "Market: no price yet. Look it up "
+					+ (where == "auction" ? "in the auction house" : "on the market") + " once to see it here."), TooltipLines.MARKET_PRICE);
+		}
 		if (showData())
 			list.push({type: "SingleTextBox", dirty: true, value: font(DIM, escape("Arkive price data: \"" + name + "\", stack "
 				+ whole(count) + ", " + (entry == null ? "not seen" : describe(entry, 1)) + (lastRow == "" ? "" : ", last row " + lastRow)))});

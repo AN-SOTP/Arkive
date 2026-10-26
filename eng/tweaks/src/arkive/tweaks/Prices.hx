@@ -34,6 +34,8 @@ class Prices {
 	static var pending:Array<String> = [];
 	static var sender:Timer;
 	static var loaded = false;
+	/** The market's items by name: "bundle|place" (place "m" market, "a" auction house), from Arkive's market-items.txt. */
+	static var items:Dynamic = null;
 
 	/** The key an item name is stored under: the name without tags and spaces at the ends. */
 	public static function key(name:String):String {
@@ -49,6 +51,8 @@ class Prices {
 		var at = key(name);
 		if (at == "" || at.indexOf("|") >= 0 || at.indexOf("\n") >= 0 || (lowest <= 0 && avg <= 0 && last <= 0))
 			return;
+		if (bundle <= 1)
+			bundle = listedBundle(at);
 		var size:Float = bundle > 1 ? bundle : 1;
 		var time = now();
 		var entry:Dynamic = {name: at, lowest: unitOf(lowest, size), avg: unitOf(avg, size), last: unitOf(last, size),
@@ -98,10 +102,15 @@ class Prices {
 		return lowest > 0 ? lowest : last > 0 ? last : avg;
 	}
 
+	/** Whole minutes since the entry was seen. */
+	public static function minutesSince(entry:Dynamic):Int {
+		var seen:Float = entry.seenAt;
+		return Math.floor((now() - seen) / 60000);
+	}
+
 	/** How long ago the entry was seen: "just now", "14 min ago", "3 h ago", "2 days ago". */
 	public static function ageText(entry:Dynamic):String {
-		var seen:Float = entry.seenAt;
-		var minutes = Math.floor((now() - seen) / 60000);
+		var minutes = minutesSince(entry);
 		if (minutes < 1)
 			return "just now";
 		if (minutes < 60)
@@ -176,19 +185,60 @@ class Prices {
 		if (loaded)
 			return;
 		loaded = true;
-		if (!keep())
+		if (Options.home() == "")
 			return;
+		readFile("market-items.txt", readItems);
+		if (keep())
+			readFile("prices.txt", read);
+	}
+
+	static function readFile(name:String, use:String->Void):Void {
 		var loader = new URLLoader();
 		loader.addEventListener(Event.COMPLETE, function(e:Dynamic) {
 			try {
 				var text:String = loader.data;
 				if (text != null)
-					read(text);
+					use(text);
 			} catch (error:Dynamic) {}
 		});
 		loader.addEventListener("ioError", function(e:Dynamic) {});
 		loader.addEventListener("securityError", function(e:Dynamic) {});
-		loader.load(new URLRequest(Options.home() + "/prices/prices.txt"));
+		loader.load(new URLRequest(Options.home() + "/prices/" + name));
+	}
+
+	/** market-items.txt: "#stamp", then name|bundle|place lines. */
+	static function readItems(text:String):Void {
+		var found:Dynamic = {};
+		for (line in text.split("
+")) {
+			var bar = line.indexOf("|");
+			if (bar <= 0 || line.charAt(0) == "#")
+				continue;
+			untyped found[line.substring(0, bar)] = line.substr(bar + 1);
+		}
+		items = found;
+	}
+
+	/**
+		Where an item with no price yet can be looked up: "market", "auction", or "" when it isn't sold there (or Arkive's
+		list of the market's items hasn't loaded).
+	**/
+	public static function place(name:String):String {
+		load();
+		var at = key(name);
+		if (items == null || !Text.has(items, at))
+			return "";
+		var value:String = untyped items[at];
+		return value.substr(value.length - 2) == "|a" ? "auction" : "market";
+	}
+
+	/** The market's bundle size for an item, from the game's item table; 1 when unknown. */
+	static function listedBundle(name:String):Int {
+		if (items == null || !Text.has(items, name))
+			return 1;
+		var value:String = untyped items[name];
+		var size = parse(value.substring(0, value.indexOf("|")));
+		return size > 1 ? Math.floor(size) : 1;
 	}
 
 	/** prices.txt lines: name|lowest|avg|last|bundle|source|seenAt, prices in hundredths of a gold per bundle. */
