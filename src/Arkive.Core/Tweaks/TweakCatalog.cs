@@ -104,11 +104,19 @@ public static class TweakCatalog
         [
             new("everything", "Install every tweak, so any of them can be switched on in game (the ones not ticked here start off)", true),
         ], Note: "Faster Launch still needs the game closed, so change it here."),
-        new("cpgems", "Combat Power on Tooltips", "A line on gem, weapon, armour and accessory tooltips (your own, inspected players', the market's) shows how much your Combat Power would go up or down if you equipped that item instead of yours, priced with the game's own table. Your Character Profile checks the prediction when your gear changes. Bracelets, ability stones, books and Ark Grid come next; support characters get gem lines only for now.", TweakRisk.Display,
+        new("cpgems", "Combat Power on Tooltips", "A line on item tooltips (gems, gear, accessories, bracelets, ability stones, engraving books, paradise orbs and Ark Grid cores and astrogems; your own, inspected players', the market's) shows how much your Combat Power would go up or down if you equipped that item instead of yours, priced with the game's own table. The honing window shows what the next level adds. Support characters get gem and Ark Grid lines only for now.", TweakRisk.Display,
         [
             H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.CombatPower.onMainTooltip", AbcHookKind.Before),
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "configUI", "arkive.tweaks.CombatPower.onAbilityConfigUI"),
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "combatType", "arkive.tweaks.CombatPower.onCombatType"),
+            // Item Inheritance and Set Transfer carry their own copy of this class; whichever movie loads first defines
+            // it for every window, so all three copies get the hook.
+            H("efui_itembuildup", "itembuilduplevel", "ark.ui.itemBuildUp.levelUp.ItemBuildUpDetailInfoBox", "draw", "arkive.tweaks.CombatPower.onHoningDetails",
+                expose: ["_detailData"]),
+            H("efui_iteminherit", "iteminherit", "ark.ui.itemBuildUp.levelUp.ItemBuildUpDetailInfoBox", "draw", "arkive.tweaks.CombatPower.onHoningDetails",
+                expose: ["_detailData"]),
+            H("efui_itemsettransfer", "itemsettransfer", "ark.ui.itemBuildUp.levelUp.ItemBuildUpDetailInfoBox", "draw", "arkive.tweaks.CombatPower.onHoningDetails",
+                expose: ["_detailData"]),
         ],
         [
             new("showData", "Show the tooltip data Arkive reads (for testing)", false),
