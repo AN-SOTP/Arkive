@@ -82,7 +82,9 @@ public sealed class TweakModService(
         if (tweaks.TryGetValue(PlayerLogsTweak, out var logs))
             logs["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/'));
         var data2 = GameDataFile ?? Path.GetFullPath(Path.Combine(packagesDirectory, "..", "..", "data2.lpk"));
-        if (tweaks.TryGetValue(CombatPowerTweak, out var power) && File.Exists(data2))
+        // Combat Power per Gold prices with the same tables; they go in once, under whichever of the two is built.
+        if ((tweaks.TryGetValue(CombatPowerTweak, out var power) || tweaks.TryGetValue(CombatPowerPerGoldTweak, out power)) &&
+            File.Exists(data2))
             foreach (var (key, value) in CombatPowerTable.Options(data2, Path.Combine(root, "cache")))
                 power[key] = value;
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
@@ -281,6 +283,9 @@ public sealed class TweakModService(
 
     /// <summary>The tweak that prices gems in Combat Power, from the game's own table.</summary>
     public const string CombatPowerTweak = "cpgems";
+
+    /// <summary>The tweak that prices auction and market rows per gold with Combat Power's tables.</summary>
+    public const string CombatPowerPerGoldTweak = "cpgold";
 
     public TweakState LoadState()
     {
