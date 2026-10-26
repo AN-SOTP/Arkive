@@ -17,6 +17,7 @@ class MarketPrice {
 	static inline var PRICE = "#FFD200";
 	static inline var DIM = "#A9A9A9";
 	static inline var RECENT_MINUTES = 10;
+	static inline var UNTRADABLE = "Untradable";
 
 	/** What the last market row held, for showData. */
 	static var lastRow:String = "";
@@ -80,20 +81,55 @@ class MarketPrice {
 		}
 		if (!title || name == null || name == "")
 			return null;
+		// Only things you could buy: items the market or auction house sells, and not this copy if it can't be traded.
 		var entry:Dynamic = Prices.get(name);
+		var where = Prices.place(name);
+		if ((entry == null && where == "") || untradable(list))
+			return null;
 		var count = hoveredCount();
-		if (entry != null) {
+		if (entry != null)
 			TooltipLines.add(boxes, TWEAK, lineFor(entry, count), TooltipLines.MARKET_PRICE);
-		} else {
-			var where = Prices.place(name);
-			if (where != "")
-				TooltipLines.add(boxes, TWEAK, font(DIM, "Market: no price yet. Look it up "
-					+ (where == "auction" ? "in the auction house" : "on the market") + " once to see it here."), TooltipLines.MARKET_PRICE);
-		}
+		else
+			TooltipLines.add(boxes, TWEAK, font(DIM, "Market: no price yet. Look it up "
+				+ (where == "auction" ? "in the auction house" : "on the market") + " once to see it here."), TooltipLines.MARKET_PRICE);
 		if (showData())
 			list.push({type: "SingleTextBox", dirty: true, value: font(DIM, escape("Arkive price data: \"" + name + "\", stack "
 				+ whole(count) + ", " + (entry == null ? "not seen" : describe(entry, 1)) + (lastRow == "" ? "" : ", last row " + lastRow)))});
 		return null;
+	}
+
+	/** True when the tooltip says this copy can't be traded ("Untradable", as on bound items). English text. */
+	static function untradable(list:Array<Dynamic>):Bool {
+		for (box in list) {
+			if (box == null)
+				continue;
+			if (mentions(box.value, UNTRADABLE, 0))
+				return true;
+		}
+		return false;
+	}
+
+	static function mentions(value:Dynamic, word:String, depth:Int):Bool {
+		if (value == null || depth > 2)
+			return false;
+		if (Tooltips.isString(value)) {
+			var text:String = value;
+			return text.indexOf(word) >= 0;
+		}
+		if (untyped __typeof__(value) != "object")
+			return false;
+		if (untyped __is__(value, Array)) {
+			var items:Array<Dynamic> = value;
+			for (item in items)
+				if (mentions(item, word, depth + 1))
+					return true;
+			return false;
+		}
+		var keys:Array<String> = untyped __keys__(value);
+		for (key in keys)
+			if (key != "slotData" && mentions(untyped value[key], word, depth + 1))
+				return true;
+		return false;
 	}
 
 	/** ARKNewSlot.handleMouseRollOver: the slot the pointer is on, whose stack a tooltip shown now belongs to. */
