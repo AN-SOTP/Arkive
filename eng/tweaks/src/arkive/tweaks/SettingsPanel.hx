@@ -351,12 +351,14 @@ class SettingsPanel {
 			list.addChild(row);
 			return y + height;
 		}
-		var heading = text(40, y + 2, width - 54, 12, DIM, kind == "list" ? label + " (change it in Arkive)" : label);
+		var heading = text(40, y + 2, width - 54, 12, DIM, label);
 		heading.multiline = true;
 		heading.wordWrap = true;
 		heading.height = heading.textHeight + 6;
 		list.addChild(heading);
 		y += heading.height;
+		if (kind == "list")
+			return listRows(id, option, y);
 		if (kind != "single")
 			return y + 2;
 		var chosen:Dynamic = Options.get(id, key, "");
@@ -385,6 +387,66 @@ class SettingsPanel {
 			x += itemWidth + 10;
 		}
 		return y + OPTION_ROW + 2;
+	}
+
+	/** A pick-list (such as Favorite Raids' raids): one tick box per choice, ticked when it's in the saved list. */
+	static function listRows(id:String, option:Dynamic, y:Float):Float {
+		var key:String = option.key;
+		var chosen:Array<Dynamic> = picked(id, key);
+		var choices:Array<Dynamic> = option.choices;
+		for (choice in choices) {
+			var value:String = choice.value;
+			var name:String = choice.label;
+			var row = new Sprite();
+			row.y = y;
+			row.addChild(check(52, 4, contains(chosen, value)));
+			row.addChild(text(74, 1, width - 88, 12, TEXT, name));
+			hit(row, width, OPTION_ROW - 2);
+			row.name = id + "\t" + key + "\t" + value;
+			row.addEventListener(MouseEvent.CLICK, pickClicked);
+			list.addChild(row);
+			y += OPTION_ROW - 2;
+		}
+		return y + 4;
+	}
+
+	/** The saved values of a pick-list, as a new array. */
+	static function picked(id:String, key:String):Array<Dynamic> {
+		var saved:Dynamic = Options.get(id, key, null);
+		var values:Array<Dynamic> = [];
+		if (saved == null)
+			return values;
+		var count:Int = saved.length;
+		for (i in 0...count)
+			values.push(saved[i]);
+		return values;
+	}
+
+	/** Ticks or unticks one choice of a pick-list. */
+	static function pickClicked(event:Dynamic):Void {
+		var parts:Array<String> = event.currentTarget.name.split("\t");
+		var values = picked(parts[0], parts[1]);
+		var next:Array<Dynamic> = [];
+		var found = false;
+		for (value in values) {
+			if (value == parts[2])
+				found = true;
+			else
+				next.push(value);
+		}
+		if (!found)
+			next.push(parts[2]);
+		Options.set(parts[0], parts[1], next);
+		// Only the change goes to Arkive ("+value" or "-value"): the whole list would take seconds to spell.
+		save(parts[0], parts[1], (found ? "-" : "+") + parts[2]);
+		render();
+	}
+
+	static function contains(values:Array<Dynamic>, value:String):Bool {
+		for (item in values)
+			if (item == value)
+				return true;
+		return false;
 	}
 
 	/** A click on the switch flips the tweak; a click on the name folds its options in or out. */

@@ -47,6 +47,13 @@ public sealed record AbcHook(string ClassName, string MethodName, string Handler
     /// </summary>
     public string? Gate { get; init; }
 
+    /// <summary>
+    /// A gated After hook that sets a tweak up when its window is built (configUI). While the tweak is off the wrapper
+    /// hands the call to <c>Options.defer(gate, handler, this, args, result)</c> instead of dropping it, and Options
+    /// replays it when the tweak is switched on, so windows built while it was off get it too.
+    /// </summary>
+    public bool Setup { get; init; }
+
     public string Id => ClassName + (Static ? "::" : ".") + MethodName;
 }
 
@@ -199,6 +206,7 @@ public static class AbcHookInjector
         var note = hook.Diagnostic ? pool.AddQName(publicNs, "note") : 0;
         var options = hook.Gate is null ? 0 : pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, "arkive.tweaks"), "Options");
         var on = hook.Gate is null ? 0 : pool.AddQName(publicNs, "on");
+        var defer = hook.Gate is null || !hook.Setup ? 0 : pool.AddQName(publicNs, "defer");
         var args = parameters + 1;
         var result = parameters + 2;
         var error = parameters + 3;
@@ -259,7 +267,17 @@ public static class AbcHookInjector
             var count = before ? 2 : 3;
             if (hook.Kind == AbcHookKind.After) c.Op(0x4F).U30(method).U30(count);
             else c.Op(0x46).U30(method).U30(count).SetLocal(answer);
-            if (off >= 0) c.Land(off);
+            if (off >= 0 && hook.Setup && hook.Kind == AbcHookKind.After)
+            {
+                var done = c.Branch(0x10); // jump
+                c.Land(off);
+                c.Op(0x60).U30(options).Op(0x2C).U30(pool.AddString(hook.Gate!));
+                c.Op(0x60).U30(ownerName).Op(0x66).U30(method); // the handler as a function
+                c.Op(0xD0).GetLocal(args).GetLocal(result);
+                c.Op(0x4F).U30(defer).U30(5); // Options.defer(gate, handler, this, args, result)
+                c.Land(done);
+            }
+            else if (off >= 0) c.Land(off);
         }
 
         void Return(AbcCode c)

@@ -33,7 +33,14 @@ public sealed record TweakHookTarget(string Package, string Movie, string ClassN
         Handler ?? throw new InvalidOperationException($"{ClassName}.{Method} has no handler yet."), Kind: Kind)
     {
         Expose = Expose,
+        Setup = Setup,
     };
+
+    /// <summary>
+    /// The hook sets its tweak up when a window or control is built (configUI, addedToStage): while the tweak is off the
+    /// call is kept and replayed when it's switched on (see AbcHook.Setup).
+    /// </summary>
+    public bool Setup => Kind == Interface.Abc.AbcHookKind.After && Method is "configUI" or "addedToStage";
 }
 
 /// <summary>

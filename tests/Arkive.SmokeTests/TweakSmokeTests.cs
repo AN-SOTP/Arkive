@@ -177,6 +177,14 @@ internal static class TweakSmokeTests
                parsed.RootElement.GetProperty("tweaks").GetProperty("boxtweaks").GetProperty("confirm").GetString() == "tick" &&
                !live.Contains("\\u", StringComparison.Ordinal),
             "live.json does not hold the switches, options and answered request, or has \\u escapes: " + live);
+
+        // A pick-list changes one choice per message: every raid starts picked, "-" takes one out, "+" puts it back.
+        Assert(service.ApplyInGameChange("0007\tfavoriteraids\traids\t-Corrupt Lord's Pandemonium") is not null &&
+               service.ApplyInGameChange("0008\tfavoriteraids\traids\t+Nowhere") is null, "a pick-list change was refused, or a made-up choice accepted");
+        var raids = service.LoadState().Kept["favoriteraids"]["raids"].EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert(raids.Length == 36 && !raids.Contains("Corrupt Lord's Pandemonium") && raids.Contains("Behemoth, the Storm Commander") &&
+               !File.ReadAllText(service.LivePath).Contains("\\u", StringComparison.Ordinal),
+            "taking one raid out of the pick-list did not leave the other 36, or live.json escaped them");
     }
 
     /// <summary>
@@ -446,10 +454,10 @@ internal static class TweakSmokeTests
 
     private static void TestHookKinds()
     {
-        string Shape(AbcHookKind kind, string? gate = null)
+        string Shape(AbcHookKind kind, string? gate = null, bool setup = false)
         {
             var abc = BuildGreeter();
-            AbcHookInjector.Inject(abc, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet", Kind: kind) { Gate = gate }]);
+            AbcHookInjector.Inject(abc, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet", Kind: kind) { Gate = gate, Setup = setup }]);
             var reread = AbcFile.Read(abc.Write());
             var wrapper = reread.Instances[0].Traits.Single(trait => reread.Pool.NameOf(trait.Name) == "greet");
             var body = reread.BodyOf(wrapper.Index) ?? throw new InvalidOperationException("wrapper has no body");
@@ -510,6 +518,9 @@ internal static class TweakSmokeTests
             "gated before hook: " + gated);
         var gatedAfter = Shape(AbcHookKind.AfterValue, "lobbycp");
         Assert(gatedAfter == "call:greet$arkive/1 call:on/1 iffalse call:onGreet/3 iffalse get:value return", "gated after hook: " + gatedAfter);
+        // A setup hook (configUI) of a tweak that is off hands its call to Options.defer, to replay when switched on.
+        var setup = Shape(AbcHookKind.After, "lobbycp", setup: true);
+        Assert(setup == "call:greet$arkive/1 call:on/1 iffalse callvoid:onGreet/3 get:onGreet callvoid:defer/5 return", "setup hook: " + setup);
     }
 
     /// <summary>package demo { public class Greeter { public function greet(name:String):String { return name; } } }</summary>

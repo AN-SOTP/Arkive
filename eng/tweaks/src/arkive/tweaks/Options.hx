@@ -41,6 +41,53 @@ class Options {
 
 	static var listeners:Array<Dynamic> = [];
 
+	/** Setup calls made while their tweak was off, by the window or control they were for (weak keys). */
+	static var pending = new Dictionary(true);
+
+	/**
+		A setup hook (configUI) ran while its tweak was off: keep the call, so switching the tweak on later sets up this
+		window too. The game reads live.json a moment after it starts, so this also covers windows built at login.
+	**/
+	public static function defer(tweak:String, handler:Dynamic, self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
+		if (self == null)
+			return;
+		var calls:Array<Dynamic> = untyped pending[self];
+		if (calls == null) {
+			calls = [];
+			untyped pending[self] = calls;
+		}
+		// Setup handlers don't read their arguments, and keeping them (an addedToStage event points back at its control)
+		// would keep every control alive through the weak keys.
+		calls.push({tweak: tweak, handler: handler});
+	}
+
+	/** Runs the setup calls kept for a tweak that has just been switched on, once each. */
+	static function replay(tweak:String):Void {
+		var owners:Array<Dynamic> = untyped __keys__(pending);
+		for (owner in owners) {
+			var calls:Array<Dynamic> = untyped pending[owner];
+			var kept:Array<Dynamic> = [];
+			var due:Array<Dynamic> = [];
+			for (call in calls) {
+				if (call.tweak == tweak)
+					due.push(call);
+				else
+					kept.push(call);
+			}
+			if (due.length == 0)
+				continue;
+			if (kept.length == 0)
+				untyped __delete__(pending, owner);
+			else
+				untyped pending[owner] = kept;
+			for (call in due) {
+				try {
+					call.handler(owner, [], null);
+				} catch (error:Dynamic) {}
+			}
+		}
+	}
+
 	static function raw():Dynamic {
 		if (parsed == null) {
 			try {
@@ -108,6 +155,8 @@ class Options {
 		var switches:Dynamic = state.on;
 		untyped switches[tweak] = value;
 		showOwned(tweak);
+		if (value)
+			replay(tweak);
 		changed(tweak, "");
 	}
 
@@ -217,6 +266,22 @@ class Options {
 				var now = on(owner);
 				if ((before[i] == "1") != now)
 					item.visible = now;
+			}
+			// Setup calls kept while a tweak was off (windows built before this read, or in a session it was off).
+			var waiting:Dynamic = {};
+			var owners:Array<Dynamic> = untyped __keys__(pending);
+			for (owner in owners) {
+				var calls:Array<Dynamic> = untyped pending[owner];
+				for (call in calls) {
+					var tweak:String = call.tweak;
+					untyped waiting[tweak] = true;
+				}
+			}
+			var tweaks:Array<Dynamic> = untyped __keys__(waiting);
+			for (tweak in tweaks) {
+				var id:String = tweak;
+				if (on(id))
+					replay(id);
 			}
 			changed("*", "*");
 		});

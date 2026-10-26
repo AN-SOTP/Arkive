@@ -212,14 +212,25 @@ public sealed class TweakModService(
         else
         {
             if (tweak.OptionList.FirstOrDefault(option => option.Key == key) is not { } option) return null;
+            var options = enabled.GetValueOrDefault(tweak.Id) ?? (state.Kept[tweak.Id] = OptionsOf(state, tweak));
             JsonElement element;
             if (option.Kind == "switch" && value is "1" or "0")
                 element = JsonSerializer.SerializeToElement(value == "1");
             else if (option.Kind == "single" && option.Choices!.Any(choice => choice.Value == value))
                 element = JsonSerializer.SerializeToElement(value);
+            else if (option.Kind == "list" && value.Length > 1 && value[0] is '+' or '-' &&
+                     option.Choices!.Any(choice => choice.Value == value[1..]))
+            {
+                // A pick-list changes one choice at a time: "+value" adds it, "-value" takes it out.
+                var list = options.TryGetValue(key, out var saved) && saved.ValueKind == JsonValueKind.Array
+                    ? saved.EnumerateArray().Select(item => item.ToString()).ToList()
+                    : option.Choices!.Where(choice => choice.Default).Select(choice => choice.Value).ToList();
+                list.Remove(value[1..]);
+                if (value[0] == '+') list.Add(value[1..]);
+                element = JsonSerializer.SerializeToElement(list);
+            }
             else
                 return null;
-            var options = enabled.GetValueOrDefault(tweak.Id) ?? (state.Kept[tweak.Id] = OptionsOf(state, tweak));
             options[key] = element;
             change = $"{tweak.Name}: {option.Label} = {value}";
         }
