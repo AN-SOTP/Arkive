@@ -85,9 +85,11 @@ public sealed class TweakModService(
         if (tweaks.TryGetValue(PlayerLogsTweak, out var logs))
             logs["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/'));
         var data2 = GameDataFile ?? Path.GetFullPath(Path.Combine(packagesDirectory, "..", "..", "data2.lpk"));
-        // Combat Power per Gold and the bracelet judge price with the Combat Power tables. They go in once: under Combat
-        // Power's id (baked, not switched on) when it or the judge is built, else under Combat Power per Gold's.
-        var pricedBy = tweaks.ContainsKey(CombatPowerTweak) || tweaks.ContainsKey(BraceletJudgeTweak) ? CombatPowerTweak
+        // Combat Power per Gold, the bracelet judge and Compare With Me price with the Combat Power tables. They go in once:
+        // under Combat Power's id (baked, not switched on) when it, the judge or Compare is built, else under Combat Power
+        // per Gold's.
+        var pricedBy = tweaks.ContainsKey(CombatPowerTweak) || tweaks.ContainsKey(BraceletJudgeTweak) || tweaks.ContainsKey(CompareTweak)
+            ? CombatPowerTweak
             : tweaks.ContainsKey(CombatPowerPerGoldTweak) ? CombatPowerPerGoldTweak : null;
         if (pricedBy is not null && File.Exists(data2))
         {
@@ -331,6 +333,9 @@ public sealed class TweakModService(
 
     /// <summary>The bracelet reroll judge, which prices with the Combat Power tweak's tables (kept under its id).</summary>
     public const string BraceletJudgeTweak = "braceletjudge";
+
+    /// <summary>The inspect window's Compare tab, which prices with the Combat Power tweak's tables (kept under its id).</summary>
+    public const string CompareTweak = "compare";
 
     /// <summary>
     /// The saved choices, without tweaks Arkive no longer has (a removed tweak's saved options are dropped) and without
