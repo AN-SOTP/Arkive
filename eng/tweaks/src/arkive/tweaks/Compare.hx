@@ -1245,7 +1245,7 @@ class Compare {
 			coreCell(their, x + GRID_THEIRS, y);
 			var change:Float = nothing();
 			if (ready)
-				change = (1 + coreWorth(mine) / 10000) / (1 + coreWorth(their) / 10000) - 1;
+				change = coreVersus(mine, their);
 			inlineDelta(x + DELTA_X, y, change, null);
 			y += TEXT_ROW;
 		}
@@ -1265,8 +1265,11 @@ class Compare {
 			content.addChild(text(x + GRID_MINE, y + 1, GRID_CELL, 13, TEXT, "Lv. " + whole(mine), "center"));
 			content.addChild(text(x + GRID_THEIRS, y + 1, GRID_CELL, 13, TEXT, "Lv. " + whole(their), "center"));
 			var id = CombatPower.ASTRO_IDS[i];
+			// A support's Combat Power adds Buff and Shield & Heal: the ally options count on the Buff share.
+			var share = CombatPower.role == 1 ? CombatPower.buffShare() : 1;
 			var change:Float = ready
-				? (1 + CombatPower.astroValue(id, Math.floor(mine)) / 10000) / (1 + CombatPower.astroValue(id, Math.floor(their)) / 10000) - 1
+				? share * ((1 + CombatPower.astroValue(id, Math.floor(mine)) / 10000)
+					/ (1 + CombatPower.astroValue(id, Math.floor(their)) / 10000) - 1)
 				: nothing();
 			inlineDelta(x + DELTA_X, y, change, null);
 			y += TEXT_ROW;
@@ -1299,15 +1302,31 @@ class Compare {
 		content.addChild(text(x, y + 2, GRID_CELL, 12, at >= 0 ? CORE_COLORS[at] : TEXT, word + " " + shown + "P", "center"));
 	}
 
-	/** A core's value in the model at the steps its own points light (hundredths of a percent), 0 for none. */
-	static function coreWorth(core:Dynamic):Float {
+	/**
+		Your core against theirs, each at the steps its own points light, as a change. A support's Combat Power adds its
+		Buff and Shield & Heal sides, so each side's core rows count on that side's share (as CombatPower.coreSwap).
+	**/
+	static function coreVersus(mine:Dynamic, their:Dynamic):Float {
+		var keys = CombatPower.role == 1 ? ["2", CombatPower.DEFENCE] : ["1"];
+		var share = CombatPower.role == 1 ? CombatPower.buffShare() : 1;
+		var change:Float = 0;
+		for (key in keys) {
+			var after = coreWorth(mine, key);
+			var before = coreWorth(their, key);
+			change += (key == CombatPower.DEFENCE ? 1 - share : share) * ((1 + after / 10000) / (1 + before / 10000) - 1);
+		}
+		return change;
+	}
+
+	/** A core's value in the model for a role key at the steps its own points light (hundredths of a percent), 0 for none. */
+	static function coreWorth(core:Dynamic, key:String):Float {
 		if (core == null)
 			return 0;
 		var name:String = core.name;
 		var family:String = core.family;
 		var grade:Int = core.grade;
 		var points:Float = core.points;
-		return CombatPower.coreValue(name, family, grade, CombatPower.coreSteps(points));
+		return CombatPower.coreValueFor(name, family, grade, CombatPower.coreSteps(points), key);
 	}
 
 	/** Crit + Specialization + Swiftness, or 0 when unknown. */
