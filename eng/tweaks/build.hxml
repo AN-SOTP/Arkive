@@ -1,0 +1,7 @@
+# Compiles Arkive's tweak code. Run eng/tweaks/Build-Tweaks.ps1, which also copies the code into Arkive.Core.
+-cp src
+--macro include('arkive.tweaks')
+-D haxeJSON
+-D swf-protected
+--swf-version 10
+-swf bin/arkive-tweaks.swf

@@ -1,0 +1,149 @@
+using System.ComponentModel;
+using System.IO;
+using System.Text.Json;
+using System.Windows;
+using Arkive.Core.Mods;
+using Arkive.Core.Tweaks;
+
+namespace Arkive.App;
+
+/// <summary>One on/off option of a tweak.</summary>
+public sealed class TweakOptionRow(TweakOption option, bool value)
+{
+    public TweakOption Option { get; } = option;
+    public string Label => Option.Label;
+    public bool Value { get; set; } = value;
+}
+
+/// <summary>One tweak in the Tweaks tab.</summary>
+public sealed class TweakRow(TweakDefinition tweak, bool enabled, IReadOnlyList<TweakOptionRow> options) : INotifyPropertyChanged
+{
+    private bool _enabled = enabled;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public TweakDefinition Tweak { get; } = tweak;
+    public string Name => Tweak.Name;
+    public string Description => Tweak.Description;
+    public string? Note => Tweak.Note;
+    public Visibility NoteVisibility => string.IsNullOrEmpty(Note) ? Visibility.Collapsed : Visibility.Visible;
+    public IReadOnlyList<TweakOptionRow> Options { get; } = options;
+
+    public string RiskLabel => Tweak.Risk switch
+    {
+        TweakRisk.Speed => "Speed",
+        TweakRisk.Batch => "Batch",
+        TweakRisk.Automation => "Automation",
+        _ => "Display",
+    };
+
+    public string RiskDetail => Tweak.Risk switch
+    {
+        TweakRisk.Speed => "Skips waits or animations.",
+        TweakRisk.Batch => "Sends several game actions from one click.",
+        TweakRisk.Automation => "Acts without a click, or turns a key into clicks.",
+        _ => "Only changes what you see.",
+    };
+
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            _enabled = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+        }
+    }
+}
+
+public partial class MainWindow
+{
+    private TweakModService? _tweaks;
+    private bool _tweaksBusy;
+
+    private TweakModService Tweaks => _tweaks ??= new TweakModService(
+        _arkiveModLibrary, Path.Combine(_projectRoot, "tweaks"), _protectionProvider,
+        (path, token) => _arkiveModApply.ResolveCleanPackageAsync(path, token));
+
+    private void RefreshTweaks(string? status = null)
+    {
+        var state = Tweaks.LoadState();
+        TweakList.ItemsSource = TweakCatalog.All.Select(tweak =>
+        {
+            var saved = state.Settings.Enabled.GetValueOrDefault(tweak.Id);
+            var options = tweak.OptionList.Select(option => new TweakOptionRow(option,
+                saved is not null && saved.TryGetValue(option.Key, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? value.GetBoolean()
+                    : option.Default)).ToArray();
+            return new TweakRow(tweak, saved is not null, options);
+        }).ToArray();
+        var on = state.Settings.Enabled.Count;
+        TweaksStatusText.Text = status ?? (on == 0
+            ? "No tweaks are on. Turn on the ones you want, then apply."
+            : $"{on:N0} tweak(s) saved. After changing them, apply again; a game update may need Apply tweaks too.");
+        UpdateTweakActions();
+    }
+
+    private void UpdateTweakActions()
+    {
+        TweaksApplyButton.IsEnabled = !_tweaksBusy && ModLibraryIdle;
+        TweaksRemoveButton.IsEnabled = !_tweaksBusy && ModLibraryIdle && Tweaks.LoadState().ModId is not null;
+    }
+
+    private async void TweaksApplyButton_Click(object sender, RoutedEventArgs e)
+    {
+        var settings = new TweakSettings();
+        foreach (var row in TweakList.ItemsSource?.OfType<TweakRow>() ?? [])
+            if (row.Enabled)
+                settings.Enabled[row.Tweak.Id] = row.Options.ToDictionary(
+                    option => option.Option.Key, option => JsonSerializer.SerializeToElement(option.Value));
+        await BuildTweaksAsync(settings);
+    }
+
+    private async void TweaksRemoveButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(new TweakSettings());
+
+    /// <summary>Rebuilds the Arkive Tweaks mod for these settings (none removes it), then applies mods as the Mods tab does.</summary>
+    private async Task BuildTweaksAsync(TweakSettings settings)
+    {
+        if (_tweaksBusy || !ModLibraryIdle) return;
+        _tweaksBusy = true;
+        UpdateTweakActions();
+        string status;
+        try
+        {
+            await EnsureGamePackagesDirectoryAsync();
+            var library = await _arkiveModLibrary.LoadAsync();
+            if (library.GamePackagesDirectory is not { } packages)
+            {
+                RefreshTweaks("Choose the game folder first (Mods tab): Arkive needs the game's Packages folder.");
+                return;
+            }
+            TweakBuildResult result;
+            using (ShowBusy("Building tweaks…", "Arkive is adding the tweaks to the game's own windows. Please wait until it finishes."))
+                result = await Task.Run(() => Tweaks.BuildAsync(settings, packages, TweakCode.LoadSwf()));
+            Log($"Tweaks built: tweaks={string.Join(",", settings.Enabled.Keys)}, mod={result.Mod?.ModId ?? "-"}, " +
+                $"movies={string.Join(",", result.Movies)}, missing={string.Join(" | ", result.MissingHooks)}");
+            status = settings.Enabled.Count == 0
+                ? "Tweaks removed from the mod library. Apply below takes them out of the game."
+                : $"Built Arkive Tweaks ({result.Movies.Count:N0} window(s)).";
+            if (result.MissingHooks.Count > 0)
+                status += $" This game version is missing {result.MissingHooks.Count:N0} place(s) some tweaks hook, so those may not work: " +
+                          string.Join(", ", result.MissingHooks.Take(4)) + (result.MissingHooks.Count > 4 ? "…" : string.Empty);
+            await RefreshArkiveModsAsync("tweaks built", result.Mod?.ModId);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or
+                                              InvalidOperationException or ArkiveModRefusalException)
+        {
+            Log($"Building tweaks failed: {exception}");
+            RefreshTweaks("The tweaks could not be built: " + exception.Message);
+            return;
+        }
+        finally
+        {
+            _tweaksBusy = false;
+        }
+        RefreshTweaks(status);
+        MainTabControl.SelectedItem = ModifiedUpksTab;
+        await RunModApplyAsync(previewOnly: false);
+    }
+}

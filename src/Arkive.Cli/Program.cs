@@ -354,6 +354,8 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--filter"), json),
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
+            "tweaks-mod" => TweaksMod(target, ReadTextOption(arguments, "--root"), ReadTextOption(arguments, "--tweaks"),
+                ReadTextOption(arguments, "--options"), ReadTextOption(arguments, "--movies"), json),
             "game-data-mod" => GameDataMod(target, ReadTextOption(arguments, "--sql"), ReadTextOption(arguments, "--name"),
                 ReadTextOption(arguments, "--mod"), json),
             "language" => Language(target, ReadTextOption(arguments, "--data"), ReadTextOption(arguments, "--use"),
@@ -2879,7 +2881,10 @@ static CliModEnvironment CreateModEnvironment(string projectRoot)
         new GuidedTextureModWorkspace(Path.Combine(staging, "texture-mods")),
         new SkeletalMeshEditWorkspaceStore(Path.Combine(staging, "skeletal-mesh-edits")),
         new StaticMeshEditWorkspaceStore(Path.Combine(staging, "static-mesh-edits"), reader, provider),
-        new MaterialInstanceEditWorkspaceStore(Path.Combine(staging, "material-edits"), provider));
+        new MaterialInstanceEditWorkspaceStore(Path.Combine(staging, "material-edits"), provider))
+    {
+        InterfaceMovies = new Arkive.Core.Interface.InterfaceMovieEditWorkspaceStore(Path.Combine(staging, "interface-movie-edits"), provider),
+    };
     var deployment = new ArkiveModDeploymentService(reader);
     var context = new ArkiveModApplyContext(
         library, edits, new GuidedTexturePackageWorkspace(Path.Combine(staging, "texture-mods", "_packages")),
@@ -3149,6 +3154,44 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
 }
 
 // Makes a Game Data mod from a LostArkPatcher-style .sql patch, or lists the table changes of one mod or of data2.lpk.
+/// <summary>
+/// Builds the "Arkive Tweaks" mod for the given tweaks from a Packages folder (read only) into a project root's library,
+/// as the Tweaks tab does; --movies DIR also writes each built movie there for decompiling.
+/// </summary>
+static int TweaksMod(string packagesRoot, string? projectRoot, string? tweaks, string? optionsJson, string? moviesOut, bool json)
+{
+    if (string.IsNullOrWhiteSpace(projectRoot) || string.IsNullOrWhiteSpace(tweaks))
+        throw new ArgumentException("tweaks-mod requires --root DIR --tweaks ID[,ID] [--options JSON] [--movies DIR].");
+    var root = Path.GetFullPath(projectRoot);
+    Directory.CreateDirectory(root);
+    var library = new ArkiveModLibrary(Path.Combine(root, "mods"), Path.Combine(root, "staging", "mod-library"));
+    var options = string.IsNullOrWhiteSpace(optionsJson)
+        ? new Dictionary<string, Dictionary<string, JsonElement>>()
+        : JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, JsonElement>>>(optionsJson)!;
+    var settings = new Arkive.Core.Tweaks.TweakSettings();
+    foreach (var id in tweaks.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (Arkive.Core.Tweaks.TweakCatalog.Find(id) is null) throw new ArgumentException($"Unknown tweak: {id}.");
+        settings.Enabled[id] = options.GetValueOrDefault(id) ?? [];
+    }
+    var service = new Arkive.Core.Tweaks.TweakModService(library, Path.Combine(root, "tweaks"),
+        ChunkProtectionProviderFactory.CreateWesternGlobal()) { KeepMoviesIn = moviesOut is null ? null : Path.GetFullPath(moviesOut) };
+    var result = service.BuildAsync(settings, Path.GetFullPath(packagesRoot), Arkive.Core.Tweaks.TweakCode.LoadSwf())
+        .GetAwaiter().GetResult();
+    if (json)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            mod = result.Mod is null ? null : library.GetModFilePath(result.Mod), result.Movies, result.MissingHooks,
+        }));
+        return 0;
+    }
+    Console.WriteLine($"Mod:     {(result.Mod is null ? "none" : library.GetModFilePath(result.Mod))}");
+    Console.WriteLine($"Movies:  {string.Join(", ", result.Movies)}");
+    Console.WriteLine($"Missing: {(result.MissingHooks.Count == 0 ? "none" : string.Join(", ", result.MissingHooks))}");
+    return result.Mod is null ? 1 : 0;
+}
+
 static int GameDataMod(string projectRoot, string? sqlPath, string? name, string? modReference, bool json)
 {
     var environment = CreateModEnvironment(projectRoot);
@@ -3901,6 +3944,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
+    Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--json]");
     Console.WriteLine("  arkive game-data-mod <Arkive-project-root> [--sql PATCH.sql [--name NAME | --mod ID|NAME]] [--mod ID|NAME] [--json]");
     Console.WriteLine("  arkive language <EFGAME_DIR> --data DIR [--use LANGUAGE | --restore] [--json]");
     Console.WriteLine("  arkive umodel-list <package.upk> [--filter TEXT] [--json]");

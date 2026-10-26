@@ -60,7 +60,8 @@ public partial class MainWindow : Window
         // The advanced views list the package workspace, which enabling mods leaves to be reloaded when needed.
         if (_packageWorkspaceStale && MainTabControl.SelectedItem is TabItem tab &&
             tab != LibraryTab && tab != CreateModTab && tab != WorkshopTab && tab != ModifiedUpksTab && tab != BodyProportionsTab &&
-            tab != SoundsTab && tab != LoginScreenTab && tab != FontsTab && tab != LanguageTab && tab != OutfitSwapTab)
+            tab != SoundsTab && tab != LoginScreenTab && tab != FontsTab && tab != LanguageTab && tab != OutfitSwapTab &&
+            tab != TweaksTab)
             _ = RefreshStalePackageWorkspaceWithNoticeAsync();
     }
 
@@ -119,6 +120,12 @@ public partial class MainWindow : Window
             PackageAliasText.Text = "Language";
             PathText.Text = "Choose the language of the game's text, including languages the game has removed.";
             _ = RefreshLanguagesAsync();
+        }
+        else if (MainTabControl.SelectedItem == TweaksTab)
+        {
+            PackageAliasText.Text = "Tweaks";
+            PathText.Text = "Extra information, buttons and quicker steps in the game's own windows.";
+            RefreshTweaks();
         }
         else if (_currentPackagePath is { } packagePath)
         { DisplayPackageAlias(packagePath); PathText.Text = packagePath; }

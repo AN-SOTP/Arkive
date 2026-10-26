@@ -1,0 +1,88 @@
+using System.IO.Compression;
+using System.Text.Json;
+using Arkive.Core.Interface;
+using Arkive.Core.Interface.Abc;
+
+namespace Arkive.Core.Tweaks;
+
+/// <summary>Arkive's compiled tweak code (eng/tweaks, built with Haxe), with the settings written into it.</summary>
+public static class TweakCode
+{
+    public const string ConfigPlaceholder = "__ARKIVE_TWEAKS_CONFIG__";
+    public const string AbcName = "arkive/tweaks";
+    private const string ResourceName = "Arkive.Core.Tweaks.arkive-tweaks.swf";
+
+    /// <summary>The compiled SWF shipped inside Arkive.Core.</summary>
+    public static byte[] LoadSwf()
+    {
+        using var stream = typeof(TweakCode).Assembly.GetManifestResourceStream(ResourceName)
+            ?? throw new InvalidOperationException("Arkive's tweak code is missing from this build.");
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        return memory.ToArray();
+    }
+
+    /// <summary>The code block to add to a movie: every tweak's code, with the chosen tweaks and options as JSON.</summary>
+    public static byte[] ForSettings(byte[] swf, TweakSettings settings)
+    {
+        var abc = AbcFile.Read(ReadSwfAbc(swf));
+        var index = abc.Pool.Strings.IndexOf(ConfigPlaceholder);
+        if (index < 0) throw new InvalidDataException("Arkive's tweak code has no place for its settings.");
+        abc.Pool.Strings[index] = settings.ToGameJson();
+        return abc.Write();
+    }
+
+    /// <summary>The single code block of a SWF the Haxe compiler wrote ("FWS", or "CWS" when zlib-compressed).</summary>
+    public static byte[] ReadSwfAbc(byte[] swf)
+    {
+        if (swf.Length < 8 || swf[1] != 'W' || swf[2] != 'S' || swf[0] is not ((byte)'F' or (byte)'C'))
+            throw new InvalidDataException("The tweak code is not a SWF file.");
+        byte[] movie;
+        if (swf[0] == 'C')
+        {
+            var length = BitConverter.ToInt32(swf, 4);
+            movie = new byte[length];
+            swf.AsSpan(0, 8).CopyTo(movie);
+            using var input = new ZLibStream(new MemoryStream(swf, 8, swf.Length - 8), CompressionMode.Decompress);
+            input.ReadExactly(movie, 8, length - 8);
+        }
+        else
+        {
+            movie = (byte[])swf.Clone();
+        }
+        movie[0] = (byte)'G';
+        movie[1] = (byte)'F';
+        movie[2] = (byte)'X';
+        var abcs = GfxMovieTags.Read(movie).Tags.Where(tag => tag.Code == GfxTag.DoAbc).ToArray();
+        if (abcs.Length != 1) throw new InvalidDataException($"The tweak code holds {abcs.Length} code blocks; expected one.");
+        return abcs[0].AbcData.ToArray();
+    }
+}
+
+public sealed record TweakMovieResult(byte[] Movie, IReadOnlyList<string> MissingHooks);
+
+/// <summary>Adds the tweak code to one game movie and routes the hooked methods through it.</summary>
+public static class TweakMovieBuilder
+{
+    public static TweakMovieResult Build(byte[] gameMovie, IEnumerable<Interface.Abc.AbcHook> hooks, byte[] tweakAbc)
+    {
+        var tags = GfxMovieTags.Read(gameMovie);
+        if (tags.Tags.Any(tag => tag.Code == GfxTag.DoAbc && tag.AbcName == TweakCode.AbcName))
+            throw new InvalidDataException("This movie already holds Arkive's tweak code; build from the game's own movie.");
+        var main = tags.MainAbc;
+        var abc = AbcFile.Read(main.AbcData);
+        var missing = AbcHookInjector.Inject(abc, hooks.DistinctBy(hook => hook.Id));
+        tags.Tags[tags.Tags.IndexOf(main)] = main.WithAbc(abc.Write());
+        tags.AppendAbc(GfxTag.NewDoAbc(TweakCode.AbcName, tweakAbc));
+        return new TweakMovieResult(tags.Write(), missing);
+    }
+}
+
+/// <summary>The tweaks a player turned on and their options.</summary>
+public sealed class TweakSettings
+{
+    public Dictionary<string, Dictionary<string, JsonElement>> Enabled { get; set; } = [];
+
+    /// <summary>{"tweaks":{"lobbycp":{},"extracurrency":{"showLeapstones":true}}}, the shape the tweak code reads.</summary>
+    public string ToGameJson() => JsonSerializer.Serialize(new { tweaks = Enabled });
+}

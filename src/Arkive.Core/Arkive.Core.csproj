@@ -8,5 +8,6 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Viewer/material-recipes.json" LogicalName="Arkive.Core.Viewer.material-recipes.json" />
+    <EmbeddedResource Include="Tweaks/arkive-tweaks.swf" LogicalName="Arkive.Core.Tweaks.arkive-tweaks.swf" />
   </ItemGroup>
 </Project>

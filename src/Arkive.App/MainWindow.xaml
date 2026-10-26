@@ -1219,6 +1219,72 @@
                         </ListBox>
                     </DockPanel>
                 </TabItem>
+                <TabItem x:Name="TweaksTab" Header="Tweaks">
+                    <DockPanel Margin="8">
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <TextBlock Text="Tweaks" FontSize="20" Margin="0,0,0,6" />
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                       Text="Small changes to the game's own windows: extra information, extra buttons and quicker steps. Turn on the ones you want, then apply. Arkive puts them in the game as one mod, Arkive Tweaks, so they restore and update like your other mods. They show the next time you start Lost Ark; close the game before applying." />
+                            <Border Padding="10,7" Background="{DynamicResource WarningSurfaceBrush}"
+                                    BorderBrush="{DynamicResource WarningBorderBrush}" BorderThickness="1">
+                                <TextBlock TextWrapping="Wrap"
+                                           Text="Changing the game's files is against Lost Ark's terms of service. Tweaks marked Batch send several game actions from one click, and those marked Automation act without a click; use them at your own risk." />
+                            </Border>
+                        </StackPanel>
+                        <Border DockPanel.Dock="Bottom" Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource SurfaceAltBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="TweaksApplyButton" Content="Apply tweaks" MinWidth="150"
+                                            Style="{StaticResource PrimaryButtonStyle}" Click="TweaksApplyButton_Click" />
+                                    <Button x:Name="TweaksRemoveButton" Content="Remove all tweaks" Margin="8,0,0,0"
+                                            Click="TweaksRemoveButton_Click"
+                                            ToolTip="Takes every tweak out of the game; the game's own windows come back exactly as they were." />
+                                </StackPanel>
+                                <TextBlock x:Name="TweaksStatusText" TextWrapping="Wrap" VerticalAlignment="Center"
+                                           Text="Turn on the tweaks you want, then apply." />
+                            </DockPanel>
+                        </Border>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsControl x:Name="TweakList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,8" Padding="14,10" CornerRadius="6" BorderThickness="1"
+                                                BorderBrush="{DynamicResource BorderStrongBrush}" Background="{DynamicResource SurfaceBrush}">
+                                            <StackPanel>
+                                                <DockPanel>
+                                                    <Border DockPanel.Dock="Right" Padding="7,2" CornerRadius="9" VerticalAlignment="Top"
+                                                            Background="{DynamicResource SurfaceAltBrush}" ToolTip="{Binding RiskDetail}">
+                                                        <TextBlock Text="{Binding RiskLabel}" FontSize="12" />
+                                                    </Border>
+                                                    <CheckBox IsChecked="{Binding Enabled, Mode=TwoWay}" VerticalContentAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" />
+                                                    </CheckBox>
+                                                </DockPanel>
+                                                <TextBlock Text="{Binding Description}" Margin="22,3,0,0" TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <TextBlock Text="{Binding Note}" Margin="22,6,0,0" TextWrapping="Wrap"
+                                                           Visibility="{Binding NoteVisibility}" />
+                                                <ItemsControl ItemsSource="{Binding Options}" Margin="22,6,0,0" IsEnabled="{Binding Enabled}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox Content="{Binding Label}" IsChecked="{Binding Value, Mode=TwoWay}" Margin="0,0,16,4" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </DockPanel>
+                </TabItem>
                 <TabItem x:Name="EntityBrowserTab" Header="Characters &amp; NPCs" Visibility="Collapsed">
                     <DockPanel Margin="6">
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,7">
