@@ -33,8 +33,8 @@ public sealed class TweakModService(
     public const string ModName = "Arkive Tweaks";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    /// <summary>Developer builds: every hook writes caught errors into this text field of the hooked object.</summary>
-    public string? DiagnosticField { get; init; }
+    /// <summary>Developer builds: every hook catches errors and passes them to the tweak code's Diag.note.</summary>
+    public bool Diagnostic { get; init; }
 
     /// <summary>When set, each built movie is also written here (for decompiling while developing tweaks).</summary>
     public string? KeepMoviesIn { get; init; }
@@ -114,7 +114,7 @@ public sealed class TweakModService(
                     continue;
                 }
                 var original = ReadExport(catalog, export);
-                var built = TweakMovieBuilder.Build(GfxMovieFile.Extract(original), group.Select(hook => hook.Hook with { DiagnosticField = DiagnosticField }), tweakCode);
+                var built = TweakMovieBuilder.Build(GfxMovieFile.Extract(original), group.Select(hook => hook.Hook with { Diagnostic = Diagnostic }), tweakCode);
                 missing.AddRange(built.MissingHooks);
                 var editedPath = Path.Combine(staging, $"{alias}.{movieName}{GfxMovieFile.Extension}");
                 Directory.CreateDirectory(staging);

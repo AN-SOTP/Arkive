@@ -29,6 +29,10 @@ class LobbyCp {
 			return;
 		// The tooltip's icon and text are sized for a bigger line; shrink them to fit beside the item level.
 		var text = (level + "  " + lines[1]).split("'19'").join("'17'").split("'-4'").join("'-3'");
+		#if arkive_diag
+		if (Diag.log != "")
+			text = text + " <font color='#ff5050'>" + Diag.log + "</font>";
+		#end
 		self.itemLevel = "<font size='13'>" + text + "</font>";
 	}
 }
