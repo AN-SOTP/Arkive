@@ -113,6 +113,8 @@ public static class TweakCatalog
             H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.ExchangeShopLastSearchListRenderer", "setData", "arkive.tweaks.MarketPrice.onLastSearchRow"),
             H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.AuctionSearchListRenderer", "setData", "arkive.tweaks.MarketPrice.onAuctionRow"),
             H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.MarketPrice.onMainTooltip", AbcHookKind.Before),
+            H(Base, "main", "ark.controls.ARKNewSlot", "handleMouseRollOver", "arkive.tweaks.MarketPrice.onSlotRollOver"),
+            H(Base, "main", "ark.controls.ARKNewSlot", "handleMouseRollOut", "arkive.tweaks.MarketPrice.onSlotRollOut"),
         ],
         [
             new("stack", "What the stack you point at is worth", true),
