@@ -122,7 +122,7 @@ public static class TweakCatalog
             new("showDestructionStones", "Destruction stones", true),
             new("showGuardianStones", "Guardian stones", true),
             new("showFusionMaterials", "Fusion materials", true),
-            new("showGracedShards", "Graced shards", true),
+            new("showGracedShards", "Shards", true),
             new("showCoreEssence", "Core essence", true),
         ]),
         new("fastadvhone", "Fast Advanced Honing", "Skips the result animation of advanced honing, so it can be clicked again straight away.", TweakRisk.Speed,
