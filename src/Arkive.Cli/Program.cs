@@ -355,6 +355,7 @@ static int Run(string[] arguments)
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
             "player-logs" => PlayerLogs(target, ReadTextOption(arguments, "--out"), json),
+            "astrogem-odds" => AstrogemOdds(target, ReadTextOption(arguments, "--target"), ReadTextOption(arguments, "--out"), json),
             "tweaks-install" => TweaksInstall(target, arguments.Contains("--saved", StringComparer.OrdinalIgnoreCase),
                 arguments.Contains("--include-other-mods", StringComparer.OrdinalIgnoreCase)),
             "tweaks-mod" => TweaksMod(target, ReadTextOption(arguments, "--root"), ReadTextOption(arguments, "--tweaks"),
@@ -3185,6 +3186,52 @@ static int PlayerLogs(string name, string? outDirectory, bool json)
 }
 
 /// <summary>
+/// The Astrogem Processing Advisor's odds for a target (all targets when none is given), from a data2.lpk: the chance and
+/// gold from a fresh gem of each grade without a reset, the time it took, and with --out the table file the tweak reads.
+/// </summary>
+static int AstrogemOdds(string data2, string? targetId, string? outDirectory, bool json)
+{
+    var work = Path.Combine(Path.GetTempPath(), "arkive-astrogem-" + Guid.NewGuid().ToString("N")[..8]);
+    try
+    {
+        var rules = Arkive.Core.Tweaks.AstrogemOdds.Read(data2, work);
+        var targets = targetId is null ? Arkive.Core.Tweaks.AstrogemOdds.Targets : [Arkive.Core.Tweaks.AstrogemOdds.Target(targetId)];
+        var results = new List<object>();
+        foreach (var target in targets)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var table = Arkive.Core.Tweaks.AstrogemOdds.Compute(rules, target);
+            var seconds = clock.Elapsed.TotalSeconds;
+            string? path = null;
+            if (!string.IsNullOrWhiteSpace(outDirectory))
+            {
+                Directory.CreateDirectory(outDirectory);
+                path = Path.Combine(Path.GetFullPath(outDirectory), target.Id + ".txt");
+                File.WriteAllText(path, Arkive.Core.Tweaks.AstrogemOdds.Encode(table));
+            }
+            var grades = table.Grades.Select(grade => new
+            {
+                grade.Grade.Attempts, grade.Grade.Rerolls, grade.Grade.Resets, grade.Grade.Cost,
+                Chance = grade.FreshChance, Gold = grade.FreshGold * grade.Grade.Cost,
+            }).ToArray();
+            results.Add(new { target.Id, target.Label, Seconds = seconds, Grades = grades, File = path });
+            if (!json)
+            {
+                Console.WriteLine($"{target.Label} ({seconds:0.0} s){(path is null ? "" : " -> " + path)}");
+                foreach (var grade in grades)
+                    Console.WriteLine($"  {grade.Attempts} attempts, {grade.Rerolls} rerolls: {grade.Chance:P2} without reset, ~{grade.Gold:0} gold");
+            }
+        }
+        if (json) WriteJson(new { rules.Grades, Effects = rules.Effects.Count, rules.MinCostAddend, rules.MaxCostAddend, Targets = results });
+        return 0;
+    }
+    finally
+    {
+        if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+    }
+}
+
+/// <summary>
 /// What the Tweaks tab's Apply tweaks does, for an Arkive data root: installs the saved tweak choices (--saved, from
 /// tweaks\state.json), cleaning up earlier tweak mods and their working edits, and applies only the game packages the
 /// tweaks touch. Other mods' waiting changes stop it unless --include-other-mods.
@@ -4045,6 +4092,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive player-logs <character-name> [--out DIR] [--json]");
+    Console.WriteLine("  arkive astrogem-odds <data2.lpk> [--target ID] [--out DIR] [--json]");
     Console.WriteLine("  arkive tweaks-install <Arkive-data-root> --saved [--include-other-mods]");
     Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf] [--diagnostic] [--data2 data2.lpk] [--json]");
     Console.WriteLine("  arkive game-data-mod <Arkive-project-root> [--sql PATCH.sql [--name NAME | --mod ID|NAME]] [--mod ID|NAME] [--json]");
