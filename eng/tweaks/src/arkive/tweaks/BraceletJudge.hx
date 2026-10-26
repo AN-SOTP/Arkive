@@ -27,6 +27,9 @@ class BraceletJudge {
 	static inline var RIGHT_NAME = "arkiveJudgeTotal";
 	static inline var SIDE_WIDTH = 150;
 	static inline var MARGIN = 10;
+	/** Label colours, the same as Combat Power on Tooltips' lines. */
+	static inline var GAIN = 0x7EE08F;
+	static inline var DIM = 0xA9A9A9;
 
 	/** The current and new effect texts as the game sent them (before Arkive added its values). */
 	static var current:Array<String> = [];
@@ -108,8 +111,10 @@ class BraceletJudge {
 		if (currentRows != null)
 			mark(currentRows, old, rest);
 		mark(offeredRows, now, rest);
-		var oldCombat:Float = old.combat;
-		var newCombat:Float = now.combat;
+		var oldMain:Float = old.main;
+		var newMain:Float = now.main;
+		var oldCombat:Float = old.combat + oldMain;
+		var newCombat:Float = now.combat + newMain;
 		var needsProfile = rest == null && (oldCombat > 0 || newCombat > 0);
 		if (firstRoll) {
 			// Nothing to compare with yet: the new side's total only.
@@ -125,34 +130,57 @@ class BraceletJudge {
 
 	/**
 		The effects on one side: {factors: one per line (0 when the line adds nothing or is a stat line), points: the
-		Crit, Specialization and Swiftness on each line, all: their factors (non-zero), combat: total points}.
+		Crit, Specialization and Swiftness on each line, mains: your main stat on each line (Strength for a Strength
+		class), all: their factors (non-zero), combat and main: the totals}.
 	**/
 	static function price(lines:Array<String>):Dynamic {
 		var factors:Array<Float> = [];
 		var points:Array<Float> = [];
+		var mains:Array<Float> = [];
 		var all:Array<Float> = [];
 		var combat:Float = 0;
+		var main:Float = 0;
 		for (line in lines) {
 			var text = Text.trim(Text.stripTags(line));
 			var factor = CombatPower.braceletEffect(text);
 			var stat:Float = 0;
+			var own:Float = 0;
 			if (factor == 0) {
 				// An effect the game wrote over several lines is in the table as one text; a stat is on a line of its own.
 				for (part in CombatPower.splitLines(line)) {
 					var found = CombatPower.combatStat(part);
+					var points = mainStat(part);
 					if (found > 0)
 						stat += found;
+					else if (points > 0)
+						own += points;
 					else
 						factor += CombatPower.braceletEffect(part);
 				}
 			}
 			factors.push(factor);
 			points.push(stat);
+			mains.push(own);
 			combat += stat;
+			main += own;
 			if (factor != 0)
 				all.push(factor);
 		}
-		return {factors: factors, points: points, all: all, combat: combat};
+		return {factors: factors, points: points, mains: mains, all: all, combat: combat, main: main};
+	}
+
+	/**
+		Your main stat on a line ("Strength +12032" for a Strength class), or 0. Another class's stat adds nothing; until
+		your armour has shown which stat is yours, any of the three counts.
+	**/
+	static function mainStat(line:String):Float {
+		for (stat in CombatPower.STATS) {
+			var start = stat + " +";
+			if (StringTools.startsWith(line, start) && line.indexOf("%") < 0
+				&& (CombatPower.mainStat == "" || CombatPower.mainStat == stat))
+				return CombatPower.number(line.substr(start.length));
+		}
+		return 0;
 	}
 
 	/**
@@ -198,25 +226,26 @@ class BraceletJudge {
 	static function total(side:Dynamic, rest:Dynamic):Float {
 		var all:Array<Float> = side.all;
 		var combat:Float = side.combat;
-		return change(all, combat, rest);
+		var main:Float = side.main;
+		return change(all, combat, main, rest);
 	}
 
-	/** The change from adding these effect factors and stat points to the bracelet; -1 when stats need the profile. */
-	static function change(factors:Array<Float>, points:Float, rest:Dynamic):Float {
+	/** The change from adding these effect factors, stat points and main stat to the bracelet; -1 when stats need the profile. */
+	static function change(factors:Array<Float>, points:Float, main:Float, rest:Dynamic):Float {
 		if (rest == null) {
-			if (points > 0)
+			if (points > 0 || main > 0)
 				return -1;
 			var product:Float = 1;
 			for (factor in factors)
 				product *= 1 + factor;
 			return product - 1;
 		}
-		var base = valueWith(rest, [], 0);
-		return base <= 0 ? -1 : valueWith(rest, factors, points) / base - 1;
+		var base = valueWith(rest, [], 0, 0);
+		return base <= 0 ? -1 : valueWith(rest, factors, points, main) / base - 1;
 	}
 
-	/** CombatPower.value with your equipped bracelet replaced by the rest plus these effects and points. */
-	static function valueWith(rest:Dynamic, factors:Array<Float>, points:Float):Float {
+	/** CombatPower.value with your equipped bracelet replaced by the rest plus these effects, points and main stat. */
+	static function valueWith(rest:Dynamic, factors:Array<Float>, points:Float, main:Float):Float {
 		var items = CombatPower.copyOf(CombatPower.gear);
 		var worn:Dynamic = rest.worn;
 		var restEffects:Array<Float> = rest.effects;
@@ -226,9 +255,27 @@ class BraceletJudge {
 			effects.push(factor);
 		for (factor in factors)
 			effects.push(factor);
+		// The worn bracelet's own main stat (its Basic Effect) plus the main stat on the judged lines.
+		var stats:Dynamic = {};
+		var wornStats:Dynamic = worn == null ? null : worn.stats;
+		var key:String = CombatPower.mainStat;
+		for (stat in CombatPower.STATS)
+			if (Text.has(wornStats, stat)) {
+				untyped stats[stat] = wornStats[stat];
+				if (key == "")
+					key = stat;
+			}
+		if (main > 0) {
+			if (key == "")
+				key = CombatPower.STATS[0];
+			var had:Float = 0;
+			if (Text.has(stats, key))
+				had = untyped stats[key];
+			untyped stats[key] = had + main;
+		}
 		items[BRACELET_SLOT] = {
 			slot: "bracelet",
-			stats: worn == null ? {} : worn.stats,
+			stats: stats,
 			weapon: worn == null ? 0.0 : worn.weapon,
 			weaponPct: worn == null ? 0.0 : worn.weaponPct,
 			flat: worn == null ? 0.0 : worn.flat,
@@ -259,15 +306,16 @@ class BraceletJudge {
 			return;
 		var factors:Array<Float> = side.factors;
 		var points:Array<Float> = side.points;
+		var mains:Array<Float> = side.mains;
 		for (i in 0...rows.length) {
 			var row:Dynamic = rows[i];
 			if (row == null || i >= factors.length)
 				continue;
 			var text = original(row);
 			untyped shown[row] = text;
-			var value = change(factors[i] == 0 ? [] : [factors[i]], points[i], rest);
+			var value = change(factors[i] == 0 ? [] : [factors[i]], points[i], mains[i], rest);
 			var suffix:String;
-			if (value < 0 && points[i] > 0)
+			if (value < 0 && (points[i] > 0 || mains[i] > 0))
 				suffix = CombatPower.font(CombatPower.DIM, "(open your profile)");
 			else if (Math.abs(value) < SAME)
 				suffix = CombatPower.font(CombatPower.DIM, "· no CP");
@@ -288,25 +336,25 @@ class BraceletJudge {
 		if (right == null || left == null)
 			return;
 		if (mine < 0) {
-			right.htmlText = CombatPower.font(CombatPower.DIM, hasStats ? "Open your profile" : "Not priced");
-			left.htmlText = "";
+			say(right, hasStats ? "Open your profile" : "Not priced", DIM);
+			say(left, "", DIM);
 			return;
 		}
 		var power:Float = CombatPower.power;
 		var amount = power > 0 ? "CP " + CombatPower.signed(power * mine, "") + " (" + CombatPower.signed(mine * 100, "%") + ")"
 			: "CP " + CombatPower.signed(mine * 100, "%");
-		right.htmlText = CombatPower.font(mine > SAME ? CombatPower.GAIN : CombatPower.DIM, amount);
+		say(right, amount, mine > SAME ? GAIN : DIM);
 		if (needsProfile || other < 0) {
-			left.htmlText = "";
+			say(left, "", DIM);
 		} else if (Math.abs(mine - other) < SAME) {
-			left.htmlText = CombatPower.font(CombatPower.DIM, "Same");
+			say(left, "Same", DIM);
 		} else if (mine > other) {
 			// Both totals are changes against the same bracelet, so their ratio is the gain of keeping this side.
 			var better = (1 + mine) / (1 + other) - 1;
 			var by = power > 0 ? CombatPower.signed(power * (1 + other) * better, "") : CombatPower.signed(better * 100, "%");
-			left.htmlText = CombatPower.font(CombatPower.GAIN, "Keep " + by);
+			say(left, "Keep " + by, GAIN);
 		} else {
-			left.htmlText = "";
+			say(left, "", DIM);
 		}
 	}
 
@@ -317,10 +365,19 @@ class BraceletJudge {
 			var right = field(group, RIGHT_NAME, TextFormatAlign.RIGHT);
 			var left = field(group, LEFT_NAME, TextFormatAlign.LEFT);
 			if (right != null)
-				right.htmlText = CombatPower.font(CombatPower.DIM, text);
+				say(right, text, DIM);
 			if (left != null)
-				left.htmlText = "";
+				say(left, "", DIM);
 		}
+	}
+
+	/**
+		Plain text in one colour. htmlText with a FONT tag drops a code-made field's font in the game's player (the colour
+		shows, the letters are boxes), so labels use text and textColor.
+	**/
+	static function say(field:TextField, text:String, color:Int):Void {
+		field.text = text;
+		field.textColor = color;
 	}
 
 	static function clear(group:Dynamic):Void {
@@ -329,7 +386,7 @@ class BraceletJudge {
 		for (name in [RIGHT_NAME, LEFT_NAME]) {
 			var made:Dynamic = group.getChildByName(name);
 			if (made != null)
-				made.htmlText = "";
+				made.text = "";
 		}
 	}
 
@@ -359,15 +416,17 @@ class BraceletJudge {
 			group.addChild(text);
 			Options.own(TWEAK, text);
 		}
-		// The font of an effect row, which shows Arkive's values fine (the title's font only has the glyphs it needs).
-		// The rows only exist once the game has drawn the page, so this is checked every time.
-		var like:Dynamic = rowField(group);
-		var own:Dynamic = like == null ? null : like.getTextFormat();
+		// The font of a field the game filled: the page's cost title ($YG760, there from the start), else an effect row.
+		var page:Dynamic = group.parent;
+		var like:Dynamic = page != null && (untyped __in__("costTitleTextField", page)) ? page.costTitleTextField : null;
+		if (like == null)
+			like = rowField(group);
+		var shown:Dynamic = like == null || like.length < 1 ? null : like.getTextFormat(0, 1);
 		var format = new TextFormat();
-		format.font = own != null && own.font != null ? own.font : "$YG760";
+		format.font = shown != null && shown.font != null ? shown.font : "$YG760";
 		format.size = 13;
 		format.align = align;
-		text.embedFonts = like != null ? like.embedFonts : true;
+		text.embedFonts = true;
 		text.defaultTextFormat = format;
 		return text;
 	}
