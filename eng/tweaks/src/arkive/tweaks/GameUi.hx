@@ -1,0 +1,100 @@
+package arkive.tweaks;
+
+import flash.system.ApplicationDomain;
+
+/**
+	Helpers for adding the game's own controls to its windows and pressing them. Classes are looked up in the shared
+	ApplicationDomain (every efui movie loads into efui_base's), with hasDefinition first, so nothing needs a try.
+**/
+class GameUi {
+	/** The game's plain button, the style its own windows use for extra actions. */
+	public static inline var PLAIN_BUTTON = "AnimatedButton_renew_V2";
+
+	/** A class or symbol any loaded movie defines, or null. */
+	public static function definition(name:String):Dynamic {
+		var domain = ApplicationDomain.currentDomain;
+		if (!domain.hasDefinition(name))
+			return null;
+		return domain.getDefinition(name);
+	}
+
+	/** A new plain game button with this label, or null when no movie has the symbol. */
+	public static function button(label:String):Dynamic {
+		var type:Dynamic = definition(PLAIN_BUTTON);
+		if (type == null)
+			return null;
+		var made:Dynamic = untyped __new__(type);
+		made.label = label;
+		return made;
+	}
+
+	/** A new button of the same kind as one of the window's own, with this label. */
+	public static function copy(like:Dynamic, label:String):Dynamic {
+		var type:Dynamic = like.constructor;
+		var made:Dynamic = untyped __new__(type);
+		made.label = label;
+		return made;
+	}
+
+	/** Adds the item to the other's parent, drawn just above it. */
+	public static function addAbove(item:Dynamic, below:Dynamic):Void {
+		var parent:Dynamic = below.parent;
+		var index:Int = parent.getChildIndex(below);
+		parent.addChildAt(item, index + 1);
+	}
+
+	/** Sets enabled only when it changes, so the button doesn't redraw every frame. */
+	public static function enable(button:Dynamic, on:Bool):Void {
+		if (button.enabled != on)
+			button.enabled = on;
+	}
+
+	/** Sets a game button's height and keeps its label centred in it. */
+	public static function setHeight(button:Dynamic, height:Float):Void {
+		var constraints:Dynamic = button.constraints;
+		var label:Dynamic = constraints == null ? null : constraints.getElement("textField");
+		if (label != null) {
+			var text:Float = button.height - label.top - label.bottom;
+			var margin:Float = (height - text) / 2;
+			if (margin < 0)
+				margin = 0;
+			label.top = margin;
+			label.bottom = margin;
+		}
+		button.height = height;
+	}
+
+	/** Clicks a game button the way the game's own click does. */
+	public static function press(button:Dynamic):Void {
+		button.dispatchEvent(new scaleform.clik.events.ButtonEvent(scaleform.clik.events.ButtonEvent.CLICK));
+	}
+
+	/** Clicks a list's row (scrolling it into view first), as the mouse would; false when it has no row there. */
+	public static function clickRow(list:Dynamic, index:Int):Bool {
+		var row:Dynamic = list.getRendererAtDataIndex(index);
+		if (row == null) {
+			list.scrollPosition = index;
+			list.validateNow();
+			row = list.getRendererAtDataIndex(index);
+		}
+		if (row == null)
+			return false;
+		row.dispatchEvent(new scaleform.gfx.MouseEventEx(flash.events.MouseEvent.CLICK));
+		return true;
+	}
+
+	/** Right-clicks an item slot as the game's mouse-up does: the slot's right-click event, then the client's call. */
+	public static function rightClickSlot(slot:Dynamic):Void {
+		if (scaleform.clik.managers.DragManager.inDrag())
+			return;
+		var bindID:String = slot.bindID;
+		var slotID:Int = slot.slotID;
+		slot.dispatchEvent(new ark.events.SlotEvent(ark.events.SlotEvent.RCLICK, true, false, 0, 1, bindID, slotID));
+		flash.external.ExternalInterface.call("ARKSlotMouseRightClick", slot);
+	}
+
+	/** The option's switch, on unless the settings turn it off. */
+	public static function on(tweak:String, key:String):Bool {
+		return Options.get(tweak, key, true) != false;
+	}
+}
