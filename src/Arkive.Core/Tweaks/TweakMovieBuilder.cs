@@ -99,6 +99,15 @@ public sealed class TweakSettings
 {
     public Dictionary<string, Dictionary<string, JsonElement>> Enabled { get; set; } = [];
 
-    /// <summary>{"tweaks":{"lobbycp":{},"extracurrency":{"showLeapstones":true}}}, the shape the tweak code reads.</summary>
-    public string ToGameJson() => JsonSerializer.Serialize(new { tweaks = Enabled });
+    /// <summary>
+    /// {"tweaks":{"lobbycp":{},"extracurrency":{"showLeapstones":true}}}, the shape the tweak code reads. Characters are
+    /// written as they are, not as \u escapes: Haxe's JSON parser reads those through Std.parseInt and Math.isNaN,
+    /// which Arkive's empty Boot leaves unset, so a single escape (a "+" in bracelet text) made every setting unreadable.
+    /// </summary>
+    public string ToGameJson() => JsonSerializer.Serialize(new { tweaks = Enabled }, GameJson);
+
+    private static readonly JsonSerializerOptions GameJson = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 }

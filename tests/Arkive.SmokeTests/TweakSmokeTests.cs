@@ -116,6 +116,10 @@ internal static class TweakSmokeTests
     {
         var settings = new Arkive.Core.Tweaks.TweakSettings();
         settings.Enabled["lobbycp"] = [];
+        // Text like a bracelet effect's: the default JSON writer would turn "+", "'" and "<" into \u escapes.
+        settings.Enabled["cpgems"] = new() { ["bracelet"] = System.Text.Json.JsonSerializer.SerializeToElement(new[] { "crit+5%.can't<x>|450|0" }) };
+        Assert(!settings.ToGameJson().Contains("\\u", StringComparison.Ordinal),
+            $"the tweak settings have \\u escapes, which the game's JSON reading can't handle: {settings.ToGameJson()}");
         var blocks = Arkive.Core.Tweaks.TweakCode.ForSettings(Arkive.Core.Tweaks.TweakCode.LoadSwf(), settings);
         Assert(blocks.Count > 0 && blocks.All(block => block.AbcName.StartsWith(Arkive.Core.Tweaks.TweakCode.AbcName + "/")),
             "the tweak code blocks are missing or unnamed");
