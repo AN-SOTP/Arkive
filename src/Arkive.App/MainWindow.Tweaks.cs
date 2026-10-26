@@ -7,21 +7,31 @@ using Arkive.Core.Tweaks;
 
 namespace Arkive.App;
 
-/// <summary>One thing to pick in a tweak option with choices.</summary>
-public sealed class TweakChoiceRow(TweakChoice choice, bool selected)
+/// <summary>One thing to pick in a tweak option with choices; <paramref name="group"/> names the set when only one may be picked.</summary>
+public sealed class TweakChoiceRow(TweakChoice choice, bool selected, string? group = null)
 {
     public TweakChoice Choice { get; } = choice;
     public string Label => Choice.Label;
     public bool Selected { get; set; } = selected;
+    public string? Group { get; } = group;
+    public Visibility CheckVisibility => Group is null ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility RadioVisibility => Group is null ? Visibility.Collapsed : Visibility.Visible;
 }
 
 /// <summary>One option of a tweak: a switch, or a set of choices.</summary>
 public sealed class TweakOptionRow
 {
-    public TweakOptionRow(TweakOption option, JsonElement? saved)
+    public TweakOptionRow(TweakOption option, JsonElement? saved, string tweakId = "")
     {
         Option = option;
-        if (option.Choices is { } choices)
+        if (option.Choices is { } single && option.Single)
+        {
+            var chosen = saved is { ValueKind: JsonValueKind.String } text && single.Any(choice => choice.Value == text.GetString())
+                ? text.GetString()
+                : (single.FirstOrDefault(choice => choice.Default) ?? single[0]).Value;
+            Choices = single.Select(choice => new TweakChoiceRow(choice, choice.Value == chosen, tweakId + "." + option.Key)).ToArray();
+        }
+        else if (option.Choices is { } choices)
         {
             var chosen = saved is { ValueKind: JsonValueKind.Array } list
                 ? list.EnumerateArray().Select(item => item.ToString()).ToHashSet()
@@ -41,10 +51,12 @@ public sealed class TweakOptionRow
     public Visibility SwitchVisibility => Option.Choices is null ? Visibility.Visible : Visibility.Collapsed;
     public Visibility ChoicesVisibility => Option.Choices is null ? Visibility.Collapsed : Visibility.Visible;
 
-    /// <summary>The value saved and written into the game: true/false, or the chosen values.</summary>
+    /// <summary>The value saved and written into the game: true/false, the chosen value (single), or the chosen values.</summary>
     public JsonElement ToJson() => Option.Choices is null
         ? JsonSerializer.SerializeToElement(Value)
-        : JsonSerializer.SerializeToElement(Choices.Where(choice => choice.Selected).Select(choice => choice.Choice.Value).ToArray());
+        : Option.Single
+            ? JsonSerializer.SerializeToElement((Choices.FirstOrDefault(choice => choice.Selected) ?? Choices[0]).Choice.Value)
+            : JsonSerializer.SerializeToElement(Choices.Where(choice => choice.Selected).Select(choice => choice.Choice.Value).ToArray());
 }
 
 /// <summary>One tweak in the Tweaks tab.</summary>
@@ -104,7 +116,7 @@ public partial class MainWindow
         {
             var saved = state.Settings.Enabled.GetValueOrDefault(tweak.Id);
             var options = tweak.OptionList.Select(option => new TweakOptionRow(option,
-                saved is not null && saved.TryGetValue(option.Key, out var value) ? value : null)).ToArray();
+                saved is not null && saved.TryGetValue(option.Key, out var value) ? value : null, tweak.Id)).ToArray();
             return new TweakRow(tweak, saved is not null, options);
         }).ToArray();
         var on = state.Settings.Enabled.Count;

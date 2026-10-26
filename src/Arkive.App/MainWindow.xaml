@@ -1286,8 +1286,12 @@
                                                                         </ItemsControl.ItemsPanel>
                                                                         <ItemsControl.ItemTemplate>
                                                                             <DataTemplate>
-                                                                                <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}"
-                                                                                          MinWidth="220" Margin="0,0,12,4" />
+                                                                                <StackPanel>
+                                                                                    <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}"
+                                                                                              Visibility="{Binding CheckVisibility}" MinWidth="220" Margin="0,0,12,4" />
+                                                                                    <RadioButton Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" GroupName="{Binding Group}"
+                                                                                                 Visibility="{Binding RadioVisibility}" MinWidth="220" Margin="0,0,12,4" />
+                                                                                </StackPanel>
                                                                             </DataTemplate>
                                                                         </ItemsControl.ItemTemplate>
                                                                     </ItemsControl>
