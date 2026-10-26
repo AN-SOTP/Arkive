@@ -10,6 +10,7 @@ internal static class TweakSmokeTests
         new("reads and writes ActionScript 3 code and movie tags byte for byte", TestAbcRoundTrip),
         new("hooks a movie method: keeps the original under a new name and calls the tweak handler after it", TestHookInjection),
         new("hooks before a method (able to skip it) and after it (able to change its result)", TestHookKinds),
+        new("hooks one method for two tweaks: the second wrapper wraps the first, so both handlers run", TestTwoHooksOneMethod),
         new("exposes a private method to tweak code under its plain public name, bound to the same method", TestExpose),
         new("exposes a private field to tweak code through a public getter and setter", TestExposeField),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
@@ -103,6 +104,31 @@ internal static class TweakSmokeTests
             "the wrapper does not call the tweak's handler");
         var again = AbcHookInjector.Inject(reread, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet")]);
         Assert(again.Count == 0 && reread.Instances[0].Traits.Count == 2, "hooking twice added a second wrapper");
+    }
+
+    private static void TestTwoHooksOneMethod()
+    {
+        var abc = BuildGreeter();
+        var originalMethod = abc.Instances[0].Traits.Single().Index;
+        AbcHook[] hooks = [new("demo.Greeter", "greet", "demo.One.onGreet"), new("demo.Greeter", "greet", "demo.Two.onGreet")];
+        Assert(AbcHookInjector.Inject(abc, hooks).Count == 0, "a hook was reported missing");
+
+        var reread = AbcFile.Read(abc.Write());
+        var p = reread.Pool;
+        var traits = reread.Instances[0].Traits;
+        AbcTrait Named(string name) => traits.Single(trait => p.NameOf(trait.Name) == name);
+        string Calls(AbcTrait trait) => string.Join(",", AbcInstructions.Starts(reread.BodyOf(trait.Index)!.Code)
+            .Select(start => (Code: reread.BodyOf(trait.Index)!.Code, Start: start))
+            .Where(item => item.Code[item.Start] is 0x46 or 0x4F or 0x60)
+            .Select(item => { var at = item.Start + 1; var value = 0; var shift = 0; byte b; do { b = item.Code[at++]; value |= (b & 0x7F) << shift; shift += 7; } while ((b & 0x80) != 0); return p.QualifiedName(value); }));
+        Assert(traits.Count == 3 && Named("greet" + AbcHookInjector.RenamedSuffix).Index == originalMethod,
+            "the original is not kept under the first name");
+        Assert(Calls(Named("greet")) == "greet" + AbcHookInjector.RenamedSuffix + "2,demo.Two,onGreet",
+            "the outer wrapper does not call the inner one, then the second handler: " + Calls(Named("greet")));
+        Assert(Calls(Named("greet" + AbcHookInjector.RenamedSuffix + "2")) == "greet" + AbcHookInjector.RenamedSuffix + ",demo.One,onGreet",
+            "the inner wrapper does not call the original, then the first handler");
+        AbcHookInjector.Inject(reread, hooks);
+        Assert(reread.Instances[0].Traits.Count == 3, "hooking both again added wrappers");
     }
 
     /// <summary>The three wrapper shapes, read back instruction by instruction (Mari's shapes A/B and C/D).</summary>

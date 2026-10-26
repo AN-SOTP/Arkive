@@ -55,12 +55,17 @@ public static class AbcHookInjector
 {
     public const string RenamedSuffix = "$arkive";
 
-    /// <summary>Applies the hooks; returns the ids of hooks whose class or method this code doesn't have, or can't take.</summary>
+    /// <summary>
+    /// Applies the hooks; returns the ids of hooks whose class or method this code doesn't have, or can't take. Several
+    /// tweaks may hook one method: each further hook wraps the previous wrapper (kept as <c>m$arkive2</c>, <c>m$arkive3</c>,
+    /// …), so every handler runs, in the order given. Code that already holds a hook's wrapper is left as it is.
+    /// </summary>
     public static IReadOnlyList<string> Inject(AbcFile abc, IEnumerable<AbcHook> hooks)
     {
         var missing = new List<string>();
         var pool = abc.Pool;
-        var all = hooks.ToArray();
+        var all = hooks.Distinct().ToArray();
+        var layers = new Dictionary<string, int>();
         foreach (var hook in all)
         {
             var classIndex = abc.FindClass(hook.ClassName);
@@ -72,7 +77,9 @@ public static class AbcHookInjector
                 continue;
             }
             var original = pool.Multinames[trait.Name];
-            var renamed = pool.AddQName(original.Namespace, hook.MethodName + RenamedSuffix);
+            var layer = layers.GetValueOrDefault(hook.Id) + 1;
+            layers[hook.Id] = layer;
+            var renamed = pool.AddQName(original.Namespace, hook.MethodName + RenamedSuffix + (layer == 1 ? "" : layer.ToString()));
             if (traits.Any(item => item.Name == renamed)) continue;
 
             var method = abc.Methods[trait.Index];

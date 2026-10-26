@@ -87,7 +87,7 @@ public static class TweakMovieBuilder
             throw new InvalidDataException("This movie already holds Arkive's tweak code; build from the game's own movie.");
         var main = tags.MainAbc;
         var abc = AbcFile.Read(main.AbcData);
-        var missing = AbcHookInjector.Inject(abc, hooks.DistinctBy(hook => hook.Id));
+        var missing = AbcHookInjector.Inject(abc, hooks);
         tags.Tags[tags.Tags.IndexOf(main)] = main.WithAbc(abc.Write());
         foreach (var block in tweakCode) tags.AppendAbc(block);
         return new TweakMovieResult(tags.Write(), missing);
