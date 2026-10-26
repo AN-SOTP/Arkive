@@ -439,6 +439,7 @@ public partial class MainWindow : Window
         ApplyBannerArtwork(_activeBannerArtwork);
         SourceInitialized += (_, _) =>
             AppearanceManager.ApplyWindowChrome(this, _effectiveAppearanceTheme);
+        SourceInitialized += (_, _) => StartPlayerLogsListener();
         ApplyRestoredSettings(_restoredSettings);
         Log($"Arkive session started. Log file: {_sessionLog.FilePath}");
         Log($"Arkive {typeof(MainWindow).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown"} " +
