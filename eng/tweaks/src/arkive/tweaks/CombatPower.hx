@@ -829,7 +829,8 @@ class CombatPower {
 				for (entry in listed)
 					orbRows.push(entry);
 		}
-		var start:String = item.name + "|" + (role == 1 ? "2" : "1") + "|";
+		var name:String = item.name;
+		var start:String = name + "|" + (role == 1 ? "2" : "1") + "|";
 		for (entry in orbRows) {
 			if (!StringTools.startsWith(entry, start))
 				continue;
