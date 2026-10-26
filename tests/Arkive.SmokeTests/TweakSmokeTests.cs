@@ -9,6 +9,7 @@ internal static class TweakSmokeTests
     [
         new("reads and writes ActionScript 3 code and movie tags byte for byte", TestAbcRoundTrip),
         new("hooks a movie method: keeps the original under a new name and calls the tweak handler after it", TestHookInjection),
+        new("hooks before a method (able to skip it) and after it (able to change its result)", TestHookKinds),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
     ];
@@ -95,11 +96,74 @@ internal static class TweakSmokeTests
         Assert(method.ParameterTypes.Count == 1 && reread.Pool.NameOf(method.ReturnType) == "String",
             "the wrapper does not have the original's signature");
         var body = reread.BodyOf(wrapper.Index) ?? throw new InvalidOperationException("wrapper has no body");
-        Assert(body.Code[^1] == 0x48 && body.LocalCount == 5 && body.Exceptions.Count == 1, "the wrapper does not return the handler's value");
+        Assert(body.Code[^1] == 0x48 && body.Exceptions.Count == 1, "the wrapper does not return the game's result");
         Assert(reread.Pool.Strings.Contains("onGreet") && reread.Pool.Strings.Contains("Tweak"),
             "the wrapper does not call the tweak's handler");
         var again = AbcHookInjector.Inject(reread, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet")]);
         Assert(again.Count == 0 && reread.Instances[0].Traits.Count == 2, "hooking twice added a second wrapper");
+    }
+
+    /// <summary>The three wrapper shapes, read back instruction by instruction (Mari's shapes A/B and C/D).</summary>
+    private static void TestHookKinds()
+    {
+        string Shape(AbcHookKind kind)
+        {
+            var abc = BuildGreeter();
+            AbcHookInjector.Inject(abc, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet", Kind: kind)]);
+            var reread = AbcFile.Read(abc.Write());
+            var wrapper = reread.Instances[0].Traits.Single(trait => reread.Pool.NameOf(trait.Name) == "greet");
+            var body = reread.BodyOf(wrapper.Index) ?? throw new InvalidOperationException("wrapper has no body");
+            Assert(body.Exceptions.Count == 1 && body.LocalCount == 6, $"{kind}: the wrapper's guard or locals are wrong");
+            foreach (var exception in body.Exceptions)
+                Assert(exception.Target < body.Code.Length && AbcInstructions.Starts(body.Code).Contains(exception.Target),
+                    $"{kind}: the guard does not land on an instruction");
+            // Each call or property read as "op:name/count"; branches checked to land on instructions.
+            var steps = new List<string>();
+            var starts = AbcInstructions.Starts(body.Code).ToHashSet();
+            foreach (var start in AbcInstructions.Starts(body.Code))
+            {
+                var op = body.Code[start];
+                var at = start + 1;
+                int U30()
+                {
+                    var value = 0;
+                    for (var shift = 0; ; shift += 7)
+                    {
+                        var b = body.Code[at++];
+                        value |= (b & 0x7F) << shift;
+                        if ((b & 0x80) == 0) return value;
+                    }
+                }
+                switch (op)
+                {
+                    case 0x46 or 0x4F:
+                        var name = reread.Pool.NameOf(U30());
+                        steps.Add((op == 0x46 ? "call:" : "callvoid:") + name + "/" + U30());
+                        break;
+                    case 0x66:
+                        var multiname = U30();
+                        steps.Add("get:" + (reread.Pool.Multinames[multiname].Kind == AbcMultiname.MultinameL ? "[i]" : reread.Pool.NameOf(multiname)));
+                        break;
+                    case 0x12:
+                        var offset = body.Code[at] | (body.Code[at + 1] << 8) | ((sbyte)body.Code[at + 2] << 16);
+                        Assert(starts.Contains(start + 4 + offset), $"{kind}: a branch does not land on an instruction");
+                        steps.Add("iffalse");
+                        break;
+                    case 0x47 or 0x48:
+                        steps.Add("return");
+                        break;
+                }
+            }
+            return string.Join(" ", steps);
+        }
+
+        var after = Shape(AbcHookKind.After);
+        Assert(after == "call:greet$arkive/1 callvoid:onGreet/3 return", "after hook: " + after);
+        var afterValue = Shape(AbcHookKind.AfterValue);
+        Assert(afterValue == "call:greet$arkive/1 call:onGreet/3 iffalse get:value return", "after hook with value: " + afterValue);
+        var before = Shape(AbcHookKind.Before);
+        Assert(before == "call:onGreet/2 iffalse get:return iffalse get:value return get:[i] call:greet$arkive/1 return",
+            "before hook: " + before);
     }
 
     /// <summary>package demo { public class Greeter { public function greet(name:String):String { return name; } } }</summary>

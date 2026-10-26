@@ -1,12 +1,32 @@
 namespace Arkive.Core.Interface.Abc;
 
+/// <summary>When a hook's handler runs, and what its return value can do (the four wrapper shapes Mari's hooks use).</summary>
+public enum AbcHookKind
+{
+    /// <summary>After the game's method: <c>Handler(this, args, result)</c>; its return value is ignored.</summary>
+    After,
+
+    /// <summary>
+    /// After the game's method, able to change what it returns: <c>Handler(this, args, result)</c> returns null to keep
+    /// the result or <c>{value: x}</c> to return x instead.
+    /// </summary>
+    AfterValue,
+
+    /// <summary>
+    /// Before the game's method: <c>Handler(this, args)</c> returns null to go on, or <c>{return: true}</c> (with
+    /// <c>value: x</c> for a method that returns something) to skip the game's method. The game's method gets
+    /// <c>args[i]</c>, so the handler can change the arguments.
+    /// </summary>
+    Before,
+}
+
 /// <summary>
 /// A game method to hook (its class's qualified name and the method) and the tweak's static handler for it
-/// ("package.Class.method"). The wrapper calls the game's method, then the handler:
-/// <c>args = [arguments]; result = this.original(arguments); try { result = Handler(this, args, result); } catch {}
-/// return result;</c>
+/// ("package.Class.method"). By default the wrapper calls the game's method, then the handler:
+/// <c>args = [arguments]; result = this.original(arguments); try { Handler(this, args, result); } catch {}
+/// return result;</c>. <see cref="Kind"/> picks the other shapes.
 /// </summary>
-public sealed record AbcHook(string ClassName, string MethodName, string Handler, bool Static = false)
+public sealed record AbcHook(string ClassName, string MethodName, string Handler, bool Static = false, AbcHookKind Kind = AbcHookKind.After)
 {
     /// <summary>
     /// Developer builds only: errors from the handler, and from the game's method too, are passed as
@@ -64,7 +84,7 @@ public static class AbcHookInjector
             {
                 Method = wrapperIndex,
                 MaxStack = parameters + 6,
-                LocalCount = parameters + 4,
+                LocalCount = parameters + 5,
                 InitScopeDepth = body.InitScopeDepth,
                 MaxScopeDepth = body.InitScopeDepth + 1,
             });
@@ -81,8 +101,11 @@ public static class AbcHookInjector
     }
 
     /// <summary>
-    /// <c>args = [p1..pn]; result = this.original(p1..pn); try { result = Handler(this, args, result); } catch {} return result;</c>
-    /// Void methods ignore the handler's value. Diagnostic hooks also guard the game's call, and note every error.
+    /// After: <c>args = [p1..pn]; result = this.original(p1..pn); try { Handler(this, args, result); } catch {} return result;</c>
+    /// AfterValue: <c>… try { o = Handler(this, args, result); } catch {} if (o) result = o.value; return result;</c>
+    /// Before: <c>args = [p1..pn]; try { o = Handler(this, args); } catch {} if (o &amp;&amp; o["return"]) return o.value;
+    /// return this.original(args[0]..args[n-1]);</c>
+    /// Diagnostic hooks also guard the game's call, and note every error.
     /// </summary>
     private static (byte[] Code, AbcException[] Handlers) WrapperCode(
         AbcConstantPool pool, AbcHook hook, int parameters, int renamed, bool returnsVoid)
@@ -100,12 +123,18 @@ public static class AbcHookInjector
         var args = parameters + 1;
         var result = parameters + 2;
         var error = parameters + 3;
+        var answer = parameters + 4;
+        var before = hook.Kind == AbcHookKind.Before;
+        var index = before ? pool.AddMultinameL(publicNs) : 0;
+        var valueName = hook.Kind == AbcHookKind.After ? 0 : pool.AddQName(publicNs, "value");
+        var returnName = before ? pool.AddQName(publicNs, "return") : 0;
         var code = new AbcCode();
         var handlers = new List<AbcException>();
         code.Op(0xD0).Op(0x30);
         for (var local = 1; local <= parameters; local++) code.GetLocal(local);
         code.Op(0x56).U30(parameters).SetLocal(args);
         code.Op(0x21).SetLocal(result);
+        code.Op(0x21).SetLocal(answer);
 
         void Guarded(Action<AbcCode> body, string label)
         {
@@ -125,24 +154,57 @@ public static class AbcHookInjector
             handlers.Add(new AbcException(start, end, target, 0, 0));
         }
 
+        // After hooks pass the wrapper's own parameters; before hooks pass args[i], which the handler may have changed.
         void Original(AbcCode c)
         {
             c.Op(0xD0);
-            for (var local = 1; local <= parameters; local++) c.GetLocal(local);
+            for (var local = 1; local <= parameters; local++)
+            {
+                if (before) c.GetLocal(args).PushInt(local - 1).Op(0x66).U30(index);
+                else c.GetLocal(local);
+            }
             if (returnsVoid) c.Op(0x4F).U30(renamed).U30(parameters);
             else c.Op(0x46).U30(renamed).U30(parameters).SetLocal(result);
         }
 
+        void Handler(AbcCode c)
+        {
+            c.Op(0x60).U30(ownerName).Op(0xD0).GetLocal(args);
+            if (!before) c.GetLocal(result);
+            var count = before ? 2 : 3;
+            if (hook.Kind == AbcHookKind.After) c.Op(0x4F).U30(method).U30(count);
+            else c.Op(0x46).U30(method).U30(count).SetLocal(answer);
+        }
+
+        void Return(AbcCode c)
+        {
+            if (returnsVoid) c.Op(0x47);
+            else c.GetLocal(result).Op(0x48);
+        }
+
+        if (before)
+        {
+            Guarded(Handler, "TWEAK ");
+            var noAnswer = code.GetLocal(answer).Branch(0x12); // iffalse
+            var goOn = code.GetLocal(answer).Op(0x66).U30(returnName).Branch(0x12);
+            if (!returnsVoid) code.GetLocal(answer).Op(0x66).U30(valueName).SetLocal(result);
+            Return(code);
+            code.Land(noAnswer);
+            code.Land(goOn);
+        }
         if (hook.Diagnostic) Guarded(Original, "ORIG ");
         else Original(code);
-        Guarded(c =>
+        if (!before)
         {
-            c.Op(0x60).U30(ownerName).Op(0xD0).GetLocal(args).GetLocal(result);
-            if (returnsVoid) c.Op(0x4F).U30(method).U30(3);
-            else c.Op(0x46).U30(method).U30(3).SetLocal(result);
-        }, "TWEAK ");
-        if (returnsVoid) code.Op(0x47);
-        else code.GetLocal(result).Op(0x48);
+            Guarded(Handler, "TWEAK ");
+            if (hook.Kind == AbcHookKind.AfterValue)
+            {
+                var keep = code.GetLocal(answer).Branch(0x12);
+                code.GetLocal(answer).Op(0x66).U30(valueName).SetLocal(result);
+                code.Land(keep);
+            }
+        }
+        Return(code);
         return (code.ToArray(), handlers.ToArray());
     }
 }
@@ -176,6 +238,9 @@ public sealed class AbcCode
     public AbcCode GetLocal(int local) => local <= 3 ? Op((byte)(0xD0 + local)) : Op(0x62).U30(local);
 
     public AbcCode SetLocal(int local) => local <= 3 ? Op((byte)(0xD4 + local)) : Op(0x63).U30(local);
+
+    /// <summary>pushbyte for small values, pushshort otherwise (0..32767).</summary>
+    public AbcCode PushInt(int value) => value < 128 ? Op(0x24).Op((byte)value) : Op(0x25).U30(value);
 
     /// <summary>Writes a branch with a placeholder offset; <see cref="Land"/> points it at the current position.</summary>
     public int Branch(byte opcode)

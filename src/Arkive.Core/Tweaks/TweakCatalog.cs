@@ -18,12 +18,13 @@ public enum TweakRisk
 
 /// <summary>
 /// A game method a tweak hooks: the interface package, the movie export, the class, the method, and the tweak code's
-/// static handler ("arkive.tweaks.Class.method"; null while the tweak isn't written yet).
+/// static handler ("arkive.tweaks.Class.method"; null while the tweak isn't written yet), and when the handler runs.
 /// </summary>
-public sealed record TweakHookTarget(string Package, string Movie, string ClassName, string Method, string? Handler = null)
+public sealed record TweakHookTarget(string Package, string Movie, string ClassName, string Method, string? Handler = null,
+    Interface.Abc.AbcHookKind Kind = Interface.Abc.AbcHookKind.After)
 {
     public Interface.Abc.AbcHook Hook => new(ClassName, Method,
-        Handler ?? throw new InvalidOperationException($"{ClassName}.{Method} has no handler yet."));
+        Handler ?? throw new InvalidOperationException($"{ClassName}.{Method} has no handler yet."), Kind: Kind);
 }
 
 /// <summary>
@@ -57,8 +58,9 @@ public static class TweakCatalog
     private const string Components = "efui_components";
     private const string Base = "efui_base";
 
-    private static TweakHookTarget H(string package, string movie, string className, string method, string? handler = null) =>
-        new(package, movie, className, method, handler);
+    private static TweakHookTarget H(string package, string movie, string className, string method, string? handler = null,
+        Interface.Abc.AbcHookKind kind = Interface.Abc.AbcHookKind.After) =>
+        new(package, movie, className, method, handler, kind);
 
     public static IReadOnlyList<TweakDefinition> All { get; } =
     [

@@ -84,6 +84,21 @@ public sealed class AbcConstantPool
         return Multinames.Count - 1;
     }
 
+    /// <summary>A run-time name (MultinameL) over a set holding just this namespace, as `array[index]` reads use.</summary>
+    public int AddMultinameL(int namespaceIndex)
+    {
+        var set = NamespaceSets.FindIndex(1, item => item.Length == 1 && item[0] == namespaceIndex);
+        if (set < 0)
+        {
+            NamespaceSets.Add([namespaceIndex]);
+            EmptyCounts[5] = false;
+            set = NamespaceSets.Count - 1;
+        }
+        for (var index = 1; index < Multinames.Count; index++)
+            if (Multinames[index].Kind == AbcMultiname.MultinameL && Multinames[index].NamespaceSet == set) return index;
+        return AddMultiname(new AbcMultiname(AbcMultiname.MultinameL) { NamespaceSet = set });
+    }
+
     public int AddMultiname(AbcMultiname multiname)
     {
         Multinames.Add(multiname);
