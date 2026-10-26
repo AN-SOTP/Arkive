@@ -107,7 +107,10 @@ public partial class MainWindow
 
     private TweakModService Tweaks => _tweaks ??= new TweakModService(
         _arkiveModLibrary, Path.Combine(_projectRoot, "tweaks"), _protectionProvider,
-        (path, token) => _arkiveModApply.ResolveCleanPackageAsync(path, token));
+        (path, token) => _arkiveModApply.ResolveCleanPackageAsync(path, token))
+    {
+        Edits = _arkiveModEdits,
+    };
 
     private void RefreshTweaks(string? status = null)
     {
