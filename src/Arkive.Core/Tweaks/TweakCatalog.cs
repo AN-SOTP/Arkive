@@ -170,7 +170,7 @@ public static class TweakCatalog
         ],
         [
             new("autoAccept", "Accept ready checks by itself (acts without a click)", false),
-        ], Note: "Gems and feasts are checked the way Mari does, by the English text of their tooltips, so this works with the English game client. Auto-accept skips prompts that mention the keyboard input limit."),
+        ], Note: "Gems and feasts are read from the English text of their tooltips, so this needs the English game client. Auto-accept skips prompts that mention the keyboard input limit."),
         new("slottweaks", "Slot Tweaks", "Marks item icons so their properties show at a glance, and shows full stack counts instead of \"9999+\".", TweakRisk.Display,
         [
             H(Base, "main", "ark.controls.ARKNewSlot", "draw", "arkive.tweaks.SlotTweaks.onDraw"),

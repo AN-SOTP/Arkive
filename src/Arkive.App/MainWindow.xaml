@@ -1274,8 +1274,10 @@
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
                                                             <StackPanel>
-                                                                <CheckBox Content="{Binding Label}" IsChecked="{Binding Value, Mode=TwoWay}" FontSize="12.5" Margin="0,0,0,3"
-                                                                          Visibility="{Binding SwitchVisibility}" />
+                                                                <CheckBox IsChecked="{Binding Value, Mode=TwoWay}" FontSize="12.5" Margin="0,0,0,3"
+                                                                          Visibility="{Binding SwitchVisibility}">
+                                                                    <TextBlock Text="{Binding Label}" TextWrapping="Wrap" />
+                                                                </CheckBox>
                                                                 <StackPanel Visibility="{Binding InlineChoicesVisibility}" Margin="0,1,0,3">
                                                                     <TextBlock Text="{Binding Label}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
                                                                     <ItemsControl ItemsSource="{Binding Choices}">
@@ -1289,8 +1291,10 @@
                                                                                 <StackPanel>
                                                                                     <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" FontSize="12.5"
                                                                                               Visibility="{Binding CheckVisibility}" Margin="0,0,12,2" />
-                                                                                    <RadioButton Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" GroupName="{Binding Group}" FontSize="12.5"
-                                                                                                 Visibility="{Binding RadioVisibility}" Margin="0,0,12,2" />
+                                                                                    <RadioButton IsChecked="{Binding Selected, Mode=TwoWay}" GroupName="{Binding Group}" FontSize="12.5"
+                                                                                                 Visibility="{Binding RadioVisibility}" Margin="0,0,12,2">
+                                                                                        <TextBlock Text="{Binding Label}" TextWrapping="Wrap" />
+                                                                                    </RadioButton>
                                                                                 </StackPanel>
                                                                             </DataTemplate>
                                                                         </ItemsControl.ItemTemplate>
