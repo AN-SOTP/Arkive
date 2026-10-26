@@ -10,8 +10,8 @@ import flash.utils.Timer;
 import scaleform.clik.events.ButtonEvent;
 
 /**
-	In-game Tweak Settings: an "Arkive" button beside the escape menu's content-status gear opens a panel over the
-	content status list. Each tweak has a switch, and a click on its name folds its options out. A change acts at once
+	In-game Tweak Settings: an "Arkive Tweaks" button in the escape menu's bottom bar, beside Store and made from the
+	bar's own button, opens a panel over the content status list. Each tweak has a switch, and a click on its name folds its options out. A change acts at once
 	(Options' live store, which every window shares) and is sent to Arkive on the Data Bus to keep; the panel says
 	"Saved" once Arkive's live.json answers the change, or that the change lasts only until the game closes.
 	The panel draws its own rows and switches rather than using the menu's controls, which report to the game.
@@ -44,36 +44,41 @@ class SettingsPanel {
 	static var checks = 0;
 	static var checker:Timer;
 
-	/** MenuWndContent.configUI: the button beside the content-status gear, and the (hidden) panel. */
+	/** The bottom bar's buttons (Store, Settings, Quit...): the game's renderer symbol and class. */
+	static inline var BAR_SYMBOL = "ExitMenuBottomBtinListRenderer";
+	static inline var BAR_ITEM = "ark.ui.systemMenu_new.ExitMenuBottomBtnListItem";
+
+	static var placedX:Float = -1;
+	static var placedY:Float = -1;
+	static var frames = 0;
+
+	/**
+		MenuWndContent.configUI: an "Arkive Tweaks" button made from the bottom bar's own button symbol (an "A" for its
+		icon), placed beside Store once the game has filled the bar, and the (hidden) panel.
+	**/
 	public static function onMenuConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
 		var group:Dynamic = self.contentsGroup;
-		if (group == null || group.settingButton == null)
-			return;
-		var gear:Dynamic = group.settingButton;
-		var button:Dynamic = GameUi.button("Arkive");
-		if (button == null)
+		var bar:Dynamic = self.bottomBtnList;
+		var type:Dynamic = GameUi.definition(BAR_SYMBOL);
+		if (group == null || bar == null || type == null)
 			return;
 		gameFont(group);
-		button.autoSize = "none";
-		button.width = 84;
-		GameUi.setHeight(button, gear.height > 20 ? gear.height : 24);
-		button.x = gear.x - button.width - 8;
-		button.y = gear.y + (gear.height - button.height) / 2;
-		// Keep clear of "show all": narrower first, then above the gear's row.
-		var other:Dynamic = group.showAllContentsButton;
-		if (other != null && other.visible && other.x + other.width + 6 > button.x) {
-			var room:Float = gear.x - 8 - (other.x + other.width + 6);
-			if (room >= 60) {
-				button.width = room;
-				button.x = gear.x - room - 8;
-			} else {
-				button.x = gear.x + gear.width - button.width;
-				button.y = gear.y - button.height - 6;
-			}
+		var item:Dynamic = untyped __new__(type);
+		try {
+			item.setData({nameStr: "Arkive Tweaks", isSpacial: false, iconType: -1, isNew: false});
+		} catch (error:Dynamic) {
+			item.nameStr = "Arkive Tweaks";
 		}
-		group.addChild(button);
+		item.visible = false;
+		item.name = "arkiveTweaksButton";
+		self.addChild(item);
+		placedX = -1;
 		build(group);
-		button.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) toggle());
+		item.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) {
+			event.stopPropagation();
+			toggle();
+		});
+		item.addEventListener("enterFrame", place);
 		if (!listening) {
 			listening = true;
 			Options.listen(function(tweak:String, key:String) {
@@ -81,6 +86,157 @@ class SettingsPanel {
 					render();
 			});
 		}
+	}
+
+	/**
+		Every frame while the menu shows: finds the bar's buttons (the game fills and may refill the bar after configUI)
+		and puts ours one button-width left of Store, the same size, with the game's own label font and an "A" icon. If
+		that spot is taken by the character panel or off the menu, it goes after the last button instead.
+	**/
+	static function place(event:Dynamic):Void {
+		var item:Dynamic = event.currentTarget;
+		var self:Dynamic = item.parent;
+		var bar:Dynamic = self == null ? null : self.bottomBtnList;
+		var window:Dynamic = self == null ? null : self.parent;
+		if (bar == null || self.visible != true || (window != null && window.visible != true))
+			return;
+		// Once placed, look again only every half second or so.
+		frames++;
+		if (item.visible == true && frames % 30 != 0)
+			return;
+		var buttons:Array<Dynamic> = [];
+		collect(bar, buttons, 0);
+		if (buttons.length < 2 || bar.visible != true) {
+			item.visible = false;
+			return;
+		}
+		var origin = new flash.geom.Point(0, 0);
+		var xs:Array<Float> = [];
+		for (button in buttons) {
+			var at:Dynamic = self.globalToLocal(button.localToGlobal(origin));
+			xs.push(at.x);
+		}
+		var first = 0;
+		var last = 0;
+		var store = -1;
+		for (i in 0...buttons.length) {
+			if (xs[i] < xs[first])
+				first = i;
+			if (xs[i] > xs[last])
+				last = i;
+			var label:String = buttons[i].nameStr;
+			if (label != null && label.indexOf("Store") >= 0)
+				store = i;
+		}
+		if (store < 0)
+			store = first;
+		var anchor:Dynamic = buttons[store];
+		var spot:Dynamic = self.globalToLocal(anchor.localToGlobal(origin));
+		var far:Dynamic = self.globalToLocal(anchor.localToGlobal(new flash.geom.Point(100, 0)));
+		var scale:Float = (far.x - spot.x) / 100;
+		var pitch:Float = 0;
+		for (i in 0...buttons.length) {
+			var gap:Float = xs[i] - spot.x;
+			if (gap > 1 && (pitch == 0 || gap < pitch))
+				pitch = gap;
+		}
+		if (pitch == 0)
+			pitch = anchor.width * scale + 4;
+		var x:Float = spot.x - pitch;
+		var y:Float = spot.y;
+		// Store hasn't moved since the last frame: nothing to do.
+		if (spot.x == placedX && spot.y == placedY && item.visible == true)
+			return;
+		var itemWidth:Float = anchor.width * scale;
+		var itemHeight:Float = anchor.height * scale;
+		var info:Dynamic = self.characterInfoGroup;
+		var blocked = x < 0;
+		if (!blocked && info != null && info.visible == true) {
+			var box:Dynamic = info.getBounds(self);
+			blocked = x < box.x + box.width && x + itemWidth > box.x && y < box.y + box.height && y + itemHeight > box.y;
+		}
+		if (blocked) {
+			var end:Dynamic = self.globalToLocal(buttons[last].localToGlobal(origin));
+			x = end.x + pitch;
+			y = end.y;
+		}
+		item.x = x;
+		item.y = y;
+		item.width = itemWidth;
+		item.height = itemHeight;
+		dress(item, anchor);
+		item.visible = true;
+		placedX = spot.x;
+		placedY = spot.y;
+	}
+
+	/** The bar's buttons that show, searched a few levels down (the tile list keeps them in its own holder). */
+	static function collect(at:Dynamic, found:Array<Dynamic>, depth:Int):Void {
+		if (depth > 4 || at == null || !GameUi.isA(at, "flash.display.DisplayObjectContainer"))
+			return;
+		var count:Int = at.numChildren;
+		for (i in 0...count) {
+			var child:Dynamic = at.getChildAt(i);
+			if (child == null || child.visible != true || child.name == "arkiveTweaksButton")
+				continue;
+			if (GameUi.isA(child, BAR_ITEM)) {
+				var label:String = child.nameStr;
+				if (label != null && label.length > 0)
+					found.push(child);
+			} else {
+				collect(child, found, depth + 1);
+			}
+		}
+	}
+
+	/**
+		Our label in the game's label font and colour, and an "A" in a ring where the game's buttons have their icon,
+		set as the button's iconMc so it takes the game's hover and press tints.
+	**/
+	static function dress(item:Dynamic, like:Dynamic):Void {
+		var label:Dynamic = item.nameTextField;
+		var model:Dynamic = like.nameTextField;
+		if (label != null && model != null) {
+			var format:Dynamic = model.getTextFormat();
+			label.embedFonts = model.embedFonts;
+			label.defaultTextFormat = format;
+			label.htmlText = "Arkive Tweaks";
+			label.setTextFormat(format);
+			label.textColor = model.textColor;
+		}
+		if (item.iconMc != null)
+			return;
+		var icon:Dynamic = like.iconMc;
+		var size:Float = icon == null ? 30 : (icon.height > icon.width ? icon.height : icon.width);
+		if (size < 16)
+			size = 30;
+		// iconMc is typed MovieClip in the game class, so the mark must be one.
+		var mark = new flash.display.MovieClip();
+		var ring = new Shape();
+		ring.graphics.lineStyle(2, 0xD1D2D0, 1);
+		ring.graphics.drawCircle(size / 2, size / 2, size / 2 - 2);
+		mark.addChild(ring);
+		var letter = new TextField();
+		var format = new TextFormat();
+		format.font = model == null ? font : model.getTextFormat().font;
+		format.size = Std.int(size * 0.62);
+		format.align = flash.text.TextFormatAlign.CENTER;
+		letter.embedFonts = model == null ? embed : model.embedFonts;
+		letter.defaultTextFormat = format;
+		letter.textColor = 0xD1D2D0;
+		letter.selectable = false;
+		letter.mouseEnabled = false;
+		letter.width = size;
+		letter.height = size;
+		letter.text = "A";
+		letter.y = (size - letter.textHeight) / 2 - 2;
+		mark.addChild(letter);
+		if (icon != null) {
+			mark.x = icon.x;
+			mark.y = icon.y;
+		}
+		item.container.addChild(mark);
+		item.iconMc = mark;
 	}
 
 	/** The panel covers the content status list (the roster tree and its scroll bar). */
