@@ -82,11 +82,17 @@ public sealed class TweakModService(
         if (tweaks.TryGetValue(PlayerLogsTweak, out var logs))
             logs["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/'));
         var data2 = GameDataFile ?? Path.GetFullPath(Path.Combine(packagesDirectory, "..", "..", "data2.lpk"));
-        // Combat Power per Gold prices with the same tables; they go in once, under whichever of the two is built.
-        if ((tweaks.TryGetValue(CombatPowerTweak, out var power) || tweaks.TryGetValue(CombatPowerPerGoldTweak, out power)) &&
-            File.Exists(data2))
+        // Combat Power per Gold and the bracelet judge price with the Combat Power tables. They go in once: under Combat
+        // Power's id (baked, not switched on) when it or the judge is built, else under Combat Power per Gold's.
+        var pricedBy = tweaks.ContainsKey(CombatPowerTweak) || tweaks.ContainsKey(BraceletJudgeTweak) ? CombatPowerTweak
+            : tweaks.ContainsKey(CombatPowerPerGoldTweak) ? CombatPowerPerGoldTweak : null;
+        if (pricedBy is not null && File.Exists(data2))
+        {
+            if (!tweaks.TryGetValue(pricedBy, out var power))
+                tweaks[pricedBy] = power = [];
             foreach (var (key, value) in CombatPowerTable.Options(data2, Path.Combine(root, "cache")))
                 power[key] = value;
+        }
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
@@ -286,6 +292,9 @@ public sealed class TweakModService(
 
     /// <summary>The tweak that prices auction and market rows per gold with Combat Power's tables.</summary>
     public const string CombatPowerPerGoldTweak = "cpgold";
+
+    /// <summary>The bracelet reroll judge, which prices with the Combat Power tweak's tables (kept under its id).</summary>
+    public const string BraceletJudgeTweak = "braceletjudge";
 
     public TweakState LoadState()
     {
