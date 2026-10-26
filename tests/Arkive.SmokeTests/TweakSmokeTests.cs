@@ -11,6 +11,7 @@ internal static class TweakSmokeTests
         new("hooks a movie method: keeps the original under a new name and calls the tweak handler after it", TestHookInjection),
         new("hooks before a method (able to skip it) and after it (able to change its result)", TestHookKinds),
         new("exposes a private method to tweak code under its plain public name, bound to the same method", TestExpose),
+        new("exposes a private field to tweak code through a public getter and setter", TestExposeField),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
     ];
@@ -125,6 +126,38 @@ internal static class TweakSmokeTests
         var count = reread.Instances[0].Traits.Count;
         AbcHookInjector.Inject(reread, [hook]);
         Assert(reread.Instances[0].Traits.Count == count, "exposing twice added another trait");
+    }
+
+    private static void TestExposeField()
+    {
+        var abc = BuildGreeter();
+        var pool = abc.Pool;
+        var secret = pool.AddQName(pool.AddNamespace(AbcNamespace.PrivateNs, "demo:Greeter"), "count");
+        var intType = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, ""), "int");
+        abc.Instances[0].Traits.Add(new AbcTrait { Name = secret, KindByte = AbcTrait.Slot, Index = intType });
+        var hook = new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet") { Expose = ["count"] };
+        Assert(AbcHookInjector.Inject(abc, [hook]).Count == 0, "the field to expose was not found");
+
+        var reread = AbcFile.Read(abc.Write());
+        var p = reread.Pool;
+        var traits = reread.Instances[0].Traits;
+        var field = traits.Single(trait => trait.Kind == AbcTrait.Slot);
+        var accessors = traits.Where(trait => p.NameOf(trait.Name) == "count" && trait.Kind is AbcTrait.Getter or AbcTrait.Setter).ToArray();
+        Assert(accessors.Length == 2 && accessors.All(trait => p.Namespaces[p.Multinames[trait.Name].Namespace].Kind == AbcNamespace.PackageNamespace),
+            "the field did not get a public getter and setter");
+        var getter = accessors.Single(trait => trait.Kind == AbcTrait.Getter);
+        var setter = accessors.Single(trait => trait.Kind == AbcTrait.Setter);
+        byte[] U30(int value) => new AbcCode().U30(value).ToArray();
+        Assert(reread.BodyOf(getter.Index)!.Code.SequenceEqual(new byte[] { 0xD0, 0x30, 0xD0, 0x66 }.Concat(U30(field.Name)).Append((byte)0x48)) &&
+               reread.Methods[getter.Index].ReturnType == field.Index,
+            "the getter does not return the private field");
+        Assert(reread.BodyOf(setter.Index)!.Code.SequenceEqual(new byte[] { 0xD0, 0x30, 0xD0, 0xD1, 0x61 }.Concat(U30(field.Name)).Append((byte)0x47)) &&
+               reread.Methods[setter.Index].ParameterTypes.SequenceEqual([field.Index]),
+            "the setter does not write the private field");
+        Assert(reread.BodyOf(getter.Index)!.InitScopeDepth == reread.BodyOf(2)!.InitScopeDepth, "the accessors do not start at the class's scope depth");
+        var count = traits.Count;
+        AbcHookInjector.Inject(reread, [hook]);
+        Assert(reread.Instances[0].Traits.Count == count, "exposing the field twice added more traits");
     }
 
     private static void TestHookKinds()

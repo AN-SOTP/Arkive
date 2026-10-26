@@ -35,8 +35,9 @@ public sealed record AbcHook(string ClassName, string MethodName, string Handler
     public bool Diagnostic { get; init; }
 
     /// <summary>
-    /// Private or protected methods of the hooked class that the handler calls by plain name (as Mari's "exposed"
-    /// members): each gets a second, public trait bound to the same method, with no new body.
+    /// Private or protected methods and fields of the hooked class that the handler reaches by plain name (as Mari's
+    /// "exposed" members): a method gets a second, public trait bound to the same method, with no new body; a field
+    /// gets a public getter and setter.
     /// </summary>
     public IReadOnlyList<string> Expose { get; init; } = [];
 
@@ -124,14 +125,42 @@ public static class AbcHookInjector
         {
             var exposed = pool.AddQName(publicNs, name);
             if (traits is not null && traits.Any(item => item.Name == exposed)) continue;
-            var trait = traits?.FirstOrDefault(item => item.Kind == AbcTrait.Method && pool.NameOf(item.Name) == name);
+            var trait = traits?.FirstOrDefault(item => item.Kind is AbcTrait.Method or AbcTrait.Slot or AbcTrait.Const &&
+                                                       pool.NameOf(item.Name) == name);
             if (traits is null || trait is null)
             {
                 yield return hook.ClassName + "." + name;
                 continue;
             }
-            traits.Add(new AbcTrait { Name = exposed, KindByte = AbcTrait.Method, Index = trait.Index });
+            if (trait.Kind == AbcTrait.Method) traits.Add(new AbcTrait { Name = exposed, KindByte = AbcTrait.Method, Index = trait.Index });
+            else ExposeField(abc, traits, trait, exposed);
         }
+    }
+
+    /// <summary>
+    /// A field gets a public getter and setter of the field's type that read and write it by its own name (Mari's
+    /// accessors for RollingTreeList._nextIndex): <c>get: return this.field;</c> <c>set: this.field = value;</c>
+    /// They start at the scope depth of the class's own methods.
+    /// </summary>
+    private static void ExposeField(AbcFile abc, List<AbcTrait> traits, AbcTrait field, int exposed)
+    {
+        var scope = traits.Where(item => item.Kind == AbcTrait.Method).Select(item => abc.BodyOf(item.Index)).FirstOrDefault(body => body is not null)
+            ?.InitScopeDepth ?? throw new InvalidDataException("The class has no method to take a scope depth from.");
+        void Accessor(byte kind, AbcMethod method, AbcCode code, int locals)
+        {
+            abc.Methods.Add(method);
+            abc.Bodies.Add(new AbcMethodBody
+            {
+                Method = abc.Methods.Count - 1, MaxStack = 2, LocalCount = locals,
+                InitScopeDepth = scope, MaxScopeDepth = scope + 1, Code = code.ToArray(),
+            });
+            traits.Add(new AbcTrait { Name = exposed, KindByte = kind, Index = abc.Methods.Count - 1 });
+        }
+        Accessor(AbcTrait.Getter, new AbcMethod { ReturnType = field.Index },
+            new AbcCode().Op(0xD0).Op(0x30).Op(0xD0).Op(0x66).U30(field.Name).Op(0x48), 1);
+        var setter = new AbcMethod();
+        setter.ParameterTypes.Add(field.Index);
+        Accessor(AbcTrait.Setter, setter, new AbcCode().Op(0xD0).Op(0x30).Op(0xD0).Op(0xD1).Op(0x61).U30(field.Name).Op(0x47), 2);
     }
 
     /// <summary>

@@ -23,7 +23,7 @@ public enum TweakRisk
 public sealed record TweakHookTarget(string Package, string Movie, string ClassName, string Method, string? Handler = null,
     Interface.Abc.AbcHookKind Kind = Interface.Abc.AbcHookKind.After)
 {
-    /// <summary>Private or protected methods of the class that the handler calls by plain name (see AbcHook.Expose).</summary>
+    /// <summary>Private or protected methods and fields of the class that the handler reaches by plain name (see AbcHook.Expose).</summary>
     public IReadOnlyList<string> Expose { get; init; } = [];
 
     public Interface.Abc.AbcHook Hook => new(ClassName, Method,
