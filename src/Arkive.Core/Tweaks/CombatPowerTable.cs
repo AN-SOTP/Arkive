@@ -13,30 +13,30 @@ public static class CombatPowerTable
     private const string Tables = "EFGame_Extra/ClientData/TableData/";
     public const string Entry = Tables + "EFTable_BattlePoint.db";
 
-    /// <summary>Gems: ValueA is the tier, ValueB the level, ValueC the value.</summary>
-    public const int GemType = 22;
+    /// <summary>
+    /// The row types the Combat Power tweak prices with: 4 weapon quality (ValueA quality, ValueB its bonus),
+    /// 5-7 Ark Passive points (Evolution, Enlightenment, Leap: ValueA per point), 15 refinement stats (ValueA 1, ValueB
+    /// stat, ValueC weight), 19 bracelet stats (same shape), 22 gems (ValueA tier, ValueB level, ValueC value) and 26
+    /// combat stats (ValueA stat, ValueB per point).
+    /// </summary>
+    public static readonly int[] PricedTypes = [4, 5, 6, 7, 15, 19, 22, 26];
 
     /// <summary>The stat a tier 4 gem's bonus effect raises: Basic Attack Power, in hundredths of a percent.</summary>
     private const int BasicAttackStat = 150;
 
-    /// <summary>The gem rows as [tier, level, dps, support, ...], read from the game's data2.lpk.</summary>
-    public static int[] Gems(string data2Path, string workDirectory) =>
+    /// <summary>The rows of <see cref="PricedTypes"/> as [key, type, ValueA, ValueB, ValueC, ...] (key 1 DPS, 2 support).</summary>
+    public static int[] Rows(string data2Path, string workDirectory) =>
         WithDatabases(data2Path, workDirectory, ["EFTable_BattlePoint.db"], connection =>
         {
-            var rows = new SortedDictionary<(int Tier, int Level), int[]>();
+            var rows = new List<int>();
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT PrimaryKey, ValueA, ValueB, ValueC FROM BattlePoint WHERE Type = $type";
-            command.Parameters.AddWithValue("$type", GemType);
+            command.CommandText = $"SELECT PrimaryKey, Type, ValueA, ValueB, ValueC FROM BattlePoint WHERE Type IN ({string.Join(',', PricedTypes)}) " +
+                                  "ORDER BY Type, PrimaryKey, SecondaryKey";
             using var reader = command.ExecuteReader();
             while (reader.Read())
-            {
-                var key = reader.GetInt32(0);
-                if (key is not (1 or 2)) continue;
-                var gem = (reader.GetInt32(1), reader.GetInt32(2));
-                if (!rows.TryGetValue(gem, out var values)) rows[gem] = values = new int[2];
-                values[key - 1] = reader.GetInt32(3);
-            }
-            return rows.SelectMany(row => new[] { row.Key.Tier, row.Key.Level, row.Value[0], row.Value[1] }).ToArray();
+                for (var column = 0; column < 5; column++)
+                    rows.Add(reader.GetInt32(column));
+            return rows.ToArray();
         });
 
     /// <summary>

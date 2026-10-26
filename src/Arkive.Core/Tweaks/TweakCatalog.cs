@@ -77,7 +77,7 @@ public static class TweakCatalog
         [
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsTab.onWndConfigUI"),
         ]),
-        new("cpgems", "Combat Power: Gems", "A line on gem tooltips (your own, inspected players', the market's) shows how much your Combat Power would go up or down if that gem replaced your weakest gem of the same kind, priced with the game's own table. Your Character Profile checks the prediction when your gems change.", TweakRisk.Display,
+        new("cpgems", "Combat Power on Tooltips", "A line on gem, weapon, armour and accessory tooltips (your own, inspected players', the market's) shows how much your Combat Power would go up or down if you equipped that item instead of yours, priced with the game's own table. Your Character Profile checks the prediction when your gear changes. Bracelets, ability stones, books and Ark Grid come next; support characters get gem lines only for now.", TweakRisk.Display,
         [
             H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.CombatPower.onMainTooltip", AbcHookKind.Before),
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "configUI", "arkive.tweaks.CombatPower.onAbilityConfigUI"),
