@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Arkive.Core.GameData;
 using Arkive.Core.Mods;
+using Arkive.Core.Tweaks;
 using Arkive.Core.Outfits;
 using Microsoft.Win32;
 
@@ -121,7 +122,9 @@ public partial class MainWindow : Window
             var previousGroup = SelectedModRows().Select(row => row.Entry.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var drafts = (await _modAuthoringWorkspace.LoadAsync()).Where(draft => draft.ModId is not null)
                 .ToDictionary(draft => draft.ModId!, StringComparer.OrdinalIgnoreCase);
+            // The Tweaks tab installs and removes its own mod; it isn't one to manage here.
             var rows = statuses
+                .Where(status => !TweakModService.IsTweakMod(status.Mod))
                 .Select(status => new ModLibraryRow(status, _arkiveModLibrary.GetModFilePath(status.Mod))
                 {
                     AuthoringPending = drafts.TryGetValue(status.Mod.ModId, out var draft) && DraftHasChanges(draft, status.Mod),
