@@ -36,20 +36,34 @@ internal static class TweakSmokeTests
                lookup.Logs[0] is { Boss: "Archbishop Arcenos", Difficulty: "Level 3", ClassName: "Slayer", Died: true },
             "the logs page was not read");
         var summary = Arkive.Core.Tweaks.PlayerLogsService.Summary(lookup!, "123x45").Split('\n');
-        Assert(summary[0] == "found\tEU Central\tChillidari\t1\t123x45", $"summary head: {summary[0]}");
-        Assert(summary[1].StartsWith("Archbishop Arcenos\tLevel 3\tSlayer\t1.68b\t89\t", StringComparison.Ordinal) &&
-               summary[1].EndsWith("\t5:27\tdied", StringComparison.Ordinal), $"summary row: {summary[1]}");
-        // The tab spells request id, name (4 hex digits per character) and a checksum; Arkive reads it back and
+        Assert(summary[0] == "found\tEU Central\tChillidari\t1\t123x45\t", $"summary head: {summary[0]}");
+        Assert(summary[1].StartsWith("#raids\tBelgardin\tHorizon Cathedral\t", StringComparison.Ordinal), $"summary raids: {summary[1]}");
+        Assert(summary[2].StartsWith("Horizon Cathedral\tG1\tArchbishop Arcenos\tLevel 3\tSlayer\t1.68b\t88\t", StringComparison.Ordinal) &&
+               summary[2].EndsWith("\t5:27\tdied", StringComparison.Ordinal), $"summary row: {summary[2]}");
+
+        // A character whose owner keeps logs private (Zurmos on EU Central): the page has the character but no logs.
+        const string hidden = """
+            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},{"type":"data","data":[
+            {"header":1,"redirectedFrom":4,"suggestions":5},{"id":2,"rid":3},270889558,27179,null,[]]},
+            {"type":"data","data":[{"logsEnabled":1,"isOwner":1},false]}]}
+            """;
+        using var hiddenPage = System.Text.Json.JsonDocument.Parse(hidden);
+        Assert(Arkive.Core.Tweaks.PlayerLogsService.Read("Zurmos", "CE", hiddenPage.RootElement) is
+               { Status: Arkive.Core.Tweaks.PlayerLogsStatus.Hidden, CharacterId: 270889558, RosterId: 27179 },
+            "a character with private logs was not told apart from a missing one");
+
+        // The tab spells request id, raid, name (4 hex digits per character) and a checksum; Arkive reads it back and
         // rejects a message with a missed or extra read.
-        var spelled = Arkive.Core.Tweaks.PlayerLogsSignal.Encode("0a1f", "Améthyst");
-        Assert(Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled, out var request, out var name) && request == "0a1f" && name == "Améthyst",
+        var spelled = Arkive.Core.Tweaks.PlayerLogsSignal.Encode("0a1f", 3, "Améthyst");
+        Assert(Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled, out var request, out var raid, out var name) &&
+               request == "0a1f" && raid == 3 && name == "Améthyst",
             $"the signal message did not decode: {spelled}");
-        Assert(!Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled.Remove(9, 1) + "0", out _, out _) &&
-               !Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled[..^4] + "0000", out _, out _),
+        Assert(!Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled.Remove(9, 1) + "0", out _, out _, out _) &&
+               !Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled[..^4] + "0000", out _, out _, out _),
             "a damaged signal message was accepted");
         var signal = new Arkive.Core.Tweaks.PlayerLogsSignal(Path.GetTempPath());
         string? heard = null;
-        signal.Requested += (who, _) => heard = who;
+        signal.Requested += (who, _, _) => heard = who;
         foreach (var symbol in (string[])["5", "go", .. spelled.Select(digit => digit.ToString()), "end"])
             signal.Receive(symbol);
         Assert(heard == "Améthyst", "the reads between go and end were not put together");

@@ -13,7 +13,8 @@ namespace Arkive.Core.Tweaks;
 /// reader's own handle has to close first). Arkive holds an opportunistic lock on each
 /// of its own files; Windows tells it when another program opens one, and Arkive notes the order. To the game this is
 /// an ordinary file read, the same as loading the answer file. The message is the click's request id (4 hex digits),
-/// the name (4 hex digits per UTF-16 character) and a checksum (the sum of both, 4 hex digits).
+/// the raid wanted (4 hex digits, 0 for recent logs), the name (4 hex digits per UTF-16 character) and a checksum
+/// (the sum of the 4-digit groups, 4 hex digits).
 /// </summary>
 public sealed class PlayerLogsSignal : IDisposable
 {
@@ -22,6 +23,7 @@ public sealed class PlayerLogsSignal : IDisposable
     public static IReadOnlyList<string> Sets { get; } = [.. "abcdefghijklmnop".Select(set => set.ToString())];
     private const string Digits = "0123456789abcdef";
     private const int RequestDigits = 4;
+    private const int HeadDigits = RequestDigits + 4;
     private const int MaxNameLength = 32;
 
     private readonly string _folder;
@@ -34,8 +36,8 @@ public sealed class PlayerLogsSignal : IDisposable
 
     public PlayerLogsSignal(string folder) => _folder = folder;
 
-    /// <summary>A complete message: the player's name and the click's request id.</summary>
-    public event Action<string, string>? Requested;
+    /// <summary>A complete message: the player's name, the click's request id and the raid wanted (0: recent logs).</summary>
+    public event Action<string, string, int>? Requested;
 
     /// <summary>A signal file could not be watched (for the log).</summary>
     public event Action<string>? Failed;
@@ -44,28 +46,30 @@ public sealed class PlayerLogsSignal : IDisposable
 
     public static string FileName(string set, string symbol) => $"{set}-{symbol}.txt";
 
-    /// <summary>The hex digits the tab sends for a click: request id, name, checksum.</summary>
-    public static string Encode(string request, string name)
+    /// <summary>The hex digits the tab sends for a click: request id, raid, name, checksum.</summary>
+    public static string Encode(string request, int raid, string name)
     {
-        var builder = new StringBuilder(request.ToLowerInvariant());
+        var builder = new StringBuilder(request.ToLowerInvariant()).Append(raid.ToString("x4", CultureInfo.InvariantCulture));
         foreach (var character in name)
             builder.Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
         return builder.Append(Checksum(builder.ToString()).ToString("x4", CultureInfo.InvariantCulture)).ToString();
     }
 
-    public static bool TryDecode(string digits, out string request, out string name)
+    public static bool TryDecode(string digits, out string request, out int raid, out string name)
     {
         request = "";
+        raid = 0;
         name = "";
-        if (digits.Length < RequestDigits + 8 || digits.Length % 4 != 0 ||
-            (digits.Length - RequestDigits - 4) / 4 > MaxNameLength || digits.Any(digit => !Digits.Contains(digit)))
+        if (digits.Length < HeadDigits + 8 || digits.Length % 4 != 0 ||
+            (digits.Length - HeadDigits - 4) / 4 > MaxNameLength || digits.Any(digit => !Digits.Contains(digit)))
             return false;
         var body = digits[..^4];
         if (Checksum(body) != int.Parse(digits.AsSpan(digits.Length - 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture))
             return false;
         request = body[..RequestDigits];
+        raid = int.Parse(body.AsSpan(RequestDigits, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
         var builder = new StringBuilder();
-        for (var at = RequestDigits; at < body.Length; at += 4)
+        for (var at = HeadDigits; at < body.Length; at += 4)
             builder.Append((char)int.Parse(body.AsSpan(at, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
         name = builder.ToString();
         return name.All(character => !char.IsControl(character) && character is not ('/' or '\\' or '#' or '?'));
@@ -123,11 +127,11 @@ public sealed class PlayerLogsSignal : IDisposable
                 _message.Clear();
                 _receiving = false;
             }
-            else if (_message.Length < RequestDigits + 4 * MaxNameLength + 4)
+            else if (_message.Length < HeadDigits + 4 * MaxNameLength + 4)
                 _message.Append(symbol);
         }
-        if (complete is not null && TryDecode(complete, out var request, out var name))
-            Requested?.Invoke(name, request);
+        if (complete is not null && TryDecode(complete, out var request, out var raid, out var name))
+            Requested?.Invoke(name, request, raid);
     }
 
     public void Dispose()
