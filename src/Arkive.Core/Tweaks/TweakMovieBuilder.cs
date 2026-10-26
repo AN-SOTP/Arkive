@@ -24,7 +24,7 @@ public static class TweakCode
 
     /// <summary>
     /// The code blocks to add to a movie, one per class as the Haxe compiler's SWC holds them, with the chosen tweaks
-    /// and options (JSON) written into the dispatcher.
+    /// and options (JSON) written into Options, and every typed null made untyped (see AbcInstructions.UntypeNulls).
     /// </summary>
     public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, TweakSettings settings)
     {
@@ -35,14 +35,13 @@ public static class TweakCode
         {
             var abc = AbcFile.Read(data);
             var index = abc.Pool.Strings.IndexOf(ConfigPlaceholder);
-            byte[] bytes = data;
             if (index >= 0)
             {
                 abc.Pool.Strings[index] = settings.ToGameJson();
-                bytes = abc.Write();
                 configured++;
             }
-            tags.Add(GfxTag.NewDoAbc(AbcName + "/" + name, bytes));
+            foreach (var body in abc.Bodies) AbcInstructions.UntypeNulls(body);
+            tags.Add(GfxTag.NewDoAbc(AbcName + "/" + name, abc.Write()));
         }
         if (configured != 1) throw new InvalidDataException("Arkive's tweak code has no single place for its settings.");
         return tags;

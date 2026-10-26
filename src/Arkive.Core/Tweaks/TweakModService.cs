@@ -67,7 +67,7 @@ public sealed class TweakModService(
     {
         var state = LoadState();
         var targets = settings.Enabled.Keys
-            .Select(TweakCatalog.Find).OfType<TweakDefinition>()
+            .Select(TweakCatalog.Find).OfType<TweakDefinition>().Where(tweak => tweak.Available)
             .SelectMany(tweak => tweak.Hooks)
             .GroupBy(hook => (hook.Package, hook.Movie))
             .ToArray();

@@ -3171,7 +3171,7 @@ static int TweaksMod(string packagesRoot, string? projectRoot, string? tweaks, s
     var settings = new Arkive.Core.Tweaks.TweakSettings();
     foreach (var id in tweaks.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
     {
-        if (Arkive.Core.Tweaks.TweakCatalog.Find(id) is null) throw new ArgumentException($"Unknown tweak: {id}.");
+        if (Arkive.Core.Tweaks.TweakCatalog.Find(id) is not { Available: true }) throw new ArgumentException($"Unknown or unfinished tweak: {id}.");
         settings.Enabled[id] = options.GetValueOrDefault(id) ?? [];
     }
     var service = new Arkive.Core.Tweaks.TweakModService(library, Path.Combine(root, "tweaks"),

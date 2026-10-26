@@ -68,7 +68,7 @@ public partial class MainWindow
     private void RefreshTweaks(string? status = null)
     {
         var state = Tweaks.LoadState();
-        TweakList.ItemsSource = TweakCatalog.All.Select(tweak =>
+        TweakList.ItemsSource = TweakCatalog.All.Where(tweak => tweak.Available).Select(tweak =>
         {
             var saved = state.Settings.Enabled.GetValueOrDefault(tweak.Id);
             var options = tweak.OptionList.Select(option => new TweakOptionRow(option,

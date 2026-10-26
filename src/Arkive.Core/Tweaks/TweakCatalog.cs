@@ -16,10 +16,14 @@ public enum TweakRisk
     Automation,
 }
 
-/// <summary>A game method a tweak routes through its code: the interface package, the movie export, the class and the method.</summary>
-public sealed record TweakHookTarget(string Package, string Movie, string ClassName, string Method)
+/// <summary>
+/// A game method a tweak hooks: the interface package, the movie export, the class, the method, and the tweak code's
+/// static handler ("arkive.tweaks.Class.method"; null while the tweak isn't written yet).
+/// </summary>
+public sealed record TweakHookTarget(string Package, string Movie, string ClassName, string Method, string? Handler = null)
 {
-    public Interface.Abc.AbcHook Hook => new(ClassName, Method);
+    public Interface.Abc.AbcHook Hook => new(ClassName, Method,
+        Handler ?? throw new InvalidOperationException($"{ClassName}.{Method} has no handler yet."));
 }
 
 public sealed record TweakOption(string Key, string Label, bool Default);
@@ -34,6 +38,9 @@ public sealed record TweakDefinition(
     string? Note = null)
 {
     public IReadOnlyList<TweakOption> OptionList => Options ?? [];
+
+    /// <summary>True once every hook has its handler written (Faster Launch needs none).</summary>
+    public bool Available => Id == "fastlaunch" || (Hooks.Count > 0 && Hooks.All(hook => hook.Handler is not null));
 }
 
 /// <summary>Every tweak Arkive offers, and the game methods each one hooks.</summary>
@@ -43,8 +50,8 @@ public static class TweakCatalog
     private const string Components = "efui_components";
     private const string Base = "efui_base";
 
-    private static TweakHookTarget H(string package, string movie, string className, string method) =>
-        new(package, movie, className, method);
+    private static TweakHookTarget H(string package, string movie, string className, string method, string? handler = null) =>
+        new(package, movie, className, method, handler);
 
     public static IReadOnlyList<TweakDefinition> All { get; } =
     [
@@ -101,9 +108,10 @@ public static class TweakCatalog
             H("efui_trinityorbmanagement", "trinityorbmanagement", "ark.ui.trinityOrbManagement.TrinityOrbManagement_Child_AlterationGrade", "configUI"),
             H("efui_trinityorbmanagement", "trinityorbmanagement", "ark.ui.trinityOrbManagement.TrinityOrbManagement_Child_Enhance", "resultData"),
         ]),
-        new("lobbycp", "Lobby CP", "Shows party members' combat power in the party finder, without hovering over them.", TweakRisk.Display,
+        new("lobbycp", "Lobby CP", "Shows party members' combat power in the party finder, without hovering over them: green with the support mark for supports, red for damage dealers.", TweakRisk.Display,
         [
-            H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "memberData"),
+            H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "configUI", "arkive.tweaks.LobbyCp.onConfigUI"),
+            H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "memberData", "arkive.tweaks.LobbyCp.onMemberData"),
         ]),
         new("markettweaks", "Market Tweaks", "Small improvements to the market window, such as buttons that list every item and set prices quickly.", TweakRisk.Batch,
         [

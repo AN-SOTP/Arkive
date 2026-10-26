@@ -1,58 +1,34 @@
 package arkive.tweaks;
 
-/** Lobby CP: shows each party member's combat power next to their item level in the party finder preview. */
+/**
+	Lobby CP: shows each party member's combat power after their item level in the party finder, using the line the
+	game's own member tooltip shows (green with the support mark for supports, red for damage dealers).
+**/
+@:keep
 class LobbyCp {
-	/** Name of the label Arkive adds beside a member's item level. */
-	static inline var LABEL = "arkiveLobbyCp";
-
-	public static function register(options:Dynamic):Void {
-		Hooks.onAfter("ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember.memberData", function(self:Dynamic, args:Array<Dynamic>, result:Dynamic) {
-			#if arkive_diag_noop
-			return result;
-			#else
-			var data:Dynamic = args[0];
-			var level:flash.text.TextField = self.itemLevel_txt;
-			if (data == null || level == null || level.parent == null)
-				return result;
-			var tooltip:Dynamic = data.memberTooltip;
-			var power = untyped __is__(tooltip, String) ? combatPower(tooltip) : null;
-			label(level).text = power == null ? "" : power;
-			return result;
-			#end
-		});
+	/** FindPartyNewPreviewListRendererMember.configUI: make the item level field wide enough for both, keeping its right edge. */
+	public static function onConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
+		var field:Dynamic = self.itemLevel_txt;
+		if (field == null)
+			return;
+		var right:Float = field.x + field.width;
+		field.width = field.width * 3;
+		field.x = right - field.width;
+		field.y = field.y - 2;
 	}
 
-	/**
-		A one-line label just left of the item level, made once per member slot. The game's own text fields are left
-		exactly as they are: changing their text can change their size, and the party finder lays itself out again.
-	**/
-	static function label(level:flash.text.TextField):flash.text.TextField {
-		var parent = level.parent;
-		var existing = parent.getChildByName(LABEL);
-		if (existing != null)
-			return cast existing;
-		var format = level.getTextFormat();
-		format.color = 0xFFD200;
-		format.align = flash.text.TextFormatAlign.RIGHT;
-		var field = new flash.text.TextField();
-		field.name = LABEL;
-		field.embedFonts = level.embedFonts;
-		field.defaultTextFormat = format;
-		field.selectable = false;
-		field.mouseEnabled = false;
-		field.multiline = false;
-		field.wordWrap = false;
-		field.width = 90;
-		field.height = level.height;
-		field.x = level.x - 95;
-		field.y = level.y;
-		parent.addChild(field);
-		return field;
-	}
-
-	/** The number after "Power:" in the member tooltip ("Combat Power: <font color='#ffd200'>1757.50</font>"). */
-	public static function combatPower(tooltip:String):Null<String> {
-		var at = tooltip.indexOf("Power:");
-		return at < 0 ? null : Text.numberAfter(tooltip, at + 6);
+	/** FindPartyNewPreviewListRendererMember.memberData(data): put the tooltip's combat power line after the item level. */
+	public static function onMemberData(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
+		var data:Dynamic = args[0];
+		if (data == null || !untyped data.hasOwnProperty("itemLevel") || !untyped data.hasOwnProperty("memberTooltip"))
+			return;
+		var level:String = data.itemLevel;
+		var tooltip:String = data.memberTooltip;
+		var lines = tooltip.split("\n");
+		if (lines.length < 3)
+			return;
+		// The tooltip's icon and text are sized for a bigger line; shrink them to fit beside the item level.
+		var text = (level + "  " + lines[1]).split("'19'").join("'17'").split("'-4'").join("'-3'");
+		self.itemLevel = "<font size='13'>" + text + "</font>";
 	}
 }

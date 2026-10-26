@@ -8,7 +8,7 @@ internal static class TweakSmokeTests
     internal static IReadOnlyList<SmokeTestCase> Cases { get; } =
     [
         new("reads and writes ActionScript 3 code and movie tags byte for byte", TestAbcRoundTrip),
-        new("routes a movie method through the tweak dispatcher and keeps the original under a new name", TestHookInjection),
+        new("hooks a movie method: keeps the original under a new name and calls the tweak handler after it", TestHookInjection),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
     ];
 
@@ -50,7 +50,7 @@ internal static class TweakSmokeTests
     {
         var abc = BuildGreeter();
         var originalMethod = abc.Instances[0].Traits.Single().Index;
-        var missing = AbcHookInjector.Inject(abc, [new AbcHook("demo.Greeter", "greet"), new AbcHook("demo.Greeter", "wave")]);
+        var missing = AbcHookInjector.Inject(abc, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet"), new AbcHook("demo.Greeter", "wave", "demo.Tweak.onWave")]);
         Assert(missing.SequenceEqual(["demo.Greeter.wave"]), "a method the class doesn't have was not reported: " + string.Join(", ", missing));
 
         var reread = AbcFile.Read(abc.Write());
@@ -63,10 +63,10 @@ internal static class TweakSmokeTests
         Assert(method.ParameterTypes.Count == 1 && reread.Pool.NameOf(method.ReturnType) == "String",
             "the wrapper does not have the original's signature");
         var body = reread.BodyOf(wrapper.Index) ?? throw new InvalidOperationException("wrapper has no body");
-        Assert(body.Code[^1] == 0x48 && body.LocalCount == 5 && body.Exceptions.Count == 2, "the wrapper does not return the after hook's value");
-        Assert(reread.Pool.Strings.Contains("demo.Greeter.greet") && reread.Pool.Strings.Contains(AbcHookInjector.DispatcherClass),
-            "the wrapper does not call the dispatcher with the hook's id");
-        var again = AbcHookInjector.Inject(reread, [new AbcHook("demo.Greeter", "greet")]);
+        Assert(body.Code[^1] == 0x48 && body.LocalCount == 4 && body.Exceptions.Count == 0, "the wrapper does not return the handler's value");
+        Assert(reread.Pool.Strings.Contains("onGreet") && reread.Pool.Strings.Contains("Tweak"),
+            "the wrapper does not call the tweak's handler");
+        var again = AbcHookInjector.Inject(reread, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet")]);
         Assert(again.Count == 0 && reread.Instances[0].Traits.Count == 2, "hooking twice added a second wrapper");
     }
 

@@ -1,36 +1,30 @@
 namespace Arkive.Core.Interface.Abc;
 
-/// <summary>A method to route through the tweak dispatcher: the class's qualified name, the method, and the id tweaks register under.</summary>
-public sealed record AbcHook(string ClassName, string MethodName, bool Static = false)
+/// <summary>
+/// A game method to hook (its class's qualified name and the method) and the tweak's static handler for it
+/// ("package.Class.method"). The wrapper calls the game's method, then the handler:
+/// <c>args = [arguments]; result = this.original(arguments); return Handler(this, args, result);</c>
+/// </summary>
+public sealed record AbcHook(string ClassName, string MethodName, string Handler, bool Static = false)
 {
     public string Id => ClassName + (Static ? "::" : ".") + MethodName;
 }
 
 /// <summary>
-/// Routes methods of a movie's own code through Arkive's tweak code. The original method keeps its body under a new
-/// name (<see cref="RenamedSuffix"/>); a new method with the original name and signature does
-/// <c>args = [arguments]; result = undefined; if (Hooks.before(id, this, args)) result = this.original(args[0], ...);
-/// return Hooks.after(id, this, args, result);</c>, with each call into Arkive's code guarded. The original is called directly, as the game would, and existing
+/// Hooks methods of a movie's own code the way the game's player is known to accept: the original keeps its body under
+/// a new name (<see cref="RenamedSuffix"/>), and a new method with the original name and signature calls it directly
+/// and then the tweak's static handler, with no dispatcher, no try blocks and no setup on the way. Existing
 /// instructions are never rewritten, so every caller, override and super call keeps working.
 /// </summary>
 public static class AbcHookInjector
 {
     public const string RenamedSuffix = "$arkive";
-    public const string DispatcherPackage = "arkive.tweaks";
-    public const string DispatcherClass = "Hooks";
-    public const string BeforeMethod = "before";
-    public const string AfterMethod = "after";
 
     /// <summary>Applies the hooks; returns the ids of hooks whose class or method this code doesn't have, or can't take.</summary>
     public static IReadOnlyList<string> Inject(AbcFile abc, IEnumerable<AbcHook> hooks)
     {
         var missing = new List<string>();
         var pool = abc.Pool;
-        var publicNs = pool.AddNamespace(AbcNamespace.PackageNamespace, "");
-        var dispatcher = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, DispatcherPackage), DispatcherClass);
-        var before = pool.AddQName(publicNs, BeforeMethod);
-        var after = pool.AddQName(publicNs, AfterMethod);
-        int? element = null;
         foreach (var hook in hooks)
         {
             var classIndex = abc.FindClass(hook.ClassName);
@@ -44,7 +38,6 @@ public static class AbcHookInjector
             var original = pool.Multinames[trait.Name];
             var renamed = pool.AddQName(original.Namespace, hook.MethodName + RenamedSuffix);
             if (traits.Any(item => item.Name == renamed)) continue;
-            element ??= ElementName(pool, publicNs);
 
             var method = abc.Methods[trait.Index];
             var body = abc.BodyOf(trait.Index) ?? throw new InvalidDataException($"{hook.Id} has no body to keep.");
@@ -59,94 +52,50 @@ public static class AbcHookInjector
             var wrapperIndex = abc.Methods.Count - 1;
 
             var parameters = method.ParameterTypes.Count;
-            var returnsVoid = pool.NameOf(method.ReturnType) == "void";
-            var (code, handlers) = WrapperCode(dispatcher, pool.AddString(hook.Id), parameters, renamed, before, after, element.Value, returnsVoid);
-            var wrapperBody = new AbcMethodBody
+            abc.Bodies.Add(new AbcMethodBody
             {
                 Method = wrapperIndex,
-                MaxStack = parameters + 6,
-                LocalCount = parameters + 4,
+                MaxStack = parameters + 4,
+                LocalCount = parameters + 3,
                 InitScopeDepth = body.InitScopeDepth,
                 MaxScopeDepth = body.InitScopeDepth + 1,
-                Code = code,
-            };
-            wrapperBody.Exceptions.AddRange(handlers);
-            abc.Bodies.Add(wrapperBody);
-
-            // The kept original loses "override": nothing above it has the new name. The wrapper takes its place.
-            traits.Add(new AbcTrait
-            {
-                Name = trait.Name,
-                KindByte = (byte)(trait.KindByte & ~(AbcTrait.AttributeMetadata << 4)),
-                Index = wrapperIndex,
+                Code = WrapperCode(pool, hook.Handler, parameters, renamed, pool.NameOf(method.ReturnType) == "void"),
             });
-            trait.Name = renamed;
-            trait.KindByte = (byte)(trait.KindByte & ~(AbcTrait.AttributeOverride << 4));
-            trait.Id = 0;
+
+            // The game's trait stays where it is (keeping its attributes, such as override) and now runs the wrapper; the
+            // original body moves to a new plain trait, which nothing above it overrides.
+            traits.Add(new AbcTrait { Name = renamed, KindByte = AbcTrait.Method, Index = trait.Index });
+            trait.Index = wrapperIndex;
         }
         return missing;
     }
 
-    /// <summary>A runtime-named property in the public namespace, for reading args[i].</summary>
-    private static int ElementName(AbcConstantPool pool, int publicNs)
-    {
-        pool.NamespaceSets.Add([publicNs]);
-        pool.EmptyCounts[5] = false;
-        return pool.AddMultiname(new AbcMultiname(AbcMultiname.MultinameL) { NamespaceSet = pool.NamespaceSets.Count - 1 });
-    }
-
     /// <summary>
-    /// The wrapper's body. The calls into Arkive's code are each in their own try block: if the tweak code fails or is
-    /// missing, the game's method still runs and its own result is returned, so a broken tweak can't break a window.
-    /// The game's method itself is called outside them, so its own errors reach the game as before.
+    /// <c>args = [p1..pn]; result = this.original(p1..pn); return Handler(this, args, result);</c>
+    /// (void methods pass undefined and ignore the handler's value).
     /// </summary>
-    private static (byte[] Code, AbcException[] Handlers) WrapperCode(
-        int dispatcher, int id, int parameters, int renamed, int before, int after, int element, bool returnsVoid)
+    private static byte[] WrapperCode(AbcConstantPool pool, string handler, int parameters, int renamed, bool returnsVoid)
     {
+        var split = handler.LastIndexOf('.');
+        var owner = handler[..split];
+        var dot = owner.LastIndexOf('.');
+        var ownerName = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, dot < 0 ? "" : owner[..dot]), owner[(dot + 1)..]);
+        var method = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, ""), handler[(split + 1)..]);
         var args = parameters + 1;
         var result = parameters + 2;
-        var run = parameters + 3;
         var code = new AbcCode();
         code.Op(0xD0).Op(0x30); // getlocal_0; pushscope
         for (var local = 1; local <= parameters; local++) code.GetLocal(local);
         code.Op(0x56).U30(parameters).SetLocal(args); // args = [p1..pn]
         code.Op(0x21).SetLocal(result); // result = undefined
-        code.Op(0x26).SetLocal(run); // run = true
-
-        var beforeStart = code.Position;
-        code.Op(0x60).U30(dispatcher).Op(0x2C).U30(id).Op(0xD0).GetLocal(args);
-        code.Op(0x46).U30(before).U30(3).SetLocal(run); // run = Hooks.before(id, this, args)
-        var beforeEnd = code.Position;
-        var toCall = code.Branch(0x10); // jump call
-        var beforeHandler = code.Position;
-        code.Op(0x29).Op(0xD0).Op(0x30); // pop the error; getlocal_0; pushscope
-        code.Land(toCall);
-
-        code.GetLocal(run);
-        var skip = code.Branch(0x12); // iffalse -> after
         code.Op(0xD0);
-        for (var index = 0; index < parameters; index++)
-            code.GetLocal(args).Op(0x24).Op((byte)index).Op(0x66).U30(element); // args[index]
-        if (returnsVoid) code.Op(0x4F).U30(renamed).U30(parameters); // callpropvoid original
-        else code.Op(0x46).U30(renamed).U30(parameters).SetLocal(result); // result = original(...)
-        code.Land(skip);
-
-        var afterStart = code.Position;
-        code.Op(0x60).U30(dispatcher).Op(0x2C).U30(id).Op(0xD0).GetLocal(args).GetLocal(result);
-        code.Op(0x46).U30(after).U30(4).SetLocal(result); // result = Hooks.after(id, this, args, result)
-        var afterEnd = code.Position;
-        var toReturn = code.Branch(0x10);
-        var afterHandler = code.Position;
-        code.Op(0x29).Op(0xD0).Op(0x30);
-        code.Land(toReturn);
-
-        if (returnsVoid) code.Op(0x47); // returnvoid
-        else code.GetLocal(result).Op(0x48); // returnvalue
-        return (code.ToArray(),
-        [
-            new AbcException(beforeStart, beforeEnd, beforeHandler, 0, 0),
-            new AbcException(afterStart, afterEnd, afterHandler, 0, 0),
-        ]);
+        for (var local = 1; local <= parameters; local++) code.GetLocal(local);
+        if (returnsVoid) code.Op(0x4F).U30(renamed).U30(parameters); // this.original(p1..pn)
+        else code.Op(0x46).U30(renamed).U30(parameters).SetLocal(result);
+        code.Op(0x60).U30(ownerName).Op(0xD0).GetLocal(args).GetLocal(result);
+        if (returnsVoid) code.Op(0x4F).U30(method).U30(3).Op(0x47); // Handler(this, args, result); returnvoid
+        else code.Op(0x46).U30(method).U30(3).Op(0x48); // return Handler(this, args, result)
+        return code.ToArray();
     }
 }
 
