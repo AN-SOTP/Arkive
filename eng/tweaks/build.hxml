@@ -2,7 +2,6 @@
 -cp src
 --macro include('arkive.tweaks')
 -D haxeJSON
--D swf-protected
 --swf-version 10
 # A SWC holds one code block per class, the layout the game's player is known to load.
 -D haxe-boot
