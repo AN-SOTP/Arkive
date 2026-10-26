@@ -129,7 +129,8 @@ public partial class MainWindow
     private void UpdateTweakActions()
     {
         TweaksApplyButton.IsEnabled = !_tweaksBusy && ModLibraryIdle;
-        TweaksRemoveButton.IsEnabled = !_tweaksBusy && ModLibraryIdle && Tweaks.LoadState().ModId is not null;
+        TweaksRemoveButton.IsEnabled = !_tweaksBusy && ModLibraryIdle &&
+                                       (Tweaks.LoadState().ModId is not null || _arkiveModLibraryManifest?.Mods.Any(TweakModService.IsTweakMod) == true);
     }
 
     private async void TweaksApplyButton_Click(object sender, RoutedEventArgs e)
@@ -143,56 +144,107 @@ public partial class MainWindow
 
     private async void TweaksRemoveButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(new TweakSettings());
 
-    /// <summary>Rebuilds the Arkive Tweaks mod for these settings (none removes it), then applies mods as the Mods tab does.</summary>
+    /// <summary>
+    /// Installs exactly these tweaks (none takes them all out), like the Login Screen and Fonts tabs: Arkive rebuilds its
+    /// own tweak mod, which the Mods list doesn't show, and applies the game packages it touches straight away. The mod
+    /// system still does the work, so backups, restores and other mods' changes to the same interface packages stay
+    /// correct. Other mods' waiting changes are only applied after the player agrees.
+    /// </summary>
     private async Task BuildTweaksAsync(TweakSettings settings)
     {
         if (_tweaksBusy || !ModLibraryIdle) return;
+        if (new LostArkProcessGuard().FindBlockingProcesses() is { Count: > 0 } running)
+        {
+            RefreshTweaks($"Close {string.Join(", ", running)} first, then try again.");
+            return;
+        }
         _tweaksBusy = true;
+        _modLibraryBusy = true;
         UpdateTweakActions();
         string status;
         try
         {
-            await EnsureGamePackagesDirectoryAsync();
-            var library = await _arkiveModLibrary.LoadAsync();
-            if (library.GamePackagesDirectory is not { } packages)
-            {
-                RefreshTweaks("Choose the game folder first (Mods tab): Arkive needs the game's Packages folder.");
-                return;
-            }
-            TweakBuildResult result;
-            var skipIntro = settings.Enabled.TryGetValue("fastlaunch", out var launch) &&
-                            (!launch.TryGetValue("skipIntro", out var skip) || skip.ValueKind == JsonValueKind.True);
-            int introFiles;
-            using (ShowBusy("Building tweaks…", "Arkive is adding the tweaks to the game's own windows. Please wait until it finishes."))
-            {
-                introFiles = await Task.Run(() => new TweakIntroMovies(Path.Combine(_projectRoot, "backups", "tweaks"), new LostArkProcessGuard())
-                    .Apply(packages, skipIntro));
-                result = await Task.Run(() => Tweaks.BuildAsync(settings, packages, TweakCode.LoadSwf()));
-            }
-            if (introFiles > 0) Log($"Tweaks: {(skipIntro ? "moved" : "restored")} {introFiles} intro movie file(s).");
-            Log($"Tweaks built: tweaks={string.Join(",", settings.Enabled.Keys)}, mod={result.Mod?.ModId ?? "-"}, " +
-                $"movies={string.Join(",", result.Movies)}, missing={string.Join(" | ", result.MissingHooks)}");
-            status = settings.Enabled.Count == 0
-                ? "Tweaks removed from the mod library. Apply below takes them out of the game."
-                : $"Built Arkive Tweaks ({result.Movies.Count:N0} window(s)).";
-            if (result.MissingHooks.Count > 0)
-                status += $" This game version is missing {result.MissingHooks.Count:N0} place(s) some tweaks hook, so those may not work: " +
-                          string.Join(", ", result.MissingHooks.Take(4)) + (result.MissingHooks.Count > 4 ? "…" : string.Empty);
-            await RefreshArkiveModsAsync("tweaks built", result.Mod?.ModId);
+            status = await InstallTweaksAsync(settings);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or
                                               InvalidOperationException or ArkiveModRefusalException)
         {
-            Log($"Building tweaks failed: {exception}");
-            RefreshTweaks("The tweaks could not be built: " + exception.Message);
-            return;
+            Log($"Installing tweaks failed: {exception}");
+            status = "The tweaks could not be installed: " + exception.Message;
         }
         finally
         {
             _tweaksBusy = false;
+            _modLibraryBusy = false;
         }
+        await RefreshArkiveModsAsync("tweaks installed");
         RefreshTweaks(status);
-        MainTabControl.SelectedItem = ModifiedUpksTab;
-        await RunModApplyAsync(previewOnly: false);
+    }
+
+    private async Task<string> InstallTweaksAsync(TweakSettings settings)
+    {
+        await EnsureGamePackagesDirectoryAsync();
+        var library = await _arkiveModLibrary.LoadAsync();
+        if (library.GamePackagesDirectory is not { } packages)
+            return "Choose the game folder first (Mods tab): Arkive needs the game's Packages folder.";
+        var removing = settings.Enabled.Count == 0;
+        var title = removing ? "Removing tweaks…" : "Installing tweaks…";
+        var skipIntro = settings.Enabled.TryGetValue("fastlaunch", out var launch) &&
+                        (!launch.TryGetValue("skipIntro", out var skip) || skip.ValueKind == JsonValueKind.True);
+
+        TweakBuildResult built;
+        ArkiveModApplyPlan plan;
+        using (ShowBusy(title, "Arkive is preparing the game's interface files. Please wait until it finishes."))
+        {
+            var introFiles = await Task.Run(() => new TweakIntroMovies(Path.Combine(_projectRoot, "backups", "tweaks"), new LostArkProcessGuard())
+                .Apply(packages, skipIntro));
+            if (introFiles > 0) Log($"Tweaks: {(skipIntro ? "moved" : "restored")} {introFiles} intro movie file(s).");
+            built = await Task.Run(() => Tweaks.BuildAsync(settings, packages, TweakCode.LoadSwf()));
+            Log($"Tweaks built: tweaks={string.Join(",", settings.Enabled.Keys)}, mod={built.Mod?.ModId ?? "-"}, " +
+                $"movies={string.Join(",", built.Movies)}, packages={string.Join(",", built.Packages)}, " +
+                $"missing={string.Join(" | ", built.MissingHooks)}");
+            plan = await _arkiveModApply.PlanAsync();
+        }
+        if (!plan.CanApply) return "The tweaks are ready but couldn't be installed: " + plan.Summary;
+
+        var others = plan.Packages.Where(package => package.Action != ArkiveModPackageAction.None &&
+                                                    !built.Packages.Contains(package.PhysicalPackageName)).ToArray();
+        if (others.Length > 0)
+        {
+            var names = string.Join("\n", others.Take(8).Select(package => $"  • {package.PackageAlias}: {package.Describe}" +
+                (package.Contributors.Count == 0 ? string.Empty
+                    : " — " + string.Join(", ", package.Contributors.Select(item => item.ModName).Distinct()))));
+            var more = others.Length > 8 ? $"\n  • and {others.Length - 8:N0} more" : string.Empty;
+            if (MessageBox.Show(this,
+                    $"Other mods have changes waiting too:\n\n{names}{more}\n\nInstall them together with the tweaks? " +
+                    "No leaves the game as it is; the tweaks go in the next time you apply.",
+                    removing ? "Remove tweaks" : "Install tweaks", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) !=
+                MessageBoxResult.Yes)
+                return "Nothing was changed in the game yet, because other mods have changes waiting. Apply tweaks again, or apply from the Mods tab.";
+        }
+        if (!plan.HasChanges) return removing ? "No tweaks are in the game." : "These tweaks are already in the game.";
+
+        ArkiveModApplyResult result;
+        using (ShowBusy(title, "Arkive is writing the game's interface files. Please wait until it finishes."))
+        {
+            var progress = new Progress<ArkiveModApplyProgress>(update =>
+            {
+                UpdateBusy(title, $"Step {update.Step:N0} of {update.TotalSteps:N0}: {update.Message}");
+                Log($"Tweaks apply progress: step={update.Step}/{update.TotalSteps}, package={update.Package}, message={update.Message}");
+            });
+            result = await _arkiveModApply.ApplyAsync(plan.Fingerprint, progress);
+        }
+        foreach (var package in result.Packages)
+            Log($"Tweaks apply package result: package={package.PhysicalPackageName}, action={package.Action}, " +
+                $"succeeded={package.Succeeded}, message={package.Message}");
+        if (!result.Succeeded)
+            return "Some interface files could not be changed: " +
+                   string.Join(" ", result.Packages.Where(item => !item.Succeeded).Take(2).Select(item => item.Message));
+        if (removing) return "Tweaks removed. The game's own windows are back as they were.";
+        var status = $"Installed {settings.Enabled.Count:N0} tweak(s). They show the next time you start Lost Ark.";
+        if (built.MissingHooks.Count > 0)
+            status += $" This game version is missing {built.MissingHooks.Count:N0} place(s) some tweaks hook, so those may not work: " +
+                      string.Join(", ", built.MissingHooks.Take(4)) + (built.MissingHooks.Count > 4 ? "…" : string.Empty);
+        return status;
     }
 }

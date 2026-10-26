@@ -9,8 +9,15 @@ using Arkive.Core.Textures;
 
 namespace Arkive.Core.Tweaks;
 
-/// <summary>What a tweak build made: the mod, and the hooks this game version no longer has (their tweaks may not work).</summary>
-public sealed record TweakBuildResult(ArkiveModLibraryEntry? Mod, IReadOnlyList<string> MissingHooks, IReadOnlyList<string> Movies);
+/// <summary>
+/// What a tweak build made: the mod, the hooks this game version no longer has (their tweaks may not work), and every
+/// game package (physical file name) the new or the replaced tweak mods touch, which is what installing must change.
+/// </summary>
+public sealed record TweakBuildResult(
+    ArkiveModLibraryEntry? Mod,
+    IReadOnlyList<string> MissingHooks,
+    IReadOnlyList<string> Movies,
+    IReadOnlySet<string> Packages);
 
 /// <summary>Saved choices: which tweaks are on, their options, and the library mod that holds them.</summary>
 public sealed class TweakState
@@ -31,6 +38,17 @@ public sealed class TweakModService(
     Func<string, CancellationToken, Task<string>>? cleanPackage = null)
 {
     public const string ModName = "Arkive Tweaks";
+    public const string Tag = "tweaks";
+
+    /// <summary>
+    /// A mod the Tweaks tab owns: it builds, installs and removes these itself, so the Mods list doesn't show them.
+    /// Test builds of the tweaks made with the CLI count too, so the tab cleans them up.
+    /// </summary>
+    public static bool IsTweakMod(ArkiveModLibraryEntry mod) =>
+        mod.Manifest.Name == ModName && mod.Manifest.Tags.Contains(Tag, StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> PackagesOf(ArkiveModLibraryEntry mod) =>
+        mod.Manifest.Assets.Select(asset => ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName));
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     /// <summary>Developer builds: every hook catches errors and passes them to the tweak code's Diag.note.</summary>
@@ -74,18 +92,22 @@ public sealed class TweakModService(
             .SelectMany(tweak => tweak.Hooks)
             .GroupBy(hook => (hook.Package, hook.Movie))
             .ToArray();
-        if (state.ModId is { } oldModId && (await library.LoadAsync(cancellationToken).ConfigureAwait(false)).Find(oldModId) is not null)
-            await library.RemoveAsync(oldModId, deleteFile: true, cancellationToken).ConfigureAwait(false);
+        var packages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var old in (await library.LoadAsync(cancellationToken).ConfigureAwait(false)).Mods.Where(IsTweakMod).ToArray())
+        {
+            packages.UnionWith(PackagesOf(old));
+            await library.RemoveAsync(old.ModId, deleteFile: true, cancellationToken).ConfigureAwait(false);
+        }
         state.ModId = null;
         state.Settings = settings;
         if (targets.Length == 0)
         {
             SaveState(state);
-            return new TweakBuildResult(null, [], []);
+            return new TweakBuildResult(null, [], [], packages);
         }
 
         var tweakCode = TweakCode.ForSettings(tweakSwf, settings);
-        var packages = FindPackages(packagesDirectory);
+        var gamePackages = FindPackages(packagesDirectory);
         var staging = Path.Combine(root, "staging");
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
         var store = new InterfaceMovieEditWorkspaceStore(staging, protectionProvider);
@@ -98,7 +120,7 @@ public sealed class TweakModService(
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var (alias, movieName) = group.Key;
-                if (!packages.TryGetValue(alias, out var installed))
+                if (!gamePackages.TryGetValue(alias, out var installed))
                 {
                     missing.AddRange(group.Select(hook => $"{alias}: package not found"));
                     continue;
@@ -148,7 +170,7 @@ public sealed class TweakModService(
             if (captured.Count == 0)
             {
                 SaveState(state);
-                return new TweakBuildResult(null, missing, movies);
+                return new TweakBuildResult(null, missing, movies, packages);
             }
             var description = "Built by Arkive's Tweaks tab: " + string.Join(", ",
                 settings.Enabled.Keys.Select(id => TweakCatalog.Find(id)?.Name ?? id)) + ". Change it there, not here.";
@@ -161,12 +183,13 @@ public sealed class TweakModService(
                 InterfaceMovies = store,
             });
             var mod = await authoring.CreateModAsync(
-                    new ArkiveModMetadata(ModName, DateTimeOffset.UtcNow.ToString("yyyy.MM.dd.HHmm"), "Arkive", description, Tags: ["tweaks"]),
+                    new ArkiveModMetadata(ModName, DateTimeOffset.UtcNow.ToString("yyyy.MM.dd.HHmm"), "Arkive", description, Tags: [Tag]),
                     captured, ArkiveModOrigin.Created, enabled: true, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             state.ModId = mod.ModId;
             SaveState(state);
-            return new TweakBuildResult(mod, missing, movies);
+            packages.UnionWith(PackagesOf(mod));
+            return new TweakBuildResult(mod, missing, movies, packages);
         }
         finally
         {
