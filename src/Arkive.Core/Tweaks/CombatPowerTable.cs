@@ -65,13 +65,14 @@ public static class CombatPowerTable
     /// Everything the Combat Power tweak reads, as its options: "rows" and "gemBase" (above), "engravings" (one text per
     /// engraving and role, "Name|key|v0,v1,…,v93": the value at index 20 × stone level + 1 + 4 × (grade − 1) + level, grade
     /// 1 heroic to 3 relic; the penalty Atk. Power Reduction by its level) and "bracelet" (one text per bracelet effect,
-    /// "text|dps|support", the text with whitespace, slashes and commas removed and lower-cased, as <see cref="Plain"/>).
+    /// "text|dps|support", the text with whitespace, slashes and commas removed and lower-cased, as <see cref="Plain"/>)
+    /// and "orbs" (one text per paradise orb and role, "Name|key|B|C": type 33 for DPS, 34 for support).
     /// Kept in <paramref name="workDirectory"/> per data2.lpk size and time, since reading the game's text takes a while.
     /// </summary>
     public static Dictionary<string, System.Text.Json.JsonElement> Options(string data2Path, string workDirectory)
     {
         var file = new FileInfo(data2Path);
-        var cache = Path.Combine(workDirectory, $"combat-power-{file.Length}-{file.LastWriteTimeUtc.Ticks}.json");
+        var cache = Path.Combine(workDirectory, $"combat-power-{CacheVersion}-{file.Length}-{file.LastWriteTimeUtc.Ticks}.json");
         if (File.Exists(cache))
         {
             var kept = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(File.ReadAllText(cache));
@@ -83,10 +84,11 @@ public static class CombatPowerTable
             ["gemBase"] = GemBasicAttack(data2Path, workDirectory),
         };
         WithDatabases(data2Path, workDirectory,
-            ["EFTable_BattlePoint.db", "EFTable_Ability.db", "EFTable_CombatEffect.db", "EFTable_GameMsg.db"], connection =>
+            ["EFTable_BattlePoint.db", "EFTable_Ability.db", "EFTable_CombatEffect.db", "EFTable_GameMsg.db", "EFTable_Item.db"], connection =>
             {
                 options["engravings"] = Engravings(connection);
                 options["bracelet"] = Bracelet(connection);
+                options["orbs"] = Orbs(connection);
                 return 0;
             });
         Directory.CreateDirectory(workDirectory);
@@ -94,6 +96,29 @@ public static class CombatPowerTable
         var json = System.Text.Json.JsonSerializer.Serialize(options);
         File.WriteAllText(cache, json);
         return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json)!;
+    }
+
+    /// <summary>Bumped when <see cref="Options"/> gains a table, so caches from older builds are read again.</summary>
+    private const int CacheVersion = 2;
+
+    /// <summary>Paradise orbs (types 33 and 34) by their item names: ValueA is the orb, B and C its values.</summary>
+    private static string[] Orbs(SqliteConnection connection)
+    {
+        var found = new List<string>();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT b.PrimaryKey, b.ValueB, b.ValueC, i.Name FROM BattlePoint b JOIN db4.Item i ON i.PrimaryKey = b.ValueA
+            WHERE b.Type IN (33, 34) ORDER BY b.PrimaryKey, b.SecondaryKey
+            """;
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var name = Text(connection, reader.GetString(3));
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            name = System.Text.RegularExpressions.Regex.Replace(name, "<[^>]*>", "").Trim();
+            found.Add($"{name}|{reader.GetInt32(0)}|{reader.GetInt32(1)}|{reader.GetInt32(2)}");
+        }
+        return found.ToArray();
     }
 
     /// <summary>Game text as the tweak compares it: tags, whitespace, slashes and commas removed, lower-cased.</summary>

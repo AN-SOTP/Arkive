@@ -17,7 +17,54 @@ internal static class TweakSmokeTests
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
         new("reads a player's logs from a lostark.bible page and writes the summary the Logs tab draws", TestPlayerLogs),
         new("deletes tweak working edits left by replaced tweak mods and keeps everyone else's", TestStaleTweakDrafts),
+        new("reads Data Bus messages and saves tweak switches and options changed in game", TestInGameSettings),
     ];
+
+    /// <summary>
+    /// The escape menu panel spells "settings" messages on the Data Bus; Arkive saves them to the tweak state (a tweak
+    /// switched off keeps its options) and to live.json, which the game follows. Bad messages change nothing.
+    /// </summary>
+    private static void TestInGameSettings()
+    {
+        var spelled = Arkive.Core.Tweaks.TweakBus.Encode("settings", "0a1f\tlobbycp\t\t0 é Ω");
+        Assert(Arkive.Core.Tweaks.TweakBus.TryDecode(spelled, out var channel, out var text) && channel == "settings" &&
+               text == "0a1f\tlobbycp\t\t0 é Ω", $"the bus message did not decode: {spelled}");
+        Assert(!Arkive.Core.Tweaks.TweakBus.TryDecode(spelled.Remove(6, 2), out _, out _), "a bus message with a missed read was accepted");
+        var bus = new Arkive.Core.Tweaks.TweakBus(Path.GetTempPath());
+        var heard = "";
+        bus.Received += (_, message) => heard = message;
+        foreach (var symbol in (string[])["go", .. Arkive.Core.Tweaks.TweakBus.Encode("x", "hi").Select(digit => digit.ToString()), "end"])
+            bus.Receive(symbol);
+        Assert(heard == "hi", "the bus reads between go and end were not put together");
+
+        var root = Path.Combine(fixtureDirectory, "tweak-settings");
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        var library = new ArkiveModLibrary(Path.Combine(root, "mods"), Path.Combine(root, "staging"));
+        var service = new Arkive.Core.Tweaks.TweakModService(library, Path.Combine(root, "tweaks"), NoChunkProtectionProvider.Instance);
+        var state = new Arkive.Core.Tweaks.TweakState();
+        state.Settings.Enabled["extracurrency"] = new() { ["showLeapstones"] = System.Text.Json.JsonSerializer.SerializeToElement(false) };
+        service.SaveState(state);
+        Assert(service.ApplyInGameChange("0001\textracurrency\t\t0") is not null, "switching a tweak off was refused");
+        state = service.LoadState();
+        Assert(!state.Settings.Enabled.ContainsKey("extracurrency") && state.Kept["extracurrency"]["showLeapstones"].GetBoolean() == false,
+            "a tweak switched off in game did not keep its options");
+        Assert(service.ApplyInGameChange("0002\tboxtweaks\tconfirm\ttick") is not null &&
+               service.ApplyInGameChange("0003\textracurrency\t\t1") is not null, "a choice or switching back on was refused");
+        state = service.LoadState();
+        Assert(state.Settings.Enabled["extracurrency"]["showLeapstones"].GetBoolean() == false && state.Kept.Count == 1 &&
+               state.Kept["boxtweaks"]["confirm"].GetString() == "tick", "switching back on lost the options, or a choice was not kept");
+        Assert(service.ApplyInGameChange("0004\tboxtweaks\tconfirm\tnonsense") is null &&
+               service.ApplyInGameChange("0005\tfastlaunch\t\t0") is null && service.ApplyInGameChange("0006\tnope\t\t1") is null,
+            "a bad choice, a game-file tweak or an unknown tweak was accepted");
+        var live = File.ReadAllText(service.LivePath);
+        using var parsed = System.Text.Json.JsonDocument.Parse(live);
+        Assert(parsed.RootElement.GetProperty("ack").GetString() == "0003" &&
+               parsed.RootElement.GetProperty("on").TryGetProperty("extracurrency", out _) &&
+               !parsed.RootElement.GetProperty("on").TryGetProperty("boxtweaks", out _) &&
+               parsed.RootElement.GetProperty("tweaks").GetProperty("boxtweaks").GetProperty("confirm").GetString() == "tick" &&
+               !live.Contains("\\u", StringComparison.Ordinal),
+            "live.json does not hold the switches, options and answered request, or has \\u escapes: " + live);
+    }
 
     /// <summary>
     /// The Logs tab draws Arkive's summary file. The page data is "devalue" encoded (objects hold indexes into one flat
@@ -116,6 +163,10 @@ internal static class TweakSmokeTests
     {
         var settings = new Arkive.Core.Tweaks.TweakSettings();
         settings.Enabled["lobbycp"] = [];
+        // Text like a bracelet effect's: the default JSON writer would turn "+", "'" and "<" into \u escapes.
+        settings.Enabled["cpgems"] = new() { ["bracelet"] = System.Text.Json.JsonSerializer.SerializeToElement(new[] { "crit+5%.can't<x>|450|0" }) };
+        Assert(!settings.ToGameJson().Contains("\\u", StringComparison.Ordinal),
+            $"the tweak settings have \\u escapes, which the game's JSON reading can't handle: {settings.ToGameJson()}");
         var blocks = Arkive.Core.Tweaks.TweakCode.ForSettings(Arkive.Core.Tweaks.TweakCode.LoadSwf(), settings);
         Assert(blocks.Count > 0 && blocks.All(block => block.AbcName.StartsWith(Arkive.Core.Tweaks.TweakCode.AbcName + "/")),
             "the tweak code blocks are missing or unnamed");
@@ -282,10 +333,10 @@ internal static class TweakSmokeTests
 
     private static void TestHookKinds()
     {
-        string Shape(AbcHookKind kind)
+        string Shape(AbcHookKind kind, string? gate = null)
         {
             var abc = BuildGreeter();
-            AbcHookInjector.Inject(abc, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet", Kind: kind)]);
+            AbcHookInjector.Inject(abc, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet", Kind: kind) { Gate = gate }]);
             var reread = AbcFile.Read(abc.Write());
             var wrapper = reread.Instances[0].Traits.Single(trait => reread.Pool.NameOf(trait.Name) == "greet");
             var body = reread.BodyOf(wrapper.Index) ?? throw new InvalidOperationException("wrapper has no body");
@@ -340,6 +391,12 @@ internal static class TweakSmokeTests
         var before = Shape(AbcHookKind.Before);
         Assert(before == "call:onGreet/2 iffalse get:return iffalse get:value return get:[i] call:greet$arkive/1 return",
             "before hook: " + before);
+        // A tweak switched off in game: Options.on(id) is asked first, and the handler is skipped when it says no.
+        var gated = Shape(AbcHookKind.Before, "lobbycp");
+        Assert(gated == "call:on/1 iffalse call:onGreet/2 iffalse get:return iffalse get:value return get:[i] call:greet$arkive/1 return",
+            "gated before hook: " + gated);
+        var gatedAfter = Shape(AbcHookKind.AfterValue, "lobbycp");
+        Assert(gatedAfter == "call:greet$arkive/1 call:on/1 iffalse call:onGreet/3 iffalse get:value return", "gated after hook: " + gatedAfter);
     }
 
     /// <summary>package demo { public class Greeter { public function greet(name:String):String { return name; } } }</summary>

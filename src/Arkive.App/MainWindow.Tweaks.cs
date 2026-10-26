@@ -131,10 +131,11 @@ public partial class MainWindow
         var state = Tweaks.LoadState();
         TweakList.ItemsSource = TweakCatalog.All.Where(tweak => tweak.Available).Select(tweak =>
         {
-            var saved = state.Settings.Enabled.GetValueOrDefault(tweak.Id);
+            // A tweak switched off in game keeps its options, ready for when it's switched on again.
+            var saved = state.Settings.Enabled.GetValueOrDefault(tweak.Id) ?? state.Kept.GetValueOrDefault(tweak.Id);
             var options = tweak.OptionList.Select(option => new TweakOptionRow(option,
                 saved is not null && saved.TryGetValue(option.Key, out var value) ? value : null, tweak.Id)).ToArray();
-            return new TweakRow(tweak, saved is not null, options);
+            return new TweakRow(tweak, state.Settings.Enabled.ContainsKey(tweak.Id), options);
         }).ToArray();
         var on = state.Settings.Enabled.Count;
         TweaksStatusText.Text = status ?? (on == 0
@@ -172,7 +173,10 @@ public partial class MainWindow
         if (_tweaksBusy || !ModLibraryIdle) return;
         if (new LostArkProcessGuard().FindBlockingProcesses() is { Count: > 0 } running)
         {
-            RefreshTweaks($"Close {string.Join(", ", running)} first, then try again.");
+            // With In-game Tweak Settings installed, switches and options reach the running game through live.json.
+            RefreshTweaks(Tweaks.TrySaveLive(settings)
+                ? "Saved. Lost Ark picks the change up within a few seconds; a window that is already open may need reopening."
+                : $"Close {string.Join(", ", running)} first, then try again.");
             return;
         }
         _tweaksBusy = true;

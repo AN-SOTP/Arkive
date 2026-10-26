@@ -26,7 +26,10 @@ public static class TweakCode
     /// The code blocks to add to a movie, one per class as the Haxe compiler's SWC holds them, with the chosen tweaks
     /// and options (JSON) written into Options, and every typed null made untyped (see AbcInstructions.UntypeNulls).
     /// </summary>
-    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, TweakSettings settings)
+    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, TweakSettings settings) => ForSettings(swf, settings.ToGameJson());
+
+    /// <summary>The code blocks with this settings JSON (the shape Options.hx reads) written in.</summary>
+    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, string gameJson)
     {
         var blocks = ReadSwfBlocks(swf);
         var configured = 0;
@@ -37,7 +40,7 @@ public static class TweakCode
             var index = abc.Pool.Strings.IndexOf(ConfigPlaceholder);
             if (index >= 0)
             {
-                abc.Pool.Strings[index] = settings.ToGameJson();
+                abc.Pool.Strings[index] = gameJson;
                 configured++;
             }
             foreach (var body in abc.Bodies) AbcInstructions.UntypeNulls(body);
@@ -99,6 +102,15 @@ public sealed class TweakSettings
 {
     public Dictionary<string, Dictionary<string, JsonElement>> Enabled { get; set; } = [];
 
-    /// <summary>{"tweaks":{"lobbycp":{},"extracurrency":{"showLeapstones":true}}}, the shape the tweak code reads.</summary>
-    public string ToGameJson() => JsonSerializer.Serialize(new { tweaks = Enabled });
+    /// <summary>
+    /// {"tweaks":{"lobbycp":{},"extracurrency":{"showLeapstones":true}}}, the shape the tweak code reads. Characters are
+    /// written as they are, not as \u escapes: Haxe's JSON parser reads those through Std.parseInt and Math.isNaN,
+    /// which Arkive's empty Boot leaves unset, so a single escape (a "+" in bracelet text) made every setting unreadable.
+    /// </summary>
+    public string ToGameJson() => JsonSerializer.Serialize(new { tweaks = Enabled }, GameJson);
+
+    private static readonly JsonSerializerOptions GameJson = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 }

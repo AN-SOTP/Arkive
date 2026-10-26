@@ -40,7 +40,18 @@ public sealed record TweakHookTarget(string Package, string Movie, string ClassN
 /// An option of a tweak: an on/off switch, or with <see cref="Choices"/> a set of things to pick (saved as the list of
 /// chosen values, for example raid ids). With <see cref="Single"/> exactly one choice is picked, saved as its value.
 /// </summary>
-public sealed record TweakOption(string Key, string Label, bool Default, IReadOnlyList<TweakChoice>? Choices = null, bool Single = false);
+public sealed record TweakOption(string Key, string Label, bool Default, IReadOnlyList<TweakChoice>? Choices = null, bool Single = false)
+{
+    /// <summary>The value a fresh Tweaks tab saves: the switch, the default choice's value (single), or the default choices.</summary>
+    public System.Text.Json.JsonElement DefaultValue => Choices is null
+        ? System.Text.Json.JsonSerializer.SerializeToElement(Default)
+        : Single
+            ? System.Text.Json.JsonSerializer.SerializeToElement((Choices.FirstOrDefault(choice => choice.Default) ?? Choices[0]).Value)
+            : System.Text.Json.JsonSerializer.SerializeToElement(Choices.Where(choice => choice.Default).Select(choice => choice.Value).ToArray());
+
+    /// <summary>"switch", "single" (one choice) or "list" (several choices), as the in-game panel reads it.</summary>
+    public string Kind => Choices is null ? "switch" : Single ? "single" : "list";
+}
 
 /// <summary>One thing to pick in a <see cref="TweakOption"/> with choices.</summary>
 public sealed record TweakChoice(string Value, string Label, bool Default = false);
@@ -58,6 +69,9 @@ public sealed record TweakDefinition(
 
     /// <summary>True once every hook has its handler written (Faster Launch needs none).</summary>
     public bool Available => Id == "fastlaunch" || (Hooks.Count > 0 && Hooks.All(hook => hook.Handler is not null));
+
+    /// <summary>A tweak that changes game files rather than interface code (Faster Launch): only Arkive can switch it, with the game closed.</summary>
+    public bool RestartOnly => Hooks.Count == 0;
 }
 
 /// <summary>Every tweak Arkive offers, and the game methods each one hooks.</summary>
@@ -77,6 +91,13 @@ public static class TweakCatalog
         [
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsTab.onWndConfigUI"),
         ]),
+        new(TweakModService.SettingsTweak, "In-game Tweak Settings", "An \"Arkive\" button in the escape menu opens a list of your tweaks: switch them on or off and change their options while you play. Keep Arkive running to save those changes; without it they last until you close the game.", TweakRisk.Display,
+        [
+            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.MenuWndContent", "configUI"),
+        ],
+        [
+            new("everything", "Install every tweak, so any of them can be switched on in game (the ones not ticked here start off)", true),
+        ], Note: "Faster Launch still needs the game closed, so change it here."),
         new("cpgems", "Combat Power on Tooltips", "A line on gem, weapon, armour and accessory tooltips (your own, inspected players', the market's) shows how much your Combat Power would go up or down if you equipped that item instead of yours, priced with the game's own table. Your Character Profile checks the prediction when your gear changes. Bracelets, ability stones, books and Ark Grid come next; support characters get gem lines only for now.", TweakRisk.Display,
         [
             H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.CombatPower.onMainTooltip", AbcHookKind.Before),

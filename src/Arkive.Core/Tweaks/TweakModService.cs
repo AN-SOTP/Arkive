@@ -19,11 +19,17 @@ public sealed record TweakBuildResult(
     IReadOnlyList<string> Movies,
     IReadOnlySet<string> Packages);
 
-/// <summary>Saved choices: which tweaks are on, their options, and the library mod that holds them.</summary>
+/// <summary>
+/// Saved choices: which tweaks are on, their options, and the library mod that holds them. <see cref="Kept"/> keeps the
+/// options of tweaks switched off in game, so switching one back on brings them back; <see cref="Built"/> lists the
+/// tweaks the installed mod has hooks for.
+/// </summary>
 public sealed class TweakState
 {
     public TweakSettings Settings { get; set; } = new();
     public string? ModId { get; set; }
+    public Dictionary<string, Dictionary<string, JsonElement>> Kept { get; set; } = [];
+    public List<string> Built { get; set; } = [];
 }
 
 /// <summary>
@@ -64,23 +70,175 @@ public sealed class TweakModService(
     public string? GameDataFile { get; init; }
 
     /// <summary>
-    /// The settings the tweak code gets: the saved ones, plus the folder the Logs tab reads its answers from and the
-    /// game's Combat Power tables (left out when there is no data2.lpk, so that tweak shows nothing).
+    /// The settings the tweak code gets (Options.hx): every built tweak's options ("tweaks"), the ones that act ("on"),
+    /// Arkive's tweak folder ("home"), plus the folder the Logs tab reads its answers from and the game's Combat Power
+    /// tables (left out when there is no data2.lpk, so that tweak shows nothing). With In-game Tweak Settings built,
+    /// "live" tells the code to follow live.json and "panel" lists what the escape menu panel shows.
     /// </summary>
-    private TweakSettings ForGame(TweakSettings settings, string packagesDirectory)
+    private string ForGame(TweakState state, IReadOnlyList<TweakDefinition> built, string packagesDirectory)
     {
-        var copy = new TweakSettings { Enabled = new(settings.Enabled) };
-        if (settings.Enabled.TryGetValue(PlayerLogsTweak, out var logs))
-            copy.Enabled[PlayerLogsTweak] = new(logs) { ["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/')) };
+        var settings = state.Settings;
+        var tweaks = built.ToDictionary(tweak => tweak.Id, tweak => OptionsOf(state, tweak));
+        if (tweaks.TryGetValue(PlayerLogsTweak, out var logs))
+            logs["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/'));
         var data2 = GameDataFile ?? Path.GetFullPath(Path.Combine(packagesDirectory, "..", "..", "data2.lpk"));
-        if (settings.Enabled.TryGetValue(CombatPowerTweak, out var power) && File.Exists(data2))
-        {
-            var options = new Dictionary<string, JsonElement>(power);
+        if (tweaks.TryGetValue(CombatPowerTweak, out var power) && File.Exists(data2))
             foreach (var (key, value) in CombatPowerTable.Options(data2, Path.Combine(root, "cache")))
-                options[key] = value;
-            copy.Enabled[CombatPowerTweak] = options;
+                power[key] = value;
+        var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["tweaks"] = tweaks,
+            ["on"] = settings.Enabled.Keys.Where(tweaks.ContainsKey).ToDictionary(id => id, _ => true),
+            ["home"] = Path.GetFullPath(root).Replace('\\', '/'),
+            ["live"] = live,
+            ["panel"] = live ? Panel(built) : null,
+        }, GameJsonOptions);
+    }
+
+    /// <summary>Plain text for the game's JSON reader: only quotes, backslashes and control characters are escaped.</summary>
+    private static readonly JsonSerializerOptions GameJsonOptions = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    /// <summary>The tweak this build has In-game Tweak Settings for, and the one that installs every tweak.</summary>
+    public const string SettingsTweak = "settings";
+
+    private const string EverythingOption = "everything";
+
+    /// <summary>The tweaks a build hooks: every interface tweak with In-game Tweak Settings' "everything" on, else the ones on.</summary>
+    public static IReadOnlyList<TweakDefinition> BuiltTweaks(TweakSettings settings)
+    {
+        var everything = settings.Enabled.TryGetValue(SettingsTweak, out var panel) &&
+                         (!panel.TryGetValue(EverythingOption, out var all) || all.ValueKind != JsonValueKind.False);
+        return [.. TweakCatalog.All.Where(tweak => tweak.Available && !tweak.RestartOnly && (everything || settings.Enabled.ContainsKey(tweak.Id)))];
+    }
+
+    /// <summary>A tweak's options: as saved (or kept while it is switched off), with defaults for the ones never saved.</summary>
+    private static Dictionary<string, JsonElement> OptionsOf(TweakState state, TweakDefinition tweak)
+    {
+        var saved = state.Settings.Enabled.GetValueOrDefault(tweak.Id) ?? state.Kept.GetValueOrDefault(tweak.Id);
+        var options = saved is null ? [] : new Dictionary<string, JsonElement>(saved);
+        foreach (var option in tweak.OptionList)
+            options.TryAdd(option.Key, option.DefaultValue);
+        return options;
+    }
+
+    /// <summary>What the escape menu panel lists: the built tweaks (not itself) and the game-file ones, which say so.</summary>
+    private static object[] Panel(IReadOnlyList<TweakDefinition> built) =>
+    [
+        .. TweakCatalog.All
+            .Where(tweak => tweak.Id != SettingsTweak && tweak.Available && (tweak.RestartOnly || built.Contains(tweak)))
+            .Select(tweak => new
+            {
+                id = tweak.Id,
+                name = tweak.Name,
+                restart = tweak.RestartOnly,
+                options = tweak.OptionList.Select(option => new
+                {
+                    key = option.Key,
+                    label = option.Label,
+                    kind = option.Kind,
+                    choices = (option.Choices ?? []).Select(choice => new { value = choice.Value, label = choice.Label }).ToArray(),
+                }).ToArray(),
+            }),
+    ];
+
+    /// <summary>The file the game follows for choices saved since the build (see Options.hx).</summary>
+    public string LivePath => Path.Combine(root, "live.json");
+
+    /// <summary>The Data Bus's signal files (see <see cref="TweakBus"/>).</summary>
+    public string BusFolder => Path.Combine(root, "bus");
+
+    /// <summary>
+    /// Writes live.json: which tweaks act and every interface tweak's options, and the request id of the in-game change
+    /// it answers ("ack"), which the panel waits for to show the change as saved.
+    /// </summary>
+    public void WriteLive(TweakState state, string ack = "")
+    {
+        var tweaks = TweakCatalog.All.Where(tweak => tweak.Available && !tweak.RestartOnly).ToArray();
+        var json = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["on"] = tweaks.Where(tweak => state.Settings.Enabled.ContainsKey(tweak.Id)).ToDictionary(tweak => tweak.Id, _ => true),
+            ["tweaks"] = tweaks.ToDictionary(tweak => tweak.Id, tweak => OptionsOf(state, tweak)),
+            ["ack"] = ack,
+        }, GameJsonOptions);
+        Directory.CreateDirectory(root);
+        var temporary = LivePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        File.WriteAllText(temporary, json);
+        File.Move(temporary, LivePath, overwrite: true);
+    }
+
+    /// <summary>The Data Bus channel the escape menu panel sends its changes on.</summary>
+    public const string SettingsChannel = "settings";
+
+    /// <summary>
+    /// Saves a change made in the escape menu panel: "request&lt;tab&gt;tweak&lt;tab&gt;&lt;tab&gt;1|0" switches a tweak,
+    /// "request&lt;tab&gt;tweak&lt;tab&gt;option&lt;tab&gt;value" sets an option (1|0 for a switch, the choice's value for a single
+    /// choice). Updates the saved state and live.json; returns what changed, or null for a message it can't take.
+    /// </summary>
+    public string? ApplyInGameChange(string text)
+    {
+        var parts = text.Split('\t');
+        if (parts.Length != 4 || TweakCatalog.Find(parts[1]) is not { Available: true, RestartOnly: false } tweak || tweak.Id == SettingsTweak)
+            return null;
+        var (request, key, value) = (parts[0], parts[2], parts[3]);
+        var state = LoadState();
+        var enabled = state.Settings.Enabled;
+        string change;
+        if (key.Length == 0)
+        {
+            if (value is not ("1" or "0")) return null;
+            var on = value == "1";
+            if (on && !enabled.ContainsKey(tweak.Id))
+            {
+                enabled[tweak.Id] = OptionsOf(state, tweak);
+                state.Kept.Remove(tweak.Id);
+            }
+            else if (!on && enabled.Remove(tweak.Id, out var options))
+                state.Kept[tweak.Id] = options;
+            change = $"{tweak.Name} {(on ? "on" : "off")}";
         }
-        return copy;
+        else
+        {
+            if (tweak.OptionList.FirstOrDefault(option => option.Key == key) is not { } option) return null;
+            JsonElement element;
+            if (option.Kind == "switch" && value is "1" or "0")
+                element = JsonSerializer.SerializeToElement(value == "1");
+            else if (option.Kind == "single" && option.Choices!.Any(choice => choice.Value == value))
+                element = JsonSerializer.SerializeToElement(value);
+            else
+                return null;
+            var options = enabled.GetValueOrDefault(tweak.Id) ?? (state.Kept[tweak.Id] = OptionsOf(state, tweak));
+            options[key] = element;
+            change = $"{tweak.Name}: {option.Label} = {value}";
+        }
+        SaveState(state, request);
+        return change;
+    }
+
+    /// <summary>
+    /// Saves the Tweaks tab's choices without rebuilding when the installed tweaks can already follow them through
+    /// live.json: In-game Tweak Settings is built, every interface tweak now on has hooks, and the game-file tweaks are
+    /// unchanged. Used while the game runs (installing needs it closed). False when a rebuild is needed.
+    /// </summary>
+    public bool TrySaveLive(TweakSettings settings)
+    {
+        var state = LoadState();
+        if (state.ModId is null || !state.Built.Contains(SettingsTweak) || !settings.Enabled.ContainsKey(SettingsTweak) ||
+            !BuiltTweaks(settings).All(tweak => state.Built.Contains(tweak.Id)))
+            return false;
+        foreach (var tweak in TweakCatalog.All.Where(tweak => tweak.RestartOnly))
+        {
+            var before = state.Settings.Enabled.GetValueOrDefault(tweak.Id);
+            var after = settings.Enabled.GetValueOrDefault(tweak.Id);
+            if ((before is null) != (after is null) ||
+                (before is not null && JsonSerializer.Serialize(before) != JsonSerializer.Serialize(after)))
+                return false;
+        }
+        foreach (var id in settings.Enabled.Keys)
+            state.Kept.Remove(id);
+        state.Settings = settings;
+        SaveState(state);
+        return true;
     }
 
     /// <summary>
@@ -136,12 +294,14 @@ public sealed class TweakModService(
         }
     }
 
-    public void SaveState(TweakState state)
+    /// <summary>Saves the choices, and writes live.json so a running game follows them (<paramref name="ack"/>: see WriteLive).</summary>
+    public void SaveState(TweakState state, string ack = "")
     {
         Directory.CreateDirectory(root);
         var temporary = StatePath + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(state, JsonOptions));
         File.Move(temporary, StatePath, overwrite: true);
+        WriteLive(state, ack);
     }
 
     /// <summary>
@@ -152,10 +312,11 @@ public sealed class TweakModService(
         TweakSettings settings, string packagesDirectory, byte[] tweakSwf, CancellationToken cancellationToken = default)
     {
         var state = LoadState();
-        var targets = settings.Enabled.Keys
-            .Select(TweakCatalog.Find).OfType<TweakDefinition>().Where(tweak => tweak.Available)
-            .SelectMany(tweak => tweak.Hooks)
-            .GroupBy(hook => (hook.Package, hook.Movie))
+        IReadOnlyList<TweakDefinition> built = settings.Enabled.Count == 0 ? [] : BuiltTweaks(settings);
+        // Every hook is gated by its tweak's id, so a tweak switched off (in game, or never ticked) leaves the game alone.
+        var targets = built
+            .SelectMany(tweak => tweak.Hooks.Select(hook => (Target: hook, Hook: hook.Hook with { Gate = tweak.Id })))
+            .GroupBy(item => (item.Target.Package, item.Target.Movie))
             .ToArray();
         var packages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var oldMods = (await library.LoadAsync(cancellationToken).ConfigureAwait(false)).Mods.Where(IsTweakMod).ToArray();
@@ -166,14 +327,17 @@ public sealed class TweakModService(
             await library.RemoveAsync(old.ModId, deleteFile: true, cancellationToken).ConfigureAwait(false);
         }
         state.ModId = null;
+        state.Built = [];
         state.Settings = settings;
+        foreach (var id in settings.Enabled.Keys)
+            state.Kept.Remove(id);
         if (targets.Length == 0)
         {
             SaveState(state);
             return new TweakBuildResult(null, [], [], packages);
         }
 
-        var tweakCode = TweakCode.ForSettings(tweakSwf, ForGame(settings, packagesDirectory));
+        var tweakCode = TweakCode.ForSettings(tweakSwf, ForGame(state, built, packagesDirectory));
         var gamePackages = FindPackages(packagesDirectory);
         var staging = Path.Combine(root, "staging");
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
@@ -203,11 +367,11 @@ public sealed class TweakModService(
                     continue;
                 }
                 var original = ReadExport(catalog, export);
-                var built = TweakMovieBuilder.Build(GfxMovieFile.Extract(original), group.Select(hook => hook.Hook with { Diagnostic = Diagnostic }), tweakCode);
-                missing.AddRange(built.MissingHooks);
+                var movie = TweakMovieBuilder.Build(GfxMovieFile.Extract(original), group.Select(item => item.Hook with { Diagnostic = Diagnostic }), tweakCode);
+                missing.AddRange(movie.MissingHooks);
                 var editedPath = Path.Combine(staging, $"{alias}.{movieName}{GfxMovieFile.Extension}");
                 Directory.CreateDirectory(staging);
-                await File.WriteAllBytesAsync(editedPath, built.Movie, cancellationToken).ConfigureAwait(false);
+                await File.WriteAllBytesAsync(editedPath, movie.Movie, cancellationToken).ConfigureAwait(false);
                 if (KeepMoviesIn is { } keep)
                 {
                     Directory.CreateDirectory(keep);
@@ -254,6 +418,7 @@ public sealed class TweakModService(
                     captured, ArkiveModOrigin.Created, enabled: true, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             state.ModId = mod.ModId;
+            state.Built = [.. built.Select(tweak => tweak.Id)];
             SaveState(state);
             packages.UnionWith(PackagesOf(mod));
             return new TweakBuildResult(mod, missing, movies, packages);
