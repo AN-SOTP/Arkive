@@ -66,7 +66,8 @@ public static class CombatPowerTable
     /// engraving and role, "Name|key|v0,v1,…,v93": the value at index 20 × stone level + 1 + 4 × (grade − 1) + level, grade
     /// 1 heroic to 3 relic; the penalty Atk. Power Reduction by its level) and "bracelet" (one text per bracelet effect,
     /// "text|dps|support", the text with whitespace, slashes and commas removed and lower-cased, as <see cref="Plain"/>)
-    /// and "orbs" (one text per paradise orb and role, "Name|key|B|C": type 33 for DPS, 34 for support).
+    /// "orbs" (one text per paradise orb and role, "Name|key|B|C": type 33 for DPS, 34 for support) and "cores" (Ark Grid
+    /// cores, "Name|grade|key|v1,…,v6": the value with 1 to 6 of the core's point steps lit, types 29 and 30 added).
     /// Kept in <paramref name="workDirectory"/> per data2.lpk size and time, since reading the game's text takes a while.
     /// </summary>
     public static Dictionary<string, System.Text.Json.JsonElement> Options(string data2Path, string workDirectory)
@@ -89,6 +90,7 @@ public static class CombatPowerTable
                 options["engravings"] = Engravings(connection);
                 options["bracelet"] = Bracelet(connection);
                 options["orbs"] = Orbs(connection);
+                options["cores"] = Cores(connection);
                 return 0;
             });
         Directory.CreateDirectory(workDirectory);
@@ -99,7 +101,7 @@ public static class CombatPowerTable
     }
 
     /// <summary>Bumped when <see cref="Options"/> gains a table, so caches from older builds are read again.</summary>
-    private const int CacheVersion = 3;
+    private const int CacheVersion = 4;
 
     /// <summary>Paradise orbs (types 33 and 34) by their item names: ValueA is the orb, B and C its values.</summary>
     private static string[] Orbs(SqliteConnection connection)
@@ -117,6 +119,48 @@ public static class CombatPowerTable
             if (string.IsNullOrWhiteSpace(name)) continue;
             name = System.Text.RegularExpressions.Regex.Replace(name, "<[^>]*>", "").Trim();
             found.Add($"{name}|{reader.GetInt32(0)}|{reader.GetInt32(1)}|{reader.GetInt32(2)}");
+        }
+        return found.ToArray();
+    }
+
+    /// <summary>
+    /// Ark Grid cores by name and grade (3 epic … 6 ancient). Order cores of one kind ("Order Sun Core") share their
+    /// values at each grade, so they're listed once by that kind; the rest by their full name.
+    /// </summary>
+    private static string[] Cores(SqliteConnection connection)
+    {
+        var cores = new Dictionary<(string Name, int Grade, int Key), int[]>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT b.PrimaryKey, b.ValueB, b.ValueC, i.Name, i.Grade FROM BattlePoint b JOIN db4.Item i ON i.PrimaryKey = b.ValueA
+                WHERE b.Type IN (29, 30)
+                """;
+            using var reader = command.ExecuteReader();
+            var names = new Dictionary<string, string?>();
+            while (reader.Read())
+            {
+                var key = reader.GetString(3);
+                if (!names.TryGetValue(key, out var name))
+                {
+                    name = Text(connection, key);
+                    names[key] = name = name is null ? null : System.Text.RegularExpressions.Regex.Replace(name, "<[^>]*>", "").Trim();
+                }
+                var step = reader.GetInt32(1);
+                if (string.IsNullOrWhiteSpace(name) || step is < 1 or > 6) continue;
+                var at = (name, reader.GetInt32(4), reader.GetInt32(0));
+                if (!cores.TryGetValue(at, out var values)) cores[at] = values = new int[6];
+                values[step - 1] += reader.GetInt32(2);
+            }
+        }
+        var found = new List<string>();
+        foreach (var kind in cores.GroupBy(core => (Kind: core.Key.Name.Split(':')[0], core.Key.Grade, core.Key.Key)))
+        {
+            var shared = kind.Select(core => string.Join(',', core.Value)).Distinct().ToArray();
+            if (shared.Length == 1)
+                found.Add($"{kind.Key.Kind}|{kind.Key.Grade}|{kind.Key.Key}|{shared[0]}");
+            else
+                found.AddRange(kind.Select(core => $"{core.Key.Name}|{core.Key.Grade}|{core.Key.Key}|{string.Join(',', core.Value)}"));
         }
         return found.ToArray();
     }
