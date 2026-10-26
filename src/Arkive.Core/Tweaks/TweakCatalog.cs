@@ -87,8 +87,11 @@ public static class TweakCatalog
         ], Note: "This doesn't raise how many buffs show at once. If icons get hidden, raise the number of shown buffs in the game's settings."),
         new("exchangemax", "Exchange Max Button", "Adds \"Exchange Max\" buttons to the event shop and other exchange windows.", TweakRisk.Batch,
         [
-            H("efui_shoptradepopup", "shoptradepopup", "ark.ui.shopTradePopup.ShopTradePopupWndContent", "configUI"),
-            H("efui_shoptradepopup", "shoptradepopup", "ark.ui.shopTradePopup.ShopTradePopupWndContent", "invalidateSizeUpdate"),
+            H("efui_shoptradepopup", "shoptradepopup", "ark.ui.shopTradePopup.ShopTradePopupWndContent", "configUI", "arkive.tweaks.ExchangeMax.onConfigUI"),
+            H("efui_shoptradepopup", "shoptradepopup", "ark.ui.shopTradePopup.ShopTradePopupWndContent", "invalidateSizeUpdate", "arkive.tweaks.ExchangeMax.onInvalidateSizeUpdate"),
+        ],
+        [
+            new("bound", "\"Exchange Max (Bound)\" button, which uses bound items first", true),
         ]),
         new("extendedescapemenu", "Extended Escape Menu", "Adds separate rows for paradise power and hourglass status to the content status tables in the escape menu.", TweakRisk.Display,
         [
@@ -128,9 +131,13 @@ public static class TweakCatalog
             H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "configUI", "arkive.tweaks.LobbyCp.onConfigUI"),
             H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "memberData", "arkive.tweaks.LobbyCp.onMemberData"),
         ]),
-        new("markettweaks", "Market Tweaks", "Small improvements to the market window, such as buttons that list every item and set prices quickly.", TweakRisk.Batch,
+        new("markettweaks", "Market Tweaks", "Buttons on the market's listing page that set the quantity to everything you have and the price to the lowest listed price.", TweakRisk.Batch,
         [
-            H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.childPage.ExchangeShopItemRegistrationPage", "configUI"),
+            H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.childPage.ExchangeShopItemRegistrationPage", "configUI", "arkive.tweaks.MarketTweaks.onConfigUI"),
+        ],
+        [
+            new("maxCount", "\"Max\" button beside the quantity", true),
+            new("prices", "\"Lowest\" and \"-1\" buttons beside the price", true),
         ]),
         new("nextbutton", "Next Item Button", "Adds a \"Next Item\" button to accessory refining and bracelet refining that picks the next item in the list.", TweakRisk.Display,
         [
@@ -153,22 +160,30 @@ public static class TweakCatalog
         ]),
         new("storageclaim", "Universal Storage Claim", "Adds \"Claim Page\" and \"Claim All\" buttons to the universal storage window.", TweakRisk.Batch,
         [
-            H("efui_currencystorage", "currencystorage", "ark.ui.currencyStorage.CurrencyStorageWndContents", "configUI"),
-        ]),
-        new("strongholdclaim", "Stronghold Crafting Claim All", "Adds a \"Claim All\" button to stronghold crafting that collects the finished items of every workshop.", TweakRisk.Batch,
+            H("efui_currencystorage", "currencystorage", "ark.ui.currencyStorage.CurrencyStorageWndContents", "configUI", "arkive.tweaks.StorageClaim.onConfigUI"),
+        ],
         [
-            H("efui_townproduction", "townproduction", "ark.ui.townProduction.TownPWndContent", "configUI"),
+            new("page", "\"Claim Page\" button", true),
+            new("all", "\"Claim All\" button", true),
         ]),
+        new("strongholdclaim", "Stronghold Crafting Claim All", "Adds a \"Claim EVERYTHING\" button to stronghold crafting that collects the finished items of every workshop.", TweakRisk.Batch,
+        [
+            H("efui_townproduction", "townproduction", "ark.ui.townProduction.TownPWndContent", "configUI", "arkive.tweaks.StrongholdClaim.onConfigUI"),
+        ], Note: "If a result window opens after a claim, close it and the button moves on to the next workshop."),
         new("tabslot", "Hold Tab to Right-Click Slots", "Holding Tab while pointing at an item slot counts as right-clicking it, for quick equipping and unequipping of items and gems.", TweakRisk.Automation,
         [
-            H(Base, "main", "ark.controls.ARKNewSlot", "handleMouseRollOver"),
-            H(Base, "main", "ark.controls.ARKNewSlot", "handleMouseRollOut"),
-            H(Base, "main", "ark.ui.ARKMain_New", "structCanvas"),
+            H(Base, "main", "ark.controls.ARKNewSlot", "addedToStage", "arkive.tweaks.TabSlot.onAddedToStage"),
+            H(Base, "main", "ark.controls.ARKNewSlot", "handleMouseRollOver", "arkive.tweaks.TabSlot.onRollOver", expose: ["handleMouseUp"]),
+            H(Base, "main", "ark.controls.ARKNewSlot", "handleMouseRollOut", "arkive.tweaks.TabSlot.onRollOut"),
         ]),
         new("unequipgems", "Unequip Gems Button", "Adds an \"Unequip All\" button to the gem page of the character profile, and an \"Unequip Gems\" button to roster storage.", TweakRisk.Batch,
         [
-            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoGemPanel", "configUI"),
-            H("efui_interaction", "windowgo", "ark.ui.windowGo.ExpeditionWindowGoContent", "configUI"),
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoGemPanel", "configUI", "arkive.tweaks.UnequipGems.onGemPanelConfigUI"),
+            H("efui_interaction", "windowgo", "ark.ui.windowGo.ExpeditionWindowGoContent", "configUI", "arkive.tweaks.UnequipGems.onStorageConfigUI"),
+        ],
+        [
+            new("profile", "\"Unequip All\" on the character profile's gem page", true),
+            new("storage", "\"Unequip Gems\" in roster storage (gems bound to the character stay)", true),
         ]),
         new("fastlaunch", "Faster Launch", "Makes the game start faster by skipping the publisher logos and the seizure warning before the login screen.", TweakRisk.Speed,
         [],
