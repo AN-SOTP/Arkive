@@ -33,15 +33,18 @@ class BraceletJudge {
 	static var offered:Array<String> = [];
 	/** Effect rows already given a value, and their text before it. */
 	static var shown:Dictionary = new Dictionary(true);
+	/** True while the bracelet has no effects of its own yet: the current side only holds placeholder rows. */
+	static var firstRoll = false;
 
 	/** ItemBEChoiceResultPage.setData, before the game draws the page: both sides. */
 	public static function onSetData(self:Dynamic, args:Array<Dynamic>):Dynamic {
 		var data:Dynamic = args[0];
 		if (data == null)
 			return null;
-		current = texts(listOf(data, "originEnchantList"));
+		firstRoll = Text.has(data, "isOnlyOne") && data.isOnlyOne == true;
+		current = firstRoll ? [] : texts(listOf(data, "originEnchantList"));
 		offered = texts(listOf(data, "newEnchantList"));
-		judge(self, listOf(data, "originEnchantList"), listOf(data, "newEnchantList"));
+		judge(self, firstRoll ? null : listOf(data, "originEnchantList"), listOf(data, "newEnchantList"));
 		return null;
 	}
 
@@ -108,6 +111,12 @@ class BraceletJudge {
 		var oldCombat:Float = old.combat;
 		var newCombat:Float = now.combat;
 		var needsProfile = rest == null && (oldCombat > 0 || newCombat > 0);
+		if (firstRoll) {
+			// Nothing to compare with yet: the new side's total only.
+			clear(before);
+			show(after, newTotal, -1, needsProfile, newCombat > 0);
+			return;
+		}
 		show(before, oldTotal, newTotal, needsProfile, oldCombat > 0);
 		show(after, newTotal, oldTotal, needsProfile, newCombat > 0);
 	}
@@ -153,7 +162,7 @@ class BraceletJudge {
 	**/
 	static function restOf(old:Dynamic):Dynamic {
 		var gear:Array<Dynamic> = CombatPower.gear;
-		if (gear == null || CombatPower.otherCombat < 0)
+		if (gear == null)
 			return null;
 		var worn:Dynamic = gear[BRACELET_SLOT];
 		var effects:Array<Float> = [];
@@ -233,7 +242,13 @@ class BraceletJudge {
 			stone: {}
 		};
 		var gems:Array<Dynamic> = CombatPower.equipped == null ? [] : CombatPower.equipped;
-		return CombatPower.value(items, gems);
+		// When the profile's stat list wasn't found, your stats are taken as your gear's alone (they're nearly all of it).
+		var other:Float = CombatPower.otherCombat;
+		if (other < 0)
+			CombatPower.otherCombat = 0;
+		var found = CombatPower.value(items, gems);
+		CombatPower.otherCombat = other;
+		return found;
 	}
 
 	// ---- Drawing ----
@@ -255,12 +270,12 @@ class BraceletJudge {
 			if (value < 0 && points[i] > 0)
 				suffix = CombatPower.font(CombatPower.DIM, "(open your profile)");
 			else if (Math.abs(value) < SAME)
-				suffix = CombatPower.font(CombatPower.DIM, "+0.00%");
+				suffix = CombatPower.font(CombatPower.DIM, "· no CP");
 			else
-				suffix = CombatPower.font(value > 0 ? CombatPower.GAIN : CombatPower.LOSS, CombatPower.signed(value * 100, "%"));
+				suffix = CombatPower.font(value > 0 ? CombatPower.GAIN : CombatPower.LOSS, "· CP " + CombatPower.signed(value * 100, "%"));
 			if (Options.get(TWEAK, "showText", false) == true)
 				suffix += " " + CombatPower.font(CombatPower.DIM, CombatPower.plain(text));
-			row.descStr = text + " " + suffix;
+			row.descStr = text + "  " + suffix;
 		}
 	}
 
@@ -308,39 +323,67 @@ class BraceletJudge {
 		}
 	}
 
+	static function clear(group:Dynamic):Void {
+		if (group == null)
+			return;
+		for (name in [RIGHT_NAME, LEFT_NAME]) {
+			var made:Dynamic = group.getChildByName(name);
+			if (made != null)
+				made.htmlText = "";
+		}
+	}
+
 	/** Arkive's own text on the group's title row (the game's title stays as it is), made the first time. */
 	static function field(group:Dynamic, name:String, align:TextFormatAlign):TextField {
 		var title:Dynamic = group.titleTextField;
 		if (title == null)
 			return null;
 		var made:Dynamic = group.getChildByName(name);
-		if (made != null)
-			return made;
+		var text:TextField = made;
+		if (text == null) {
+			text = new TextField();
+			text.name = name;
+			text.selectable = false;
+			text.mouseEnabled = false;
+			text.multiline = false;
+			text.wordWrap = false;
+			text.autoSize = TextFieldAutoSize.NONE;
+			text.width = SIDE_WIDTH;
+			text.height = 20;
+			var titleX:Float = title.x;
+			var titleY:Float = title.y;
+			var titleWidth:Float = title.width;
+			var titleHeight:Float = title.height;
+			text.x = align == TextFormatAlign.RIGHT ? titleX + titleWidth - MARGIN - SIDE_WIDTH : titleX + MARGIN;
+			text.y = titleY + (titleHeight - 20) / 2;
+			group.addChild(text);
+			Options.own(TWEAK, text);
+		}
+		// The font of an effect row, which shows Arkive's values fine (the title's font only has the glyphs it needs).
+		// The rows only exist once the game has drawn the page, so this is checked every time.
+		var like:Dynamic = rowField(group);
+		var own:Dynamic = like == null ? null : like.getTextFormat();
 		var format = new TextFormat();
-		var own:Dynamic = title.getTextFormat();
-		// The title's own font, or the game's common one: an embedded-font field without a font shows nothing.
 		format.font = own != null && own.font != null ? own.font : "$YG760";
 		format.size = 13;
 		format.align = align;
-		var text = new TextField();
-		text.name = name;
-		text.embedFonts = title.embedFonts;
+		text.embedFonts = like != null ? like.embedFonts : true;
 		text.defaultTextFormat = format;
-		text.selectable = false;
-		text.mouseEnabled = false;
-		text.multiline = false;
-		text.wordWrap = false;
-		text.autoSize = TextFieldAutoSize.NONE;
-		text.width = SIDE_WIDTH;
-		text.height = 20;
-		var titleX:Float = title.x;
-		var titleY:Float = title.y;
-		var titleWidth:Float = title.width;
-		var titleHeight:Float = title.height;
-		text.x = align == TextFormatAlign.RIGHT ? titleX + titleWidth - MARGIN - SIDE_WIDTH : titleX + MARGIN;
-		text.y = titleY + (titleHeight - 20) / 2;
-		group.addChild(text);
-		Options.own(TWEAK, text);
 		return text;
+	}
+
+	/** The text field of the group's first effect row, or null. */
+	static function rowField(group:Dynamic):Dynamic {
+		var view:Dynamic = group.resultImageView;
+		var content:Dynamic = view == null ? null : view.content;
+		if (content == null || !(untyped __is__(content, flash.display.DisplayObjectContainer)))
+			return null;
+		var count:Int = content.numChildren;
+		for (i in 0...count) {
+			var child:Dynamic = content.getChildAt(i);
+			if (child != null && (untyped __in__("textField", child)) && child.textField != null)
+				return child.textField;
+		}
+		return null;
 	}
 }
