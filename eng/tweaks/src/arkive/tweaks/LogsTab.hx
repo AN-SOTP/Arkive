@@ -96,6 +96,7 @@ class LogsTab {
 		button.x = group.x + last.x + last.width;
 		button.y = group.y + last.y;
 		GameUi.addAbove(button, group);
+		Options.own("logs", button);
 		button.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) show(self, group, button));
 		// Any real tab, clicked or chosen by the game (an inspect starts on Gear), closes the Logs tab.
 		group.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) closeFor(button));

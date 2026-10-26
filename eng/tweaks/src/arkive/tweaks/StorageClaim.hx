@@ -52,6 +52,7 @@ class StorageClaim {
 		while (i > 0) {
 			i--;
 			GameUi.addAbove(added[i], receive);
+			Options.own("storageclaim", added[i]);
 		}
 		for (n in 0...added.length) {
 			var button:Dynamic = added[n];

@@ -57,12 +57,13 @@ class BoxTweaks {
 		all.x = open.x + half + GAP;
 		all.y = open.y;
 		GameUi.addAbove(all, open);
-		all.visible = open.visible;
+		Options.own("boxtweaks", all);
+		all.visible = open.visible && Options.on("boxtweaks");
 		all.addEventListener("enterFrame", function(event:Dynamic):Void {
 			if (all.enabled != open.enabled)
 				all.enabled = open.enabled;
-			if (all.visible != open.visible)
-				all.visible = open.visible;
+			if (all.visible != (open.visible && Options.on("boxtweaks")))
+				all.visible = open.visible && Options.on("boxtweaks");
 		});
 		all.addEventListener("buttonClick", function(event:Dynamic):Void {
 			if (open.enabled)
@@ -87,6 +88,7 @@ class BoxTweaks {
 			button.width = ROW_BUTTON_WIDTH;
 			button.y = preview.y + (preview.height - button.height) / 2;
 			self.addChild(button);
+			Options.own("boxtweaks", button);
 			button.addEventListener("buttonClick", function(event:Dynamic):Void {
 				event.stopPropagation();
 				openAll(content.receiveAllBtn, content.receiveBtn);

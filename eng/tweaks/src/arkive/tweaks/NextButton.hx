@@ -58,6 +58,7 @@ class NextButton {
 		made.y = beside.y + (beside.height - made.height) / 2;
 		var at:Int = beside.parent == owner ? owner.getChildIndex(beside) + 1 : owner.numChildren;
 		owner.addChildAt(made, at);
+		Options.own("nextbutton", made);
 	}
 
 	/** A plain framed button for when the game's button symbols aren't loaded. */

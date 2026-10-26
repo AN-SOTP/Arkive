@@ -93,7 +93,7 @@ public static class TweakCatalog
         ]),
         new(TweakModService.SettingsTweak, "In-game Tweak Settings", "An \"Arkive\" button in the escape menu opens a list of your tweaks: switch them on or off and change their options while you play. Keep Arkive running to save those changes; without it they last until you close the game.", TweakRisk.Display,
         [
-            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.MenuWndContent", "configUI"),
+            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.MenuWndContent", "configUI", "arkive.tweaks.SettingsPanel.onMenuConfigUI"),
         ],
         [
             new("everything", "Install every tweak, so any of them can be switched on in game (the ones not ticked here start off)", true),

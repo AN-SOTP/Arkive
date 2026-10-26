@@ -37,6 +37,7 @@ class UnequipGems {
 		button.y = recommend.y + recommend.height + 6;
 		button.addEventListener(scaleform.clik.events.ButtonEvent.CLICK, function(event:Dynamic) rightClickAll(self.gemSlotManager));
 		GameUi.addAbove(button, recommend);
+		Options.own("unequipgems", button);
 	}
 
 	static function rightClickAll(manager:Dynamic):Void {
@@ -89,6 +90,7 @@ class UnequipGems {
 			return;
 		var button:Dynamic = GameUi.copy(move, "Unequip Gems");
 		GameUi.addAbove(button, move);
+		Options.own("unequipgems", button);
 		var parent:Dynamic = move.parent;
 		var left:Float = move.x;
 		var span:Float = move.width;

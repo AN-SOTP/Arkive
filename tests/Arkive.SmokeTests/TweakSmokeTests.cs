@@ -37,6 +37,17 @@ internal static class TweakSmokeTests
             bus.Receive(symbol);
         Assert(heard == "hi", "the bus reads between go and end were not put together");
 
+        // With In-game Tweak Settings on, every interface tweak is built (the unticked ones start off); without it, only the ticked ones.
+        var choices = new Arkive.Core.Tweaks.TweakSettings();
+        choices.Enabled["lobbycp"] = [];
+        Assert(Arkive.Core.Tweaks.TweakModService.BuiltTweaks(choices).Select(tweak => tweak.Id).SequenceEqual(["lobbycp"]),
+            "a build without In-game Tweak Settings should hook only the ticked tweaks");
+        choices.Enabled[Arkive.Core.Tweaks.TweakModService.SettingsTweak] = [];
+        var everything = Arkive.Core.Tweaks.TweakModService.BuiltTweaks(choices);
+        Assert(everything.Count == Arkive.Core.Tweaks.TweakCatalog.All.Count(tweak => tweak.Available && !tweak.RestartOnly) &&
+               everything.All(tweak => tweak.Id != "fastlaunch"),
+            "In-game Tweak Settings should build every interface tweak and no game-file one");
+
         var root = Path.Combine(fixtureDirectory, "tweak-settings");
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         var library = new ArkiveModLibrary(Path.Combine(root, "mods"), Path.Combine(root, "staging"));
