@@ -82,9 +82,14 @@ public sealed class TweakModService(
         if (tweaks.TryGetValue(PlayerLogsTweak, out var logs))
             logs["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/'));
         var data2 = GameDataFile ?? Path.GetFullPath(Path.Combine(packagesDirectory, "..", "..", "data2.lpk"));
-        if (tweaks.TryGetValue(CombatPowerTweak, out var power) && File.Exists(data2))
+        // The bracelet judge prices with the Combat Power tables, kept under Combat Power's id (baked, not switched on).
+        if ((tweaks.ContainsKey(CombatPowerTweak) || tweaks.ContainsKey(BraceletJudgeTweak)) && File.Exists(data2))
+        {
+            if (!tweaks.TryGetValue(CombatPowerTweak, out var power))
+                tweaks[CombatPowerTweak] = power = [];
             foreach (var (key, value) in CombatPowerTable.Options(data2, Path.Combine(root, "cache")))
                 power[key] = value;
+        }
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
@@ -281,6 +286,9 @@ public sealed class TweakModService(
 
     /// <summary>The tweak that prices gems in Combat Power, from the game's own table.</summary>
     public const string CombatPowerTweak = "cpgems";
+
+    /// <summary>The bracelet reroll judge, which prices with the Combat Power tweak's tables (kept under its id).</summary>
+    public const string BraceletJudgeTweak = "braceletjudge";
 
     public TweakState LoadState()
     {

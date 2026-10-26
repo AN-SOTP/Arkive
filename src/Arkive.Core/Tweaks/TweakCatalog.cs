@@ -107,6 +107,17 @@ public static class TweakCatalog
         [
             new("showData", "Show the tooltip data Arkive reads (for testing)", false),
         ], Note: "Open your Character Profile once after logging in: the tweak reads your Combat Power, DPS or support, and your gems from it."),
+        new("braceletjudge", "Bracelet Reroll Judge", "On the bracelet page that asks whether to keep the current effects or take the new ones, every effect line shows what it adds to your Combat Power, each side shows its total, and the better side says \"Keep\". It only advises: you still pick. Priced with the same game table as Combat Power on Tooltips.", TweakRisk.Display,
+        [
+            H("efui_itembraceletenchant", "itembraceletenchant", "ark.ui.itemBraceletEnchant.ItemBEChoiceResultPage", "setData", "arkive.tweaks.BraceletJudge.onSetData", AbcHookKind.Before),
+            H("efui_itembraceletenchant", "itembraceletenchant", "ark.ui.itemBraceletEnchant.ItemBEChoiceResultPage", "updateNewResultData", "arkive.tweaks.BraceletJudge.onUpdateNewResult", AbcHookKind.Before),
+            // Your Combat Power, role and gear, read the same way as Combat Power on Tooltips (each gated by its own tweak).
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "configUI", "arkive.tweaks.CombatPower.onAbilityConfigUI"),
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "combatType", "arkive.tweaks.CombatPower.onCombatType"),
+        ],
+        [
+            new("showText", "Show the effect text Arkive matches (for testing)", false),
+        ], Note: "Open your Character Profile once after logging in: Crit, Specialization and Swiftness lines are priced from your totals there. DPS characters only for now."),
         new("boxtweaks", "Chest Opening Tweaks", "Various tweaks for the chest opening window.", TweakRisk.Display,
         [
             H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData", "arkive.tweaks.BoxTweaks.onSetData"),
