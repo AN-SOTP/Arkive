@@ -74,6 +74,16 @@ def draw_text(layer, item):
 
 frame = Image.open(sys.argv[2]).convert('RGBA')
 layout = json.load(open(os.path.join(here, 'layout.json')))
+# Buttons made from shared component symbols the movie can't draw on its own (the task tracker's Settings).
+for b in layout.get('buttons', []):
+    box = Image.new('RGBA', (b['w'], b['h']))
+    for row in range(b['h']):
+        shade = 74 - int(22 * row / b['h'])
+        ImageDraw.Draw(box).line((0, row, b['w'], row), fill=(shade - 18, shade - 6, shade + 12, 255))
+    ImageDraw.Draw(box).rectangle((0, 0, b['w'] - 1, b['h'] - 1), outline=(96, 112, 134, 255))
+    frame.alpha_composite(box, (int(b['x']), int(b['y'])))
+    draw_text(frame, dict(text=b['label'], x=b['x'], y=b['y'], w=b['w'], h=b['h'], size=14, color='#ffffff',
+                          font='body', align='center', valign='center'))
 for item in json.load(open(os.path.join(here, 'texts.json'))):
     draw_text(frame, item)
 
