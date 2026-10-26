@@ -21,9 +21,11 @@ class Options {
 			}
 		}
 		var tweaks:Dynamic = parsed.tweaks;
-		if (tweaks == null || !untyped tweaks.hasOwnProperty(tweak))
+		if (!Text.has(tweaks, tweak))
 			return fallback;
 		var options:Dynamic = untyped tweaks[tweak];
-		return options != null && untyped options.hasOwnProperty(key) ? untyped options[key] : fallback;
+		if (!Text.has(options, key))
+			return fallback;
+		return untyped options[key];
 	}
 }

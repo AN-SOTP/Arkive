@@ -3,13 +3,14 @@ namespace Arkive.Core.Interface.Abc;
 /// <summary>
 /// A game method to hook (its class's qualified name and the method) and the tweak's static handler for it
 /// ("package.Class.method"). The wrapper calls the game's method, then the handler:
-/// <c>args = [arguments]; result = this.original(arguments); return Handler(this, args, result);</c>
+/// <c>args = [arguments]; result = this.original(arguments); try { result = Handler(this, args, result); } catch {}
+/// return result;</c>
 /// </summary>
 public sealed record AbcHook(string ClassName, string MethodName, string Handler, bool Static = false)
 {
     /// <summary>
-    /// Developer builds only: the wrapper catches any error from the game's method or the handler and passes
-    /// "ORIG id: error" / "TWEAK id: error" to the tweak code's static <c>arkive.tweaks.Diag.note</c> instead of throwing.
+    /// Developer builds only: errors from the handler, and from the game's method too, are passed as
+    /// "ORIG id: error" / "TWEAK id: error" to the tweak code's static <c>arkive.tweaks.Diag.note</c>.
     /// </summary>
     public bool Diagnostic { get; init; }
 
@@ -19,8 +20,9 @@ public sealed record AbcHook(string ClassName, string MethodName, string Handler
 /// <summary>
 /// Hooks methods of a movie's own code the way the game's player is known to accept: the original keeps its body under
 /// a new name (<see cref="RenamedSuffix"/>), and a new method with the original name and signature calls it directly
-/// and then the tweak's static handler, with no dispatcher, no try blocks and no setup on the way. Existing
-/// instructions are never rewritten, so every caller, override and super call keeps working.
+/// and then the tweak's static handler, with no dispatcher and no setup on the way. The handler call is guarded: a
+/// tweak that throws (as Lobby CP did on empty party slots) leaves the game's window working instead of breaking it.
+/// Existing instructions are never rewritten, so every caller, override and super call keeps working.
 /// </summary>
 public static class AbcHookInjector
 {
@@ -61,21 +63,14 @@ public static class AbcHookInjector
             abc.Bodies.Add(new AbcMethodBody
             {
                 Method = wrapperIndex,
-                MaxStack = parameters + 4,
-                LocalCount = parameters + 3,
+                MaxStack = parameters + 6,
+                LocalCount = parameters + 4,
                 InitScopeDepth = body.InitScopeDepth,
                 MaxScopeDepth = body.InitScopeDepth + 1,
-                Code = WrapperCode(pool, hook.Handler, parameters, renamed, pool.NameOf(method.ReturnType) == "void"),
             });
-            if (hook.Diagnostic)
-            {
-                var diagnostic = abc.Bodies[^1];
-                (diagnostic.Code, var handlers) = DiagnosticCode(pool, hook.Handler, parameters, renamed,
-                    pool.NameOf(method.ReturnType) == "void", hook.Id);
-                diagnostic.Exceptions.AddRange(handlers);
-                diagnostic.LocalCount = parameters + 4;
-                diagnostic.MaxStack = parameters + 6;
-            }
+            var wrapperBody = abc.Bodies[^1];
+            (wrapperBody.Code, var handlers) = WrapperCode(pool, hook, parameters, renamed, pool.NameOf(method.ReturnType) == "void");
+            wrapperBody.Exceptions.AddRange(handlers);
 
             // The game's trait stays where it is (keeping its attributes, such as override) and now runs the wrapper; the
             // original body moves to a new plain trait, which nothing above it overrides.
@@ -86,45 +81,22 @@ public static class AbcHookInjector
     }
 
     /// <summary>
-    /// <c>args = [p1..pn]; result = this.original(p1..pn); return Handler(this, args, result);</c>
-    /// (void methods pass undefined and ignore the handler's value).
+    /// <c>args = [p1..pn]; result = this.original(p1..pn); try { result = Handler(this, args, result); } catch {} return result;</c>
+    /// Void methods ignore the handler's value. Diagnostic hooks also guard the game's call, and note every error.
     /// </summary>
-    private static byte[] WrapperCode(AbcConstantPool pool, string handler, int parameters, int renamed, bool returnsVoid)
+    private static (byte[] Code, AbcException[] Handlers) WrapperCode(
+        AbcConstantPool pool, AbcHook hook, int parameters, int renamed, bool returnsVoid)
     {
-        var split = handler.LastIndexOf('.');
-        var owner = handler[..split];
-        var dot = owner.LastIndexOf('.');
-        var ownerName = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, dot < 0 ? "" : owner[..dot]), owner[(dot + 1)..]);
-        var method = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, ""), handler[(split + 1)..]);
-        var args = parameters + 1;
-        var result = parameters + 2;
-        var code = new AbcCode();
-        code.Op(0xD0).Op(0x30); // getlocal_0; pushscope
-        for (var local = 1; local <= parameters; local++) code.GetLocal(local);
-        code.Op(0x56).U30(parameters).SetLocal(args); // args = [p1..pn]
-        code.Op(0x21).SetLocal(result); // result = undefined
-        code.Op(0xD0);
-        for (var local = 1; local <= parameters; local++) code.GetLocal(local);
-        if (returnsVoid) code.Op(0x4F).U30(renamed).U30(parameters); // this.original(p1..pn)
-        else code.Op(0x46).U30(renamed).U30(parameters).SetLocal(result);
-        code.Op(0x60).U30(ownerName).Op(0xD0).GetLocal(args).GetLocal(result);
-        if (returnsVoid) code.Op(0x4F).U30(method).U30(3).Op(0x47); // Handler(this, args, result); returnvoid
-        else code.Op(0x46).U30(method).U30(3).Op(0x48); // return Handler(this, args, result)
-        return code.ToArray();
-    }
-
-    /// <summary>The wrapper with each call in a try block whose handler passes the error to Diag.note.</summary>
-    private static (byte[] Code, AbcException[] Handlers) DiagnosticCode(
-        AbcConstantPool pool, string handler, int parameters, int renamed, bool returnsVoid, string id)
-    {
+        var handler = hook.Handler;
+        var id = hook.Id;
         var split = handler.LastIndexOf('.');
         var owner = handler[..split];
         var dot = owner.LastIndexOf('.');
         var publicNs = pool.AddNamespace(AbcNamespace.PackageNamespace, "");
         var ownerName = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, dot < 0 ? "" : owner[..dot]), owner[(dot + 1)..]);
         var method = pool.AddQName(publicNs, handler[(split + 1)..]);
-        var diag = pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, "arkive.tweaks"), "Diag");
-        var note = pool.AddQName(publicNs, "note");
+        var diag = hook.Diagnostic ? pool.AddQName(pool.AddNamespace(AbcNamespace.PackageNamespace, "arkive.tweaks"), "Diag") : 0;
+        var note = hook.Diagnostic ? pool.AddQName(publicNs, "note") : 0;
         var args = parameters + 1;
         var result = parameters + 2;
         var error = parameters + 3;
@@ -143,20 +115,26 @@ public static class AbcHookInjector
             var over = code.Branch(0x10);
             var target = code.Position;
             code.SetLocal(error).Op(0xD0).Op(0x30); // keep the error; getlocal_0; pushscope
-            code.Op(0x60).U30(diag); // Diag
-            code.Op(0x2C).U30(pool.AddString(label + id + ": ")).GetLocal(error).Op(0xA0); // label + error
-            code.Op(0x4F).U30(note).U30(1); // Diag.note(…)
+            if (hook.Diagnostic)
+            {
+                code.Op(0x60).U30(diag); // Diag
+                code.Op(0x2C).U30(pool.AddString(label + id + ": ")).GetLocal(error).Op(0xA0); // label + error
+                code.Op(0x4F).U30(note).U30(1); // Diag.note(…)
+            }
             code.Land(over);
             handlers.Add(new AbcException(start, end, target, 0, 0));
         }
 
-        Guarded(c =>
+        void Original(AbcCode c)
         {
             c.Op(0xD0);
             for (var local = 1; local <= parameters; local++) c.GetLocal(local);
             if (returnsVoid) c.Op(0x4F).U30(renamed).U30(parameters);
             else c.Op(0x46).U30(renamed).U30(parameters).SetLocal(result);
-        }, "ORIG ");
+        }
+
+        if (hook.Diagnostic) Guarded(Original, "ORIG ");
+        else Original(code);
         Guarded(c =>
         {
             c.Op(0x60).U30(ownerName).Op(0xD0).GetLocal(args).GetLocal(result);

@@ -95,7 +95,7 @@ internal static class TweakSmokeTests
         Assert(method.ParameterTypes.Count == 1 && reread.Pool.NameOf(method.ReturnType) == "String",
             "the wrapper does not have the original's signature");
         var body = reread.BodyOf(wrapper.Index) ?? throw new InvalidOperationException("wrapper has no body");
-        Assert(body.Code[^1] == 0x48 && body.LocalCount == 4 && body.Exceptions.Count == 0, "the wrapper does not return the handler's value");
+        Assert(body.Code[^1] == 0x48 && body.LocalCount == 5 && body.Exceptions.Count == 1, "the wrapper does not return the handler's value");
         Assert(reread.Pool.Strings.Contains("onGreet") && reread.Pool.Strings.Contains("Tweak"),
             "the wrapper does not call the tweak's handler");
         var again = AbcHookInjector.Inject(reread, [new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet")]);

@@ -20,19 +20,17 @@ class LobbyCp {
 	/** FindPartyNewPreviewListRendererMember.memberData(data): put the tooltip's combat power line after the item level. */
 	public static function onMemberData(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
 		var data:Dynamic = args[0];
-		if (data == null || !untyped data.hasOwnProperty("itemLevel") || !untyped data.hasOwnProperty("memberTooltip"))
+		if (!Text.has(data, "itemLevel") || !Text.has(data, "memberTooltip"))
 			return;
 		var level:String = data.itemLevel;
 		var tooltip:String = data.memberTooltip;
+		if (level == null || tooltip == null)
+			return;
 		var lines = tooltip.split("\n");
 		if (lines.length < 3)
 			return;
 		// The tooltip's icon and text are sized for a bigger line; shrink them to fit beside the item level.
 		var text = (level + "  " + lines[1]).split("'19'").join("'17'").split("'-4'").join("'-3'");
-		#if arkive_diag
-		if (Diag.log != "")
-			text = text + " <font color='#ff5050'>" + Diag.log + "</font>";
-		#end
 		self.itemLevel = "<font size='13'>" + text + "</font>";
 	}
 }

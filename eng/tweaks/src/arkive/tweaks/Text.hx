@@ -1,11 +1,18 @@
 package arkive.tweaks;
 
 /**
-	Text helpers for game HTML. Scaleform's player builds strings slowly, so these never add one character at a time
-	(a long tooltip done that way froze the game); they find positions with indexOf and copy whole pieces. No regular
-	expressions either, which the player may not have.
+	Text helpers for game objects and HTML. They find positions with indexOf and copy whole pieces rather than adding
+	one character at a time, and use no regular expressions.
 **/
 class Text {
+	/**
+		True when the object has this field. Use this instead of writing `untyped o.hasOwnProperty(f)` inside a condition:
+		Haxe's `untyped` swallows the rest of the expression (`!untyped a || b` became `!(a || b)`, which broke Lobby CP).
+	**/
+	public static function has(o:Dynamic, field:String):Bool {
+		return o != null && (untyped o.hasOwnProperty(field));
+	}
+
 	/** Removes <tags> from game HTML text. */
 	public static function stripTags(html:String):String {
 		if (html == null)
