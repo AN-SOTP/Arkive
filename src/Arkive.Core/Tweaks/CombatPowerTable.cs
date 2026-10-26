@@ -14,12 +14,12 @@ public static class CombatPowerTable
     public const string Entry = Tables + "EFTable_BattlePoint.db";
 
     /// <summary>
-    /// The row types the Combat Power tweak prices with: 4 weapon quality (ValueA quality, ValueB its bonus),
+    /// The row types the Combat Power tweak prices with: 2 a support's base health (ValueA per Max HP), 4 weapon quality (ValueA quality, ValueB its bonus),
     /// 5-7 Ark Passive points (Evolution, Enlightenment, Leap: ValueA per point), 15 refinement stats (ValueA 1, ValueB
     /// stat, ValueC weight), 19 bracelet stats (same shape), 22 gems (ValueA tier, ValueB level, ValueC value) and 26
     /// combat stats (ValueA stat, ValueB per point) and 31 astrogem options (ValueA option, ValueB total level, ValueC value).
     /// </summary>
-    public static readonly int[] PricedTypes = [4, 5, 6, 7, 15, 19, 22, 26, 31];
+    public static readonly int[] PricedTypes = [2, 4, 5, 6, 7, 15, 19, 22, 26, 31];
 
     /// <summary>The stat a tier 4 gem's bonus effect raises: Basic Attack Power, in hundredths of a percent.</summary>
     private const int BasicAttackStat = 150;
@@ -64,10 +64,12 @@ public static class CombatPowerTable
     /// <summary>
     /// Everything the Combat Power tweak reads, as its options: "rows" and "gemBase" (above), "engravings" (one text per
     /// engraving and role, "Name|key|v0,v1,…,v93": the value at index 20 × stone level + 1 + 4 × (grade − 1) + level, grade
-    /// 1 heroic to 3 relic; the penalty Atk. Power Reduction by its level) and "bracelet" (one text per bracelet effect,
+    /// 1 heroic to 3 relic; the penalty Atk. Power Reduction by its level; key "2d" a support's defence engravings, type 11,
+    /// which count towards Shield &amp; Heal Power) and "bracelet" (one text per bracelet effect,
     /// "text|dps|support", the text with whitespace, slashes and commas removed and lower-cased, as <see cref="Plain"/>)
     /// "orbs" (one text per paradise orb and role, "Name|key|B|C": type 33 for DPS, 34 for support) and "cores" (Ark Grid
-    /// cores, "Name|grade|key|v1,…,v6": the value with 1 to 6 of the core's point steps lit, types 29 and 30 added).
+    /// cores, "Name|grade|key|v1,…,v6": the value with 1 to 6 of the core's point steps lit; key "2d" is type 30, a
+    /// support core's Shield &amp; Heal value).
     /// Kept in <paramref name="workDirectory"/> per data2.lpk size and time, since reading the game's text takes a while.
     /// </summary>
     public static Dictionary<string, System.Text.Json.JsonElement> Options(string data2Path, string workDirectory)
@@ -101,7 +103,7 @@ public static class CombatPowerTable
     }
 
     /// <summary>Bumped when <see cref="Options"/> gains a table, so caches from older builds are read again.</summary>
-    private const int CacheVersion = 4;
+    private const int CacheVersion = 5;
 
     /// <summary>Paradise orbs (types 33 and 34) by their item names: ValueA is the orb, B and C its values.</summary>
     private static string[] Orbs(SqliteConnection connection)
@@ -129,11 +131,11 @@ public static class CombatPowerTable
     /// </summary>
     private static string[] Cores(SqliteConnection connection)
     {
-        var cores = new Dictionary<(string Name, int Grade, int Key), int[]>();
+        var cores = new Dictionary<(string Name, int Grade, string Key), int[]>();
         using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                SELECT b.PrimaryKey, b.ValueB, b.ValueC, i.Name, i.Grade FROM BattlePoint b JOIN db4.Item i ON i.PrimaryKey = b.ValueA
+                SELECT b.PrimaryKey, b.ValueB, b.ValueC, i.Name, i.Grade, b.Type FROM BattlePoint b JOIN db4.Item i ON i.PrimaryKey = b.ValueA
                 WHERE b.Type IN (29, 30)
                 """;
             using var reader = command.ExecuteReader();
@@ -148,7 +150,7 @@ public static class CombatPowerTable
                 }
                 var step = reader.GetInt32(1);
                 if (string.IsNullOrWhiteSpace(name) || step is < 1 or > 6) continue;
-                var at = (name, reader.GetInt32(4), reader.GetInt32(0));
+                var at = (name, reader.GetInt32(4), RoleKey(reader.GetInt32(0), reader.GetInt32(5) == 30));
                 if (!cores.TryGetValue(at, out var values)) cores[at] = values = new int[6];
                 values[step - 1] += reader.GetInt32(2);
             }
@@ -165,6 +167,9 @@ public static class CombatPowerTable
         return found.ToArray();
     }
 
+    /// <summary>A row's role as the options name it: "1" DPS, "2" support, "2d" a support's Shield &amp; Heal side.</summary>
+    private static string RoleKey(int key, bool defence) => defence ? $"{key}d" : $"{key}";
+
     /// <summary>Game text as the tweak compares it: tags, whitespace, slashes and commas removed, lower-cased.</summary>
     public static string Plain(string text) =>
         new(System.Text.RegularExpressions.Regex.Replace(text, "<[^>]*>", "")
@@ -180,14 +185,14 @@ public static class CombatPowerTable
 
     private static string[] Engravings(SqliteConnection connection)
     {
-        var values = new Dictionary<(int Ability, int Key), int[]>();
+        var values = new Dictionary<(int Ability, string Key), int[]>();
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT PrimaryKey, ValueA, ValueB, ValueC FROM BattlePoint WHERE Type IN (10, 11)";
+            command.CommandText = "SELECT PrimaryKey, ValueA, ValueB, ValueC, Type FROM BattlePoint WHERE Type IN (10, 11)";
             using var reader = command.ExecuteReader();
             while (reader.Read())
             {
-                var at = (reader.GetInt32(1), reader.GetInt32(0));
+                var at = (reader.GetInt32(1), RoleKey(reader.GetInt32(0), reader.GetInt32(4) == 11));
                 if (!values.TryGetValue(at, out var row)) values[at] = row = new int[94];
                 var index = reader.GetInt32(2);
                 if (index is >= 0 and < 94) row[index] = reader.GetInt32(3);

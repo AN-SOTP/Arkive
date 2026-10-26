@@ -15,11 +15,13 @@ import flash.text.TextFormat;
 	hundredths of a percent), "gemBase" (a gem's Basic Attack Power by level), "engravings" ("Name|key|v0,…,v93", the
 	value at 20 × stone level + 1 + 4 × (grade − 1) + level) and "bracelet" (an effect's plain text and its DPS and
 	support values). The base is the square root of main stat times weapon power over six, plus flat Basic Atk. Power,
-	raised by Basic Attack Power % (gems, the stone's level bonus). Factors priced: gems (type 22), weapon quality (4),
+	raised by Basic Attack Power % (gems, the stone's level bonus); main stat × weapon power is scaled so your gear gives
+	the Basic Atk. Power your profile shows. Paradise orbs count B plus C per hundred million paradise power. Factors priced: gems (type 22), weapon quality (4),
 	refinement lines (15 by stat; Outgoing Damage as shown), bracelet stats (19) and effects (20), Enlightenment (6) and
 	Leap (7) points, combat stats (26) and engravings with the stone's levels (10). Main stat and weapon power are summed
 	over your equipment, which leaves out your character's own stats, so gear lines start with "~" until the profile
-	check confirms them. Support characters get gem lines only for now; Ark Grid and paradise orbs aren't priced yet.
+	check confirms them. A support's Combat Power is Buff Power plus Shield & Heal Power (Max HP based), so its gem,
+	astrogem and core lines move each side by its share of your figure; support gear isn't priced yet.
 
 	Your Combat Power, DPS or support, equipment, gems, engravings and Ark Passive points are read from your own
 	Character Profile (an inspected player's window is ignored), so the lines ask you to open it once. When the profile
@@ -125,6 +127,17 @@ class CombatPower {
 	/** Your Ark Grid's cores: {name, family, grade, points, willpower} from the Ark Grid tab; null until it was read. */
 	static var gridCores:Array<Dynamic>;
 	static var coreRows:Array<String>;
+	/** Basic Atk. Power and Max HP from the profile's basic stats, or -1 until read. */
+	static var profileAttack:Float = -1;
+	static var maxHp:Float = -1;
+	/**
+		What main stat × weapon power summed over your gear is multiplied by to give the Basic Atk. Power your profile
+		shows: gear alone leaves out skins, pets, karma and cores. 1 until the profile showed it.
+	**/
+	static var baseScale:Float = 1;
+	/** loa-sim's support sample (Brushann): Buff Power 2,714 of 3,417, for when the profile's Max HP isn't known. */
+	static inline var BUFF_SHARE = 0.79;
+	static inline var DEFENCE = "2d";
 	/** What the profile showed last, for the showData listing. */
 	static var profileData:String = "";
 
@@ -311,6 +324,8 @@ class CombatPower {
 		readEngravings(window);
 		readTotals(label.parent, window, items);
 		readGrid(window);
+		readBasics(label.parent);
+		calibrate(items, gems);
 		if (showData())
 			profileData = readProfile(label, window, items, gems);
 	}
@@ -410,6 +425,8 @@ class CombatPower {
 				after.push(owned);
 		after.push(gem);
 		var change = gemRatio(equipped, after) - 1;
+		if (role == 1)
+			change *= buffShare();
 		var targetName:String = target == null ? "" : target.name;
 		var against:String = target == null ? "in an empty slot" : "vs your " + targetName;
 		return {change: change, note: null, book: false, rough: false, against: against};
@@ -856,11 +873,6 @@ class CombatPower {
 		stone's levels, and each gem.
 	**/
 	static function value(items:Array<Dynamic>, gems:Array<Dynamic>):Float {
-		var stat:Float = 0;
-		var weapon:Float = 0;
-		var weaponPct:Float = 0;
-		var flat:Float = 0;
-		var basicPct:Float = 0;
 		var enlightenment:Float = otherEnlightenment < 0 ? 0 : otherEnlightenment;
 		var leap:Float = otherLeap < 0 ? 0 : otherLeap;
 		var combat:Float = otherCombat < 0 ? 0 : otherCombat;
@@ -868,15 +880,6 @@ class CombatPower {
 		for (item in items) {
 			if (item == null)
 				continue;
-			stat += mainStatOf(item);
-			var itemWeapon:Float = item.weapon;
-			weapon += itemWeapon;
-			var itemPct:Float = item.weaponPct;
-			weaponPct += itemPct;
-			var itemFlat:Float = item.flat;
-			flat += itemFlat;
-			var itemBasic:Float = item.basicPct;
-			basicPct += itemBasic;
 			var itemEnlightenment:Float = item.enlightenment;
 			enlightenment += itemEnlightenment;
 			var itemLeap:Float = item.leap;
@@ -899,13 +902,142 @@ class CombatPower {
 		if (otherCombat >= 0)
 			factors *= 1 + combat * combatPerPoint();
 		factors *= engravingFactor(items[STONE_SLOT]);
-		var base = stat > 0 && weapon > 0 ? Math.sqrt(stat * weapon * (1 + weaponPct / 100) / 6) + flat : 1;
-		var gemBase:Float = 0;
+		var attack = attackParts(items);
+		var stat:Float = attack.stat;
+		var weapon:Float = attack.weapon;
+		var weaponPct:Float = attack.weaponPct;
+		var flat:Float = attack.flat;
+		var basicPct:Float = attack.basicPct;
+		var base = stat > 0 && weapon > 0 ? Math.sqrt(baseScale * stat * weapon * (1 + weaponPct / 100) / 6) + flat : 1;
+		var gemBase = gemBasics(gems);
+		return base * (1 + (gemBase + basicPct) / 100) * factors * gemRatio([], gems) / (1 + gemBase / 100);
+	}
+
+	/** Your gear's main stat, weapon power, Weapon Power %, flat Basic Atk. Power and Basic Attack Power % (the stone's). */
+	static function attackParts(items:Array<Dynamic>):Dynamic {
+		var stat:Float = 0;
+		var weapon:Float = 0;
+		var weaponPct:Float = 0;
+		var flat:Float = 0;
+		var basicPct:Float = 0;
+		for (item in items) {
+			if (item == null)
+				continue;
+			stat += mainStatOf(item);
+			var itemWeapon:Float = item.weapon;
+			weapon += itemWeapon;
+			var itemPct:Float = item.weaponPct;
+			weaponPct += itemPct;
+			var itemFlat:Float = item.flat;
+			flat += itemFlat;
+			var itemBasic:Float = item.basicPct;
+			basicPct += itemBasic;
+		}
+		return {stat: stat, weapon: weapon, weaponPct: weaponPct, flat: flat, basicPct: basicPct};
+	}
+
+	/** The gems' Basic Attack Power %, added up. */
+	static function gemBasics(gems:Array<Dynamic>):Float {
+		var total:Float = 0;
 		for (gem in gems) {
 			var own:Float = gem.base;
-			gemBase += own;
+			total += own;
 		}
-		return base * (1 + (gemBase + basicPct) / 100) * factors * gemRatio([], gems) / (1 + gemBase / 100);
+		return total;
+	}
+
+	/**
+		The game's base is (√(main stat × weapon power ÷ 6) + flat Basic Atk. Power) × (1 + Basic Attack Power % ÷ 100),
+		which your profile shows as Basic Atk. Power. Sets baseScale so your gear gives that figure; stays 1 when the
+		profile didn't show it or the scale is out of line (a misread).
+	**/
+	static function calibrate(items:Array<Dynamic>, gems:Array<Dynamic>):Void {
+		baseScale = 1;
+		var attack = attackParts(items);
+		var stat:Float = attack.stat;
+		var weapon:Float = attack.weapon;
+		var weaponPct:Float = attack.weaponPct;
+		var flat:Float = attack.flat;
+		var basicPct:Float = attack.basicPct;
+		if (profileAttack <= 0 || stat <= 0 || weapon <= 0)
+			return;
+		var root = profileAttack / (1 + (gemBasics(gems) + basicPct) / 100) - flat;
+		if (root <= 0)
+			return;
+		var scale = root * root * 6 / (stat * weapon * (1 + weaponPct / 100));
+		if (scale >= 0.8 && scale <= 3)
+			baseScale = scale;
+	}
+
+	/**
+		Basic Atk. Power (the Atk. Power row's tooltip: "… Basic Atk. Power … is 213290") and Max HP from the profile's
+		basic stats list.
+	**/
+	static function readBasics(page:Dynamic):Void {
+		var list:Dynamic = page == null || page.abilityDefaultList == null ? null : page.abilityDefaultList.dataProvider;
+		if (list == null)
+			return;
+		var count:Int = list.length;
+		for (i in 0...count) {
+			var row:Dynamic = list[i];
+			if (row == null || row.titleStr == null)
+				continue;
+			var title = Text.trim(Text.stripTags(row.titleStr));
+			if (title.indexOf("HP") >= 0 && row.valueStr != null) {
+				var shown = number(Text.stripTags(untyped __global__["String"](row.valueStr)));
+				if (shown > 0)
+					maxHp = shown;
+			}
+			var tip = Text.stripTags(strings(row.tooltip, [], 0).join(" "));
+			var at = tip.indexOf("Basic Atk. Power");
+			if (at < 0)
+				continue;
+			var said = tip.indexOf(" is ", at);
+			var found = number(tip.substr(said >= 0 ? said + 4 : at + 16));
+			if (found > 0)
+				profileAttack = found;
+		}
+	}
+
+	/**
+		A support's Combat Power is Buff Power plus Shield & Heal Power, not one product, so what multiplies Buff Power
+		moves only its share. Shield & Heal Power is Max HP times the table's base health (0.0012) times its own factors:
+		your defence engravings with the stone's levels and your cores' defence values (accessory heal and shield lines
+		aren't read, a few percent of it).
+	**/
+	static function buffShare():Float {
+		if (power <= 0 || maxHp <= 0)
+			return BUFF_SHARE;
+		var shield = maxHp * baseHealth() / 10000;
+		var stone:Dynamic = gear == null ? null : gear[STONE_SLOT];
+		for (engraving in engravings) {
+			var name:String = engraving.name;
+			var grade:Int = engraving.grade;
+			var level:Int = engraving.level;
+			shield *= 1 + engravingValueFor(name, 20 * stoneLevel(stone, name) + index(grade, level), DEFENCE) / 10000;
+		}
+		if (gridCores != null)
+			for (core in gridCores) {
+				var name:String = core.name;
+				var family:String = core.family;
+				var grade:Int = core.grade;
+				var points:Float = core.points;
+				shield *= 1 + coreValueFor(name, family, grade, coreSteps(points), DEFENCE) / 10000;
+			}
+		var share = 1 - shield / power;
+		return share < 0.3 ? 0.3 : (share > 1 ? 1 : share);
+	}
+
+	/** A support's base health per Max HP in the table (type 2, 12 = 0.0012). */
+	static function baseHealth():Float {
+		var found = table();
+		var at = 0;
+		while (found != null && at + 4 < found.length) {
+			if (found[at] == 2 && found[at + 1] == 2)
+				return found[at + 2];
+			at += 5;
+		}
+		return 12;
 	}
 
 	/**
@@ -953,6 +1085,11 @@ class CombatPower {
 
 	/** An engraving's value at an index for your role, from the "engravings" option, or 0. */
 	static function engravingValue(name:String, at:Int):Float {
+		return engravingValueFor(name, at, role == 1 ? "2" : "1");
+	}
+
+	/** An engraving's value at an index for a role key ("1", "2", or "2d" for a support's Shield & Heal side). */
+	static function engravingValueFor(name:String, at:Int, key:String):Float {
 		if (engravingRows == null) {
 			engravingRows = [];
 			var listed:Array<Dynamic> = tableOption("engravings");
@@ -960,7 +1097,6 @@ class CombatPower {
 				for (entry in listed)
 					engravingRows.push(entry);
 		}
-		var key:String = role == 1 ? "2" : "1";
 		var start = name + "|" + key + "|";
 		for (entry in engravingRows) {
 			if (!StringTools.startsWith(entry, start))
@@ -972,12 +1108,13 @@ class CombatPower {
 	}
 
 	/**
-		A paradise orb's factor: its cap (type 33's C) times how far its paradise power is towards B million, my reading
-		of the table (C is 40 × B for most orbs); support (type 34) has a fixed value in B. 0 for other items.
+		A paradise orb's factor for a DPS character: type 33's B plus C per hundred million paradise power, uncapped
+		(lostark.bible's breakdown, which loa-sim reproduces). A support's orb (type 34) counts towards Shield & Heal
+		Power, which gear lines don't price, so 0 for supports and for other items.
 	**/
 	static function orbFactor(item:Dynamic):Float {
 		var slot:String = item.slot;
-		if (slot != "orb")
+		if (slot != "orb" || role == 1)
 			return 0;
 		if (orbRows == null) {
 			orbRows = [];
@@ -987,17 +1124,15 @@ class CombatPower {
 					orbRows.push(entry);
 		}
 		var name:String = item.name;
-		var start:String = name + "|" + (role == 1 ? "2" : "1") + "|";
+		var start:String = name + "|1|";
 		for (entry in orbRows) {
 			if (!StringTools.startsWith(entry, start))
 				continue;
 			var fields = entry.substr(start.length).split("|");
 			var b = number(fields[0]);
 			var c = fields.length > 1 ? number(fields[1]) : 0;
-			if (c <= 0)
-				return b / 10000;
 			var power:Float = item.paradise;
-			return b <= 0 ? 0 : c / 10000 * Math.min(1, power / (b * 1000000));
+			return (Math.max(0, b) + Math.max(0, c) * Math.max(0, power) / 100000000) / 10000;
 		}
 		return 0;
 	}
@@ -1156,6 +1291,11 @@ class CombatPower {
 
 	/** A core's value with this many steps lit, from the "cores" option (by its name, else its kind), for your role. */
 	static function coreValue(name:String, family:String, grade:Int, steps:Int):Float {
+		return coreValueFor(name, family, grade, steps, role == 1 ? "2" : "1");
+	}
+
+	/** A core's value for a role key ("1", "2", or "2d" for a support's Shield & Heal side). */
+	static function coreValueFor(name:String, family:String, grade:Int, steps:Int, key:String):Float {
 		if (steps <= 0)
 			return 0;
 		if (coreRows == null) {
@@ -1166,7 +1306,7 @@ class CombatPower {
 					coreRows.push(entry);
 		}
 		var shownGrade:String = untyped __global__["String"](grade);
-		var tail:String = "|" + shownGrade + "|" + (role == 1 ? "2" : "1") + "|";
+		var tail:String = "|" + shownGrade + "|" + key + "|";
 		var starts:Array<String> = [name + tail, family + tail];
 		for (start in starts)
 			for (entry in coreRows) {
@@ -1224,7 +1364,8 @@ class CombatPower {
 			var after = astroValue(id, Math.floor(have + adds));
 			change *= (1 + after / 10000) / (1 + before / 10000);
 		}
-		return {change: change - 1, note: null, book: false, rough: true, against: "on top of your Ark Grid"};
+		var share = role == 1 ? buffShare() : 1;
+		return {change: (change - 1) * share, note: null, book: false, rough: true, against: "on top of your Ark Grid"};
 	}
 
 	/**
@@ -1241,16 +1382,7 @@ class CombatPower {
 				mine = owned;
 		var points:Float = mine == null ? 0 : mine.points;
 		var steps = coreSteps(points);
-		var name:String = core.name;
-		var grade:Int = core.grade;
-		var after = coreValue(name, family, grade, steps);
-		var before:Float = 0;
-		if (mine != null) {
-			var mineName:String = mine.name;
-			var mineGrade:Int = mine.grade;
-			before = coreValue(mineName, family, mineGrade, steps);
-		}
-		var change = (1 + after / 10000) / (1 + before / 10000) - 1;
+		var change = coreSwap(core, mine, steps);
 		var wornName:String = mine == null ? "" : mine.name;
 		var against:String = (mine == null ? "in an empty slot" : "vs your " + wornName) + " at your " + money(points).split(".")[0]
 			+ " points";
@@ -1261,13 +1393,7 @@ class CombatPower {
 			var need = CORE_STEPS[i];
 			if (need <= points)
 				continue;
-			var beforeThen:Float = 0;
-			if (mine != null) {
-				var mineName:String = mine.name;
-				var mineGrade:Int = mine.grade;
-				beforeThen = coreValue(mineName, family, mineGrade, i + 1);
-			}
-			var then = (1 + coreValue(name, family, grade, i + 1) / 10000) / (1 + beforeThen / 10000) - 1;
+			var then = coreSwap(core, mine, i + 1);
 			if (then > best + 0.00005) {
 				best = then;
 				bestPoints = need;
@@ -1283,6 +1409,27 @@ class CombatPower {
 		if (supply > 0 && needs > supply)
 			against += " (your astrogems there need more willpower than it supplies)";
 		return {change: change, note: null, book: false, rough: false, against: against};
+	}
+
+	/**
+		Your Combat Power's change from a core in place of yours (null: an empty slot) with this many steps lit. For a
+		support each side moves by its share: the core's Buff Power value and its Shield & Heal value.
+	**/
+	static function coreSwap(core:Dynamic, mine:Dynamic, steps:Int):Float {
+		var name:String = core.name;
+		var family:String = core.family;
+		var grade:Int = core.grade;
+		var mineName:String = mine == null ? "" : mine.name;
+		var mineGrade:Int = mine == null ? 0 : mine.grade;
+		var keys = role == 1 ? ["2", DEFENCE] : ["1"];
+		var share = role == 1 ? buffShare() : 1;
+		var change:Float = 0;
+		for (key in keys) {
+			var after = coreValueFor(name, family, grade, steps, key);
+			var before = mine == null ? 0 : coreValueFor(mineName, family, mineGrade, steps, key);
+			change += (key == DEFENCE ? 1 - share : share) * ((1 + after / 10000) / (1 + before / 10000) - 1);
+		}
+		return change;
 	}
 
 	/** An astrogem option's value at a total level for your role (type 31), or 0. */
@@ -1683,6 +1830,8 @@ class CombatPower {
 		var lines:Array<String> = [];
 		var shownRole:String = untyped __global__["String"](role);
 		lines.push("Profile: role " + shownRole + " (0 DPS, 1 support), Combat Power " + money(power) + ", main stat " + mainStat);
+		lines.push("Basic Atk. Power " + money(profileAttack) + ", Max HP " + money(maxHp) + ", base scale " + money(baseScale)
+			+ (role == 1 ? ", Buff Power share " + money(buffShare() * 100) + "%" : ""));
 		lines.push("Other than gear: Enlightenment " + money(otherEnlightenment) + ", Leap " + money(otherLeap) + ", combat stats "
 			+ money(otherCombat) + " (-1 = not found)");
 		var page:Dynamic = label.parent;
