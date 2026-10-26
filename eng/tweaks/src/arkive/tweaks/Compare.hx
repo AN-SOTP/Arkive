@@ -68,7 +68,7 @@ class Compare {
 	static inline var GEM = 34;
 	static inline var GEM_STEP = 40;
 	static inline var GEM_LABEL = 76;
-	static inline var TEXT_ROW = 20;
+	static inline var TEXT_ROW = 18;
 	static inline var COLUMN_WIDTH = 326;
 	static var COLUMNS:Array<Int> = [16, 362, 708];
 	static inline var GEMS_TOP = 440;
@@ -1245,14 +1245,33 @@ class Compare {
 			inlineDelta(x + DELTA_X, y, change, null);
 			y += TEXT_ROW;
 		}
-		if (shade)
-			band(x, y, COLUMN_WIDTH, TEXT_ROW);
+		// Astrogem options by the grid's total level each: the three that count for your role (DPS: Atk. Power,
+		// Additional Damage, Boss Damage; support: the ally options), each priced at both totals.
 		var mineLevels:Dynamic = mineGrid.levels;
 		var theirLevels:Dynamic = theirGrid.levels;
-		content.addChild(text(x + 4, y + 1, GRID_NAME, 13, TEXT, "Astrogems", "left"));
-		content.addChild(text(x + GRID_MINE, y + 1, GRID_CELL, 13, TEXT, "Lv. " + levelTotal(mineLevels), "center"));
-		content.addChild(text(x + GRID_THEIRS, y + 1, GRID_CELL, 13, TEXT, "Lv. " + levelTotal(theirLevels), "center"));
-		inlineDelta(x + DELTA_X, y, ready ? astroFactor(mineLevels) / astroFactor(theirLevels) - 1 : nothing(), null);
+		var first = CombatPower.role == 1 ? 3 : 0;
+		for (i in first...first + 3) {
+			if (shade)
+				band(x, y, COLUMN_WIDTH, TEXT_ROW);
+			shade = !shade;
+			var option = CombatPower.ASTRO_NAMES[i];
+			var mine = optionLevel(mineLevels, option);
+			var their = optionLevel(theirLevels, option);
+			content.addChild(text(x + 4, y + 1, GRID_NAME, 13, TEXT, option.split("Additional").join("Add."), "left"));
+			content.addChild(text(x + GRID_MINE, y + 1, GRID_CELL, 13, TEXT, "Lv. " + whole(mine), "center"));
+			content.addChild(text(x + GRID_THEIRS, y + 1, GRID_CELL, 13, TEXT, "Lv. " + whole(their), "center"));
+			var id = CombatPower.ASTRO_IDS[i];
+			var change:Float = ready
+				? (1 + CombatPower.astroValue(id, Math.floor(mine)) / 10000) / (1 + CombatPower.astroValue(id, Math.floor(their)) / 10000) - 1
+				: nothing();
+			inlineDelta(x + DELTA_X, y, change, null);
+			y += TEXT_ROW;
+		}
+	}
+
+	static function optionLevel(levels:Dynamic, option:String):Float {
+		var value:Float = Text.has(levels, option) ? untyped levels[option] : 0;
+		return value;
 	}
 
 	static function findCore(list:Array<Dynamic>, family:String):Dynamic {
@@ -1285,28 +1304,6 @@ class Compare {
 		var grade:Int = core.grade;
 		var points:Float = core.points;
 		return CombatPower.coreValue(name, family, grade, CombatPower.coreSteps(points));
-	}
-
-	static function levelTotal(levels:Dynamic):String {
-		var total:Float = 0;
-		var keys:Array<String> = untyped __keys__(levels);
-		for (key in keys) {
-			var value:Float = untyped levels[key];
-			total += value;
-		}
-		var shown:String = untyped __global__["String"](Math.floor(total));
-		return shown;
-	}
-
-	/** The astrogem options' factor in the model: the product of (1 + value at each option's total level). */
-	static function astroFactor(levels:Dynamic):Float {
-		var factor:Float = 1;
-		for (i in 0...CombatPower.ASTRO_NAMES.length) {
-			var option = CombatPower.ASTRO_NAMES[i];
-			var value:Float = Text.has(levels, option) ? untyped levels[option] : 0;
-			factor *= 1 + CombatPower.astroValue(CombatPower.ASTRO_IDS[i], Math.floor(value)) / 10000;
-		}
-		return factor;
 	}
 
 	static function numberRow(x:Float, y:Float, label:String, mine:Float, their:Float, change:Float, shade:Bool):Void {
