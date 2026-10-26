@@ -106,6 +106,7 @@ public static class TweakCatalog
         ],
         [
             new("showCheck", "Show Arkive's model figure beside the game's (for testing)", false),
+            new("steps", "Build the page one step per click, to find what freezes the game (for testing)", false),
         ], Note: "Open your own Character Profile once after logging in (and its Gems and Engravings tabs): Compare reads your side from it. DPS characters get every line; supports get gems and engravings for now."),
         new(TweakModService.SettingsTweak, "In-game Tweak Settings", "An \"Arkive\" button in the escape menu opens a list of your tweaks: switch them on or off and change their options while you play. Keep Arkive running to save those changes; without it they last until you close the game.", TweakRisk.Display,
         [

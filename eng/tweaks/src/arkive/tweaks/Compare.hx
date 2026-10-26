@@ -98,6 +98,17 @@ class Compare {
 	static var originals:Dictionary = new Dictionary(true);
 	static var logsWatched:Dictionary = new Dictionary(true);
 
+	/**
+		Test steps (option "steps"): each click on the tab builds one more stage of the page, so the click that froze the
+		game names the stage. 1 the empty page, 2 names, labels and lists, 3 items and gems read through their slots'
+		tooltips, with prices, 4 the slot and title art, 5 item icons (the whole page).
+	**/
+	static inline var STEPS = 5;
+	static var STEP_NAMES:Array<String> = ["the empty page", "names, labels and lists", "reading items and gems, with prices",
+		"slot and title art", "item icons"];
+	static var step = 0;
+	static var level = STEPS;
+
 	static var page:Sprite;
 	static var content:Sprite;
 	/** Under the page's slots and text: section title art, empty-slot pictures and row bands. */
@@ -262,6 +273,13 @@ class Compare {
 		tabs = group;
 		tab = button;
 		showing = true;
+		if (Options.get(TWEAK, "steps", false) == true) {
+			if (step < STEPS)
+				step++;
+			level = step;
+		} else {
+			level = STEPS;
+		}
 		pages(self, false);
 		build(self);
 		page.visible = true;
@@ -596,13 +614,20 @@ class Compare {
 		content.addChild(under);
 		shownName = labelText(nameLabel(window));
 		shownSignature = signature(window);
-		var ready = CombatPower.gear != null && CombatPower.equipped != null && CombatPower.role >= 0 && CombatPower.table() != null;
+		if (level < STEPS)
+			stepNote();
+		if (level < 2)
+			return;
+		var ready = level >= 3 && CombatPower.gear != null && CombatPower.equipped != null && CombatPower.role >= 0
+			&& CombatPower.table() != null;
 		var dps = ready && CombatPower.role == 0;
 		var theirRole = roleOf(window);
 
 		// Theirs are read from the inspect window now; yours are what your profile last showed.
-		var theirs = readItems(window);
-		var mineItems:Array<Dynamic> = myItems == null ? [] : myItems;
+		var theirs:Array<Dynamic> = level >= 3 ? readItems(window) : [];
+		while (theirs.length < SLOT_COUNT)
+			theirs.push(null);
+		var mineItems:Array<Dynamic> = myItems == null || level < 3 ? [] : myItems;
 		while (mineItems.length < SLOT_COUNT)
 			mineItems.push(null);
 		var model:Dynamic = slotModel();
@@ -617,8 +642,8 @@ class Compare {
 			itemPicture(model, theirItem == null ? null : theirItem.data, x, y + 2, SLOT);
 			itemPicture(model, mineItem == null ? null : mineItem.data, x + COLUMN_WIDTH - SLOT, y + 2, SLOT);
 		}
-		var theirGems = readGems(window);
-		var mineGems:Array<Dynamic> = myGems == null ? [] : CombatPower.copyOf(myGems);
+		var theirGems:Array<Dynamic> = level >= 3 ? readGems(window) : [];
+		var mineGems:Array<Dynamic> = myGems == null || level < 3 ? [] : CombatPower.copyOf(myGems);
 		var theirEngravings = readEngravings(window);
 		var theirPassive = readPassive(window);
 		var theirCombat = readCombat(window);
@@ -630,7 +655,7 @@ class Compare {
 		var y = engravingRows(theirs, mineItems, theirEngravings, ready);
 		y = passiveRows(y, theirPassive, dps);
 		y = combatRows(y, theirCombat, dps);
-		if (y + 40 <= PAGE_HEIGHT) {
+		if (y + 40 <= PAGE_HEIGHT && level >= STEPS) {
 			var note = text(COLUMNS[2], y + 4, COLUMN_WIDTH, 11, DIM, "", "left");
 			note.multiline = true;
 			note.wordWrap = true;
@@ -638,6 +663,17 @@ class Compare {
 			note.text = "Each figure is your Combat Power with just that part of theirs in place of yours.";
 			content.addChild(note);
 		}
+	}
+
+	/** The test step's line at the top of the page: what this click built and what the next one adds. */
+	static function stepNote():Void {
+		var shown:String = untyped __global__["String"](level);
+		var next:String = untyped __global__["String"](level + 1);
+		var done:String = STEP_NAMES[level - 1];
+		var coming:String = STEP_NAMES[level];
+		var line = "Compare test, step " + shown + " of 5 (" + done + ") worked. Click Compare again for step " + next + " ("
+			+ coming + ").";
+		content.addChild(text(COLUMNS[0], PAGE_HEIGHT - 20, COLUMNS[2] + COLUMN_WIDTH - COLUMNS[0], 13, 0xFFC861, line, "center"));
 	}
 
 	/** Where an equipment slot's row is: {x, y} of the row in its column. */
@@ -1005,7 +1041,7 @@ class Compare {
 	**/
 	static function sectionTitle(x:Float, y:Float, title:String, sides:Bool, ?width:Float):Float {
 		var wide:Float = width == null ? COLUMN_WIDTH : width;
-		var art:Dynamic = make(TITLE_ART);
+		var art:Dynamic = level >= 4 ? make(TITLE_ART) : null;
 		if (art != null) {
 			art.x = x + (wide - TITLE_ART_WIDTH) / 2;
 			art.y = y;
@@ -1022,6 +1058,8 @@ class Compare {
 
 	/** The profile's empty-slot picture for an equipment slot (helm, weapon …), as it draws one under each slot. */
 	static function emptyBack(index:Int, x:Float, y:Float, size:Float):Void {
+		if (level < 4)
+			return;
 		var manager:Dynamic = gearSlots(window);
 		var back:Dynamic = manager == null ? null : manager.getChildByName("slotBgMc" + index);
 		if (back == null)
@@ -1065,7 +1103,7 @@ class Compare {
 		(the game's own icon loader, ExtendIcon) and the frame. Only pictures: nothing in it is a slot the game knows.
 	**/
 	static function itemPicture(model:Dynamic, data:Dynamic, x:Float, y:Float, size:Float):Void {
-		if (model == null || data == null)
+		if (model == null || data == null || level < 4)
 			return;
 		var picture = new Sprite();
 		picture.mouseEnabled = false;
@@ -1090,7 +1128,7 @@ class Compare {
 		}
 		var iconClass:Dynamic = GameUi.definition("ark.controls.ExtendIcon");
 		var path:String = data.iconPath;
-		if (iconClass != null && path != null && path != "") {
+		if (iconClass != null && path != null && path != "" && level >= 5) {
 			var icon:Dynamic = untyped __new__(iconClass);
 			icon.iconType = "Type_NORMAL";
 			icon.canvasWidth = ICON;
