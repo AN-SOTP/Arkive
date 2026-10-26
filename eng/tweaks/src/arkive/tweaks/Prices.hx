@@ -31,7 +31,6 @@ class Prices {
 	static inline var MESSAGE_LENGTH = 1500;
 
 	static var entries:Dynamic = {};
-	static var ids:Dynamic = {};
 	static var pending:Array<String> = [];
 	static var sender:Timer;
 	static var loaded = false;
@@ -43,9 +42,9 @@ class Prices {
 
 	/**
 		Records one sighting. Prices are per bundle, as the market shows them ("-1" or below for one it didn't show);
-		bundle is the bundle size (1 when sold singly); id is the item's bindID when the row has one.
+		bundle is the bundle size (1 when sold singly).
 	**/
-	public static function note(name:String, lowest:Float, avg:Float, last:Float, bundle:Int, source:String, id:String):Void {
+	public static function note(name:String, lowest:Float, avg:Float, last:Float, bundle:Int, source:String):Void {
 		load();
 		var at = key(name);
 		if (at == "" || at.indexOf("|") >= 0 || at.indexOf("\n") >= 0 || (lowest <= 0 && avg <= 0 && last <= 0))
@@ -66,8 +65,6 @@ class Prices {
 		if (old != null && same(old, entry) && time - old.sentAt < RESEND_MS)
 			entry.sentAt = old.sentAt;
 		untyped entries[at] = entry;
-		if (id != null && id != "" && id != "0")
-			untyped ids[id] = at;
 		if (entry.sentAt == 0)
 			queue(at);
 	}
@@ -85,14 +82,6 @@ class Prices {
 		load();
 		var at = key(name);
 		return Text.has(entries, at) ? untyped entries[at] : null;
-	}
-
-	/** The entry for an item's bindID as a market row gave it, or null. */
-	public static function byId(id:String):Dynamic {
-		if (id == null || !Text.has(ids, id))
-			return null;
-		var at:String = untyped ids[id];
-		return get(at);
 	}
 
 	/** The best unit price for an item: the lowest listing, else the last sale, else the average; -1 when none. */

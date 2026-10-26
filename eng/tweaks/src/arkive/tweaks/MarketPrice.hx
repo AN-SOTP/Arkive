@@ -8,7 +8,8 @@ package arkive.tweaks;
 
 	Market prices are per bundle ("[Sold in bundles of 10 units]" under the name), so the line gives the unit price and
 	the bundle's. Auction rows are single listings, so a gem's price is the cheapest buy-now seen in the last ten
-	minutes. With the "showData" option the tooltip also lists what the tweak read, for testing.
+	minutes. A tooltip doesn't say how many items the stack holds, so that comes from the slot under the pointer. With
+	the "showData" option the tooltip ends with a grey line of what the tweak read, for testing.
 **/
 @:keep
 class MarketPrice {
@@ -19,15 +20,18 @@ class MarketPrice {
 	/** What the last market row held, for showData. */
 	static var lastRow:String = "";
 
+	/** The item slot under the pointer. */
+	static var hovered:Dynamic;
+
 	/** ExchangeShopItemRenderer.setData: a market search, wish list or interest list row. */
 	public static function onItemRow(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
 		var row:Dynamic = args[0];
 		if (row == null)
 			return;
 		Prices.note(row.itemName, Prices.parse(row.lowestPrice), Prices.parse(row.avgPrice), Prices.parse(row.lastPrice),
-			bundleOf(row.packStr), "market", idOf(row.itemData));
+			bundleOf(row.packStr), "market");
 		if (showData())
-			lastRow = describe(row, 0);
+			lastRow = shortRow(row);
 	}
 
 	/** ExchangeShopLastSearchListRenderer.setData: a recent search row (average and last price, no lowest). */
@@ -40,8 +44,7 @@ class MarketPrice {
 		// A search row seen just as recently knows the lowest price too; don't drop it.
 		if (old != null && old.lowest > 0)
 			return;
-		Prices.note(name, -1, Prices.parse(row.avgPrice), Prices.parse(row.lastPrice), bundleOf(row.packStr), "market",
-			idOf(row.itemData));
+		Prices.note(name, -1, Prices.parse(row.avgPrice), Prices.parse(row.lastPrice), bundleOf(row.packStr), "market");
 	}
 
 	/** AuctionSearchListRenderer.setData: gems only, since other auction items each have their own stats. */
@@ -54,7 +57,7 @@ class MarketPrice {
 			return;
 		var price = Prices.parse(row.buyNowPrice);
 		if (price > 0)
-			Prices.note(name, price, -1, -1, 1, "auction", null);
+			Prices.note(name, price, -1, -1, 1, "auction");
 	}
 
 	/** TooltipDocument.setMainTooltipData, before the game draws it: the price line under an item's title. */
@@ -64,31 +67,47 @@ class MarketPrice {
 			return null;
 		var list:Array<Dynamic> = boxes;
 		var name:String = null;
-		var slot:Dynamic = null;
 		var title = false;
 		for (box in list) {
 			if (box == null)
 				continue;
 			if (box.type == "NameTagBox" && name == null)
 				name = Prices.key(Tooltips.htmlOf(box.value));
-			else if (box.type == "ItemTitle") {
+			else if (box.type == "ItemTitle")
 				title = true;
-				if (box.value != null && Text.has(box.value, "slotData"))
-					slot = box.value.slotData;
-			}
 		}
 		if (!title || name == null || name == "")
 			return null;
 		var entry:Dynamic = Prices.get(name);
-		if (entry == null && slot != null)
-			entry = Prices.byId(idOf(slot));
-		var count = countOf(slot);
+		var count = hoveredCount();
 		if (entry != null)
 			TooltipLines.add(boxes, TWEAK, lineFor(entry, count), TooltipLines.MARKET_PRICE);
 		if (showData())
-			TooltipLines.add(boxes, TWEAK + "Data", font(DIM, escape("Arkive price data: name \"" + name + "\", slot "
-				+ describe(slot, 1) + ", entry " + describe(entry, 1) + ", last market row " + lastRow)), TooltipLines.MARKET_PRICE + 1);
+			list.push({type: "SingleTextBox", dirty: true, value: font(DIM, escape("Arkive price data: \"" + name + "\", stack "
+				+ whole(count) + ", " + (entry == null ? "not seen" : describe(entry, 1)) + (lastRow == "" ? "" : ", last row " + lastRow)))});
 		return null;
+	}
+
+	/** ARKNewSlot.handleMouseRollOver: the slot the pointer is on, whose stack a tooltip shown now belongs to. */
+	public static function onSlotRollOver(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
+		hovered = self;
+	}
+
+	/** ARKNewSlot.handleMouseRollOut. */
+	public static function onSlotRollOut(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
+		if (hovered == self)
+			hovered = null;
+	}
+
+	/** The stack size of the slot under the pointer (0 when none, or a single item). The tooltip itself doesn't say. */
+	static function hoveredCount():Int {
+		if (hovered == null || hovered.stage == null)
+			return 0;
+		var count:Dynamic = hovered.count;
+		if (count == null)
+			return 0;
+		var value:Int = count;
+		return value > 1 ? value : 0;
 	}
 
 	static function lineFor(entry:Dynamic, count:Int):String {
@@ -127,23 +146,15 @@ class MarketPrice {
 		return size > 1 ? Math.floor(size) : 1;
 	}
 
-	static function idOf(slot:Dynamic):String {
-		if (slot == null || !Text.has(slot, "bindID") || slot.bindID == null)
-			return null;
-		var id:String = untyped __global__["String"](slot.bindID);
-		return id;
-	}
-
-	/** The stack size a tooltip's slot data says (0 when it doesn't). */
-	static function countOf(slot:Dynamic):Int {
-		if (slot == null || !Text.has(slot, "count"))
-			return 0;
-		var count:Float = Prices.parse(untyped __global__["String"](slot.count));
-		return count > 1 ? Math.floor(count) : 0;
-	}
-
 	static function showData():Bool {
 		return Options.get(TWEAK, "showData", false) == true;
+	}
+
+	/** A market row's fields for showData, without the icon data. */
+	static function shortRow(row:Dynamic):String {
+		var name:String = Prices.key(row.itemName);
+		return name + " " + describe(row.packStr, 1) + " lowest " + describe(row.lowestPrice, 1) + " avg " + describe(row.avgPrice, 1)
+			+ " last " + describe(row.lastPrice, 1);
 	}
 
 	static function font(color:String, text:String):String {
