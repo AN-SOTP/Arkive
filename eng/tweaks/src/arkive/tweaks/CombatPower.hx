@@ -131,6 +131,10 @@ class CombatPower {
 	static var pendingLabel:Dynamic;
 	static var pendingText:String = "";
 	static var check:TextField;
+	static var honing:TextField;
+	static inline var GREEN = 0x7EE08F;
+	static inline var RED = 0xFF8A80;
+	static inline var GREY = 0xA9A9A9;
 
 	/** TooltipDocument.setMainTooltipData, before the game draws it: adds the line after an item's title. */
 	public static function onMainTooltip(self:Dynamic, args:Array<Dynamic>):Dynamic {
@@ -144,6 +148,116 @@ class CombatPower {
 		if (line != null)
 			TooltipLines.add(list, TWEAK, line, TooltipLines.COMBAT_POWER);
 		return null;
+	}
+
+	/**
+		ItemBuildUpDetailInfoBox.draw, after the game drew the honing window's stat list (each row's title, value now and
+		value at the next level): a line under "Level 18 → Level 19" with what the next level adds to your Combat Power.
+	**/
+	public static function onHoningDetails(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
+		var window:Dynamic = GameUi.ancestor(self, "ark.ui.itemBuildUp.levelUp.ItemBuildUpLevelWndContent");
+		if (window == null || window.nextLevelGroup_mc == null)
+			return;
+		var line = honingLine(window, self._detailData);
+		var group:Dynamic = window.nextLevelGroup_mc;
+		var parent:Dynamic = group.parent;
+		if (parent == null)
+			return;
+		if (honing == null || honing.parent != parent) {
+			var label:Dynamic = group.nextLevel_lb == null ? null : group.nextLevel_lb.textField;
+			honing = new TextField();
+			var format = new TextFormat();
+			if (label != null) {
+				var own:Dynamic = label.getTextFormat();
+				if (own != null && own.font != null)
+					format.font = own.font;
+				honing.embedFonts = label.embedFonts;
+			}
+			format.size = 13;
+			format.align = flash.text.TextFormatAlign.CENTER;
+			honing.defaultTextFormat = format;
+			honing.selectable = false;
+			honing.mouseEnabled = false;
+			honing.multiline = false;
+			honing.wordWrap = false;
+			parent.addChild(honing);
+		}
+		honing.visible = line != null;
+		if (line == null)
+			return;
+		var text:String = line.text;
+		var color:Int = line.color;
+		honing.x = group.x - 60;
+		honing.width = group.width + 120;
+		honing.y = group.y + group.height + 2;
+		honing.height = 22;
+		honing.textColor = color;
+		honing.text = text;
+	}
+
+	/** {text, color} for the honing window: what the next level adds, from its stat rows; null when there's nothing to say. */
+	static function honingLine(window:Dynamic, rows:Dynamic):Dynamic {
+		if (rows == null || !(untyped __is__(rows, Array)) || rows.length == 0)
+			return null;
+		if (table() == null || gear == null || role < 0)
+			return {text: "Combat Power: open your Character Profile once to compare", color: GREY};
+		if (role == 1)
+			return {text: "Combat Power: gear isn't priced for support yet", color: GREY};
+		var label:Dynamic = window.itemName_lb;
+		var shown:String = label == null ? "" : (label.textField != null ? label.textField.text : label.text);
+		var name = Text.trim(Text.stripTags(shown));
+		var slot = -1;
+		for (i in 0...gear.length) {
+			var owned:Dynamic = gear[i];
+			var ownedName:String = owned == null ? "" : owned.name;
+			if (owned != null && name != "" && (ownedName == name || StringTools.endsWith(ownedName, " " + name)))
+				slot = i;
+		}
+		if (slot < 0)
+			return {text: "Combat Power: equip this item to see what honing adds", color: GREY};
+		var next = copyItem(gear[slot]);
+		var list:Array<Dynamic> = rows;
+		for (row in list) {
+			if (row == null || row.title == null)
+				continue;
+			var title = Text.trim(Text.stripTags(untyped __global__["String"](row.title)));
+			var before = number(Text.stripTags(untyped __global__["String"](row.preValue)));
+			var after = number(Text.stripTags(untyped __global__["String"](row.newValue)));
+			if (before < 0 || after < 0)
+				continue;
+			var added = after - before;
+			if (title == "Weapon Power") {
+				var weapon:Float = next.weapon;
+				next.weapon = weapon + added;
+			} else if (title == "Basic Atk. Power") {
+				var flat:Float = next.flat;
+				next.flat = flat + added;
+			} else if (STATS.indexOf(title) >= 0) {
+				var had:Float = Text.has(next.stats, title) ? untyped next.stats[title] : 0;
+				untyped next.stats[title] = had + added;
+			}
+		}
+		var upgraded = copyOf(gear);
+		upgraded[slot] = next;
+		var change = value(upgraded, equipped) / value(gear, equipped) - 1;
+		if (Math.abs(change) < 0.00005)
+			return {text: "Combat Power 0 at the next level", color: GREY};
+		var amount:String = power > 0 ? signed(power * change, "") + " (" + signed(change * 100, "%") + ")" : signed(change * 100, "%");
+		return {text: "Combat Power ~" + amount + " at the next level", color: change >= 0 ? GREEN : RED};
+	}
+
+	/** A copy of a parsed item whose stats can change without touching the original. */
+	static function copyItem(item:Dynamic):Dynamic {
+		var copy:Dynamic = {};
+		var keys:Array<String> = untyped __keys__(item);
+		for (key in keys)
+			untyped copy[key] = item[key];
+		var stats:Dynamic = {};
+		var statKeys:Array<String> = untyped __keys__(item.stats);
+		for (key in statKeys)
+			untyped stats[key] = item.stats[key];
+		copy.stats = stats;
+		return copy;
 	}
 
 	/** CharInfoEquipAbilityPage.configUI: watch the label the game writes the Combat Power figure into. */
