@@ -18,7 +18,35 @@ internal static class TweakSmokeTests
         new("reads a player's logs from a lostark.bible page and writes the summary the Logs tab draws", TestPlayerLogs),
         new("deletes tweak working edits left by replaced tweak mods and keeps everyone else's", TestStaleTweakDrafts),
         new("reads Data Bus messages and saves tweak switches and options changed in game", TestInGameSettings),
+        new("keeps the market prices Market Price sends, the newest per item, for the next session", TestMarketPrices),
     ];
+
+    /// <summary>
+    /// Market Price sends "name|lowest|avg|last|bundle|source" lines (hundredths of a gold per bundle) on the "prices"
+    /// channel; Arkive keeps the newest per item in prices.txt with the time, and every sighting in history.txt.
+    /// </summary>
+    private static void TestMarketPrices()
+    {
+        var folder = Path.Combine(fixtureDirectory, "tweak-prices");
+        if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        var first = DateTimeOffset.FromUnixTimeMilliseconds(1_790_000_000_000);
+        var taken = Arkive.Core.Tweaks.MarketPriceStore.Save(folder,
+            "Destiny Destruction Stone|1200|1250|-1|10|market\nLv. 8 Doomfire Gem|95000000|-1|-1|1|auction\nbad line\n|1|1|1|1|market\nX|-1|-1|-1|1|market", first);
+        Assert(taken == 2, $"took {taken} lines, expected the two good ones");
+        Arkive.Core.Tweaks.MarketPriceStore.Save(folder, "Destiny Destruction Stone|1100|1240|1150|10|market", first.AddMinutes(5));
+        var kept = Arkive.Core.Tweaks.MarketPriceStore.Load(Path.Combine(folder, Arkive.Core.Tweaks.MarketPriceStore.FileName));
+        Assert(kept.Count == 2 && kept["Destiny Destruction Stone"].Lowest == 1100 && kept["Destiny Destruction Stone"].Last == 1150 &&
+               kept["Destiny Destruction Stone"].SeenAt == first.AddMinutes(5).ToUnixTimeMilliseconds() &&
+               kept["Lv. 8 Doomfire Gem"].Bundle == 1 && kept["Lv. 8 Doomfire Gem"].Source == "auction",
+            "prices.txt does not hold the newest price per item");
+        var text = File.ReadAllText(Path.Combine(folder, Arkive.Core.Tweaks.MarketPriceStore.FileName));
+        Assert(text.Contains("Destiny Destruction Stone|1100|1240|1150|10|market|", StringComparison.Ordinal) && !text.Contains('\r'),
+            "prices.txt is not in the line format the tweak reads: " + text);
+        Assert(File.ReadAllLines(Path.Combine(folder, Arkive.Core.Tweaks.MarketPriceStore.HistoryName)).Length == 3, "history.txt missed a sighting");
+        Assert(Arkive.Core.Tweaks.TweakBus.TryDecode(Arkive.Core.Tweaks.TweakBus.Encode("prices", "Oreha Fusion Material|-1|880|900|1|market"),
+            out var channel, out var message) && channel == Arkive.Core.Tweaks.MarketPriceStore.Channel && message.EndsWith("|market", StringComparison.Ordinal),
+            "a prices message did not survive the bus");
+    }
 
     /// <summary>
     /// The escape menu panel spells "settings" messages on the Data Bus; Arkive saves them to the tweak state (a tweak

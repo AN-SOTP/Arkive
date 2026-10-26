@@ -279,6 +279,9 @@ public sealed class TweakModService(
 
     public string PlayerLogsFolder => Path.Combine(root, "player-logs");
 
+    /// <summary>Where Market Price on Tooltips' prices are kept (the tweak reads prices/prices.txt under "home").</summary>
+    public string PricesFolder => Path.Combine(root, "prices");
+
     /// <summary>The tweak that prices gems in Combat Power, from the game's own table.</summary>
     public const string CombatPowerTweak = "cpgems";
 

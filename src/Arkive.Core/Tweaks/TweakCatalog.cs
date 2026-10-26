@@ -107,7 +107,7 @@ public static class TweakCatalog
         [
             new("showData", "Show the tooltip data Arkive reads (for testing)", false),
         ], Note: "Open your Character Profile once after logging in: the tweak reads your Combat Power, DPS or support, and your gems from it."),
-        new("marketprice", "Market Price on Tooltips", "Item tooltips show the market price you last saw for that item: the unit price, the bundle's, what your stack is worth, the average, and how long ago you saw it. Prices are remembered as you browse the market (and gems in the auction house) until the game closes; Arkive never searches for you.", TweakRisk.Display,
+        new("marketprice", "Market Price on Tooltips", "Item tooltips show the market price you last saw for that item: the unit price, the bundle's, what your stack is worth, the average, and how long ago you saw it. Prices are remembered as you browse the market (and gems in the auction house), and kept for your next session while Arkive is running; Arkive never searches for you.", TweakRisk.Display,
         [
             H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.controls.ExchangeShopItemRenderer", "setData", "arkive.tweaks.MarketPrice.onItemRow"),
             H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.ExchangeShopLastSearchListRenderer", "setData", "arkive.tweaks.MarketPrice.onLastSearchRow"),
@@ -116,9 +116,10 @@ public static class TweakCatalog
         ],
         [
             new("stack", "What the stack you point at is worth", true),
+            new("keep", "Keep prices for the next session (Arkive must be running)", true),
             new("average", "The average price beside the lowest", true),
             new("showData", "Show the price data Arkive reads (for testing)", false),
-        ], Note: "Only items you have looked up on the market this session have a price. Bundle sizes are read from the English market text."),
+        ], Note: "Only items you have looked up on the market have a price. Bundle sizes are read from the English market text."),
         new("boxtweaks", "Chest Opening Tweaks", "Various tweaks for the chest opening window.", TweakRisk.Display,
         [
             H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData", "arkive.tweaks.BoxTweaks.onSetData"),

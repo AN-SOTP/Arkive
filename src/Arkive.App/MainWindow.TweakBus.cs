@@ -16,7 +16,21 @@ public partial class MainWindow
     private Dictionary<string, Action<string>> TweakBusHandlers => new(StringComparer.Ordinal)
     {
         [TweakModService.SettingsChannel] = SaveInGameTweakChange,
+        [MarketPriceStore.Channel] = SaveMarketPrices,
     };
+
+    /// <summary>Prices the player saw on the market, kept so tooltips have them next session too.</summary>
+    private void SaveMarketPrices(string text)
+    {
+        try
+        {
+            MarketPriceStore.Save(Tweaks.PricesFolder, text, DateTimeOffset.UtcNow);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Dispatcher.InvokeAsync(() => Log($"Tweaks: could not keep market prices: {exception.Message}"));
+        }
+    }
 
     private void StartTweakBus()
     {

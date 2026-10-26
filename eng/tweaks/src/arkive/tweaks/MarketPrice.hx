@@ -3,8 +3,8 @@ package arkive.tweaks;
 /**
 	Market Price on Tooltips. Every market row the game draws (search results, wish list, recent searches) and every
 	gem in auction search results is remembered in Prices as the player browses; item tooltips then show the price
-	under the title: "Market: 128 g each · avg 131 g · ×120 = 15,360 g · seen 14 min ago". Only what the player looked
-	at is known, for the rest of the session; nothing is searched for them.
+	under the title: "Market: 128 g each · ×120 = 15,360 g · avg 131 g · seen 14 min ago". Only what the player looked
+	at is known; nothing is searched for them. Prices keeps them for the next session while Arkive runs.
 
 	Market prices are per bundle ("[Sold in bundles of 10 units]" under the name), so the line gives the unit price and
 	the bundle's. Auction rows are single listings, so a gem's price is the cheapest buy-now seen in the last ten
