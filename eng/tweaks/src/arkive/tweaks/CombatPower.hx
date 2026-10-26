@@ -1135,7 +1135,32 @@ class CombatPower {
 		}
 		var change = (1 + after / 10000) / (1 + before / 10000) - 1;
 		var wornName:String = mine == null ? "" : mine.name;
-		var against:String = mine == null ? "in an empty slot" : "vs your " + wornName;
+		var against:String = (mine == null ? "in an empty slot" : "vs your " + wornName) + " at your " + money(points).split(".")[0]
+			+ " points";
+		// A higher grade often adds only its later steps (17P and up), so say what it gives once your astrogems reach them.
+		var best = change;
+		var bestPoints = 0;
+		for (i in 0...CORE_STEPS.length) {
+			var need = CORE_STEPS[i];
+			if (need <= points)
+				continue;
+			var beforeThen:Float = 0;
+			if (mine != null) {
+				var mineName:String = mine.name;
+				var mineGrade:Int = mine.grade;
+				beforeThen = coreValue(mineName, family, mineGrade, i + 1);
+			}
+			var then = (1 + coreValue(name, family, grade, i + 1) / 10000) / (1 + beforeThen / 10000) - 1;
+			if (then > best + 0.00005) {
+				best = then;
+				bestPoints = need;
+			}
+		}
+		if (bestPoints > 0) {
+			var shownPoints:String = untyped __global__["String"](bestPoints);
+			against += "; " + (power > 0 ? signed(power * best, "") + " (" + signed(best * 100, "%") + ")" : signed(best * 100, "%"))
+				+ " at " + shownPoints + " points";
+		}
 		var supply:Float = core.supply;
 		var needs:Float = mine == null ? 0 : mine.willpower;
 		if (supply > 0 && needs > supply)
