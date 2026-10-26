@@ -44,6 +44,8 @@ class Astrogem {
 	static var panel:Dynamic;
 	static var box:TextField;
 	static var fontSet = false;
+	/** Font and size only, put back over the box after each htmlText: <font color> alone drops the face (boxes). */
+	static var boxFont:TextFormat;
 	static var frames = 0;
 	static var shown = "";
 	static var listening = false;
@@ -437,6 +439,8 @@ class Astrogem {
 		if (!fontSet)
 			fontSet = fontFrom(panel, box);
 		box.htmlText = data == null ? html : html + BR + "<font color='" + DIM + "'>" + data + "</font>";
+		if (boxFont != null && box.length > 0)
+			box.setTextFormat(boxFont);
 	}
 
 	/**
@@ -547,6 +551,7 @@ class Astrogem {
 		var made = new TextField();
 		made.embedFonts = true;
 		made.defaultTextFormat = format;
+		boxFont = format;
 		made.filters = [new GlowFilter(0, 1, 2, 2, 4, 1)];
 		made.textColor = 0xE6E6E6;
 		made.selectable = false;
@@ -587,6 +592,7 @@ class Astrogem {
 			format.size = 13;
 			target.embedFonts = source.embedFonts;
 			target.defaultTextFormat = format;
+			boxFont = format;
 			return true;
 		}
 		return false;
