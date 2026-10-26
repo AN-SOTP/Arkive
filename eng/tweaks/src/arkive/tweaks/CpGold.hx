@@ -8,7 +8,7 @@ import flash.utils.Dictionary;
 /**
 	Combat Power per Gold. Auction house results (accessories, bracelets, ability stones, gems) and market rows of
 	engraving books get a short line under the item's name: the Combat Power the item would give you and the gold it
-	costs per 1% of it at the price on the row, "+0.84% CP · 9,400 g per 1%". The best value among the rows on screen
+	costs per 1% of it at the price on the row, "+0.84% CP, 9,400 g per 1%". The best value among the rows on screen
 	turns gold. A loss shows in red without a gold figure; an item Combat Power can't compare shows the reason in grey.
 
 	The item's stats come from its tooltip, fetched for the row's own slot the way a hover does (no search, nothing
@@ -28,10 +28,11 @@ class CpGold {
 	static inline var BEST = "#FFD200";
 	/** Books needed for one engraving level. */
 	static inline var BOOKS = 5;
+	static inline var FONT = "$YG760";
 	static inline var SIZE = 12;
 	static inline var LINE_HEIGHT = 18;
 	static inline var GAP = 8;
-	/** A change smaller than this (0.005%) shows as none. */
+	/** A change that rounds to 0.00% shows as none. */
 	static inline var NONE = 0.00005;
 	static inline var AUCTION_ROW = "ark.ui.exchangeShop.AuctionSearchListRenderer";
 	static inline var BOOK = " Engraving Recipe";
@@ -217,7 +218,7 @@ class CpGold {
 			return [font(DIM, "CP: " + note), font(DIM, "CP: " + note), ""];
 		}
 		if (Math.abs(change) < NONE)
-			return [font(DIM, "No CP change"), font(DIM, "No CP change"), font(DIM, "+0 CP")];
+			return [font(DIM, "0% CP"), font(DIM, "0% CP"), font(DIM, "0%")];
 		var percent = signed(change * 100) + "%";
 		if (change < 0)
 			return [font(LOSS, percent + " CP"), font(LOSS, percent + " CP"), font(LOSS, percent)];
@@ -228,21 +229,21 @@ class CpGold {
 		var bid = state.bid == true ? " (bid)" : "";
 		var color = best ? BEST : GAIN;
 		var lead = best ? "Best: " : "";
-		return [font(color, lead + percent + " CP · " + (per < 1000000000 ? Tooltips.grouped(Math.round(per)) : compact(per)) + " g per 1%" + bid),
-			font(color, percent + " · " + compact(per) + " g/1%" + bid), font(color, compact(per) + " g/1%")];
+		return [font(color, lead + percent + " CP, " + (per < 1000000000 ? Tooltips.grouped(Math.round(per)) : compact(per)) + " g per 1%" + bid),
+			font(color, percent + ", " + compact(per) + " g/1%" + bid), font(color, compact(per) + " g/1%")];
 	}
 
 	static function labelOf(row:Dynamic, like:Dynamic):TextField {
 		var label:TextField = untyped labels[row];
 		if (label != null && label.parent == like.parent)
 			return label;
+		// The font of a row field that shows text (its name or trade count), else the "$YG760" those fields are made
+		// with. An empty field reports no font, and a line without one draws as boxes.
 		var format = new TextFormat();
-		var own:Dynamic = like.getTextFormat();
-		if (own != null && own.font != null)
-			format.font = own.font;
+		format.font = fontOf([row.itemName_txt, row.itemNameDouble_txt, row.packString_txt]);
 		format.size = SIZE;
 		label = new TextField();
-		label.embedFonts = like.embedFonts;
+		label.embedFonts = true;
 		label.defaultTextFormat = format;
 		label.selectable = false;
 		label.mouseEnabled = false;
@@ -253,6 +254,21 @@ class CpGold {
 		Options.own(TWEAK, label);
 		untyped labels[row] = label;
 		return label;
+	}
+
+	static function fontOf(fields:Array<Dynamic>):String {
+		for (field in fields) {
+			if (field == null)
+				continue;
+			var text:String = field.text;
+			if (text == null || text.length == 0)
+				continue;
+			var format:Dynamic = field.getTextFormat(0, 1);
+			var name:String = format == null ? null : format.font;
+			if (name != null && name != "")
+				return name;
+		}
+		return FONT;
 	}
 
 	/** Puts the line in a column cell, centred on the line the game's field at y would show. */
