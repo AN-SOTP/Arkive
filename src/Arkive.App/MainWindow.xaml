@@ -1274,7 +1274,7 @@
                                                     <TextBlock Text="Faster Launch" FontSize="15" FontWeight="SemiBold" />
                                                 </DockPanel>
                                                 <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,3,0,0" Foreground="{DynamicResource TextSecondaryBrush}"
-                                                           Text="Skips the publisher logos and the seizure warning before the login screen. It changes game files, so it can't be switched in game: install or remove it here, with Lost Ark closed." />
+                                                           Text="Skips the publisher logos and the seizure warning before the login screen." />
                                             </StackPanel>
                                         </DockPanel>
                                     </Border>
