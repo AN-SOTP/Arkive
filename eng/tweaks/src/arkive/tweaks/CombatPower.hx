@@ -188,27 +188,49 @@ class CombatPower {
 
 	/** The tooltip line for an item, or null when the tweak doesn't price it. */
 	static function lineFor(list:Array<Dynamic>):String {
+		var found = priced(list);
+		if (found == null)
+			return null;
+		var note:String = found.note;
+		if (note != null)
+			return font(DIM, "Combat Power: " + note);
+		var change:Float = found.change;
+		var rough:Bool = found.rough;
+		var against:String = found.against;
+		return changeText(change, rough) + " " + font(DIM, against);
+	}
+
+	/**
+		What equipping an item (or reading five more of an engraving book) would do to your Combat Power, for other
+		tweaks too (CP per Gold): null when the tweak doesn't price that kind of item, else {change (a fraction of your
+		Combat Power; NaN when it can't compare), note (the short reason when NaN, else null), book (an engraving book,
+		where change is its next five books), rough (rests on summed main stat and weapon power), against (what it was
+		compared with)}.
+	**/
+	public static function priced(list:Array<Dynamic>):Dynamic {
+		if (list == null)
+			return null;
 		var gem = gemOf(list);
 		if (gem != null)
-			return gemLine(gem);
+			return gemPrice(gem);
 		var book = bookOf(list);
 		if (book != null)
-			return bookLine(book);
+			return bookPrice(book);
 		var item = itemOf(list);
 		if (item == null || item.slot == "" || UNPRICED.indexOf(item.slot) >= 0)
 			return null;
 		if (table() == null)
-			return font(DIM, "Combat Power: Arkive couldn't read the game's table");
+			return unpriced("Arkive couldn't read the game's table", false);
 		if (gear == null || role < 0)
-			return font(DIM, "Combat Power: open your Character Profile once to compare");
+			return unpriced("open your Character Profile once to compare", false);
 		if (role == 1)
-			return font(DIM, "Combat Power: gear isn't priced for support yet");
+			return unpriced("gear isn't priced for support yet", false);
 		// An item you wear in either slot of a pair (earrings, rings) is yours, not one to compare with the other.
 		var itemText:String = item.text;
 		for (owned in gear) {
 			var ownedText:String = owned == null ? "" : owned.text;
 			if (owned != null && ownedText == itemText)
-				return font(DIM, "Combat Power: this is what you wear");
+				return unpriced("this is what you wear", false);
 		}
 		var slot = targetSlot(item);
 		if (slot < 0)
@@ -219,18 +241,23 @@ class CombatPower {
 		var change = value(after, equipped) / value(gear, equipped) - 1;
 		var wornName:String = worn == null ? "" : worn.name;
 		var against:String = worn == null ? "in an empty slot" : "vs your " + wornName;
-		var note = "";
 		var combat:Float = item.combat;
 		if (otherCombat < 0 && combat > 0)
-			note = " (combat stats not counted)";
-		return changeText(change, true) + " " + font(DIM, against + note);
+			against += " (combat stats not counted)";
+		return {change: change, note: null, book: false, rough: true, against: against};
 	}
 
-	static function gemLine(gem:Dynamic):String {
+	static function unpriced(note:String, book:Bool):Dynamic {
+		// Number.NaN, not Haxe's Math.NaN: Haxe's Boot sets that up, and Arkive's empty Boot doesn't.
+		var none:Float = untyped __global__["Number"].NaN;
+		return {change: none, note: note, book: book, rough: false, against: ""};
+	}
+
+	static function gemPrice(gem:Dynamic):Dynamic {
 		if (table() == null)
-			return font(DIM, "Combat Power: Arkive couldn't read the game's gem table");
+			return unpriced("Arkive couldn't read the game's gem table", false);
 		if (equipped == null || role < 0)
-			return font(DIM, "Combat Power: open your Character Profile once to compare");
+			return unpriced("open your Character Profile once to compare", false);
 		var target:Dynamic = weakest(gem);
 		var after:Array<Dynamic> = [];
 		for (owned in equipped)
@@ -240,38 +267,38 @@ class CombatPower {
 		var change = gemRatio(equipped, after) - 1;
 		var targetName:String = target == null ? "" : target.name;
 		var against:String = target == null ? "in an empty slot" : "vs your " + targetName;
-		return changeText(change, false) + " " + font(DIM, against);
+		return {change: change, note: null, book: false, rough: false, against: against};
 	}
 
 	/** What reading five more books of an engraving you have equipped would add. */
-	static function bookLine(book:Dynamic):String {
+	static function bookPrice(book:Dynamic):Dynamic {
 		if (table() == null)
-			return font(DIM, "Combat Power: Arkive couldn't read the game's table");
+			return unpriced("Arkive couldn't read the game's table", true);
 		if (gear == null || role < 0)
-			return font(DIM, "Combat Power: open your Character Profile once to compare");
+			return unpriced("open your Character Profile once to compare", true);
 		if (role == 1)
-			return font(DIM, "Combat Power: books aren't priced for support yet");
+			return unpriced("books aren't priced for support yet", true);
 		var name:String = book.engraving;
 		var mine:Dynamic = null;
 		for (engraving in engravings)
 			if (engraving.name == name)
 				mine = engraving;
 		if (mine == null)
-			return font(DIM, engravings.length == 0 ? "Combat Power: open your profile's Engravings tab once to compare"
-				: "Combat Power: not one of your equipped engravings");
+			return unpriced(engravings.length == 0 ? "open your profile's Engravings tab once to compare"
+				: "not one of your equipped engravings", true);
 		var grade:Int = mine.grade;
 		var level:Int = mine.level;
 		var bookGrade:Int = book.grade;
 		// Books of an engraving's grade raise it to level 4; at level 4 the next grade's books carry on.
 		var useful = (bookGrade == grade && level < 4) || (bookGrade == grade + 1 && level == 4);
 		if (!useful)
-			return font(DIM, "Combat Power: these books add nothing at your engraving's grade and level");
+			return unpriced("these books add nothing at your engraving's grade and level", true);
 		var stone = stoneLevel(gear[STONE_SLOT], name);
 		var now = 20 * stone + index(grade, level);
 		var before = engravingValue(name, now);
 		var after = engravingValue(name, now + 1);
 		var change = (1 + after / 10000) / (1 + before / 10000) - 1;
-		return changeText(change, false) + " " + font(DIM, "for the next 5 books");
+		return {change: change, note: null, book: true, rough: false, against: "for the next 5 books"};
 	}
 
 	/** "Combat Power +12.34 (+0.53%)" in green or red; "~" in front when it rests on summed main stat and weapon power. */
@@ -458,7 +485,7 @@ class CombatPower {
 		if (braceletTexts == null) {
 			braceletTexts = [];
 			braceletValues = [];
-			var listed:Array<Dynamic> = Options.get(TWEAK, "bracelet", null);
+			var listed:Array<Dynamic> = tableOption("bracelet");
 			if (listed != null)
 				for (entry in listed) {
 					var fields = (entry : String).split("|");
@@ -763,7 +790,7 @@ class CombatPower {
 	static function engravingValue(name:String, at:Int):Float {
 		if (engravingRows == null) {
 			engravingRows = [];
-			var listed:Array<Dynamic> = Options.get(TWEAK, "engravings", null);
+			var listed:Array<Dynamic> = tableOption("engravings");
 			if (listed != null)
 				for (entry in listed)
 					engravingRows.push(entry);
@@ -821,9 +848,15 @@ class CombatPower {
 		return 0;
 	}
 
+	/** A table Arkive copied into the options: Combat Power's own, or CP per Gold's when only that tweak is on. */
+	static function tableOption(key:String):Dynamic {
+		var found:Dynamic = Options.get(TWEAK, key, null);
+		return found != null ? found : Options.get("cpgold", key, null);
+	}
+
 	static function table():Array<Int> {
 		if (rows == null)
-			rows = Options.get(TWEAK, "rows", null);
+			rows = tableOption("rows");
 		return rows;
 	}
 
@@ -920,7 +953,7 @@ class CombatPower {
 		if (tier != 4)
 			return 0;
 		if (basics == null)
-			basics = Options.get(TWEAK, "gemBase", null);
+			basics = tableOption("gemBase");
 		if (basics == null)
 			return 0;
 		var at = 0;
