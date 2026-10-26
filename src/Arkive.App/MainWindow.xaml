@@ -1224,11 +1224,11 @@
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <TextBlock Text="Tweaks" FontSize="20" Margin="0,0,0,6" />
                             <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
-                                       Text="Small changes to the game's own windows: extra information, extra buttons and quicker steps. Turn on the ones you want, then apply. Arkive puts them in the game as one mod, Arkive Tweaks, so they restore and update like your other mods. They show the next time you start Lost Ark; close the game before applying." />
-                            <Border Padding="10,7" Background="{DynamicResource WarningSurfaceBrush}"
+                                       Text="Small changes to the game's own windows: extra information, extra buttons and quicker steps. Tick the ones you want and apply; Arkive installs them straight away, and Remove all tweaks takes them out again. They show the next time you start Lost Ark; close the game first." />
+                            <Border Padding="10,5" Background="{DynamicResource WarningSurfaceBrush}"
                                     BorderBrush="{DynamicResource WarningBorderBrush}" BorderThickness="1">
-                                <TextBlock TextWrapping="Wrap"
-                                           Text="Changing the game's files is against Lost Ark's terms of service. Tweaks marked Batch send several game actions from one click, and those marked Automation act without a click; use them at your own risk." />
+                                <TextBlock TextWrapping="Wrap" FontSize="12"
+                                           Text="Changing the game's files is against Lost Ark's terms of service. Batch tweaks send several game actions from one click and Automation tweaks act without a click; use them at your own risk." />
                             </Border>
                         </StackPanel>
                         <Border DockPanel.Dock="Bottom" Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource SurfaceAltBrush}"
@@ -1242,42 +1242,42 @@
                                             ToolTip="Takes every tweak out of the game; the game's own windows come back exactly as they were." />
                                 </StackPanel>
                                 <TextBlock x:Name="TweaksStatusText" TextWrapping="Wrap" VerticalAlignment="Center"
-                                           Text="Turn on the tweaks you want, then apply." />
+                                           Text="Tick the tweaks you want, then apply." />
                             </DockPanel>
                         </Border>
                         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <ItemsControl x:Name="TweakList">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Margin="0,0,0,8" Padding="14,10" CornerRadius="6" BorderThickness="1"
-                                                BorderBrush="{DynamicResource BorderStrongBrush}" Background="{DynamicResource SurfaceBrush}">
+                                        <Border Width="350" Margin="4" Padding="12,9,12,10" CornerRadius="6" BorderThickness="1"
+                                                BorderBrush="{Binding CardBorder}" Background="{DynamicResource SurfaceBrush}">
                                             <StackPanel>
                                                 <DockPanel>
-                                                    <Border DockPanel.Dock="Right" Padding="7,2" CornerRadius="9" VerticalAlignment="Top"
+                                                    <Border DockPanel.Dock="Right" Padding="7,1" CornerRadius="9" VerticalAlignment="Center"
                                                             Background="{DynamicResource SurfaceAltBrush}" ToolTip="{Binding RiskDetail}">
-                                                        <TextBlock Text="{Binding RiskLabel}" FontSize="12" />
+                                                        <TextBlock Text="{Binding RiskLabel}" FontSize="11" />
                                                     </Border>
-                                                    <CheckBox IsChecked="{Binding Enabled, Mode=TwoWay}" VerticalContentAlignment="Center">
-                                                        <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" />
+                                                    <CheckBox IsChecked="{Binding Enabled, Mode=TwoWay}" VerticalContentAlignment="Center" Margin="0,0,8,0">
+                                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                                     </CheckBox>
                                                 </DockPanel>
-                                                <TextBlock Text="{Binding Description}" Margin="22,3,0,0" TextWrapping="Wrap"
+                                                <TextBlock Text="{Binding Description}" Margin="22,3,0,0" TextWrapping="Wrap" FontSize="12"
                                                            Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                <TextBlock Text="{Binding Note}" Margin="22,6,0,0" TextWrapping="Wrap"
-                                                           Visibility="{Binding NoteVisibility}" />
-                                                <ItemsControl ItemsSource="{Binding Options}" Margin="22,6,0,0" IsEnabled="{Binding Enabled}">
-                                                    <ItemsControl.ItemsPanel>
-                                                        <ItemsPanelTemplate>
-                                                            <WrapPanel />
-                                                        </ItemsPanelTemplate>
-                                                    </ItemsControl.ItemsPanel>
+                                                <TextBlock Text="{Binding Note}" Margin="22,4,0,0" TextWrapping="Wrap" FontSize="11.5" FontStyle="Italic"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}" Visibility="{Binding NoteVisibility}" />
+                                                <ItemsControl ItemsSource="{Binding Options}" Margin="22,6,0,0" Visibility="{Binding OptionsVisibility}">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
                                                             <StackPanel>
-                                                                <CheckBox Content="{Binding Label}" IsChecked="{Binding Value, Mode=TwoWay}" Margin="0,0,16,4"
+                                                                <CheckBox Content="{Binding Label}" IsChecked="{Binding Value, Mode=TwoWay}" FontSize="12.5" Margin="0,0,0,3"
                                                                           Visibility="{Binding SwitchVisibility}" />
-                                                                <StackPanel Visibility="{Binding ChoicesVisibility}" Margin="0,2,16,6">
-                                                                    <TextBlock Text="{Binding Label}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                                                                <StackPanel Visibility="{Binding InlineChoicesVisibility}" Margin="0,1,0,3">
+                                                                    <TextBlock Text="{Binding Label}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
                                                                     <ItemsControl ItemsSource="{Binding Choices}">
                                                                         <ItemsControl.ItemsPanel>
                                                                             <ItemsPanelTemplate>
@@ -1287,15 +1287,26 @@
                                                                         <ItemsControl.ItemTemplate>
                                                                             <DataTemplate>
                                                                                 <StackPanel>
-                                                                                    <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}"
-                                                                                              Visibility="{Binding CheckVisibility}" MinWidth="220" Margin="0,0,12,4" />
-                                                                                    <RadioButton Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" GroupName="{Binding Group}"
-                                                                                                 Visibility="{Binding RadioVisibility}" MinWidth="220" Margin="0,0,12,4" />
+                                                                                    <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" FontSize="12.5"
+                                                                                              Visibility="{Binding CheckVisibility}" Margin="0,0,12,2" />
+                                                                                    <RadioButton Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" GroupName="{Binding Group}" FontSize="12.5"
+                                                                                                 Visibility="{Binding RadioVisibility}" Margin="0,0,12,2" />
                                                                                 </StackPanel>
                                                                             </DataTemplate>
                                                                         </ItemsControl.ItemTemplate>
                                                                     </ItemsControl>
                                                                 </StackPanel>
+                                                                <Expander Header="{Binding ListHeader}" Visibility="{Binding ListVisibility}" Margin="0,1,0,3" FontSize="12.5">
+                                                                    <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                                                                        <ItemsControl ItemsSource="{Binding Choices}">
+                                                                            <ItemsControl.ItemTemplate>
+                                                                                <DataTemplate>
+                                                                                    <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" Margin="0,0,0,2" />
+                                                                                </DataTemplate>
+                                                                            </ItemsControl.ItemTemplate>
+                                                                        </ItemsControl>
+                                                                    </ScrollViewer>
+                                                                </Expander>
                                                             </StackPanel>
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>

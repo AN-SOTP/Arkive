@@ -49,7 +49,13 @@ public sealed class TweakOptionRow
     public bool Value { get; set; }
     public IReadOnlyList<TweakChoiceRow> Choices { get; } = [];
     public Visibility SwitchVisibility => Option.Choices is null ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility ChoicesVisibility => Option.Choices is null ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>Short sets of choices show inline; long pick-lists (such as raids) fold into an expander to keep cards compact.</summary>
+    private bool LongList => Option.Choices is { Count: > 6 } && !Option.Single;
+
+    public Visibility InlineChoicesVisibility => Option.Choices is not null && !LongList ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ListVisibility => LongList ? Visibility.Visible : Visibility.Collapsed;
+    public string ListHeader => $"{Label} ({Choices.Count:N0})";
 
     /// <summary>The value saved and written into the game: true/false, the chosen value (single), or the chosen values.</summary>
     public JsonElement ToJson() => Option.Choices is null
@@ -72,6 +78,12 @@ public sealed class TweakRow(TweakDefinition tweak, bool enabled, IReadOnlyList<
     public string? Note => Tweak.Note;
     public Visibility NoteVisibility => string.IsNullOrEmpty(Note) ? Visibility.Collapsed : Visibility.Visible;
     public IReadOnlyList<TweakOptionRow> Options { get; } = options;
+
+    /// <summary>A tweak's options show once it is ticked, which keeps the cards small.</summary>
+    public Visibility OptionsVisibility => Enabled && Options.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    public System.Windows.Media.Brush CardBorder => (System.Windows.Media.Brush)Application.Current.FindResource(
+        Enabled ? "AccentBrush" : "BorderStrongBrush");
 
     public string RiskLabel => Tweak.Risk switch
     {
@@ -96,6 +108,8 @@ public sealed class TweakRow(TweakDefinition tweak, bool enabled, IReadOnlyList<
         {
             _enabled = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(OptionsVisibility)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CardBorder)));
         }
     }
 }
