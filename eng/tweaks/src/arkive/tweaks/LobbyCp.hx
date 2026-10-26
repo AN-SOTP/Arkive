@@ -8,7 +8,11 @@ class LobbyCp {
 			if (data == null || self.itemLevel_txt == null)
 				return result;
 			var tooltip:Dynamic = data.memberTooltip;
+			#if arkive_diag_trivial
+			var power:String = "ok";
+			#else
 			var power = untyped __is__(tooltip, String) ? combatPower(tooltip) : null;
+			#end
 			var level:String = untyped __is__(data.itemLevel, String) ? data.itemLevel : "";
 			if (power != null)
 				self.itemLevel_txt.htmlText = level + "  <font color='#ffd200'>" + power + "</font>";
