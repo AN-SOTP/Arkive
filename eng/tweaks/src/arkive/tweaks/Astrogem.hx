@@ -25,7 +25,11 @@ class Astrogem {
 	static inline var TWEAK = "astrogem";
 	static inline var GOOD = "#7EE08F";
 	static inline var BAD = "#FF8A80";
-	static inline var DIM = "#A9A9A9";
+	/** Notes: the light grey of the game's tooltip notes, readable on the panel (A9A9A9 was too faint here). */
+	static inline var DIM = "#C8C8C8";
+	/** The heading, in the light blue the game's tooltips use for section titles. */
+	static inline var TITLE = "#A9D0F5";
+	static inline var TEXT = 0xE6E6E6;
 	static inline var PLUS_COLOR = "b7fb00";
 	static inline var MINUS_COLOR = "e73517";
 	static inline var LEVELS = 5;
@@ -303,7 +307,7 @@ class Astrogem {
 		if (state == null)
 			return "";
 		var levels:Array<Int> = state.levels;
-		var heading = "<font color='" + DIM + "'>Arkive · " + targetName() + "</font>";
+		var heading = "<font color='" + TITLE + "'>Arkive · " + targetName() + "</font>";
 		if (reached(levels))
 			return heading + BR + "<font color='" + GOOD + "'>Target reached." + BR + "Suggestion: Processing Complete</font>";
 		var all:Int = state.all;
@@ -446,7 +450,7 @@ class Astrogem {
 	/**
 		showData: what the tweak made of the panel, in a few short lines under the advice: levels (Willpower, Points,
 		first and second option), attempts left/in all, rerolls and resets left, cost, and each offer as the stat it
-		changes (W, P, O1, O2; "chg" an option change, "$" a cost change, "rr" extra rerolls, "=" no change).
+		changes (W, P, O1, O2; "chg" an option change, "$" a cost change, "reroll" extra rerolls, "=" no change).
 	**/
 	static function describe(state:Dynamic):String {
 		if (state == null)
@@ -457,7 +461,7 @@ class Astrogem {
 		var rerolls:Int = state.rerolls;
 		var resets:Int = state.resets;
 		var cost:Int = state.cost;
-		var out = "read: " + levels.join(" ") + BR + "left " + left + "/" + all + ", rr " + rerolls + ", reset " + resets + ", cost " + cost;
+		var out = "read: " + levels.join(" ") + BR + "left " + left + "/" + all + ", rerolls " + rerolls + ", resets " + resets + ", cost " + cost;
 		var stats = ["W", "P", "O1", "O2"];
 		var effects:Array<Dynamic> = state.effects;
 		var offers:Array<String> = [];
@@ -471,7 +475,7 @@ class Astrogem {
 			else if (percent != 0)
 				offers.push("$" + (percent > 0 ? "+" : "") + percent + "%");
 			else if (extra != 0)
-				offers.push("rr+" + extra);
+				offers.push("reroll+" + extra);
 			else
 				offers.push(e.change == true ? "chg" : "=");
 		}
@@ -545,15 +549,9 @@ class Astrogem {
 
 	/** The box; its font is set from the panel's own text once that shows (see fontFrom). */
 	static function field(width:Int, height:Int):TextField {
-		var format = new TextFormat();
-		format.font = "$YG760";
-		format.size = 13;
 		var made = new TextField();
-		made.embedFonts = true;
-		made.defaultTextFormat = format;
-		boxFont = format;
-		made.filters = [new GlowFilter(0, 1, 2, 2, 4, 1)];
-		made.textColor = 0xE6E6E6;
+		useFont(made, "$YG760", true);
+		made.filters = [new GlowFilter(0, 0.9, 3, 3, 6, 1)];
 		made.selectable = false;
 		made.mouseEnabled = false;
 		made.multiline = true;
@@ -587,15 +585,26 @@ class Astrogem {
 			var name:String = own == null ? null : own.font;
 			if (name == null || name == "")
 				continue;
-			var format = new TextFormat();
-			format.font = name;
-			format.size = 13;
-			target.embedFonts = source.embedFonts;
-			target.defaultTextFormat = format;
-			boxFont = format;
+			useFont(target, name, source.embedFonts);
 			return true;
 		}
 		return false;
+	}
+
+	/**
+		The box's font: the default format also carries the light text colour (a format without one means black), while
+		boxFont, put back after each htmlText, carries only the face and size so the lines keep their own colours.
+	**/
+	static function useFont(target:TextField, name:String, embed:Bool):Void {
+		var format = new TextFormat();
+		format.font = name;
+		format.size = 13;
+		format.color = TEXT;
+		target.embedFonts = embed;
+		target.defaultTextFormat = format;
+		boxFont = new TextFormat();
+		boxFont.font = name;
+		boxFont.size = 13;
 	}
 
 	// ---- Text ----
