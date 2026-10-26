@@ -3172,8 +3172,15 @@ static int TweaksMod(string packagesRoot, string? projectRoot, string? tweaks, s
     var settings = new Arkive.Core.Tweaks.TweakSettings();
     foreach (var id in tweaks.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
     {
-        if (Arkive.Core.Tweaks.TweakCatalog.Find(id) is not { Available: true }) throw new ArgumentException($"Unknown or unfinished tweak: {id}.");
-        settings.Enabled[id] = options.GetValueOrDefault(id) ?? [];
+        if (Arkive.Core.Tweaks.TweakCatalog.Find(id) is not { Available: true } tweak) throw new ArgumentException($"Unknown or unfinished tweak: {id}.");
+        var chosen = options.GetValueOrDefault(id) ?? [];
+        // Options left out take their defaults, as a fresh Tweaks tab saves them.
+        foreach (var option in tweak.OptionList)
+            if (!chosen.ContainsKey(option.Key))
+                chosen[option.Key] = option.Choices is null
+                    ? JsonSerializer.SerializeToElement(option.Default)
+                    : JsonSerializer.SerializeToElement(option.Choices.Where(choice => choice.Default).Select(choice => choice.Value).ToArray());
+        settings.Enabled[id] = chosen;
     }
     var service = new Arkive.Core.Tweaks.TweakModService(library, Path.Combine(root, "tweaks"),
         ChunkProtectionProviderFactory.CreateWesternGlobal())
