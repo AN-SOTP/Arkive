@@ -34,6 +34,12 @@ public sealed record AbcHook(string ClassName, string MethodName, string Handler
     /// </summary>
     public bool Diagnostic { get; init; }
 
+    /// <summary>
+    /// Private or protected methods of the hooked class that the handler calls by plain name (as Mari's "exposed"
+    /// members): each gets a second, public trait bound to the same method, with no new body.
+    /// </summary>
+    public IReadOnlyList<string> Expose { get; init; } = [];
+
     public string Id => ClassName + (Static ? "::" : ".") + MethodName;
 }
 
@@ -53,7 +59,8 @@ public static class AbcHookInjector
     {
         var missing = new List<string>();
         var pool = abc.Pool;
-        foreach (var hook in hooks)
+        var all = hooks.ToArray();
+        foreach (var hook in all)
         {
             var classIndex = abc.FindClass(hook.ClassName);
             var traits = classIndex < 0 ? null : hook.Static ? abc.Classes[classIndex].Traits : abc.Instances[classIndex].Traits;
@@ -97,7 +104,34 @@ public static class AbcHookInjector
             traits.Add(new AbcTrait { Name = renamed, KindByte = AbcTrait.Method, Index = trait.Index });
             trait.Index = wrapperIndex;
         }
+        foreach (var hook in all)
+            missing.AddRange(Expose(abc, hook));
         return missing;
+    }
+
+    /// <summary>
+    /// Adds a public trait for each of the hook's <see cref="AbcHook.Expose"/> methods, bound to the method the
+    /// existing trait runs (the wrapper, when that method is hooked too); returns "Class.method" for those not found.
+    /// </summary>
+    private static IEnumerable<string> Expose(AbcFile abc, AbcHook hook)
+    {
+        if (hook.Expose.Count == 0) yield break;
+        var pool = abc.Pool;
+        var classIndex = abc.FindClass(hook.ClassName);
+        var traits = classIndex < 0 ? null : hook.Static ? abc.Classes[classIndex].Traits : abc.Instances[classIndex].Traits;
+        var publicNs = pool.AddNamespace(AbcNamespace.PackageNamespace, "");
+        foreach (var name in hook.Expose)
+        {
+            var exposed = pool.AddQName(publicNs, name);
+            if (traits is not null && traits.Any(item => item.Name == exposed)) continue;
+            var trait = traits?.FirstOrDefault(item => item.Kind == AbcTrait.Method && pool.NameOf(item.Name) == name);
+            if (traits is null || trait is null)
+            {
+                yield return hook.ClassName + "." + name;
+                continue;
+            }
+            traits.Add(new AbcTrait { Name = exposed, KindByte = AbcTrait.Method, Index = trait.Index });
+        }
     }
 
     /// <summary>

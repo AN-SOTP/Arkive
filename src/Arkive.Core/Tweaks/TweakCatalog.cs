@@ -23,8 +23,14 @@ public enum TweakRisk
 public sealed record TweakHookTarget(string Package, string Movie, string ClassName, string Method, string? Handler = null,
     Interface.Abc.AbcHookKind Kind = Interface.Abc.AbcHookKind.After)
 {
+    /// <summary>Private or protected methods of the class that the handler calls by plain name (see AbcHook.Expose).</summary>
+    public IReadOnlyList<string> Expose { get; init; } = [];
+
     public Interface.Abc.AbcHook Hook => new(ClassName, Method,
-        Handler ?? throw new InvalidOperationException($"{ClassName}.{Method} has no handler yet."), Kind: Kind);
+        Handler ?? throw new InvalidOperationException($"{ClassName}.{Method} has no handler yet."), Kind: Kind)
+    {
+        Expose = Expose,
+    };
 }
 
 /// <summary>
@@ -59,8 +65,8 @@ public static class TweakCatalog
     private const string Base = "efui_base";
 
     private static TweakHookTarget H(string package, string movie, string className, string method, string? handler = null,
-        Interface.Abc.AbcHookKind kind = Interface.Abc.AbcHookKind.After) =>
-        new(package, movie, className, method, handler, kind);
+        Interface.Abc.AbcHookKind kind = Interface.Abc.AbcHookKind.After, string[]? expose = null) =>
+        new(package, movie, className, method, handler, kind) { Expose = expose ?? [] };
 
     public static IReadOnlyList<TweakDefinition> All { get; } =
     [

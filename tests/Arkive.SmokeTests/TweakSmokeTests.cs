@@ -10,6 +10,7 @@ internal static class TweakSmokeTests
         new("reads and writes ActionScript 3 code and movie tags byte for byte", TestAbcRoundTrip),
         new("hooks a movie method: keeps the original under a new name and calls the tweak handler after it", TestHookInjection),
         new("hooks before a method (able to skip it) and after it (able to change its result)", TestHookKinds),
+        new("exposes a private method to tweak code under its plain public name, bound to the same method", TestExpose),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
     ];
@@ -104,6 +105,28 @@ internal static class TweakSmokeTests
     }
 
     /// <summary>The three wrapper shapes, read back instruction by instruction (Mari's shapes A/B and C/D).</summary>
+    private static void TestExpose()
+    {
+        var abc = BuildGreeter();
+        var pool = abc.Pool;
+        var secret = pool.AddQName(pool.AddNamespace(AbcNamespace.PrivateNs, "demo:Greeter"), "secret");
+        abc.Instances[0].Traits.Add(new AbcTrait { Name = secret, KindByte = AbcTrait.Method, Index = 2 });
+        var hook = new AbcHook("demo.Greeter", "greet", "demo.Tweak.onGreet") { Expose = ["secret", "nothing"] };
+        var missing = AbcHookInjector.Inject(abc, [hook]);
+        Assert(missing.SequenceEqual(["demo.Greeter.nothing"]), "a method to expose that the class doesn't have was not reported: " + string.Join(", ", missing));
+
+        var reread = AbcFile.Read(abc.Write());
+        var named = reread.Instances[0].Traits.Where(trait => reread.Pool.NameOf(trait.Name) == "secret").ToArray();
+        Assert(named.Length == 2 && named.All(trait => trait.Index == 2 && trait.Kind == AbcTrait.Method),
+            "the exposed trait is missing or bound to another method");
+        Assert(named.Count(trait => reread.Pool.NamespaceNameOf(trait.Name) == "" &&
+                                    reread.Pool.Namespaces[reread.Pool.Multinames[trait.Name].Namespace].Kind == AbcNamespace.PackageNamespace) == 1,
+            "the exposed trait is not public");
+        var count = reread.Instances[0].Traits.Count;
+        AbcHookInjector.Inject(reread, [hook]);
+        Assert(reread.Instances[0].Traits.Count == count, "exposing twice added another trait");
+    }
+
     private static void TestHookKinds()
     {
         string Shape(AbcHookKind kind)
