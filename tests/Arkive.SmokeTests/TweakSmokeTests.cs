@@ -16,6 +16,7 @@ internal static class TweakSmokeTests
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
         new("reads a player's logs from a lostark.bible page and writes the summary the Logs tab draws", TestPlayerLogs),
+        new("deletes tweak working edits left by replaced tweak mods and keeps everyone else's", TestStaleTweakDrafts),
     ];
 
     /// <summary>
@@ -50,6 +51,35 @@ internal static class TweakSmokeTests
         Assert(Arkive.Core.Tweaks.PlayerLogsService.Read("Chillidari", "NA", other.RootElement) is null &&
                Arkive.Core.Tweaks.PlayerLogsService.SuggestedRegion("Chillidari", other.RootElement) == "CE",
             "a page without the character should give no logs and suggest its region");
+    }
+
+    /// <summary>
+    /// Installing a tweak mod sets its movies up as working edits; older builds removed the mod but left those edits
+    /// ticked, and the next build's mod then clashed with them ("The checked draft 'Tweaks: …' and mod 'Arkive Tweaks'
+    /// both replace …"). Releasing deletes every tweak edit no other mod is bound to and leaves a player's own edits.
+    /// </summary>
+    private static void TestStaleTweakDrafts()
+    {
+        var root = Path.Combine(fixtureDirectory, "tweak-drafts");
+        var packagePath = Path.Combine(root, "client", "EFGame", "ReleasePC", "Packages", "efui_test.upk");
+        Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
+        InterfaceSmokeTests.WriteInterfaceMoviePackage(packagePath, InterfaceSmokeTests.BuildExport(InterfaceSmokeTests.BuildMovie("QuickSlot", compressed: false)));
+        var environment = ArkiveModTestFixture.CreateEnvironment(Path.Combine(root, "data"));
+        var store = environment.Edits.InterfaceMovies!;
+        var export = new AssetCatalogReader(null, NoChunkProtectionProvider.Instance).Read(packagePath).Assets
+            .Single(asset => asset.ClassName.Equals("EFSwfMovie", StringComparison.OrdinalIgnoreCase));
+        var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(packagePath)));
+        var stale = store.CreateAsync(packagePath, "efui_test", hash, export, Arkive.Core.Tweaks.TweakModService.DraftPrefix + "efui_test TestMovie")
+            .GetAwaiter().GetResult();
+        var own = store.CreateAsync(packagePath, "efui_test", hash, export, "My own HP bar edit").GetAwaiter().GetResult();
+        var service = new Arkive.Core.Tweaks.TweakModService(environment.Library, Path.Combine(root, "tweaks"), NoChunkProtectionProvider.Instance)
+        {
+            Edits = environment.Edits,
+        };
+        var released = service.ReleaseDraftsAsync([]).GetAwaiter().GetResult();
+        var left = ArkiveModEditSnapshot.LoadAsync(environment.Edits).GetAwaiter().GetResult();
+        Assert(released == 1 && left.Find(stale.Manifest.EditId) is null && left.Find(own.Manifest.EditId) is { Included: true },
+            $"stale tweak edits were not deleted, or the player's own edit was touched (released {released})");
     }
 
     /// <summary>

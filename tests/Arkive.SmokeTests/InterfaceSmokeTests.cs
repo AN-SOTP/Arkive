@@ -263,7 +263,7 @@ internal static class InterfaceSmokeTests
     }
 
     /// <summary>A one-export package holding an EFSwfMovie named TestMovie, laid out like the material fixture.</summary>
-    private static void WriteInterfaceMoviePackage(string path, byte[] payload)
+    internal static void WriteInterfaceMoviePackage(string path, byte[] payload)
     {
         var names = new[] { "None", "Core", "Class", "EFSwfMovie", "Package", "TestMovie", "RawData", "ArrayProperty" };
         using var namesStream = new MemoryStream();

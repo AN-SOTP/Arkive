@@ -40,6 +40,9 @@ public sealed class TweakModService(
     public const string ModName = "Arkive Tweaks";
     public const string Tag = "tweaks";
 
+    /// <summary>The display name every tweak movie edit starts with ("Tweaks: efui_tophud tophud").</summary>
+    public const string DraftPrefix = "Tweaks: ";
+
     /// <summary>
     /// A mod the Tweaks tab owns: it builds, installs and removes these itself, so the Mods list doesn't show them.
     /// Test builds of the tweaks made with the CLI count too, so the tab cleans them up.
@@ -64,6 +67,37 @@ public sealed class TweakModService(
         var copy = new TweakSettings { Enabled = new(settings.Enabled) };
         copy.Enabled[PlayerLogsTweak] = new(options) { ["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/')) };
         return copy;
+    }
+
+    /// <summary>
+    /// The app's working edits. Installing a tweak mod sets its movies up there as edits bound to the mod; when a
+    /// build replaces the mod those edits are deleted with it, so none is left ticked to clash with the next build.
+    /// </summary>
+    public ArkiveModEditWorkspaces? Edits { get; init; }
+
+    /// <summary>
+    /// Deletes the working edits of the given tweak mods and every tweak edit no other mod is bound to, such as ones
+    /// left by older Arkive test builds (which removed tweak mods without their edits). Returns how many it deleted.
+    /// </summary>
+    public async Task<int> ReleaseDraftsAsync(IReadOnlyCollection<ArkiveModLibraryEntry> tweakMods, CancellationToken cancellationToken = default)
+    {
+        if (Edits is not { } edits) return 0;
+        var current = await library.LoadAsync(cancellationToken).ConfigureAwait(false);
+        var removing = tweakMods.Select(mod => mod.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var keptBindings = current.Mods.Where(mod => !removing.Contains(mod.ModId))
+            .SelectMany(mod => mod.Bindings).Select(binding => binding.EditId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var snapshot = await ArkiveModEditSnapshot.LoadAsync(edits, cancellationToken).ConfigureAwait(false);
+        var stale = tweakMods.SelectMany(mod => mod.Bindings).Select(binding => binding.EditId)
+            .Concat(snapshot.Edits
+                .Where(edit => edit.Kind == UnifiedPackageAssetKind.InterfaceMovie &&
+                               edit.DisplayName.StartsWith(DraftPrefix, StringComparison.Ordinal))
+                .Select(edit => edit.EditId))
+            .Where(editId => !keptBindings.Contains(editId) && snapshot.Find(editId) is not null)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(editId => new ArkiveModReleasedEdit(editId, Delete: true))
+            .ToArray();
+        await ArkiveModSelectionService.ReleaseAsync(edits, stale, cancellationToken).ConfigureAwait(false);
+        return stale.Length;
     }
 
     private string StatePath => Path.Combine(root, "state.json");
@@ -107,7 +141,9 @@ public sealed class TweakModService(
             .GroupBy(hook => (hook.Package, hook.Movie))
             .ToArray();
         var packages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var old in (await library.LoadAsync(cancellationToken).ConfigureAwait(false)).Mods.Where(IsTweakMod).ToArray())
+        var oldMods = (await library.LoadAsync(cancellationToken).ConfigureAwait(false)).Mods.Where(IsTweakMod).ToArray();
+        await ReleaseDraftsAsync(oldMods, cancellationToken).ConfigureAwait(false);
+        foreach (var old in oldMods)
         {
             packages.UnionWith(PackagesOf(old));
             await library.RemoveAsync(old.ModId, deleteFile: true, cancellationToken).ConfigureAwait(false);
@@ -163,7 +199,7 @@ public sealed class TweakModService(
                 // The edit reads the clean package (a backup when the tweaks are installed), whose hash is the game's own;
                 // the mod still targets the game's file name.
                 var entry = await store.CreateAsync(
-                        source, alias, Sha256(source), export, $"Tweaks: {alias} {movieName}", editedPath, cancellationToken)
+                        source, alias, Sha256(source), export, $"{DraftPrefix}{alias} {movieName}", editedPath, cancellationToken)
                     .ConfigureAwait(false);
                 var local = new ArkiveModLocalEdit(
                     UnifiedPackageAssetKind.InterfaceMovie, entry.Manifest.EditId, entry.ManifestPath, entry.Manifest.DisplayName,
