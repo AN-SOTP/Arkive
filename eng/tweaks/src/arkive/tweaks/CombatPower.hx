@@ -653,9 +653,10 @@ class CombatPower {
 				continue;
 			var grade:Int = row.engraveGrade == null ? 0 : row.engraveGrade;
 			var level:Int = row.curActivity == null ? 0 : row.curActivity;
-			// The list's grade counts like item grades (3 heroic, 4 legendary, 5 relic) or from 1; the table's from 1.
-			if (grade >= 3)
-				grade -= 2;
+			// The list counts 2 heroic, 3 legendary, 4 relic (a relic Lv. 4 engraving shows as 4/4); the table from 1.
+			grade = grade - 1;
+			if (grade > 3)
+				grade = 3;
 			found.push({name: name, grade: grade, level: level});
 		}
 		if (found.length > 0)
