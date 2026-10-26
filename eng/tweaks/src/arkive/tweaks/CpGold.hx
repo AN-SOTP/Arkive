@@ -22,10 +22,10 @@ import flash.utils.Dictionary;
 @:keep
 class CpGold {
 	static inline var TWEAK = "cpgold";
-	static inline var GAIN = "#7EE08F";
-	static inline var LOSS = "#FF8A80";
-	static inline var DIM = "#A9A9A9";
-	static inline var BEST = "#FFD200";
+	static inline var GAIN = 0x7EE08F;
+	static inline var LOSS = 0xFF8A80;
+	static inline var DIM = 0xA9A9A9;
+	static inline var BEST = 0xFFD200;
 	/** Books needed for one engraving level. */
 	static inline var BOOKS = 5;
 	static inline var FONT = "$YG760";
@@ -193,44 +193,54 @@ class CpGold {
 			untyped nameYs[row] = name.y;
 			name.y = high.y;
 			place(label, pack.x, pack.y, pack.width);
-			label.htmlText = forms[0];
+			label.text = forms[0];
 		} else {
 			var used:Float = pack.textWidth + GAP;
 			place(label, pack.x + used, pack.y, pack.width - used);
-			label.htmlText = "";
+			label.text = "";
 			for (form in forms) {
-				label.htmlText = form;
+				label.text = form;
 				if (label.textWidth + 4 <= label.width)
 					break;
-				label.htmlText = "";
+				label.text = "";
 			}
 		}
+		label.textColor = colorOf(state, best);
 		label.visible = true;
 	}
 
-	/** The row's line, longest form first: full, short (beside a trade count), shortest. */
+	/**
+		The row's line as plain text, longest form first: full, short (beside a trade count), shortest. Plain text and
+		textColor, not htmlText: the game's player drops the field's font for HTML text, which then draws as boxes.
+	**/
 	static function texts(state:Dynamic, best:Bool):Array<String> {
 		var change:Float = state.change;
 		if (isNaN(change)) {
 			var note:String = state.note;
 			if (note == null || note == "")
 				return [""];
-			return [font(DIM, "CP: " + note), font(DIM, "CP: " + note), ""];
+			return ["CP: " + note, "CP: " + note, ""];
 		}
 		if (Math.abs(change) < NONE)
-			return [font(DIM, "0% CP"), font(DIM, "0% CP"), font(DIM, "0%")];
+			return ["0% CP", "0% CP", "0%"];
 		var percent = signed(change * 100) + "%";
-		if (change < 0)
-			return [font(LOSS, percent + " CP"), font(LOSS, percent + " CP"), font(LOSS, percent)];
 		var cost:Float = state.price;
-		if (cost <= 0)
-			return [font(GAIN, percent + " CP"), font(GAIN, percent + " CP"), font(GAIN, percent)];
+		if (change < 0 || cost <= 0)
+			return [percent + " CP", percent + " CP", percent];
 		var per = cost / (change * 100);
 		var bid = state.bid == true ? " (bid)" : "";
-		var color = best ? BEST : GAIN;
 		var lead = best ? "Best: " : "";
-		return [font(color, lead + percent + " CP, " + (per < 1000000000 ? Tooltips.grouped(Math.round(per)) : compact(per)) + " g per 1%" + bid),
-			font(color, percent + ", " + compact(per) + " g/1%" + bid), font(color, compact(per) + " g/1%")];
+		return [lead + percent + " CP, " + (per < 1000000000 ? Tooltips.grouped(Math.round(per)) : compact(per)) + " g per 1%" + bid,
+			percent + ", " + compact(per) + " g/1%" + bid, compact(per) + " g/1%"];
+	}
+
+	static function colorOf(state:Dynamic, best:Bool):Int {
+		var change:Float = state.change;
+		if (isNaN(change) || Math.abs(change) < NONE)
+			return DIM;
+		if (change < 0)
+			return LOSS;
+		return best ? BEST : GAIN;
 	}
 
 	static function labelOf(row:Dynamic, like:Dynamic):TextField {
@@ -284,7 +294,7 @@ class CpGold {
 		untyped __delete__(states, row);
 		var label:TextField = untyped labels[row];
 		if (label != null) {
-			label.htmlText = "";
+			label.text = "";
 			label.visible = false;
 		}
 		restoreName(row);
@@ -343,9 +353,5 @@ class CpGold {
 	/** The player's isNaN: Haxe's Math.isNaN is set up by Haxe's Boot, which Arkive's empty Boot leaves out. */
 	static function isNaN(value:Float):Bool {
 		return untyped __global__["isNaN"](value);
-	}
-
-	static function font(color:String, text:String):String {
-		return "<FONT COLOR='" + color + "'>" + text + "</FONT>";
 	}
 }
