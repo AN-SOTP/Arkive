@@ -81,7 +81,7 @@ public sealed class TweakModService(
             return new TweakBuildResult(null, [], []);
         }
 
-        var tweakAbc = TweakCode.ForSettings(tweakSwf, settings);
+        var tweakCode = TweakCode.ForSettings(tweakSwf, settings);
         var packages = FindPackages(packagesDirectory);
         var staging = Path.Combine(root, "staging");
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
@@ -111,7 +111,7 @@ public sealed class TweakModService(
                     continue;
                 }
                 var original = ReadExport(catalog, export);
-                var built = TweakMovieBuilder.Build(GfxMovieFile.Extract(original), group.Select(hook => hook.Hook), tweakAbc);
+                var built = TweakMovieBuilder.Build(GfxMovieFile.Extract(original), group.Select(hook => hook.Hook), tweakCode);
                 missing.AddRange(built.MissingHooks);
                 var editedPath = Path.Combine(staging, $"{alias}.{movieName}{GfxMovieFile.Extension}");
                 Directory.CreateDirectory(staging);

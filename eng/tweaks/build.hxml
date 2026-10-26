@@ -4,4 +4,7 @@
 -D haxeJSON
 -D swf-protected
 --swf-version 10
--swf bin/arkive-tweaks.swf
+# A SWC holds one code block per class, the layout the game's player is known to load.
+-D haxe-boot
+-D no-flash-override
+--swf bin/arkive-tweaks.swc

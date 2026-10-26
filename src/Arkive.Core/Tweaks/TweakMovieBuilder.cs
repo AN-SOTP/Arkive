@@ -22,18 +22,34 @@ public static class TweakCode
         return memory.ToArray();
     }
 
-    /// <summary>The code block to add to a movie: every tweak's code, with the chosen tweaks and options as JSON.</summary>
-    public static byte[] ForSettings(byte[] swf, TweakSettings settings)
+    /// <summary>
+    /// The code blocks to add to a movie, one per class as the Haxe compiler's SWC holds them, with the chosen tweaks
+    /// and options (JSON) written into the dispatcher.
+    /// </summary>
+    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, TweakSettings settings)
     {
-        var abc = AbcFile.Read(ReadSwfAbc(swf));
-        var index = abc.Pool.Strings.IndexOf(ConfigPlaceholder);
-        if (index < 0) throw new InvalidDataException("Arkive's tweak code has no place for its settings.");
-        abc.Pool.Strings[index] = settings.ToGameJson();
-        return abc.Write();
+        var blocks = ReadSwfBlocks(swf);
+        var configured = 0;
+        var tags = new List<GfxTag>();
+        foreach (var (name, data) in blocks)
+        {
+            var abc = AbcFile.Read(data);
+            var index = abc.Pool.Strings.IndexOf(ConfigPlaceholder);
+            byte[] bytes = data;
+            if (index >= 0)
+            {
+                abc.Pool.Strings[index] = settings.ToGameJson();
+                bytes = abc.Write();
+                configured++;
+            }
+            tags.Add(GfxTag.NewDoAbc(AbcName + "/" + name, bytes));
+        }
+        if (configured != 1) throw new InvalidDataException("Arkive's tweak code has no single place for its settings.");
+        return tags;
     }
 
-    /// <summary>The single code block of a SWF the Haxe compiler wrote ("FWS", or "CWS" when zlib-compressed).</summary>
-    public static byte[] ReadSwfAbc(byte[] swf)
+    /// <summary>The code blocks of a SWF the Haxe compiler wrote ("FWS", or "CWS" when zlib-compressed), by name.</summary>
+    public static IReadOnlyList<(string Name, byte[] Abc)> ReadSwfBlocks(byte[] swf)
     {
         if (swf.Length < 8 || swf[1] != 'W' || swf[2] != 'S' || swf[0] is not ((byte)'F' or (byte)'C'))
             throw new InvalidDataException("The tweak code is not a SWF file.");
@@ -53,9 +69,10 @@ public static class TweakCode
         movie[0] = (byte)'G';
         movie[1] = (byte)'F';
         movie[2] = (byte)'X';
-        var abcs = GfxMovieTags.Read(movie).Tags.Where(tag => tag.Code == GfxTag.DoAbc).ToArray();
-        if (abcs.Length != 1) throw new InvalidDataException($"The tweak code holds {abcs.Length} code blocks; expected one.");
-        return abcs[0].AbcData.ToArray();
+        var blocks = GfxMovieTags.Read(movie).Tags.Where(tag => tag.Code == GfxTag.DoAbc)
+            .Select(tag => (tag.AbcName, tag.AbcData.ToArray())).ToArray();
+        if (blocks.Length == 0) throw new InvalidDataException("The tweak code holds no code blocks.");
+        return blocks;
     }
 }
 
@@ -64,16 +81,16 @@ public sealed record TweakMovieResult(byte[] Movie, IReadOnlyList<string> Missin
 /// <summary>Adds the tweak code to one game movie and routes the hooked methods through it.</summary>
 public static class TweakMovieBuilder
 {
-    public static TweakMovieResult Build(byte[] gameMovie, IEnumerable<Interface.Abc.AbcHook> hooks, byte[] tweakAbc)
+    public static TweakMovieResult Build(byte[] gameMovie, IEnumerable<Interface.Abc.AbcHook> hooks, IReadOnlyList<GfxTag> tweakCode)
     {
         var tags = GfxMovieTags.Read(gameMovie);
-        if (tags.Tags.Any(tag => tag.Code == GfxTag.DoAbc && tag.AbcName == TweakCode.AbcName))
+        if (tags.Tags.Any(tag => tag.Code == GfxTag.DoAbc && tag.AbcName.StartsWith(TweakCode.AbcName + "/", StringComparison.Ordinal)))
             throw new InvalidDataException("This movie already holds Arkive's tweak code; build from the game's own movie.");
         var main = tags.MainAbc;
         var abc = AbcFile.Read(main.AbcData);
         var missing = AbcHookInjector.Inject(abc, hooks.DistinctBy(hook => hook.Id));
         tags.Tags[tags.Tags.IndexOf(main)] = main.WithAbc(abc.Write());
-        tags.AppendAbc(GfxTag.NewDoAbc(TweakCode.AbcName, tweakAbc));
+        foreach (var block in tweakCode) tags.AppendAbc(block);
         return new TweakMovieResult(tags.Write(), missing);
     }
 }

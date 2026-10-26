@@ -1,53 +1,79 @@
 package arkive.tweaks;
 
-/** A tweak's handler for one hooked method: it gets the object, the call's arguments and `next`, which runs the
-    remaining handlers and then the game's own method, and returns what the method should return. */
-typedef Handler = Dynamic->Array<Dynamic>->(Void->Dynamic)->Dynamic;
+/** Runs before a hooked game method; return false to skip the game's own method. `args` may be changed in place. */
+typedef Before = Dynamic->Array<Dynamic>->Bool;
 
-/** The dispatcher every hooked game method calls (Arkive's injector writes `Hooks.run(id, this, [args], original)`). */
+/** Runs after a hooked game method (or instead of it, when a Before skipped it); returns the method's result. */
+typedef After = Dynamic->Array<Dynamic>->Dynamic->Dynamic;
+
+/**
+	The dispatcher every hooked game method calls. Arkive's injector writes:
+	`args = [arguments]; if (Hooks.before(id, this, args)) result = this.original(args...); return Hooks.after(id, this, args, result);`
+	Ids are "package.Class.method".
+**/
 @:keep
 class Hooks {
 	/** Replaced by Arkive with the tweak settings (JSON) when it builds the movie. */
 	public static var config:String = "__ARKIVE_TWEAKS_CONFIG__";
 
-	static var handlers:Map<String, Array<Handler>>;
+	static var befores:Map<String, Array<Before>>;
+	static var afters:Map<String, Array<After>>;
 
-	public static function run(id:String, self:Dynamic, args:Array<Dynamic>, original:Dynamic):Dynamic {
-		if (handlers == null) {
-			handlers = new Map();
-			Tweaks.start(config);
-		}
-		var list = handlers.get(id);
+	public static function before(id:String, self:Dynamic, args:Array<Dynamic>):Bool {
+		start();
+		var list = befores.get(id);
 		if (list == null)
-			return Reflect.callMethod(self, original, args);
-		return call(list, 0, self, args, original);
+			return true;
+		var run = true;
+		var i = 0;
+		while (i < list.length) {
+			try {
+				if (list[i](self, args) == false)
+					run = false;
+			} catch (error:Dynamic) {}
+			i++;
+		}
+		return run;
 	}
 
-	/** Registers a handler for a hook id ("package.Class.method"). */
-	public static function on(id:String, handler:Handler):Void {
-		var list = handlers.get(id);
+	public static function after(id:String, self:Dynamic, args:Array<Dynamic>, result:Dynamic):Dynamic {
+		start();
+		var list = afters.get(id);
+		if (list == null)
+			return result;
+		var i = 0;
+		while (i < list.length) {
+			try {
+				result = list[i](self, args, result);
+			} catch (error:Dynamic) {}
+			i++;
+		}
+		return result;
+	}
+
+	public static function onBefore(id:String, handler:Before):Void {
+		var list = befores.get(id);
 		if (list == null) {
 			list = [];
-			handlers.set(id, list);
+			befores.set(id, list);
 		}
 		list.push(handler);
 	}
 
-	static function call(list:Array<Handler>, index:Int, self:Dynamic, args:Array<Dynamic>, original:Dynamic):Dynamic {
-		if (index >= list.length)
-			return Reflect.callMethod(self, original, args);
-		var ran = false;
-		var result:Dynamic = null;
-		var next = function():Dynamic {
-			ran = true;
-			result = call(list, index + 1, self, args, original);
-			return result;
-		};
-		try {
-			return list[index](self, args, next);
-		} catch (error:Dynamic) {
-			// A broken tweak must never break the game's window: finish the call as if the tweak weren't there.
-			return ran ? result : next();
+	public static function onAfter(id:String, handler:After):Void {
+		var list = afters.get(id);
+		if (list == null) {
+			list = [];
+			afters.set(id, list);
 		}
+		list.push(handler);
+	}
+
+	static function start():Void {
+		if (befores != null)
+			return;
+		befores = new Map();
+		afters = new Map();
+		Tweaks.start(config);
 	}
 }

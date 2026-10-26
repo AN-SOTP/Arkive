@@ -3,8 +3,7 @@ package arkive.tweaks;
 /** Lobby CP: shows each party member's combat power next to their item level in the party finder preview. */
 class LobbyCp {
 	public static function register(options:Dynamic):Void {
-		Hooks.on("ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember.memberData", function(self:Dynamic, args:Array<Dynamic>, next) {
-			var result = next();
+		Hooks.onAfter("ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember.memberData", function(self:Dynamic, args:Array<Dynamic>, result:Dynamic) {
 			var data:Dynamic = args[0];
 			if (data == null || self.itemLevel_txt == null)
 				return result;

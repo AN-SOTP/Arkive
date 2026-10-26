@@ -22,6 +22,10 @@ try {
 }
 finally { Pop-Location }
 
-$target = Join-Path $here '..\..\src\Arkive.Core\Tweaks\arkive-tweaks.swf'
-Copy-Item (Join-Path $here 'bin\arkive-tweaks.swf') $target -Force
+# The SWC is a zip; its library.swf holds one code block per class, which is what Arkive adds to movies.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$target = [System.IO.Path]::GetFullPath((Join-Path $here '..\..\src\Arkive.Core\Tweaks\arkive-tweaks.swf'))
+$zip = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $here 'bin\arkive-tweaks.swc'))
+try { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry('library.swf'), $target, $true) }
+finally { $zip.Dispose() }
 Write-Host "Tweak code: $((Get-Item $target).Length) bytes -> $target"
