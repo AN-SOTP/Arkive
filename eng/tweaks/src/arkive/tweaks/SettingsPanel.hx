@@ -61,6 +61,12 @@ class SettingsPanel {
 	static var placedY:Float = -1;
 	static var frames = 0;
 
+	/** Where each drop-down's list opens (see dropDown), added to the body after the rows. */
+	static var holders:Array<Dynamic> = [];
+
+	/** The bar's Store button (or its first) that ours sits beside. */
+	static var anchor:Dynamic;
+
 	static var request:String = "";
 	static var checks = 0;
 	static var checker:Timer;
@@ -83,7 +89,9 @@ class SettingsPanel {
 		}
 		item.visible = false;
 		item.name = "arkiveTweaksButton";
-		self.addChild(item);
+		// Just above the bar, so the menu's child windows and popups (switch character, task tracker settings) cover it
+		// as they cover the bar.
+		self.addChildAt(item, self.getChildIndex(bar) + 1);
 		placedX = -1;
 		build(self);
 		item.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) {
@@ -112,9 +120,14 @@ class SettingsPanel {
 		var frame:Dynamic = self == null ? null : self.parent;
 		if (bar == null || self.visible != true || (frame != null && frame.visible != true))
 			return;
-		// Once placed, look again only every half second or so.
+		// Hides with Store (the bar or the buttons hidden, as on the switch character screen); every frame, it's cheap.
+		if (item.visible == true && !shown(anchor, self)) {
+			item.visible = false;
+			placedX = -1;
+		}
+		// Once placed, look again only every half second or so; while hidden, a few times a second.
 		frames++;
-		if (item.visible == true && frames % 30 != 0)
+		if (frames % (item.visible == true ? 30 : 10) != 0)
 			return;
 		var buttons:Array<Dynamic> = [];
 		collect(bar, buttons, 0);
@@ -142,7 +155,7 @@ class SettingsPanel {
 		}
 		if (store < 0)
 			store = first;
-		var anchor:Dynamic = buttons[store];
+		anchor = buttons[store];
 		var spot:Dynamic = self.globalToLocal(anchor.localToGlobal(origin));
 		var far:Dynamic = self.globalToLocal(anchor.localToGlobal(new Point(100, 0)));
 		var scale:Float = (far.x - spot.x) / 100;
@@ -180,6 +193,18 @@ class SettingsPanel {
 		item.visible = true;
 		placedX = spot.x;
 		placedY = spot.y;
+	}
+
+	/** True when the object and every parent up to `top` are visible and not faded out. */
+	static function shown(at:Dynamic, top:Dynamic):Bool {
+		if (at == null)
+			return false;
+		while (at != null && at != top) {
+			if (at.visible != true || at.alpha < 0.05)
+				return false;
+			at = at.parent;
+		}
+		return at == top;
 	}
 
 	/** The bar's buttons that show, searched a few levels down (the tile list keeps them in its own holder). */
@@ -224,14 +249,10 @@ class SettingsPanel {
 			size = 30;
 		// iconMc is typed MovieClip in the game class, so the mark must be one.
 		var mark = new flash.display.MovieClip();
-		var ring = new Shape();
-		ring.graphics.lineStyle(2, 0xD1D2D0, 1);
-		ring.graphics.drawCircle(size / 2, size / 2, size / 2 - 2);
-		mark.addChild(ring);
 		var letter = new TextField();
 		var format = new TextFormat();
 		format.font = model == null ? font : model.getTextFormat().font;
-		format.size = Std.int(size * 0.62);
+		format.size = Std.int(size * 0.8);
 		format.align = flash.text.TextFormatAlign.CENTER;
 		letter.embedFonts = model == null ? embed : model.embedFonts;
 		letter.defaultTextFormat = format;
@@ -406,12 +427,16 @@ class SettingsPanel {
 			var y:Float = 6;
 			var tweaks = Options.panel();
 			var first = true;
+			holders = [];
 			for (tweak in tweaks) {
 				if (!first)
 					y = divider(y);
 				first = false;
 				y = section(tweak, y);
 			}
+			// The drop-downs' lists open in these, added last so a list lies over the rows below its drop-down.
+			for (holder in holders)
+				body.addChild(holder);
 			var content:Float = y + 8;
 			if (scrollBar != null) {
 				var most:Float = content - bodyHeight;
@@ -590,7 +615,11 @@ class SettingsPanel {
 				combo.dropdown = "DefaultEFDropdownList_V2";
 				combo.itemRenderer = "ComboBoxListRendererV2";
 				combo.scrollBar = "DefaultEFScrollBarSmall_V2";
-				combo.menuDirection = "down";
+				// The list opens in a holder of its own in the window's body, as Settings opens its lists in a
+				// "renderContainer" beside each drop-down; the game's pop-up layer put it outside the window. It opens
+				// upwards when there isn't room below in the visible part of the list.
+				var listHeight:Float = 28 * (choices.length < 5 ? choices.length : 5) + 8;
+				combo.menuDirection = y - scroll + 34 + listHeight > bodyHeight ? "up" : "down";
 				combo.menuRowCount = 5;
 				combo.menuMargin = 1;
 				combo.autoSize = "none";
@@ -598,6 +627,11 @@ class SettingsPanel {
 				combo.x = x;
 				combo.y = y;
 				combo.name = id + "\t" + key;
+				var holder = new flash.display.MovieClip();
+				holder.name = "arkiveDropList" + holders.length;
+				holder.x = x;
+				holders.push(holder);
+				combo.renderContainer = holder.name;
 				combo.dataProviderArray = rows;
 				combo.selectedIndex = index;
 				combo.addEventListener("listIndexChange", function(event:Dynamic) {
