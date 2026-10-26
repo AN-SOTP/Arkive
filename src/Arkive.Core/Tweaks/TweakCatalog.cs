@@ -107,6 +107,13 @@ public static class TweakCatalog
         [
             new("showData", "Show the tooltip data Arkive reads (for testing)", false),
         ], Note: "Open your Character Profile once after logging in: the tweak reads your Combat Power, DPS or support, and your gems from it."),
+        new("cpgold", "Combat Power per Gold", "Auction house results (accessories, bracelets, ability stones, gems) and market engraving books show the Combat Power the item would give you and the gold it costs per 1% at the listed price. The best value on screen turns gold. Priced with the same model as Combat Power on Tooltips; rows are never reordered and nothing is searched for you.", TweakRisk.Display,
+        [
+            H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.AuctionSearchListRenderer", "setData", "arkive.tweaks.CpGold.onAuctionRow"),
+            H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.controls.ExchangeShopItemRenderer", "setData", "arkive.tweaks.CpGold.onMarketRow"),
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "configUI", "arkive.tweaks.CombatPower.onAbilityConfigUI"),
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "combatType", "arkive.tweaks.CombatPower.onCombatType"),
+        ], Note: "Open your Character Profile once after logging in, as for Combat Power on Tooltips. Support characters get gems only for now."),
         new("boxtweaks", "Chest Opening Tweaks", "Various tweaks for the chest opening window.", TweakRisk.Display,
         [
             H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData", "arkive.tweaks.BoxTweaks.onSetData"),
