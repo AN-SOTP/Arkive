@@ -8,13 +8,14 @@ import flash.utils.Dictionary;
 
 /**
 	Bracelet Reroll Judge. On the bracelet page that asks whether to keep the current effects or take the new ones,
-	every effect line ends with what it adds to your Combat Power, each side's title row shows its total, and the side
-	worth more says "Keep" with the difference. Advice only: the player still picks.
+	every effect line ends with what it adds to your Combat Power, each side's title row shows how your Combat Power
+	would change with the whole bracelet (its other lines plus that side's) instead of the bracelet you wear, and the
+	side worth more says "Keep" with the difference. Advice only: the player still picks.
 
 	The prices come from the Combat Power on Tooltips model (its options and your profile as it last read it): an effect
-	is matched against the game's bracelet table by its text; Crit, Specialization and Swiftness lines need your
-	Character Profile opened once, since what a point is worth depends on your total. The comparison swaps the effects
-	on your equipped bracelet (when the rerolled bracelet is the one you wear, its current effects are taken out first).
+	is matched against the game's bracelet table by its text; Crit, Specialization, Swiftness and your main stat count
+	through your totals. Lines the game's Combat Power ignores (Vitality, Expertise, speed, damage to lower-grade
+	monsters) show "no CP". The bracelet's other lines are read from the window's fixed and changeable lists.
 **/
 @:keep
 @:access(arkive.tweaks.CombatPower)
@@ -25,11 +26,15 @@ class BraceletJudge {
 	static inline var SAME = 0.00005;
 	static inline var LEFT_NAME = "arkiveJudgeVerdict";
 	static inline var RIGHT_NAME = "arkiveJudgeTotal";
-	static inline var SIDE_WIDTH = 150;
+	static inline var SIDE_WIDTH = 160;
 	static inline var MARGIN = 10;
 	/** Label colours, the same as Combat Power on Tooltips' lines. */
 	static inline var GAIN = 0x7EE08F;
 	static inline var DIM = 0xA9A9A9;
+	static inline var LOSS = 0xFF8A80;
+	/** A line value that needs your profile, and a side with nothing to compare with. */
+	static inline var NEEDS_PROFILE = -1000.0;
+	static inline var NOTHING = -1000.0;
 
 	/** The current and new effect texts as the game sent them (before Arkive added its values). */
 	static var current:Array<String> = [];
@@ -90,7 +95,8 @@ class BraceletJudge {
 
 	/**
 		Prices both sides, adds a value to each row the game is about to draw (`currentRows` null when only the new side
-		is redrawn) and writes each side's total and the verdict on its title row.
+		is redrawn) and writes on each side's title row how the whole bracelet with that side compares with the bracelet
+		you wear, and "Keep" on the better side.
 	**/
 	static function judge(page:Dynamic, currentRows:Array<Dynamic>, offeredRows:Array<Dynamic>):Void {
 		var before:Dynamic = page.beforeGroup;
@@ -103,70 +109,117 @@ class BraceletJudge {
 			note(before, after, "Support: not priced yet");
 			return;
 		}
+		var others = otherLines(page, current);
+		var rest = price(others);
 		var old = price(current);
-		var rest = restOf(old);
 		var now = price(offered);
-		var oldTotal = total(old, rest);
-		var newTotal = total(now, rest);
 		if (currentRows != null)
-			mark(currentRows, old, rest);
-		mark(offeredRows, now, rest);
-		var oldMain:Float = old.main;
-		var newMain:Float = now.main;
-		var oldCombat:Float = old.combat + oldMain;
-		var newCombat:Float = now.combat + newMain;
-		var needsProfile = rest == null && (oldCombat > 0 || newCombat > 0);
-		if (firstRoll) {
-			// Nothing to compare with yet: the new side's total only.
-			clear(before);
-			show(after, newTotal, -1, needsProfile, newCombat > 0);
+			mark(currentRows, old, rest, others);
+		mark(offeredRows, now, rest, others);
+		if (CombatPower.gear == null) {
+			// Without your profile there is no equipped bracelet to compare with.
+			if (firstRoll)
+				clear(before);
+			else
+				note(before, null, "Open your profile");
+			note(null, after, "Open your profile");
 			return;
 		}
-		show(before, oldTotal, newTotal, needsProfile, oldCombat > 0);
-		show(after, newTotal, oldTotal, needsProfile, newCombat > 0);
+		var newWhole = whole([rest.total, now.total]);
+		if (firstRoll) {
+			// Nothing to keep yet: the new side only.
+			clear(before);
+			show(after, newWhole, NOTHING);
+			return;
+		}
+		var oldWhole = whole([rest.total, old.total]);
+		show(before, oldWhole, newWhole);
+		show(after, newWhole, oldWhole);
 	}
 
 	// ---- Pricing ----
 
 	/**
-		The effects on one side: {factors: one per line (0 when the line adds nothing or is a stat line), points: the
-		Crit, Specialization and Swiftness on each line, mains: your main stat on each line (Strength for a Strength
-		class), all: their factors (non-zero), combat and main: the totals}.
+		The bracelet's lines that the reroll leaves alone: the window's fixed and changeable lists (locked lines stay)
+		without the current side's lines.
+	**/
+	static function otherLines(page:Dynamic, judged:Array<String>):Array<String> {
+		var window:Dynamic = GameUi.ancestor(page, "ark.ui.itemBraceletEnchant.ItemBEWndContent");
+		var lines:Array<String> = [];
+		if (window != null) {
+			addRows(lines, window.fixAttributeList);
+			addRows(lines, window.fluidAttributeList);
+		}
+		var plains:Array<String> = [];
+		for (line in lines)
+			plains.push(CombatPower.plain(line));
+		for (line in judged) {
+			var at = plains.indexOf(CombatPower.plain(line));
+			if (at >= 0) {
+				plains.splice(at, 1);
+				lines.splice(at, 1);
+			}
+		}
+		return lines;
+	}
+
+	static function addRows(into:Array<String>, list:Dynamic):Void {
+		var data:Dynamic = list == null ? null : list.dataProvider;
+		if (data == null)
+			return;
+		var count:Int = data.length;
+		for (i in 0...count) {
+			var text = original(data[i]);
+			if (text != "")
+				into.push(text);
+		}
+	}
+
+	/**
+		Each line's part ({all: its effect factors, combat: Crit + Specialization + Swiftness, main: your main stat}) and
+		their total: {lines, total}.
 	**/
 	static function price(lines:Array<String>):Dynamic {
-		var factors:Array<Float> = [];
-		var points:Array<Float> = [];
-		var mains:Array<Float> = [];
+		var parts:Array<Dynamic> = [];
 		var all:Array<Float> = [];
 		var combat:Float = 0;
 		var main:Float = 0;
 		for (line in lines) {
-			var text = Text.trim(Text.stripTags(line));
-			var factor = CombatPower.braceletEffect(text);
-			var stat:Float = 0;
-			var own:Float = 0;
-			if (factor == 0) {
-				// An effect the game wrote over several lines is in the table as one text; a stat is on a line of its own.
-				for (part in CombatPower.splitLines(line)) {
-					var found = CombatPower.combatStat(part);
-					var points = mainStat(part);
-					if (found > 0)
-						stat += found;
-					else if (points > 0)
-						own += points;
-					else
-						factor += CombatPower.braceletEffect(part);
-				}
-			}
-			factors.push(factor);
-			points.push(stat);
-			mains.push(own);
-			combat += stat;
-			main += own;
-			if (factor != 0)
+			var part = partOf(line);
+			parts.push(part);
+			var factors:Array<Float> = part.all;
+			for (factor in factors)
 				all.push(factor);
+			var points:Float = part.combat;
+			var own:Float = part.main;
+			combat += points;
+			main += own;
 		}
-		return {factors: factors, points: points, mains: mains, all: all, combat: combat, main: main};
+		return {lines: parts, total: {all: all, combat: combat, main: main}};
+	}
+
+	static function partOf(line:String):Dynamic {
+		var text = Text.trim(Text.stripTags(line));
+		var factor = CombatPower.braceletEffect(text);
+		var stat:Float = 0;
+		var own:Float = 0;
+		if (factor == 0) {
+			// An effect the game wrote over several lines is in the table as one text; a stat is on a line of its own.
+			for (piece in CombatPower.splitLines(line)) {
+				var found = CombatPower.combatStat(piece);
+				var points = mainStat(piece);
+				if (found > 0)
+					stat += found;
+				else if (points > 0)
+					own += points;
+				else
+					factor += CombatPower.braceletEffect(piece);
+			}
+		}
+		var factors:Array<Float> = [];
+		if (factor != 0)
+			factors.push(factor);
+		return {all: factors, combat: stat, main: own};
 	}
 
 	/**
@@ -183,118 +236,73 @@ class BraceletJudge {
 		return 0;
 	}
 
-	/**
-		Your equipped bracelet without the effects being judged: when the current effects are all on it (you're
-		rerolling the bracelet you wear) they're taken out; otherwise only its effects go and its stats stay, standing in
-		for the rerolled bracelet's own stats. Null until your profile has been read.
-	**/
-	static function restOf(old:Dynamic):Dynamic {
-		var gear:Array<Dynamic> = CombatPower.gear;
-		if (gear == null)
-			return null;
-		var worn:Dynamic = gear[BRACELET_SLOT];
-		var effects:Array<Float> = [];
-		var combat:Float = 0;
-		var mainOff:Float = 0;
-		if (worn != null) {
-			var wornEffects:Array<Float> = worn.effects;
-			var wornCombat:Float = worn.combat;
-			var left:Array<Float> = [];
-			for (factor in wornEffects)
-				left.push(factor);
-			var oldEffects:Array<Float> = old.all;
-			var oldCombat:Float = old.combat;
-			var wearing = oldCombat <= wornCombat;
-			for (factor in oldEffects) {
-				var at = left.indexOf(factor);
-				if (at < 0) {
-					wearing = false;
-					break;
-				}
-				left.splice(at, 1);
-			}
-			var oldMain:Float = old.main;
-			if (wearing && (oldEffects.length > 0 || oldCombat > 0 || oldMain > 0)) {
-				effects = left;
-				combat = wornCombat - oldCombat;
-				// Combat Power on Tooltips counts a bracelet's bonus main stat in its stats; take the judged one out.
-				mainOff = oldMain;
-			} else {
-				combat = wornCombat;
-			}
-		}
-		return {worn: worn, effects: effects, combat: combat, mainOff: mainOff};
+	/** How your Combat Power changes (0.012 for +1.2%) with a bracelet made of these parts instead of the one you wear. */
+	static function whole(parts:Array<Dynamic>):Float {
+		var base = measure(CombatPower.copyOf(CombatPower.gear));
+		return base <= 0 ? 0 : measure(withBracelet(parts)) / base - 1;
 	}
 
-	/** How much the side adds to your Combat Power (0.021 for +2.1%), or -1 when it can't be priced. */
-	static function total(side:Dynamic, rest:Dynamic):Float {
-		var all:Array<Float> = side.all;
-		var combat:Float = side.combat;
-		var main:Float = side.main;
-		return change(all, combat, main, rest);
-	}
-
-	/** The change from adding these effect factors, stat points and main stat to the bracelet; -1 when stats need the profile. */
-	static function change(factors:Array<Float>, points:Float, main:Float, rest:Dynamic):Float {
-		if (rest == null) {
+	/** What one line adds to a bracelet that has the other lines (`rest`); NEEDS_PROFILE for a stat line without it. */
+	static function lineChange(part:Dynamic, rest:Dynamic):Float {
+		if (CombatPower.gear == null) {
+			var points:Float = part.combat;
+			var main:Float = part.main;
 			if (points > 0 || main > 0)
-				return -1;
+				return NEEDS_PROFILE;
 			var product:Float = 1;
+			var factors:Array<Float> = part.all;
 			for (factor in factors)
 				product *= 1 + factor;
 			return product - 1;
 		}
-		var base = valueWith(rest, [], 0, 0);
-		return base <= 0 ? -1 : valueWith(rest, factors, points, main) / base - 1;
+		var base = measure(withBracelet([rest]));
+		return base <= 0 ? 0 : measure(withBracelet([rest, part])) / base - 1;
 	}
 
-	/** CombatPower.value with your equipped bracelet replaced by the rest plus these effects, points and main stat. */
-	static function valueWith(rest:Dynamic, factors:Array<Float>, points:Float, main:Float):Float {
+	/**
+		Your equipment with a bracelet made of these parts. What a bracelet has besides its lines (its Ark Passive points)
+		is taken from the one you wear.
+	**/
+	static function withBracelet(parts:Array<Dynamic>):Array<Dynamic> {
 		var items = CombatPower.copyOf(CombatPower.gear);
-		var worn:Dynamic = rest.worn;
-		var restEffects:Array<Float> = rest.effects;
-		var restCombat:Float = rest.combat;
+		var worn:Dynamic = items[BRACELET_SLOT];
 		var effects:Array<Float> = [];
-		for (factor in restEffects)
-			effects.push(factor);
-		for (factor in factors)
-			effects.push(factor);
-		// The worn bracelet's main stat (with its bonus lines, less the judged ones when it's the rerolled bracelet) plus
-		// the main stat on the judged lines.
+		var combat:Float = 0;
+		var main:Float = 0;
+		for (part in parts) {
+			var factors:Array<Float> = part.all;
+			for (factor in factors)
+				effects.push(factor);
+			var points:Float = part.combat;
+			var own:Float = part.main;
+			combat += points;
+			main += own;
+		}
 		var stats:Dynamic = {};
-		var wornStats:Dynamic = worn == null ? null : worn.stats;
-		var key:String = CombatPower.mainStat;
-		for (stat in CombatPower.STATS)
-			if (Text.has(wornStats, stat)) {
-				untyped stats[stat] = wornStats[stat];
-				if (key == "")
-					key = stat;
-			}
-		var mainOff:Float = rest.mainOff;
-		var added = main - mainOff;
-		if (added != 0) {
-			if (key == "")
-				key = CombatPower.STATS[0];
-			var had:Float = 0;
-			if (Text.has(stats, key))
-				had = untyped stats[key];
-			untyped stats[key] = Math.max(0, had + added);
+		if (main > 0) {
+			var key:String = CombatPower.mainStat == "" ? CombatPower.STATS[0] : CombatPower.mainStat;
+			untyped stats[key] = main;
 		}
 		items[BRACELET_SLOT] = {
 			slot: "bracelet",
 			stats: stats,
-			weapon: worn == null ? 0.0 : worn.weapon,
-			weaponPct: worn == null ? 0.0 : worn.weaponPct,
-			flat: worn == null ? 0.0 : worn.flat,
-			basicPct: worn == null ? 0.0 : worn.basicPct,
+			weapon: 0.0,
+			weaponPct: 0.0,
+			flat: 0.0,
+			basicPct: 0.0,
 			quality: -1,
 			refine: [],
 			effects: effects,
-			combat: restCombat + points,
+			combat: combat,
 			enlightenment: worn == null ? 0 : worn.enlightenment,
 			leap: worn == null ? 0 : worn.leap,
 			stone: {}
 		};
+		return items;
+	}
+
+	/** CombatPower.value of this equipment with your gems. */
+	static function measure(items:Array<Dynamic>):Float {
 		var gems:Array<Dynamic> = CombatPower.equipped == null ? [] : CombatPower.equipped;
 		// When the profile's stat list wasn't found, your stats are taken as your gear's alone (they're nearly all of it).
 		var other:Float = CombatPower.otherCombat;
@@ -308,61 +316,68 @@ class BraceletJudge {
 	// ---- Drawing ----
 
 	/** Adds each row's value after its text (the game lays the rows out from their text, so nothing overlaps). */
-	static function mark(rows:Array<Dynamic>, side:Dynamic, rest:Dynamic):Void {
+	static function mark(rows:Array<Dynamic>, side:Dynamic, rest:Dynamic, others:Array<String>):Void {
 		if (rows == null)
 			return;
-		var factors:Array<Float> = side.factors;
-		var points:Array<Float> = side.points;
-		var mains:Array<Float> = side.mains;
+		var parts:Array<Dynamic> = side.lines;
+		var restTotal:Dynamic = rest.total;
 		for (i in 0...rows.length) {
 			var row:Dynamic = rows[i];
-			if (row == null || i >= factors.length)
+			if (row == null || i >= parts.length)
 				continue;
 			var text = original(row);
 			untyped shown[row] = text;
-			var value = change(factors[i] == 0 ? [] : [factors[i]], points[i], mains[i], rest);
+			var part:Dynamic = parts[i];
+			var value = lineChange(part, restTotal);
 			var suffix:String;
-			if (value < 0 && (points[i] > 0 || mains[i] > 0))
+			if (value == NEEDS_PROFILE)
 				suffix = CombatPower.font(CombatPower.DIM, "(open your profile)");
 			else if (Math.abs(value) < SAME)
 				suffix = CombatPower.font(CombatPower.DIM, "· no CP");
 			else
 				suffix = CombatPower.font(value > 0 ? CombatPower.GAIN : CombatPower.LOSS, "· CP " + CombatPower.signed(value * 100, "%"));
-			if (Options.get(TWEAK, "showText", false) == true)
+			if (Options.get(TWEAK, "showText", false) == true) {
 				suffix += " " + CombatPower.font(CombatPower.DIM, CombatPower.plain(text));
+				if (i == 0)
+					suffix += " " + CombatPower.font(CombatPower.DIM, "[other lines: " + others.join(" / ") + "]");
+			}
 			row.descStr = text + "  " + suffix;
 		}
 	}
 
-	/** One side's title row: its total at the right and, on the better side, "Keep" and by how much at the left. */
-	static function show(group:Dynamic, mine:Float, other:Float, needsProfile:Bool, hasStats:Bool):Void {
+	/**
+		One side's title row: at the right, your Combat Power change with this bracelet instead of the one you wear; at the
+		left of the better side, "Keep" and by how much (`other` NOTHING when there's nothing to compare with).
+	**/
+	static function show(group:Dynamic, mine:Float, other:Float):Void {
 		if (group == null)
 			return;
 		var right = field(group, RIGHT_NAME, TextFormatAlign.RIGHT);
 		var left = field(group, LEFT_NAME, TextFormatAlign.LEFT);
 		if (right == null || left == null)
 			return;
-		if (mine < 0) {
-			say(right, hasStats ? "Open your profile" : "Not priced", DIM);
-			say(left, "", DIM);
-			return;
-		}
 		var power:Float = CombatPower.power;
-		var amount = power > 0 ? "CP " + CombatPower.signed(power * mine, "") + " (" + CombatPower.signed(mine * 100, "%") + ")"
-			: "CP " + CombatPower.signed(mine * 100, "%");
-		say(right, amount, mine > SAME ? GAIN : DIM);
-		if (needsProfile || other < 0) {
+		if (Math.abs(mine) < SAME)
+			say(right, "Same as equipped", DIM);
+		else
+			say(right, amount(mine, power) + " vs equipped", mine > 0 ? GAIN : LOSS);
+		if (other == NOTHING) {
 			say(left, "", DIM);
 		} else if (Math.abs(mine - other) < SAME) {
 			say(left, "Same", DIM);
 		} else if (mine > other) {
-			// Both totals are changes against the same bracelet, so their ratio is the gain of keeping this side.
-			var better = (1 + mine) / (1 + other) - 1;
-			var by = power > 0 ? CombatPower.signed(power * (1 + other) * better, "") : CombatPower.signed(better * 100, "%");
-			say(left, "Keep " + by, GAIN);
+			// Both are changes from the same equipment, so their difference is what keeping this side is worth.
+			say(left, "Keep " + (power > 0 ? CombatPower.signed(power * (mine - other), "") + " CP"
+				: CombatPower.signed((mine - other) * 100, "%")), GAIN);
 		} else {
 			say(left, "", DIM);
 		}
+	}
+
+	/** "+12.34 (+0.53%)", or "+0.53%" before the profile has shown your Combat Power. */
+	static function amount(change:Float, power:Float):String {
+		return power > 0 ? CombatPower.signed(power * change, "") + " (" + CombatPower.signed(change * 100, "%") + ")"
+			: CombatPower.signed(change * 100, "%");
 	}
 
 	static function note(before:Dynamic, after:Dynamic, text:String):Void {
@@ -428,10 +443,10 @@ class BraceletJudge {
 		var like:Dynamic = page != null && (untyped __in__("costTitleTextField", page)) ? page.costTitleTextField : null;
 		if (like == null)
 			like = rowField(group);
-		var shown:Dynamic = like == null || like.length < 1 ? null : like.getTextFormat(0, 1);
+		var sample:Dynamic = like == null || like.length < 1 ? null : like.getTextFormat(0, 1);
 		var format = new TextFormat();
-		format.font = shown != null && shown.font != null ? shown.font : "$YG760";
-		format.size = 13;
+		format.font = sample != null && sample.font != null ? sample.font : "$YG760";
+		format.size = 12;
 		format.align = align;
 		text.embedFonts = true;
 		text.defaultTextFormat = format;
