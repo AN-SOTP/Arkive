@@ -85,21 +85,12 @@ public sealed class ArkiveModEditSnapshot
         ArgumentNullException.ThrowIfNull(workspaces);
         var edits = new List<ArkiveModLocalEdit>();
         foreach (var texture in await workspaces.Textures.LoadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            edits.Add(new ArkiveModLocalEdit(
-                UnifiedPackageAssetKind.Texture2D, texture.Manifest.ProjectId, texture.ManifestPath,
-                texture.Manifest.DisplayName, Path.GetFullPath(texture.Manifest.SourcePackagePath),
-                texture.Manifest.ObjectName, texture.Manifest.IncludedInPackageBuild is not false, texture));
-        }
+            edits.Add(From(texture));
         foreach (var mesh in (await workspaces.SkeletalMeshEdits.LoadAsync(cancellationToken).ConfigureAwait(false)).Entries)
         {
             try
             {
-                var source = await LoadSkeletalSourceAsync(mesh, cancellationToken).ConfigureAwait(false);
-                edits.Add(new ArkiveModLocalEdit(
-                    UnifiedPackageAssetKind.SkeletalMesh, mesh.Manifest.EditId, mesh.ManifestPath,
-                    mesh.Manifest.DisplayName, Path.GetFullPath(source.SourcePackagePath), source.ObjectName,
-                    mesh.Manifest.IncludedInPackageBuild, mesh));
+                edits.Add(await FromAsync(mesh, cancellationToken).ConfigureAwait(false));
             }
             catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException or
                                                   UnauthorizedAccessException)
@@ -110,12 +101,7 @@ public sealed class ArkiveModEditSnapshot
         {
             try
             {
-                var source = await StaticMeshEditableExportService.LoadManifestAsync(
-                    mesh.Manifest.SourceEditableManifestPath, cancellationToken).ConfigureAwait(false);
-                edits.Add(new ArkiveModLocalEdit(
-                    UnifiedPackageAssetKind.StaticMesh, mesh.Manifest.EditId, mesh.ManifestPath,
-                    mesh.Manifest.DisplayName, Path.GetFullPath(source.SourcePackagePath), source.ObjectName,
-                    mesh.Manifest.IncludedInPackageBuild, mesh));
+                edits.Add(await FromAsync(mesh, cancellationToken).ConfigureAwait(false));
             }
             catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException or
                                                   NotSupportedException or UnauthorizedAccessException)
@@ -123,27 +109,91 @@ public sealed class ArkiveModEditSnapshot
             }
         }
         foreach (var material in await workspaces.MaterialEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            edits.Add(new ArkiveModLocalEdit(
-                UnifiedPackageAssetKind.MaterialInstanceConstant, material.Document.EditId, material.DocumentPath,
-                material.Document.DisplayName, Path.GetFullPath(material.Document.SourcePackagePath),
-                material.Document.ObjectName, material.Document.IncludedInPackageBuild, material));
-        }
+            edits.Add(From(material));
         foreach (var particle in await workspaces.ParticleEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            edits.Add(new ArkiveModLocalEdit(
-                UnifiedPackageAssetKind.ParticleSystem, particle.Document.EditId, particle.DocumentPath,
-                particle.Document.DisplayName, Path.GetFullPath(particle.Document.SourcePackagePath),
-                particle.Document.SystemObjectName, particle.Document.IncludedInPackageBuild, particle));
-        }
+            edits.Add(From(particle));
         if (workspaces.InterfaceMovies is { } movies)
             foreach (var movie in await movies.LoadAsync(cancellationToken).ConfigureAwait(false))
-                edits.Add(new ArkiveModLocalEdit(
-                    UnifiedPackageAssetKind.InterfaceMovie, movie.Manifest.EditId, movie.ManifestPath,
-                    movie.Manifest.DisplayName, Path.GetFullPath(movie.Manifest.SourcePackagePath),
-                    movie.Manifest.ObjectName, movie.Manifest.IncludedInPackageBuild, movie));
+                edits.Add(From(movie));
         return new ArkiveModEditSnapshot(edits);
     }
+
+    /// <summary>
+    /// <paramref name="edit"/>'s working file read again from disk, or null when it is gone or can no longer be read
+    /// (as a full load would leave it out).
+    /// </summary>
+    public static async Task<ArkiveModLocalEdit?> ReloadAsync(
+        ArkiveModEditWorkspaces workspaces,
+        ArkiveModLocalEdit edit,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspaces);
+        ArgumentNullException.ThrowIfNull(edit);
+        if (!File.Exists(edit.ManifestPath)) return null;
+        try
+        {
+            return edit.Entry switch
+            {
+                GuidedTextureModProjectEntry => From(await GuidedTextureModWorkspace.LoadProjectAsync(
+                    edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                SkeletalMeshEditWorkspaceEntry => await FromAsync(await workspaces.SkeletalMeshEdits.LoadEntryAsync(
+                    edit.ManifestPath, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false),
+                StaticMeshEditEntry => await FromAsync(await workspaces.StaticMeshEdits.LoadEntryAsync(
+                    edit.ManifestPath, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false),
+                MaterialInstanceEditEntry => From(await workspaces.MaterialEdits.LoadEntryAsync(
+                    edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                ParticleEffectEditEntry => From(await workspaces.ParticleEdits.LoadEntryAsync(
+                    edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                InterfaceMovieEditEntry => From(await InterfaceMovieEditWorkspaceStore.LoadEntryAsync(
+                    edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                _ => null,
+            };
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException or
+                                              NotSupportedException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static ArkiveModLocalEdit From(GuidedTextureModProjectEntry texture) => new(
+        UnifiedPackageAssetKind.Texture2D, texture.Manifest.ProjectId, texture.ManifestPath,
+        texture.Manifest.DisplayName, Path.GetFullPath(texture.Manifest.SourcePackagePath),
+        texture.Manifest.ObjectName, texture.Manifest.IncludedInPackageBuild is not false, texture);
+
+    private static async Task<ArkiveModLocalEdit> FromAsync(SkeletalMeshEditWorkspaceEntry mesh, CancellationToken cancellationToken)
+    {
+        var source = await LoadSkeletalSourceAsync(mesh, cancellationToken).ConfigureAwait(false);
+        return new ArkiveModLocalEdit(
+            UnifiedPackageAssetKind.SkeletalMesh, mesh.Manifest.EditId, mesh.ManifestPath,
+            mesh.Manifest.DisplayName, Path.GetFullPath(source.SourcePackagePath), source.ObjectName,
+            mesh.Manifest.IncludedInPackageBuild, mesh);
+    }
+
+    private static async Task<ArkiveModLocalEdit> FromAsync(StaticMeshEditEntry mesh, CancellationToken cancellationToken)
+    {
+        var source = await StaticMeshEditableExportService.LoadManifestAsync(
+            mesh.Manifest.SourceEditableManifestPath, cancellationToken).ConfigureAwait(false);
+        return new ArkiveModLocalEdit(
+            UnifiedPackageAssetKind.StaticMesh, mesh.Manifest.EditId, mesh.ManifestPath,
+            mesh.Manifest.DisplayName, Path.GetFullPath(source.SourcePackagePath), source.ObjectName,
+            mesh.Manifest.IncludedInPackageBuild, mesh);
+    }
+
+    private static ArkiveModLocalEdit From(MaterialInstanceEditEntry material) => new(
+        UnifiedPackageAssetKind.MaterialInstanceConstant, material.Document.EditId, material.DocumentPath,
+        material.Document.DisplayName, Path.GetFullPath(material.Document.SourcePackagePath),
+        material.Document.ObjectName, material.Document.IncludedInPackageBuild, material);
+
+    private static ArkiveModLocalEdit From(ParticleEffectEditEntry particle) => new(
+        UnifiedPackageAssetKind.ParticleSystem, particle.Document.EditId, particle.DocumentPath,
+        particle.Document.DisplayName, Path.GetFullPath(particle.Document.SourcePackagePath),
+        particle.Document.SystemObjectName, particle.Document.IncludedInPackageBuild, particle);
+
+    private static ArkiveModLocalEdit From(InterfaceMovieEditEntry movie) => new(
+        UnifiedPackageAssetKind.InterfaceMovie, movie.Manifest.EditId, movie.ManifestPath,
+        movie.Manifest.DisplayName, Path.GetFullPath(movie.Manifest.SourcePackagePath),
+        movie.Manifest.ObjectName, movie.Manifest.IncludedInPackageBuild, movie);
 
     public static async Task<string?> GetBuildContentSha256Async(
         ArkiveModLocalEdit edit,

@@ -86,11 +86,13 @@ public partial class MainWindow : Window
         return await _arkiveModAuthoring.SaveModAsync(modId);
     }
 
-    private async Task SaveEnabledModChangesAsync()
+    /// <returns>The working files as read, for the plan that follows, or null once a mod was saved (saving may change them).</returns>
+    private async Task<ArkiveModEditSnapshot?> SaveEnabledModChangesAsync()
     {
         var library = await _arkiveModLibrary.LoadAsync();
         var snapshot = await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
         var drafts = await _modAuthoringWorkspace.LoadAsync();
+        var saved = false;
         foreach (var mod in library.Mods.Where(mod => mod.Enabled))
         {
             var draft = drafts.FirstOrDefault(draft => draft.ModId == mod.ModId);
@@ -99,8 +101,11 @@ public partial class MainWindow : Window
             foreach (var binding in mod.Bindings)
                 if (snapshot.Find(binding.EditId) is { } edit && await ArkiveModAuthoringService.IsModifiedAsync(edit, binding))
                 { changed = true; break; }
-            if (pending || changed) await SaveLibraryModAsync(mod.ModId);
+            if (!pending && !changed) continue;
+            await SaveLibraryModAsync(mod.ModId);
+            saved = true;
         }
+        return saved ? null : snapshot;
     }
 
     private static bool DraftHasChanges(ArkiveModAuthoringDraft draft, ArkiveModLibraryEntry mod) =>

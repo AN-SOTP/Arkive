@@ -71,18 +71,25 @@ public sealed class StaticMeshEditWorkspaceStore
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                await using var stream = File.OpenRead(path);
-                var manifest = await JsonSerializer.DeserializeAsync<StaticMeshEditManifest>(
-                    stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-                if (manifest is null || manifest.SchemaVersion != 1) continue;
-                entries.Add(new StaticMeshEditEntry(Path.GetDirectoryName(path)!, path, manifest));
+                entries.Add(await LoadEntryAsync(path, cancellationToken).ConfigureAwait(false));
             }
-            catch (Exception exception) when (exception is IOException or JsonException or NotSupportedException)
+            catch (Exception exception) when (exception is IOException or JsonException or NotSupportedException or InvalidDataException)
             {
                 // Ignore damaged entries without hiding healthy edits.
             }
         }
         return entries.OrderByDescending(entry => entry.Manifest.CreatedAt).ToArray();
+    }
+
+    /// <summary>One edit's record read from disk, checked as LoadAsync checks it.</summary>
+    public async Task<StaticMeshEditEntry> LoadEntryAsync(string manifestPath, CancellationToken cancellationToken = default)
+    {
+        await using var stream = File.OpenRead(manifestPath);
+        var manifest = await JsonSerializer.DeserializeAsync<StaticMeshEditManifest>(
+            stream, JsonOptions, cancellationToken).ConfigureAwait(false);
+        if (manifest is null || manifest.SchemaVersion != 1)
+            throw new InvalidDataException("The StaticMesh edit record is empty or has an unsupported schema.");
+        return new StaticMeshEditEntry(Path.GetDirectoryName(manifestPath)!, manifestPath, manifest);
     }
 
     public async Task<StaticMeshEditEntry> RevalidateAsync(

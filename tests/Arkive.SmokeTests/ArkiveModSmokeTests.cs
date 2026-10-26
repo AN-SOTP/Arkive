@@ -497,8 +497,10 @@ internal static class ArkiveModSmokeTests
 
         player.Library.SetPriorityAsync(a.ModId, 1).GetAwaiter().GetResult();
         player.Library.SetPriorityAsync(b.ModId, 9).GetAwaiter().GetResult();
-        // The Mods list shows the working files as the selection left them without reading them all again.
-        var synced = ArkiveModSelectionService.SynchronizeWithSnapshotAsync(player.Library, player.Edits).GetAwaiter().GetResult();
+        // The Mods list hands on the working files it last read; only those the two mods compete on are read again,
+        // and it shows them as the selection left them.
+        var synced = ArkiveModSelectionService.SynchronizeChangedAsync(player.Library, player.Edits, snapshot, [a.ModId, b.ModId])
+            .GetAwaiter().GetResult();
         var reread = ArkiveModEditSnapshot.LoadAsync(player.Edits).GetAwaiter().GetResult();
         Assert(synced.Changes is [{ Included: false } dropped] && dropped.EditId == aEdit.EditId &&
                synced.Snapshot.Edits.Count == reread.Edits.Count &&
@@ -507,6 +509,16 @@ internal static class ArkiveModSmokeTests
                                         kept.Document.IncludedInPackageBuild == saved.Document.IncludedInPackageBuild &&
                                         kept.Document.UpdatedAt == saved.Document.UpdatedAt),
             "the selection's working files differed from the ones saved after a priority change");
+        Assert(ArkiveModSelectionService.SynchronizeAsync(player.Library, player.Edits).GetAwaiter().GetResult().Count == 0,
+            "a full selection pass still found changes after the one limited to the changed mods");
+        // A working file changed after the Mods list read it is read again, not taken from the list's copy.
+        ArkiveModSelectionService.SetIncludedAsync(player.Edits, synced.Snapshot.Find(aEdit.EditId)!, true).GetAwaiter().GetResult();
+        var stale = ArkiveModSelectionService.SynchronizeChangedAsync(player.Library, player.Edits, synced.Snapshot, [b.ModId])
+            .GetAwaiter().GetResult();
+        Assert(stale.Changes is [{ Included: false } again] && again.EditId == aEdit.EditId &&
+               !stale.Snapshot.Find(aEdit.EditId)!.Included &&
+               !ArkiveModEditSnapshot.LoadAsync(player.Edits).GetAwaiter().GetResult().Find(aEdit.EditId)!.Included,
+            "the limited selection pass trusted a stale copy of a working file changed after it was read");
         var swap = service.PlanAsync().GetAwaiter().GetResult();
         Assert(swap.Packages is [{ Action: ArkiveModPackageAction.Rebuild, RestoreFirst: true }] &&
                swap.Packages[0].Setups.Single().ModId == b.ModId,

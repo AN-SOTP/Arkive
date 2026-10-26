@@ -371,12 +371,17 @@ public sealed class ArkiveModApplyService
     }
 
     public Task<ArkiveModApplyPlan> PlanAsync(CancellationToken cancellationToken = default) =>
-        PlanAsync(null, cancellationToken);
+        PlanAsync(null, null, cancellationToken);
+
+    /// <summary>The plan for working files the caller has just read (<paramref name="snapshot"/>), so they are not read twice.</summary>
+    public Task<ArkiveModApplyPlan> PlanAsync(ArkiveModEditSnapshot snapshot, CancellationToken cancellationToken = default) =>
+        PlanAsync(null, snapshot, cancellationToken);
 
     public Task<ArkiveModApplyPlan> PreviewModAsync(string modId, CancellationToken cancellationToken = default) =>
-        PlanAsync(modId, cancellationToken);
+        PlanAsync(modId, null, cancellationToken);
 
-    private async Task<ArkiveModApplyPlan> PlanAsync(string? previewModId, CancellationToken cancellationToken)
+    private async Task<ArkiveModApplyPlan> PlanAsync(
+        string? previewModId, ArkiveModEditSnapshot? knownSnapshot, CancellationToken cancellationToken)
     {
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
         if (previewModId is not null)
@@ -385,7 +390,8 @@ public sealed class ArkiveModApplyService
             library = library with
             { Mods = library.Mods.Select(mod => mod.ModId == previewModId ? mod with { Enabled = true } : mod).ToArray() };
         }
-        var snapshot = await ArkiveModEditSnapshot.LoadAsync(_context.Edits, cancellationToken).ConfigureAwait(false);
+        var snapshot = knownSnapshot ??
+                       await ArkiveModEditSnapshot.LoadAsync(_context.Edits, cancellationToken).ConfigureAwait(false);
         var packages = await _context.Packages.LoadAsync(cancellationToken).ConfigureAwait(false);
         var resolution = ArkiveModConflictResolver.Resolve(library.Mods);
         var problems = new List<string>();
