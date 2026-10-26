@@ -93,6 +93,10 @@ public sealed class TweakModService(
             foreach (var (key, value) in CombatPowerTable.Options(data2, Path.Combine(root, "cache")))
                 power[key] = value;
         }
+        if (tweaks.TryGetValue(AstrogemTweak, out var astrogem) && File.Exists(data2))
+            astrogem["tables"] = JsonSerializer.SerializeToElement(
+                AstrogemOdds.WriteTables(data2, Path.Combine(root, "cache"), Path.Combine(root, "astrogem"))
+                    .ToDictionary(table => table.Key, table => table.Value.Replace('\\', '/')));
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
@@ -289,6 +293,8 @@ public sealed class TweakModService(
 
     /// <summary>Where Market Price on Tooltips' prices are kept (the tweak reads prices/prices.txt under "home").</summary>
     public string PricesFolder => Path.Combine(root, "prices");
+    /// <summary>The tweak that advises astrogem processing, from odds tables Arkive writes for every target.</summary>
+    public const string AstrogemTweak = "astrogem";
 
     /// <summary>The tweak that prices gems in Combat Power, from the game's own table.</summary>
     public const string CombatPowerTweak = "cpgems";

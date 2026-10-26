@@ -191,7 +191,7 @@ public static class CombatPowerTable
     /// Extracts the named databases from data2.lpk, opens the first and attaches the rest as db1, db2…, runs
     /// <paramref name="read"/>, then deletes the copies.
     /// </summary>
-    private static T WithDatabases<T>(string data2Path, string workDirectory, string[] databases, Func<SqliteConnection, T> read)
+    internal static T WithDatabases<T>(string data2Path, string workDirectory, string[] databases, Func<SqliteConnection, T> read)
     {
         Directory.CreateDirectory(workDirectory);
         var stamp = Guid.NewGuid().ToString("N")[..8];

@@ -19,6 +19,7 @@ internal static class TweakSmokeTests
         new("deletes tweak working edits left by replaced tweak mods and keeps everyone else's", TestStaleTweakDrafts),
         new("reads Data Bus messages and saves tweak switches and options changed in game", TestInGameSettings),
         new("keeps the market prices Market Price sends, the newest per item, for the next session", TestMarketPrices),
+        new("works out astrogem processing odds from the game's weights and writes the table the advisor reads", TestAstrogemOdds),
     ];
 
     /// <summary>
@@ -46,6 +47,79 @@ internal static class TweakSmokeTests
         Assert(Arkive.Core.Tweaks.TweakBus.TryDecode(Arkive.Core.Tweaks.TweakBus.Encode("prices", "Oreha Fusion Material|-1|880|900|1|market"),
             out var channel, out var message) && channel == Arkive.Core.Tweaks.MarketPriceStore.Channel && message.EndsWith("|market", StringComparison.Ordinal),
             "a prices message did not survive the bus");
+    }
+
+    /// <summary>
+    /// The astrogem odds with the game's own weights (group 4000) and grades: a last attempt checked against every
+    /// ordered draw of four effects, more attempts and rerolls never hurting, and the encoded table reading back.
+    /// </summary>
+    private static void TestAstrogemOdds()
+    {
+        List<Arkive.Core.Tweaks.AstrogemEffect> effects = [];
+        var id = 3000;
+        foreach (var (type, option) in new[] { (2, 0), (3, 0), (4, 0), (4, 1) })
+            foreach (var (delta, weight) in new[] { (1, 1165), (2, 440), (3, 175), (4, 45), (-1, 300) })
+                effects.Add(new(++id, type, option, delta, weight));
+        effects.AddRange([new(3033, 5, 0, 0, 325), new(3034, 5, 1, 0, 325), new(3036, 6, 0, 10000, 175), new(3038, 6, 0, -10000, 175),
+            new(3039, 0, 0, 0, 175), new(3041, 7, 0, 1, 250), new(3042, 7, 0, 2, 75)]);
+        var rules = new Arkive.Core.Tweaks.AstrogemRules(effects, [new(5, 0, 1, 900), new(7, 1, 1, 900), new(9, 2, 1, 900)], -10000, 10000);
+        var target = Arkive.Core.Tweaks.AstrogemOdds.Target("w4p4");
+        var table = Arkive.Core.Tweaks.AstrogemOdds.Compute(rules, target);
+
+        // Last attempt at Willpower 3, Points 4: only Willpower +1 or +2 reaches 4+. Cost changes and extra rerolls
+        // aren't offered on the last attempt, nor Willpower +3/+4 or option -1 at these levels.
+        var offered = effects.Where(effect => effect.Type switch
+        {
+            2 => effect.ValueB is 1 or 2 or -1,
+            3 => effect.ValueB is 1 or -1,
+            4 => effect.ValueB > 0,
+            6 or 7 => false,
+            _ => true,
+        }).ToArray();
+        var included = new double[offered.Length];
+        var worthIt = 0.0;
+        void Draw(int depth, double chance, double left, List<int> taken)
+        {
+            if (depth == 4)
+            {
+                foreach (var index in taken) included[index] += chance;
+                if (taken.Any(index => offered[index].Type == 2 && offered[index].ValueB > 0)) worthIt += chance;
+                return;
+            }
+            for (var i = 0; i < offered.Length; i++)
+            {
+                if (taken.Contains(i)) continue;
+                taken.Add(i);
+                Draw(depth + 1, chance * offered[i].Weight / left, left - offered[i].Weight, taken);
+                taken.RemoveAt(taken.Count - 1);
+            }
+        }
+        Draw(0, 1, offered.Sum(effect => effect.Weight), []);
+        var expected = Enumerable.Range(0, offered.Length)
+            .Where(i => offered[i].Type == 2 && offered[i].ValueB > 0).Sum(i => included[i]) / 4;
+        var index = table.Index(1, 0, 1, 3, 4, 1, 1);
+        Assert(Math.Abs(table.NoReset.Chance[index] - expected) < 1e-9,
+            $"last attempt chance {table.NoReset.Chance[index]:0.000000}, every draw gives {expected:0.000000}");
+        // Processing is only worth its gold when the offer holds a way to the target; otherwise the best play is to stop.
+        Assert(Math.Abs(table.NoReset.Gold[index] - worthIt) < 1e-9, $"last attempt gold {table.NoReset.Gold[index]:0.000000}, expected {worthIt:0.000000}");
+
+        var fresh = table.Grades.Select(grade => grade.FreshChance).ToArray();
+        Assert(fresh[0] is > 0.03 and < 0.06 && fresh[0] < fresh[1] && fresh[1] < fresh[2],
+            $"fresh chances by grade: {string.Join(", ", fresh.Select(chance => chance.ToString("0.0000")))}");
+        var later = table.Index(3, 0, 1, 2, 2, 1, 1);
+        var withRerolls = table.Index(3, 2, 1, 2, 2, 1, 1);
+        Assert(table.NoReset.Chance[withRerolls] >= table.NoReset.Chance[later] - 1e-12, "rerolls lowered the chance");
+        Assert(table.Grades[2].WithReset!.Chance[later] >= table.NoReset.Chance[later] - 1e-12, "a reset in hand lowered the chance");
+        Assert(table.NoReset.Chance[table.Index(2, 0, 1, 4, 4, 1, 1)] == 1, "a reached target isn't certain");
+
+        const string digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
+        var lines = Arkive.Core.Tweaks.AstrogemOdds.Encode(table).Split('\n');
+        Assert(lines[0] == "arkive-astrogem 1" && lines[1] == "target w4p4 4 4 0" && lines[2] == "rules 5 4 3 -1 10000",
+            $"table header: {string.Join(" | ", lines.Take(3))}");
+        var none = lines.Single(line => line.StartsWith("table none ", StringComparison.Ordinal))["table none ".Length..];
+        int Pair(int at) => digits.IndexOf(none[at]) * 64 + digits.IndexOf(none[at + 1]);
+        Assert(Math.Abs(Pair(index * 4) / 4095.0 - table.NoReset.Chance[index]) <= 0.5 / 4095 &&
+               Math.Abs(Pair(index * 4 + 2) / 200.0 - table.NoReset.Gold[index]) <= 0.5 / 200, "the encoded table reads back wrong");
     }
 
     /// <summary>
