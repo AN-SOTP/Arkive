@@ -77,6 +77,12 @@ public static class TweakCatalog
         [
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsTab.onWndConfigUI"),
         ]),
+        new("cpgems", "Combat Power: Gems", "A line on gem tooltips (your own, inspected players', the market's) shows how much your Combat Power would go up or down if that gem replaced your weakest gem of the same kind, priced with the game's own table. Your Character Profile checks the prediction when your gems change.", TweakRisk.Display,
+        [
+            H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.CombatPower.onMainTooltip", AbcHookKind.Before),
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "configUI", "arkive.tweaks.CombatPower.onAbilityConfigUI"),
+            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoEquipAbilityPage", "combatType", "arkive.tweaks.CombatPower.onCombatType"),
+        ], Note: "Open your Character Profile once after logging in: the tweak reads your Combat Power, DPS or support, and your gems from it."),
         new("boxtweaks", "Chest Opening Tweaks", "Various tweaks for the chest opening window.", TweakRisk.Display,
         [
             H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData", "arkive.tweaks.BoxTweaks.onSetData"),

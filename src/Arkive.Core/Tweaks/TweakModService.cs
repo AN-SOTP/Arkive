@@ -60,12 +60,24 @@ public sealed class TweakModService(
     /// <summary>When set, each built movie is also written here (for decompiling while developing tweaks).</summary>
     public string? KeepMoviesIn { get; init; }
 
-    /// <summary>The settings the tweak code gets: the saved ones, plus the folder the Logs tab reads its answers from.</summary>
-    private TweakSettings ForGame(TweakSettings settings)
+    /// <summary>The game's data2.lpk, for tweaks that read game tables. When unset, the one two folders above the packages.</summary>
+    public string? GameDataFile { get; init; }
+
+    /// <summary>
+    /// The settings the tweak code gets: the saved ones, plus the folder the Logs tab reads its answers from and the
+    /// game's gem prices for Combat Power (left out when there is no data2.lpk, so that tweak shows nothing).
+    /// </summary>
+    private TweakSettings ForGame(TweakSettings settings, string packagesDirectory)
     {
-        if (!settings.Enabled.TryGetValue(PlayerLogsTweak, out var options)) return settings;
         var copy = new TweakSettings { Enabled = new(settings.Enabled) };
-        copy.Enabled[PlayerLogsTweak] = new(options) { ["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/')) };
+        if (settings.Enabled.TryGetValue(PlayerLogsTweak, out var logs))
+            copy.Enabled[PlayerLogsTweak] = new(logs) { ["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/')) };
+        var data2 = GameDataFile ?? Path.GetFullPath(Path.Combine(packagesDirectory, "..", "..", "data2.lpk"));
+        if (settings.Enabled.TryGetValue(CombatPowerTweak, out var power) && File.Exists(data2))
+            copy.Enabled[CombatPowerTweak] = new(power)
+            {
+                ["gems"] = JsonSerializer.SerializeToElement(CombatPowerTable.Gems(data2, Path.Combine(root, "cache"))),
+            };
         return copy;
     }
 
@@ -106,6 +118,9 @@ public sealed class TweakModService(
     public const string PlayerLogsTweak = "logs";
 
     public string PlayerLogsFolder => Path.Combine(root, "player-logs");
+
+    /// <summary>The tweak that prices gems in Combat Power, from the game's own table.</summary>
+    public const string CombatPowerTweak = "cpgems";
 
     public TweakState LoadState()
     {
@@ -156,7 +171,7 @@ public sealed class TweakModService(
             return new TweakBuildResult(null, [], [], packages);
         }
 
-        var tweakCode = TweakCode.ForSettings(tweakSwf, ForGame(settings));
+        var tweakCode = TweakCode.ForSettings(tweakSwf, ForGame(settings, packagesDirectory));
         var gamePackages = FindPackages(packagesDirectory);
         var staging = Path.Combine(root, "staging");
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);

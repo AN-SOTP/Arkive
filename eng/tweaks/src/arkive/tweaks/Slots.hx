@@ -19,7 +19,7 @@ class Slots {
 	static inline var SEARCH_DEPTH = 8;
 
 	/** The slot's tooltip entries, or null. */
-	static function tooltip(type:Int, id:Int):Array<Dynamic> {
+	public static function tooltip(type:Int, id:Int):Array<Dynamic> {
 		var manager:Dynamic = GameUi.definition("ark.managers.TooltipManager");
 		var tooltips:Dynamic = manager == null ? null : manager.getInstance();
 		if (tooltips == null || tooltips.nativeGetTooltip == null)
