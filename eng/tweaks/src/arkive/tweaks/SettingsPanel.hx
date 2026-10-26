@@ -463,12 +463,6 @@ class SettingsPanel {
 		var id:String = tweak.id;
 		var name:String = tweak.name;
 		var on = Options.on(id);
-		if (tweak.restart == true) {
-			body.addChild(tickBox(name, on, SIDE, y, WIDTH - 2 * SIDE - 20, id, ""));
-			body.addChild(text(SIDE + INDENT, y + ROW + 2, WIDTH - 2 * SIDE - INDENT - 20, 12, DIM,
-				"Changes the game's files: takes effect the next time you click Install All Tweaks in Arkive with the game closed.", font));
-			return y + ROW + 26;
-		}
 		var box = tickBox(name, on, SIDE, y, WIDTH - 2 * SIDE - 20, id, "");
 		body.addChild(box);
 		y += ROW + 4;

@@ -167,8 +167,8 @@ internal static class TweakSmokeTests
         Assert(state.Settings.Enabled["extracurrency"]["showLeapstones"].GetBoolean() == false && state.Kept.Count == 1 &&
                state.Kept["boxtweaks"]["confirm"].GetString() == "tick", "switching back on lost the options, or a choice was not kept");
         Assert(service.ApplyInGameChange("0004\tboxtweaks\tconfirm\tnonsense") is null &&
-               service.ApplyInGameChange("0005\tfastlaunch\tskipIntro\t0") is null && service.ApplyInGameChange("0006\tnope\t\t1") is null,
-            "a bad choice, a game-file tweak's option or an unknown tweak was accepted");
+               service.ApplyInGameChange("0005\tfastlaunch\t\t1") is null && service.ApplyInGameChange("0006\tnope\t\t1") is null,
+            "a bad choice, a game-file tweak or an unknown tweak was accepted");
         var live = File.ReadAllText(service.LivePath);
         using var parsed = System.Text.Json.JsonDocument.Parse(live);
         Assert(parsed.RootElement.GetProperty("ack").GetString() == "0003" &&
@@ -209,11 +209,13 @@ internal static class TweakSmokeTests
                service.EveryTweak().Enabled.ContainsKey("extracurrency"),
             "Remove All Tweaks lost the options of the tweaks it took out, or which of them were on");
 
-        // Faster Launch can be switched in game; the switch is saved and shown as on in live.json.
-        Assert(service.ApplyInGameChange("0008\tfastlaunch\t\t1") is not null && service.LoadState().Settings.Enabled.ContainsKey("fastlaunch"),
-            "switching Faster Launch in game was not saved");
-        using var withLaunch = System.Text.Json.JsonDocument.Parse(File.ReadAllText(service.LivePath));
-        Assert(withLaunch.RootElement.GetProperty("on").TryGetProperty("fastlaunch", out _), "live.json does not show Faster Launch on");
+        // Faster Launch is installed on its own: one saved by an older build is dropped, and Install All never includes it.
+        state = service.LoadState();
+        state.Settings.Enabled["fastlaunch"] = [];
+        state.OnBeforeRemove.Add("fastlaunch");
+        service.SaveState(state);
+        Assert(!service.LoadState().Settings.Enabled.ContainsKey("fastlaunch") && !service.EveryTweak().Enabled.ContainsKey("fastlaunch"),
+            "Faster Launch was kept in the saved choices or put into Install All Tweaks");
     }
 
     /// <summary>

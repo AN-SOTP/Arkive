@@ -103,7 +103,7 @@ public static class TweakCatalog
         ],
         [
             new("everything", "Install every tweak, so any of them can be switched on in game (the ones not ticked here start off)", true),
-        ], Note: "Faster Launch still needs the game closed, so change it here."),
+        ], Note: "Faster Launch changes game files, so it is installed and removed on its own in the Tweaks tab, not in game."),
         new("cpgems", "Combat Power on Tooltips", "A line on item tooltips (gems, gear, accessories, bracelets, ability stones, engraving books, paradise orbs and Ark Grid cores and astrogems; your own, inspected players', the market's) shows how much your Combat Power would go up or down if you equipped that item instead of yours, priced with the game's own table. The honing window shows what the next level adds. Support characters get gem and Ark Grid lines only for now.", TweakRisk.Display,
         [
             H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.CombatPower.onMainTooltip", AbcHookKind.Before),
@@ -277,25 +277,6 @@ public static class TweakCatalog
         [
             new("page", "\"Claim Page\" button", true),
             new("all", "\"Claim All\" button", true),
-        ]),
-        new("strongholdclaim", "Stronghold Crafting Claim All", "Adds a \"Claim EVERYTHING\" button to stronghold crafting that collects the finished items of every workshop.", TweakRisk.Batch,
-        [
-            H("efui_townproduction", "townproduction", "ark.ui.townProduction.TownPWndContent", "configUI", "arkive.tweaks.StrongholdClaim.onConfigUI"),
-        ], Note: "If a result window opens after a claim, close it and the button moves on to the next workshop."),
-        new("tabslot", "Hold Tab to Right-Click Slots", "Holding Tab while pointing at an item slot counts as right-clicking it, for quick equipping and unequipping of items and gems.", TweakRisk.Automation,
-        [
-            H(Base, "main", "ark.controls.ARKNewSlot", "addedToStage", "arkive.tweaks.TabSlot.onAddedToStage"),
-            H(Base, "main", "ark.controls.ARKNewSlot", "handleMouseRollOver", "arkive.tweaks.TabSlot.onRollOver", expose: ["handleMouseUp"]),
-            H(Base, "main", "ark.controls.ARKNewSlot", "handleMouseRollOut", "arkive.tweaks.TabSlot.onRollOut"),
-        ]),
-        new("unequipgems", "Unequip Gems Button", "Adds an \"Unequip All\" button to the gem page of the character profile, and an \"Unequip Gems\" button to roster storage.", TweakRisk.Batch,
-        [
-            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoGemPanel", "configUI", "arkive.tweaks.UnequipGems.onGemPanelConfigUI"),
-            H("efui_interaction", "windowgo", "ark.ui.windowGo.ExpeditionWindowGoContent", "configUI", "arkive.tweaks.UnequipGems.onStorageConfigUI"),
-        ],
-        [
-            new("profile", "\"Unequip All\" on the character profile's gem page", true),
-            new("storage", "\"Unequip Gems\" in roster storage (gems bound to the character stay)", true),
         ]),
         new("fastlaunch", "Faster Launch", "Makes the game start faster by skipping the publisher logos and the seizure warning before the login screen.", TweakRisk.Speed,
         [],

@@ -141,7 +141,7 @@ class Options {
 	}
 
 	/**
-		What the panel lists, in order: [{id, name, restart, options:[{key, label, kind, choices:[{value, label}]}]}].
+		What the panel lists, in order: [{id, name, options:[{key, label, kind, choices:[{value, label}]}]}].
 		kind is "switch", "single" (one choice) or "list" (several; changed in Arkive only).
 	**/
 	public static function panel():Array<Dynamic> {

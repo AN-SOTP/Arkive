@@ -1,5 +1,4 @@
 using System.IO;
-using System.Text.Json;
 using System.Windows;
 using Arkive.Core.Mods;
 using Arkive.Core.Tweaks;
@@ -63,7 +62,7 @@ public partial class MainWindow
     {
         var state = Tweaks.LoadState();
         var installed = state.ModId is not null;
-        var rows = TweakCatalog.All.Where(tweak => tweak.Available)
+        var rows = TweakCatalog.All.Where(tweak => tweak.Available && !tweak.RestartOnly)
             .Select(tweak => new TweakRow(tweak, installed ? state.Settings.Enabled.ContainsKey(tweak.Id) : null))
             .ToArray();
         TweakList.ItemsSource = rows;
@@ -73,12 +72,68 @@ public partial class MainWindow
         TweaksStatusText.Text = status ?? (!installed
             ? "No tweaks are installed."
             : $"All tweaks are installed; {on:N0} of {rows.Length:N0} are enabled. Enable, disable and change them in game.");
+        var launch = FasterLaunchInstalled;
+        FasterLaunchStateText.Text = launch ? "Installed" : "Not Installed";
+        FasterLaunchState.Background = (System.Windows.Media.Brush)FindResource(launch ? "SuccessSurfaceBrush" : "SurfaceAltBrush");
+        FasterLaunchStateText.Foreground = (System.Windows.Media.Brush)FindResource(launch ? "SuccessTextBrush" : "TextSecondaryBrush");
+        TweaksFasterLaunchButton.Content = launch ? "Remove Faster Launch" : "Install Faster Launch";
         UpdateTweakActions();
+    }
+
+    private TweakIntroMovies IntroMovies => new(Path.Combine(_projectRoot, "backups", "tweaks"), new LostArkProcessGuard());
+
+    /// <summary>Faster Launch is installed while Arkive holds the intro movies in its backups.</summary>
+    private bool FasterLaunchInstalled => IntroMovies.Skipping;
+
+    /// <summary>
+    /// Installs or removes Faster Launch on its own: it moves the game's intro movies rather than changing interface code,
+    /// so it can't be switched in game and isn't part of Install All Tweaks.
+    /// </summary>
+    private async void TweaksFasterLaunchButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_tweaksBusy || !ModLibraryIdle) return;
+        if (new LostArkProcessGuard().FindBlockingProcesses() is { Count: > 0 } running)
+        {
+            RefreshTweaks($"Close {string.Join(", ", running)} first: Faster Launch moves files the game is using.");
+            return;
+        }
+        var install = !FasterLaunchInstalled;
+        _tweaksBusy = true;
+        UpdateTweakActions();
+        string status;
+        try
+        {
+            await EnsureGamePackagesDirectoryAsync();
+            if ((await _arkiveModLibrary.LoadAsync()).GamePackagesDirectory is not { } packages)
+                status = "Choose the game folder first (Mods tab): Arkive needs the game's Packages folder.";
+            else
+            {
+                int moved;
+                using (ShowBusy(install ? "Installing Faster Launch…" : "Removing Faster Launch…",
+                           "Arkive is moving the game's intro movies. Please wait until it finishes."))
+                    moved = await Task.Run(() => IntroMovies.Apply(packages, install));
+                Log($"Faster Launch: {(install ? "moved" : "restored")} {moved} intro movie file(s).");
+                status = install
+                    ? "Faster Launch is installed: Lost Ark skips the publisher logos and the seizure warning from the next start."
+                    : "Faster Launch is removed: the intro plays again from the next start.";
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log($"Faster Launch could not be changed: {exception}");
+            status = "Faster Launch could not be changed: " + exception.Message;
+        }
+        finally
+        {
+            _tweaksBusy = false;
+        }
+        RefreshTweaks(status);
     }
 
     private void UpdateTweakActions()
     {
         TweaksInstallAllButton.IsEnabled = !_tweaksBusy && ModLibraryIdle;
+        TweaksFasterLaunchButton.IsEnabled = !_tweaksBusy && ModLibraryIdle;
         TweaksRemoveAllButton.IsEnabled = !_tweaksBusy && ModLibraryIdle &&
                                            (Tweaks.LoadState().ModId is not null || _arkiveModLibraryManifest?.Mods.Any(TweakModService.IsTweakMod) == true);
     }
@@ -180,16 +235,11 @@ public partial class MainWindow
             return "Choose the game folder first (Mods tab): Arkive needs the game's Packages folder.";
         var removing = settings.Enabled.Count == 0;
         var title = removing ? "Removing tweaks…" : "Installing tweaks…";
-        var skipIntro = settings.Enabled.TryGetValue("fastlaunch", out var launch) &&
-                        (!launch.TryGetValue("skipIntro", out var skip) || skip.ValueKind == JsonValueKind.True);
 
         TweakBuildResult built;
         ArkiveModApplyPlan plan;
         using (ShowBusy(title, "Arkive is preparing the game's interface files. Please wait until it finishes."))
         {
-            var introFiles = await Task.Run(() => new TweakIntroMovies(Path.Combine(_projectRoot, "backups", "tweaks"), new LostArkProcessGuard())
-                .Apply(packages, skipIntro));
-            if (introFiles > 0) Log($"Tweaks: {(skipIntro ? "moved" : "restored")} {introFiles} intro movie file(s).");
             built = await Task.Run(() => Tweaks.BuildAsync(settings, packages, TweakCode.LoadSwf()));
             Log($"Tweaks built: tweaks={string.Join(",", settings.Enabled.Keys)}, mod={built.Mod?.ModId ?? "-"}, " +
                 $"movies={string.Join(",", built.Movies)}, packages={string.Join(",", built.Packages)}, " +
