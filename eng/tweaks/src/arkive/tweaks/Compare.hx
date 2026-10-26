@@ -11,18 +11,19 @@ import scaleform.clik.events.ButtonEvent;
 
 /**
 	Compare With Me: a "Compare" tab in the inspect window that sets the player's build beside yours. Equipment,
-	accessories and gems sit in the game's own item slots (hovering one shows the game's tooltip), engravings, Ark
-	Passive points and combat stats are listed beside yours, and every difference says what taking just that part of
-	theirs would do to your Combat Power, priced with Combat Power on Tooltips' model. The top of the page prices their
-	whole build on you.
+	accessories and gems are drawn as the profile draws its slots (the slot's background, grade background, icon and
+	frame), engravings, Ark Passive points and combat stats are listed beside yours, and every difference says what
+	taking just that part of theirs would do to your Combat Power, priced with Combat Power on Tooltips' model. The top
+	of the page prices their whole build on you.
 
-	Your side comes from your own Character Profile: the tweak keeps what it showed the last time it was open (its
-	slots, lists and labels), and Combat Power's model keeps your gear and totals from the same reading. Hovering one of
-	your slots asks the game for that slot, so the tooltip is always your item now.
+	The page never makes item slots of its own: a new ARKNewSlot binds itself to the game engine (ARKDataBinding) and
+	the engine froze and crashed on one. Items are read only through the windows' own slots, as Combat Power reads
+	them: theirs from the inspect window when the page draws, yours from your profile while it shows (kept, with its
+	lists and labels, for later; Combat Power's model keeps your gear and totals from the same reading).
 
 	The tab sits before Logs Tab's. With both, the seven tabs share the row the game's five and Logs share alone. Like
 	the Logs tab it is a page of its own: the other tabs' pages hide while it shows, and any real tab (or a new inspect)
-	closes it. Clicks and drags never reach the slots, so nothing can be moved or equipped from the page.
+	closes it.
 **/
 @:keep
 @:access(arkive.tweaks.CombatPower)
@@ -39,6 +40,7 @@ class Compare {
 	static inline var TITLE_ART_WIDTH = 194;
 	/** The profile's slots are this wide unscaled (a 64 px icon in a 3 px frame). */
 	static inline var SLOT_ART = 70;
+	static inline var ICON = 64;
 
 	static inline var TITLE = 0x919CA6;
 	static inline var TEXT = 0xE6E6E6;
@@ -66,15 +68,17 @@ class Compare {
 	static var RIGHT_SLOTS:Array<Int> = [6, 7, 8, 9, 10, 11, 12];
 	static var PASSIVES:Array<String> = ["Evolution", "Enlightenment", "Leap"];
 
-	/** Engraving grades as the profile's list numbers them (1 rare … 4 relic), with their names and colours. */
-	static var GRADE_WORDS:Array<String> = ["", "Rare", "Heroic", "Legendary", "Relic"];
+	/** Engraving grade colours by the profile list's grade numbers (1 rare … 4 relic). */
 	static var GRADE_COLORS:Array<Int> = [TEXT, 0x00B0FA, 0xCE43FC, 0xF99200, 0xFA5D00];
 
 	/** Your own profile window, and what it last showed. */
 	static var mineWindow:Dynamic;
 	static var frames = 0;
+	/** Your slots' data (for their pictures) and the items and gems read from them, by slot. */
 	static var myGear:Array<Dynamic>;
+	static var myItems:Array<Dynamic>;
 	static var myGems:Array<Dynamic>;
+	static var myGemData:Array<Dynamic>;
 	static var myEngravings:Array<Dynamic>;
 	static var myPassive:Array<Float>;
 	static var myCombat:Dynamic;
@@ -260,8 +264,8 @@ class Compare {
 		showing = true;
 		pages(self, false);
 		build(self);
-		draw();
 		page.visible = true;
+		safeDraw();
 	}
 
 	/** Closes the page; `restore` shows the window's own tab again (not when Logs Tab's page takes over). */
@@ -311,7 +315,7 @@ class Compare {
 		}
 		frames++;
 		if (frames % 20 == 0 && signature(window) != shownSignature)
-			draw();
+			safeDraw();
 	}
 
 	/** What decides the page's content: the name, Combat Power and which slots are filled. */
@@ -334,12 +338,17 @@ class Compare {
 		var self:Dynamic = mineWindow;
 		if (self == null || self.parent == null || !self.parent.visible || !self.visible)
 			return;
+		// Tooltips are read only when a slot's data changed, not every check.
 		var gear = slotData(gearSlots(self), SLOT_COUNT);
-		if (filled(gear))
+		if (filled(gear) && changed(gear, myGear)) {
 			myGear = gear;
-		var gems = slotData(gemSlots(self), GEM_COUNT);
-		if (filled(gems))
-			myGems = gems;
+			myItems = readItems(self);
+		}
+		var gemData = slotData(gemSlots(self), GEM_COUNT);
+		if (filled(gemData) && changed(gemData, myGemData)) {
+			myGemData = gemData;
+			myGems = readGems(self);
+		}
 		var engravings = readEngravings(self);
 		if (engravings.length > 0)
 			myEngravings = engravings;
@@ -358,6 +367,15 @@ class Compare {
 		var power = powerLabel(self);
 		if (power != null && power.visible)
 			myPower = labelText(power);
+	}
+
+	static function changed(now:Array<Dynamic>, before:Array<Dynamic>):Bool {
+		if (before == null || before.length != now.length)
+			return true;
+		for (i in 0...now.length)
+			if (now[i] != before[i])
+				return true;
+		return false;
 	}
 
 	static function filled(list:Array<Dynamic>):Bool {
@@ -478,17 +496,40 @@ class Compare {
 		return seen == CombatPower.COMBAT_LABELS.length ? found : null;
 	}
 
-	/** The item a slot of the page shows (Combat Power's reading of its tooltip), or null. */
-	static function itemFrom(slot:Dynamic, index:Int):Dynamic {
-		var boxes = slot == null ? null : Tooltips.boxes(slot, slot);
-		var item:Dynamic = boxes == null ? null : CombatPower.itemOf(boxes);
-		if (item == null)
-			return null;
-		item.slot = CombatPower.SLOTS[index];
-		item.shownQuality = CombatPower.qualityOf(boxes);
-		if (index == 0)
-			item.quality = item.shownQuality;
-		return item;
+	/** A window's equipment by slot, each read through its own slot's tooltip (Combat Power's reading), null where empty. */
+	static function readItems(self:Dynamic):Array<Dynamic> {
+		var manager:Dynamic = gearSlots(self);
+		var items:Array<Dynamic> = [];
+		for (i in 0...SLOT_COUNT) {
+			var slot:Dynamic = manager == null ? null : manager.getSlotAtIndex(i);
+			var boxes = slot == null || slot.data == null ? null : Tooltips.boxes(slot.binding, slot);
+			var item:Dynamic = boxes == null ? null : CombatPower.itemOf(boxes);
+			if (item != null) {
+				item.slot = CombatPower.SLOTS[i];
+				item.shownQuality = CombatPower.qualityOf(boxes);
+				if (i == 0)
+					item.quality = item.shownQuality;
+				item.data = slot.data;
+			}
+			items.push(item);
+		}
+		return items;
+	}
+
+	/** A window's equipped gems ({tier, level, kind, base, name, data}), read through its gem slots' tooltips. */
+	static function readGems(self:Dynamic):Array<Dynamic> {
+		var manager:Dynamic = gemSlots(self);
+		var gems:Array<Dynamic> = [];
+		for (i in 0...GEM_COUNT) {
+			var slot:Dynamic = manager == null ? null : manager.getSlotAtIndex(i);
+			var boxes = slot == null || slot.data == null ? null : Tooltips.boxes(slot.binding, slot);
+			var gem:Dynamic = boxes == null ? null : CombatPower.gemOf(boxes);
+			if (gem != null) {
+				gem.data = slot.data;
+				gems.push(gem);
+			}
+		}
+		return gems;
 	}
 
 	// ---- The page ----
@@ -540,6 +581,13 @@ class Compare {
 		return label == null ? null : label.textField;
 	}
 
+	/** Draws the page; an error leaves whatever was drawn (the page's listeners aren't inside the hooks' guard). */
+	static function safeDraw():Void {
+		try {
+			draw();
+		} catch (error:Dynamic) {}
+	}
+
 	/** Draws the page afresh from the inspect window (theirs) and what your profile last showed (yours). */
 	static function draw():Void {
 		while (content.numChildren > 0)
@@ -552,25 +600,25 @@ class Compare {
 		var dps = ready && CombatPower.role == 0;
 		var theirRole = roleOf(window);
 
-		// The slots come first: each item is read through its slot's own tooltip, as the game's hover reads it. Theirs
-		// are the inspect window's now; yours are what your profile last showed (prices use Combat Power's reading of it).
-		var manager:Dynamic = gearSlots(window);
-		var like:Dynamic = manager == null ? null : manager.getSlotAtIndex(1);
-		var theirData = slotData(manager, SLOT_COUNT);
-		var mineData:Array<Dynamic> = myGear == null ? [] : myGear;
-		var theirs:Array<Dynamic> = [];
-		var mineItems:Array<Dynamic> = [];
+		// Theirs are read from the inspect window now; yours are what your profile last showed.
+		var theirs = readItems(window);
+		var mineItems:Array<Dynamic> = myItems == null ? [] : myItems;
+		while (mineItems.length < SLOT_COUNT)
+			mineItems.push(null);
+		var model:Dynamic = slotModel();
 		for (i in 0...SLOT_COUNT) {
 			var at = rowOf(i);
 			var x:Float = at.x;
 			var y:Float = at.y;
-			theirs.push(itemFrom(placedSlot(i, like, theirData[i], x, y + 2), i));
-			mineItems.push(itemFrom(placedSlot(i, like, i < mineData.length ? mineData[i] : null, x + COLUMN_WIDTH - SLOT, y + 2), i));
+			var theirItem:Dynamic = theirs[i];
+			var mineItem:Dynamic = mineItems[i];
+			emptyBack(i, x, y + 2, SLOT);
+			emptyBack(i, x + COLUMN_WIDTH - SLOT, y + 2, SLOT);
+			itemPicture(model, theirItem == null ? null : theirItem.data, x, y + 2, SLOT);
+			itemPicture(model, mineItem == null ? null : mineItem.data, x + COLUMN_WIDTH - SLOT, y + 2, SLOT);
 		}
-		var gemManager:Dynamic = gemSlots(window);
-		var gemLike:Dynamic = gemManager == null ? null : gemManager.getSlotAtIndex(0);
-		var theirGems = gemsOf(gemLike, slotData(gemManager, GEM_COUNT));
-		var mineGems = gemsOf(gemLike, myGems == null ? [] : myGems);
+		var theirGems = readGems(window);
+		var mineGems:Array<Dynamic> = myGems == null ? [] : CombatPower.copyOf(myGems);
 		var theirEngravings = readEngravings(window);
 		var theirPassive = readPassive(window);
 		var theirCombat = readCombat(window);
@@ -578,7 +626,7 @@ class Compare {
 		header(ready, dps, theirRole, theirs, theirGems, theirEngravings, theirPassive, theirCombat);
 		gearColumn(COLUMNS[0], "Equipment", LEFT_SLOTS, theirs, mineItems, dps);
 		gearColumn(COLUMNS[1], "Accessories", RIGHT_SLOTS, theirs, mineItems, dps);
-		gemStrip(theirGems, mineGems, ready);
+		gemStrip(model, theirGems, mineGems, ready);
 		var y = engravingRows(theirs, mineItems, theirEngravings, ready);
 		y = passiveRows(y, theirPassive, dps);
 		y = combatRows(y, theirCombat, dps);
@@ -587,8 +635,7 @@ class Compare {
 			note.multiline = true;
 			note.wordWrap = true;
 			note.height = PAGE_HEIGHT - y - 4;
-			note.text = "Each figure is your Combat Power with just that part of theirs in place of yours. "
-				+ "Hover a slot for the game's own tooltip.";
+			note.text = "Each figure is your Combat Power with just that part of theirs in place of yours.";
 			content.addChild(note);
 		}
 	}
@@ -602,25 +649,6 @@ class Compare {
 		return {x: COLUMNS[1], y: TOP + TITLE_BLOCK + at * ROW};
 	}
 
-	/** Gem slots for these slot data, each with its gem ({kind, level, …, slot}); gemRow places them. */
-	static function gemsOf(like:Dynamic, list:Array<Dynamic>):Array<Dynamic> {
-		var gems:Array<Dynamic> = [];
-		for (data in list) {
-			var made:Dynamic = gameSlot(like, data, 0, 0, GEM);
-			if (made == null)
-				continue;
-			var boxes = Tooltips.boxes(made, made);
-			var gem:Dynamic = boxes == null ? null : CombatPower.gemOf(boxes);
-			if (gem == null) {
-				content.removeChild(made.parent);
-				continue;
-			}
-			gem.slot = made;
-			gems.push(gem);
-		}
-		return gems;
-	}
-
 	// ---- Header ----
 
 	static function header(ready:Bool, dps:Bool, theirRole:Int, theirs:Array<Dynamic>, theirGems:Array<Dynamic>,
@@ -629,11 +657,11 @@ class Compare {
 		var right = COLUMNS[2];
 		var name = labelText(nameLabel(window));
 		content.addChild(text(left, 2, COLUMN_WIDTH, 18, NAME, name, "left"));
-		content.addChild(text(left, 28, COLUMN_WIDTH, 13, DIM, details(labelText(classLabel(window)), labelText(levelLabel(window)),
+		content.addChild(text(left, 28, COLUMN_WIDTH, 12, DIM, details(labelText(classLabel(window)), labelText(levelLabel(window)),
 			theirRole < 0 ? "" : labelText(powerLabel(window))), "left"));
 		var you = myName.length > 0 ? "You  ·  " + myName : "You";
 		content.addChild(text(right, 2, COLUMN_WIDTH, 18, NAME, you, "right"));
-		content.addChild(text(right, 28, COLUMN_WIDTH, 13, DIM, details(myClass, myLevel, myPower), "right"));
+		content.addChild(text(right, 28, COLUMN_WIDTH, 12, DIM, details(myClass, myLevel, myPower), "right"));
 
 		var middle = COLUMNS[1];
 		var lead:TextField;
@@ -666,7 +694,7 @@ class Compare {
 			parts.push("Item Lv. " + level);
 		if (power.length > 0)
 			parts.push("Combat Power " + power);
-		return parts.join("  ·  ");
+		return parts.join(" · ");
 	}
 
 	/**
@@ -807,13 +835,13 @@ class Compare {
 
 	// ---- Gems ----
 
-	static function gemStrip(theirGems:Array<Dynamic>, mineGems:Array<Dynamic>, ready:Bool):Void {
+	static function gemStrip(model:Dynamic, theirGems:Array<Dynamic>, mineGems:Array<Dynamic>, ready:Bool):Void {
 		var left = COLUMNS[0];
 		var y = sectionTitle(left, GEMS_TOP, "Gems", false, COLUMNS[1] + COLUMN_WIDTH - left);
 		theirGems.sort(gemOrder);
 		mineGems.sort(gemOrder);
-		gemRow(left, y, "Theirs", theirGems);
-		gemRow(left, y + GEM + 12, "Yours", mineGems);
+		gemRow(model, left, y, "Theirs", theirGems);
+		gemRow(model, left, y + GEM + 12, "Yours", mineGems);
 		var change:Float = nothing();
 		if (ready && theirGems.length > 0)
 			change = CombatPower.value(CombatPower.gear, theirGems) / CombatPower.value(CombatPower.gear, CombatPower.equipped) - 1;
@@ -821,16 +849,14 @@ class Compare {
 		delta(x, y + 14, COLUMNS[1] + COLUMN_WIDTH - x, change, theirGems.length == 0 ? "open their Gems tab" : null);
 	}
 
-	static function gemRow(x:Float, y:Float, label:String, gems:Array<Dynamic>):Void {
+	static function gemRow(model:Dynamic, x:Float, y:Float, label:String, gems:Array<Dynamic>):Void {
 		content.addChild(text(x, y + 9, 56, 13, DIM, label, "left"));
 		for (i in 0...gems.length) {
 			if (i >= GEM_COUNT)
 				break;
 			var gem:Dynamic = gems[i];
 			var at = x + 58 + i * GEM_STEP;
-			var holder:Dynamic = gem.slot.parent;
-			holder.x = at;
-			holder.y = y;
+			itemPicture(model, gem.data, at, y, GEM);
 			var level:Int = gem.level;
 			var shown:String = untyped __global__["String"](level);
 			content.addChild(text(at - 3, y + GEM - 4, GEM + 6, 11, TEXT, "Lv." + shown, "center"));
@@ -901,7 +927,7 @@ class Compare {
 		return null;
 	}
 
-	/** "Relic 4" in the grade's colour, with the stone's levels for it in grey ("+2"). */
+	/** "Lv. 4" in the grade's colour (as the profile colours grades), with the stone's levels for it ("+2"). */
 	static function engravingCell(engraving:Dynamic, stone:Dynamic, name:String, x:Float, y:Float):Void {
 		if (engraving == null) {
 			content.addChild(text(x, y + 2, 70, 13, DIM, "—", "center"));
@@ -909,12 +935,11 @@ class Compare {
 		}
 		var grade:Int = engraving.grade;
 		var level:Int = engraving.level;
-		var word = grade >= 0 && grade < GRADE_WORDS.length ? GRADE_WORDS[grade] : "";
 		var shown:String = untyped __global__["String"](level);
 		var stoneLevel = CombatPower.stoneLevel(stone, name);
 		var extra:String = untyped __global__["String"](stoneLevel);
 		content.addChild(text(x, y + 2, 70, 13, grade >= 0 && grade < GRADE_COLORS.length ? GRADE_COLORS[grade] : TEXT,
-			(word.length > 0 ? word + " " : "Lv. ") + shown + (stoneLevel > 0 ? " +" + extra : ""), "center"));
+			"Lv. " + shown + (stoneLevel > 0 ? "  +" + extra : ""), "center"));
 	}
 
 	/** An engraving's value in the model (hundredths of a percent) at its grade, level and the stone's levels. */
@@ -987,7 +1012,7 @@ class Compare {
 			art.mouseEnabled = false;
 			under.addChild(art);
 		}
-		content.addChild(text(x, y + 20, wide, 16, TITLE, title, "center"));
+		content.addChild(text(x, y + 20, wide, 16, TITLE, title, "center", bigFont));
 		if (sides) {
 			content.addChild(text(x + 2, y + 30, 60, 12, DIM, "Theirs", "left"));
 			content.addChild(text(x + wide - 62, y + 30, 60, 12, DIM, "Yours", "right"));
@@ -995,52 +1020,89 @@ class Compare {
 		return y + TITLE_BLOCK;
 	}
 
-	/** A slot with the profile's empty-slot picture for that slot behind it, as the profile draws them; null when empty. */
-	static function placedSlot(index:Int, like:Dynamic, data:Dynamic, x:Float, y:Float):Dynamic {
-		var size:Float = SLOT;
+	/** The profile's empty-slot picture for an equipment slot (helm, weapon …), as it draws one under each slot. */
+	static function emptyBack(index:Int, x:Float, y:Float, size:Float):Void {
 		var manager:Dynamic = gearSlots(window);
 		var back:Dynamic = manager == null ? null : manager.getChildByName("slotBgMc" + index);
-		if (back != null) {
-			var made:Dynamic = untyped __new__(back.constructor);
-			made.mouseEnabled = false;
-			made.mouseChildren = false;
-			var natural:Float = made.width;
-			var scale = natural > 0 ? size / natural : 1;
-			made.scaleX = scale;
-			made.scaleY = scale;
-			made.x = x;
-			made.y = y;
-			under.addChild(made);
-		}
-		return gameSlot(like, data, x, y, size);
+		if (back == null)
+			return;
+		var made:Dynamic = untyped __new__(back.constructor);
+		made.mouseEnabled = false;
+		made.mouseChildren = false;
+		var natural:Float = made.width;
+		var scale = natural > 0 ? size / natural : 1;
+		made.scaleX = scale;
+		made.scaleY = scale;
+		made.x = x;
+		made.y = y;
+		under.addChild(made);
 	}
 
 	/**
-		A new slot of the window's own kind showing this data: the game draws its icon, grade frame and level, and its
-		tooltip on hover. Clicks and drags are stopped before they reach it, so it can't move or equip anything.
+		The art a profile slot is made of, taken from one of the window's own slots: its background, grade background and
+		frame (their classes), and where its 64 px icon sits. Null when the window has no slot to copy.
 	**/
-	static function gameSlot(like:Dynamic, data:Dynamic, x:Float, y:Float, size:Float):Dynamic {
-		if (like == null || data == null)
+	static function slotModel():Dynamic {
+		var manager:Dynamic = gearSlots(window);
+		var slot:Dynamic = manager == null ? null : manager.getSlotAtIndex(1);
+		if (slot == null)
 			return null;
-		var holder = new Sprite();
-		holder.x = x;
-		holder.y = y;
-		for (type in [MouseEvent.MOUSE_DOWN, MouseEvent.MOUSE_UP, MouseEvent.CLICK, MouseEvent.DOUBLE_CLICK])
-			holder.addEventListener(type, block, true);
-		content.addChild(holder);
-		var made:Dynamic = untyped __new__(like.constructor);
-		var scale = size / SLOT_ART;
-		made.scaleX = scale;
-		made.scaleY = scale;
-		holder.addChild(made);
-		made.useDrag = false;
-		made.setItemSlotData = data;
-		made.useDrag = false;
-		return made;
+		var background:Dynamic = slot.background;
+		var grade:Dynamic = slot.gradeBG;
+		var border:Dynamic = slot.border;
+		var canvas:Dynamic = slot.contentCanvas;
+		return {
+			background: background == null ? null : background.constructor,
+			grade: grade == null ? null : grade.constructor,
+			border: border == null ? null : border.constructor,
+			iconX: canvas == null ? 3 : canvas.x,
+			iconY: canvas == null ? 3 : canvas.y
+		};
 	}
 
-	static function block(event:Dynamic):Void {
-		event.stopImmediatePropagation();
+	/**
+		An item drawn as the profile draws its slot: background, the grade background for the item's grade, the icon
+		(the game's own icon loader, ExtendIcon) and the frame. Only pictures: nothing in it is a slot the game knows.
+	**/
+	static function itemPicture(model:Dynamic, data:Dynamic, x:Float, y:Float, size:Float):Void {
+		if (model == null || data == null)
+			return;
+		var picture = new Sprite();
+		picture.mouseEnabled = false;
+		picture.mouseChildren = false;
+		picture.x = x;
+		picture.y = y;
+		var scale = size / SLOT_ART;
+		picture.scaleX = scale;
+		picture.scaleY = scale;
+		content.addChild(picture);
+		var background:Dynamic = model.background == null ? null : untyped __new__(model.background);
+		if (background != null)
+			picture.addChild(background);
+		var iconX:Float = model.iconX;
+		var iconY:Float = model.iconY;
+		if (model.grade != null && data.iconGrade != null) {
+			var grade:Dynamic = untyped __new__(model.grade);
+			grade.x = iconX;
+			grade.y = iconY;
+			picture.addChild(grade);
+			grade.icon = data.iconGrade;
+		}
+		var iconClass:Dynamic = GameUi.definition("ark.controls.ExtendIcon");
+		var path:String = data.iconPath;
+		if (iconClass != null && path != null && path != "") {
+			var icon:Dynamic = untyped __new__(iconClass);
+			icon.iconType = "Type_NORMAL";
+			icon.canvasWidth = ICON;
+			icon.canvasHeight = ICON;
+			icon.x = iconX;
+			icon.y = iconY;
+			picture.addChild(icon);
+			icon.loadImageEx(path, data.iconU, data.iconV, data.iconWidth, data.iconHeight, false);
+		}
+		var border:Dynamic = model.border == null ? null : untyped __new__(model.border);
+		if (border != null)
+			picture.addChild(border);
 	}
 
 	/** A faint band behind every other row, as the profile's lists shade theirs. */
