@@ -119,12 +119,14 @@ internal static class Program
         await UntilAsync(() => Control<ItemsControl>(window, "TweakList").Items.Count > 0,
             () => "The Tweaks tab listed no tweaks.");
         var tweakRows = Control<ItemsControl>(window, "TweakList").Items.OfType<TweakRow>().ToArray();
-        Check(tweakRows.Length == Arkive.Core.Tweaks.TweakCatalog.All.Count(tweak => tweak.Available) &&
+        Check(tweakRows.Length == Arkive.Core.Tweaks.TweakCatalog.All.Count(tweak => tweak.Available && !tweak.RestartOnly) &&
               tweakRows.All(row => row.On is null && !string.IsNullOrWhiteSpace(row.Description)),
             "The Tweaks tab does not list every finished tweak, with its description and no on/off state while none is installed.");
         await UntilAsync(() => Control<Button>(window, "TweaksInstallAllButton").IsVisible, () => "The Tweaks tab shows no Install All Tweaks button.");
         Check(!Control<Button>(window, "TweaksRemoveAllButton").IsEnabled, "The Tweaks tab offers Remove All Tweaks with nothing installed.");
-        Console.WriteLine($"PASS: the Tweaks tab lists {tweakRows.Length} tweaks with Install All and Remove All");
+        Check(Control<Button>(window, "TweaksFasterLaunchButton").Content as string == "Install Faster Launch",
+            "The Tweaks tab does not offer Faster Launch on its own.");
+        Console.WriteLine($"PASS: the Tweaks tab lists {tweakRows.Length} tweaks with Install All and Remove All, and Faster Launch on its own");
         tabs.SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
         Console.WriteLine("PASS: asset discovery, creation, editing, and deployment have separate main tabs");
         tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");

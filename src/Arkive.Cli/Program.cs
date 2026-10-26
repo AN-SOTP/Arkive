@@ -3253,17 +3253,13 @@ static int TweaksInstall(string projectRoot, bool saved, bool includeOtherMods)
     {
         Edits = environment.Context.Edits,
     };
+    // Faster Launch isn't part of the saved choices: the Tweaks tab installs it on its own.
     var settings = service.LoadState().Settings;
-    var skipIntro = settings.Enabled.TryGetValue("fastlaunch", out var launch) &&
-                    (!launch.TryGetValue("skipIntro", out var skip) || skip.ValueKind == JsonValueKind.True);
-    var intro = new Arkive.Core.Tweaks.TweakIntroMovies(Path.Combine(root, "backups", "tweaks"), new LostArkProcessGuard())
-        .Apply(packages, skipIntro);
     var built = service.BuildAsync(settings, packages, Arkive.Core.Tweaks.TweakCode.LoadSwf()).GetAwaiter().GetResult();
     Console.WriteLine($"Tweaks:   {(settings.Enabled.Count == 0 ? "none (removing)" : string.Join(", ", settings.Enabled.Keys))}");
     Console.WriteLine($"Movies:   {string.Join(", ", built.Movies)}");
     Console.WriteLine($"Packages: {string.Join(", ", built.Packages)}");
     Console.WriteLine($"Missing:  {(built.MissingHooks.Count == 0 ? "none" : string.Join(", ", built.MissingHooks))}");
-    if (intro > 0) Console.WriteLine($"Intro movies {(skipIntro ? "moved aside" : "restored")}: {intro}");
     var plan = environment.Apply.PlanAsync().GetAwaiter().GetResult();
     if (!plan.CanApply)
     {

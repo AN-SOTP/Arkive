@@ -1224,7 +1224,7 @@
                         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                             <TextBlock Text="Tweaks" FontSize="20" Margin="0,0,0,6" />
                             <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
-                                       Text="Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install All Tweaks puts every tweak into the game; Remove All Tweaks takes them all out again. Close Lost Ark before installing or removing them." />
+                                       Text="Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install All Tweaks puts every tweak into the game; Remove All Tweaks takes them all out again. Faster Launch is installed on its own. Close Lost Ark before installing or removing them." />
                             <Border Padding="10,5" Background="{DynamicResource WarningSurfaceBrush}"
                                     BorderBrush="{DynamicResource WarningBorderBrush}" BorderThickness="1">
                                 <TextBlock TextWrapping="Wrap" FontSize="12"
@@ -1239,7 +1239,7 @@
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                 <StackPanel Width="760">
                                     <UniformGrid Columns="2">
-                                        <Button x:Name="TweaksInstallAllButton" Height="76" Margin="0,0,6,0" Style="{StaticResource PrimaryButtonStyle}"
+                                        <Button x:Name="TweaksInstallAllButton" Height="68" Margin="0,0,6,0" Style="{StaticResource PrimaryButtonStyle}"
                                                 Click="TweaksInstallAllButton_Click"
                                                 ToolTip="Puts every tweak into the game. A first install has them all switched off; switch them on in game. Your switches and options from before are kept.">
                                             <StackPanel>
@@ -1247,7 +1247,7 @@
                                                 <TextBlock Text="Switch Them On In Game" FontSize="12" Opacity="0.85" HorizontalAlignment="Center" Margin="0,2,0,0" />
                                             </StackPanel>
                                         </Button>
-                                        <Button x:Name="TweaksRemoveAllButton" Height="76" Margin="6,0,0,0" Click="TweaksRemoveAllButton_Click"
+                                        <Button x:Name="TweaksRemoveAllButton" Height="68" Margin="6,0,0,0" Click="TweaksRemoveAllButton_Click"
                                                 ToolTip="Takes every tweak out of the game; the game's own windows come back exactly as they were. Your switches and options are kept for next time.">
                                             <StackPanel>
                                                 <TextBlock Text="Remove All Tweaks" FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center" />
@@ -1259,16 +1259,33 @@
                                             BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                                         <TextBlock x:Name="TweaksStatusText" TextWrapping="Wrap" Text="No tweaks are installed." />
                                     </Border>
+                                    <Border Margin="0,10,0,0" Padding="12,10" CornerRadius="6" BorderThickness="1"
+                                            BorderBrush="{DynamicResource BorderStrongBrush}" Background="{DynamicResource SurfaceBrush}">
+                                        <DockPanel>
+                                            <Button x:Name="TweaksFasterLaunchButton" DockPanel.Dock="Right" MinWidth="190" Height="40" Margin="12,0,0,0"
+                                                    VerticalAlignment="Center" Content="Install Faster Launch" Click="TweaksFasterLaunchButton_Click"
+                                                    ToolTip="Moves the game's intro movies into Arkive's backups, or puts them back. Close Lost Ark first." />
+                                            <StackPanel>
+                                                <DockPanel>
+                                                    <Border x:Name="FasterLaunchState" DockPanel.Dock="Right" Padding="7,1" CornerRadius="9" VerticalAlignment="Center"
+                                                            Background="{DynamicResource SurfaceAltBrush}">
+                                                        <TextBlock x:Name="FasterLaunchStateText" Text="Not Installed" FontSize="11" />
+                                                    </Border>
+                                                    <TextBlock Text="Faster Launch" FontSize="15" FontWeight="SemiBold" />
+                                                </DockPanel>
+                                                <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,3,0,0" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                           Text="Skips the publisher logos and the seizure warning before the login screen. It changes game files, so it can't be switched in game: install or remove it here, with Lost Ark closed." />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Border>
                                     <TextBlock Text="Enable, Disable And Change Tweaks In Game" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,4" />
                                     <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
-                                               Text="Once installed, every tweak is enabled, disabled and changed in game, not here. In Lost Ark, press Esc and click Arkive Tweaks in the bar at the bottom of the menu: tick a tweak to enable it, untick it to disable it, and change its options below it. Changes act straight away. Keep Arkive running so they are kept for your next session." />
+                                               Text="In Lost Ark, press Esc and click Arkive Tweaks at the bottom of the menu: tick a tweak to enable it, untick it to disable it, and change its options below it. Keep Arkive running so your changes are kept for next time." />
                                     <Border CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderStrongBrush}" Background="Black"
                                             Cursor="Hand" MouseLeftButtonUp="TweaksEscapeMenuPicture_Click"
-                                            ToolTip="The escape menu in game with the Arkive Tweaks button marked. Click to see it full size.">
+                                            ToolTip="The escape menu with the Arkive Tweaks button marked, built from the game's own interface with placeholder names and values. Click to see it full size.">
                                         <Image x:Name="TweaksEscapeMenuImage" Height="272" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
                                     </Border>
-                                    <TextBlock Text="Built from the game's own interface; names and values are placeholders. Click the picture to see it full size." FontSize="11" FontStyle="Italic" TextWrapping="Wrap"
-                                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" />
                                 </StackPanel>
                             </ScrollViewer>
                             <DockPanel Grid.Column="1" Margin="16,0,0,0">

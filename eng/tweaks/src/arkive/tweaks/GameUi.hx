@@ -89,21 +89,6 @@ class GameUi {
 			button.enabled = on;
 	}
 
-	/** Sets a game button's height and keeps its label centred in it. */
-	public static function setHeight(button:Dynamic, height:Float):Void {
-		var constraints:Dynamic = button.constraints;
-		var label:Dynamic = constraints == null ? null : constraints.getElement("textField");
-		if (label != null) {
-			var text:Float = button.height - label.top - label.bottom;
-			var margin:Float = (height - text) / 2;
-			if (margin < 0)
-				margin = 0;
-			label.top = margin;
-			label.bottom = margin;
-		}
-		button.height = height;
-	}
-
 	/** Clicks a game button the way the game's own click does. */
 	public static function press(button:Dynamic):Void {
 		button.dispatchEvent(new scaleform.clik.events.ButtonEvent(scaleform.clik.events.ButtonEvent.CLICK));
@@ -121,16 +106,6 @@ class GameUi {
 			return false;
 		row.dispatchEvent(new scaleform.gfx.MouseEventEx(flash.events.MouseEvent.CLICK));
 		return true;
-	}
-
-	/** Right-clicks an item slot as the game's mouse-up does: the slot's right-click event, then the client's call. */
-	public static function rightClickSlot(slot:Dynamic):Void {
-		if (scaleform.clik.managers.DragManager.inDrag())
-			return;
-		var bindID:String = slot.bindID;
-		var slotID:Int = slot.slotID;
-		slot.dispatchEvent(new ark.events.SlotEvent(ark.events.SlotEvent.RCLICK, true, false, 0, 1, bindID, slotID));
-		flash.external.ExternalInterface.call("ARKSlotMouseRightClick", slot);
 	}
 
 	/** The option's switch, on unless the settings turn it off. */

@@ -1,8 +1,8 @@
 package arkive.tweaks;
 
 /**
-	Reading and moving the player's item slots through the client's own functions: the tooltip query the game's
-	tooltips use, and the drag-end call a drag and drop makes. Slot types: 4 bag, 61 roster storage, 341 equipped gems.
+	Reading the player's item slots through the client's own tooltip query, the one the game's tooltips use.
+	Slot types: 4 bag, 61 roster storage, 341 equipped gems.
 **/
 class Slots {
 	public static inline var BAG = 4;
@@ -69,22 +69,5 @@ class Slots {
 			if (shows(untyped value[key], text, depth + 1))
 				return true;
 		return false;
-	}
-
-	/** The first empty slot of this type from `from` up to (not including) `count`, or -1. */
-	public static function firstEmpty(type:Int, from:Int, count:Int):Int {
-		for (id in from...count)
-			if (!filled(type, id))
-				return id;
-		return -1;
-	}
-
-	/** Asks the client to move an item as a drag and drop from one slot to the other would; false when it can't ask. */
-	public static function move(fromType:Int, fromId:Int, toType:Int, toId:Int):Bool {
-		var drag:Dynamic = GameUi.definition("ark.managers.ARKDragManager");
-		if (drag == null || drag.nativeSlotDragEnd == null)
-			return false;
-		drag.nativeSlotDragEnd({slotType: fromType, slotID: fromId}, {slotType: toType, slotID: toId});
-		return true;
 	}
 }

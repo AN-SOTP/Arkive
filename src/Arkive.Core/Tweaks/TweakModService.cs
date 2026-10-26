@@ -106,8 +106,7 @@ public sealed class TweakModService(
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["tweaks"] = tweaks,
-            ["on"] = settings.Enabled.Keys.Where(id => tweaks.ContainsKey(id) || TweakCatalog.Find(id) is { RestartOnly: true })
-                .ToDictionary(id => id, _ => true),
+            ["on"] = settings.Enabled.Keys.Where(tweaks.ContainsKey).ToDictionary(id => id, _ => true),
             ["home"] = Path.GetFullPath(root).Replace('\\', '/'),
             ["live"] = live,
             ["panel"] = live ? Panel(built) : null,
@@ -133,14 +132,15 @@ public sealed class TweakModService(
     /// <summary>
     /// What the Tweaks tab's Install All Tweaks installs: In-game Tweak Settings set to build every tweak, and switched on
     /// only the tweaks the player has on (or had on before Remove All Tweaks), each with its saved options. A first
-    /// install has every tweak off; the player switches them on in game.
+    /// install has every tweak off; the player switches them on in game. Faster Launch isn't part of it (see
+    /// <see cref="TweakIntroMovies"/>): it changes game files, so the tab installs it on its own.
     /// </summary>
     public TweakSettings EveryTweak()
     {
         var state = LoadState();
         var on = state.Settings.Enabled.Keys.Concat(state.OnBeforeRemove).Append(SettingsTweak).ToHashSet();
         var settings = new TweakSettings();
-        foreach (var tweak in TweakCatalog.All.Where(tweak => tweak.Available && on.Contains(tweak.Id)))
+        foreach (var tweak in TweakCatalog.All.Where(tweak => tweak.Available && !tweak.RestartOnly && on.Contains(tweak.Id)))
             settings.Enabled[tweak.Id] = OptionsOf(state, tweak);
         settings.Enabled[SettingsTweak][EverythingOption] = JsonSerializer.SerializeToElement(true);
         return settings;
@@ -156,16 +156,15 @@ public sealed class TweakModService(
         return options;
     }
 
-    /// <summary>What the escape menu panel lists: the built tweaks (not itself) and the game-file ones, which say so.</summary>
+    /// <summary>What the escape menu panel lists: the built tweaks, not itself.</summary>
     private static object[] Panel(IReadOnlyList<TweakDefinition> built) =>
     [
         .. TweakCatalog.All
-            .Where(tweak => tweak.Id != SettingsTweak && tweak.Available && (tweak.RestartOnly || built.Contains(tweak)))
+            .Where(tweak => tweak.Id != SettingsTweak && built.Contains(tweak))
             .Select(tweak => new
             {
                 id = tweak.Id,
                 name = tweak.Name,
-                restart = tweak.RestartOnly,
                 options = tweak.OptionList.Select(option => new
                 {
                     key = option.Key,
@@ -191,9 +190,7 @@ public sealed class TweakModService(
         var tweaks = TweakCatalog.All.Where(tweak => tweak.Available && !tweak.RestartOnly).ToArray();
         var json = JsonSerializer.Serialize(new Dictionary<string, object>
         {
-            // Game-file tweaks (Faster Launch) are listed too, so the panel shows their switch as saved.
-            ["on"] = TweakCatalog.All.Where(tweak => tweak.Available && state.Settings.Enabled.ContainsKey(tweak.Id))
-                .ToDictionary(tweak => tweak.Id, _ => true),
+            ["on"] = tweaks.Where(tweak => state.Settings.Enabled.ContainsKey(tweak.Id)).ToDictionary(tweak => tweak.Id, _ => true),
             ["tweaks"] = tweaks.ToDictionary(tweak => tweak.Id, tweak => OptionsOf(state, tweak)),
             ["ack"] = ack,
         }, GameJsonOptions);
@@ -209,17 +206,14 @@ public sealed class TweakModService(
     /// <summary>
     /// Saves a change made in the escape menu panel: "request&lt;tab&gt;tweak&lt;tab&gt;&lt;tab&gt;1|0" switches a tweak,
     /// "request&lt;tab&gt;tweak&lt;tab&gt;option&lt;tab&gt;value" sets an option (1|0 for a switch, the choice's value for a single
-    /// choice). Updates the saved state and live.json; returns what changed, or null for a message it can't take. A
-    /// game-file tweak (Faster Launch) can only be switched, and its switch takes effect at the next Install All Tweaks.
+    /// choice). Updates the saved state and live.json; returns what changed, or null for a message it can't take.
     /// </summary>
     public string? ApplyInGameChange(string text)
     {
         var parts = text.Split('\t');
-        if (parts.Length != 4 || TweakCatalog.Find(parts[1]) is not { Available: true } tweak || tweak.Id == SettingsTweak)
+        if (parts.Length != 4 || TweakCatalog.Find(parts[1]) is not { Available: true, RestartOnly: false } tweak || tweak.Id == SettingsTweak)
             return null;
         var (request, key, value) = (parts[0], parts[2], parts[3]);
-        if (tweak.RestartOnly && key.Length > 0)
-            return null;
         var state = LoadState();
         var enabled = state.Settings.Enabled;
         string change;
@@ -267,8 +261,8 @@ public sealed class TweakModService(
 
     /// <summary>
     /// Saves the Tweaks tab's choices without rebuilding when the installed tweaks can already follow them through
-    /// live.json: In-game Tweak Settings is built, every interface tweak now on has hooks, and the game-file tweaks are
-    /// unchanged. Used while the game runs (installing needs it closed). False when a rebuild is needed.
+    /// live.json: In-game Tweak Settings is built and every interface tweak now on has hooks. Used while the game runs
+    /// (installing needs it closed). False when a rebuild is needed.
     /// </summary>
     public bool TrySaveLive(TweakSettings settings)
     {
@@ -276,14 +270,6 @@ public sealed class TweakModService(
         if (state.ModId is null || !state.Built.Contains(SettingsTweak) || !settings.Enabled.ContainsKey(SettingsTweak) ||
             !BuiltTweaks(settings).All(tweak => state.Built.Contains(tweak.Id)))
             return false;
-        foreach (var tweak in TweakCatalog.All.Where(tweak => tweak.RestartOnly))
-        {
-            var before = state.Settings.Enabled.GetValueOrDefault(tweak.Id);
-            var after = settings.Enabled.GetValueOrDefault(tweak.Id);
-            if ((before is null) != (after is null) ||
-                (before is not null && JsonSerializer.Serialize(before) != JsonSerializer.Serialize(after)))
-                return false;
-        }
         foreach (var id in settings.Enabled.Keys)
             state.Kept.Remove(id);
         state.Settings = settings;
@@ -346,7 +332,10 @@ public sealed class TweakModService(
     /// <summary>The bracelet reroll judge, which prices with the Combat Power tweak's tables (kept under its id).</summary>
     public const string BraceletJudgeTweak = "braceletjudge";
 
-    /// <summary>The saved choices, without tweaks Arkive no longer has (a removed tweak's saved options are dropped).</summary>
+    /// <summary>
+    /// The saved choices, without tweaks Arkive no longer has (a removed tweak's saved options are dropped) and without
+    /// Faster Launch, which older Arkive builds saved here: whether it is installed is the intro movies' own state.
+    /// </summary>
     public TweakState LoadState()
     {
         TweakState state;
@@ -358,10 +347,12 @@ public sealed class TweakModService(
         {
             return new();
         }
-        foreach (var id in state.Settings.Enabled.Keys.Concat(state.Kept.Keys).Where(id => TweakCatalog.Find(id) is null).ToArray())
+        foreach (var id in state.Settings.Enabled.Keys.Concat(state.Kept.Keys).Concat(state.OnBeforeRemove)
+                     .Where(id => TweakCatalog.Find(id) is null or { RestartOnly: true }).ToArray())
         {
             state.Settings.Enabled.Remove(id);
             state.Kept.Remove(id);
+            state.OnBeforeRemove.Remove(id);
         }
         return state;
     }
