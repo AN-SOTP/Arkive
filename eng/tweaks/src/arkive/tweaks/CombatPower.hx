@@ -90,6 +90,10 @@ class CombatPower {
 		"Ally Attack Enh."];
 	static var ASTRO_IDS:Array<Int> = [2001, 2002, 2003, 2011, 2012, 2013];
 	static inline var ASTROGEM_OPTION = 31;
+	/** Points a core's steps need, and grade names by the game's grade numbers (3 epic … 6 ancient). */
+	static var CORE_STEPS:Array<Int> = [10, 14, 17, 18, 19, 20];
+	static var GRADE_NAMES:Array<String> = ["Epic", "Legendary", "Relic", "Ancient"];
+	static var GRADE_VALUES:Array<Int> = [3, 4, 5, 6];
 
 	/** Engraving book grades by the word they start with. */
 	static var BOOK_GRADES:Array<String> = ["Heroic", "Epic", "Legendary", "Relic"];
@@ -118,6 +122,9 @@ class CombatPower {
 	static var orbRows:Array<String>;
 	/** Your Ark Grid's total level per astrogem option, from the profile's Ark Grid tab; null until it was read. */
 	static var gridLevels:Dynamic;
+	/** Your Ark Grid's cores: {name, family, grade, points, willpower} from the Ark Grid tab; null until it was read. */
+	static var gridCores:Array<Dynamic>;
+	static var coreRows:Array<String>;
 	/** What the profile showed last, for the showData listing. */
 	static var profileData:String = "";
 
@@ -986,12 +993,76 @@ class CombatPower {
 		if (kind == "")
 			return null;
 		var levels:Dynamic = {};
-		for (box in boxes)
-			if (box != null && box.type == "ItemPartBox")
-				for (text in strings(box.value, [], 0))
-					for (line in splitLines(text))
-						addLevel(levels, line);
-		return {kind: kind, name: name, levels: levels};
+		var points:Float = 0;
+		var willpower:Float = 0;
+		var supply:Float = 0;
+		var grade = 0;
+		for (box in boxes) {
+			if (box == null)
+				continue;
+			if (box.type == "ItemTitle" && box.value != null && Tooltips.isString(box.value.leftStr0)) {
+				var shown = Text.trim(Text.stripTags(box.value.leftStr0));
+				var at = GRADE_NAMES.indexOf(shown);
+				if (at >= 0)
+					grade = GRADE_VALUES[at];
+			}
+			if (box.type != "ItemPartBox")
+				continue;
+			var heading = "";
+			if ((untyped __is__(box.value, Array)) && Tooltips.isString(box.value[0]))
+				heading = Text.trim(Text.stripTags(box.value[0]));
+			for (text in strings(box.value, [], 0))
+				for (line in splitLines(text)) {
+					addLevel(levels, line);
+					if (StringTools.startsWith(line, "Order Points:") || StringTools.startsWith(line, "Chaos Points:"))
+						points += number(line.substr(13));
+					else if (StringTools.startsWith(line, "Required Willpower:"))
+						willpower += number(line.substr(19));
+					else if (heading.indexOf("Willpower") >= 0 && line.indexOf("Points") >= 0)
+						supply = number(line);
+				}
+		}
+		var family = kind == "core" ? name.split(":")[0] : "";
+		return {kind: kind, name: name, levels: levels, points: points, willpower: willpower, supply: supply, grade: grade,
+			family: family};
+	}
+
+	/** Point steps a core lights: 10, 14, 17, 18, 19 and 20 points of its astrogems. */
+	static function coreSteps(points:Float):Int {
+		var steps = 0;
+		for (need in CORE_STEPS)
+			if (points >= need)
+				steps++;
+		return steps;
+	}
+
+	/** A core's value with this many steps lit, from the "cores" option (by its name, else its kind), for your role. */
+	static function coreValue(name:String, family:String, grade:Int, steps:Int):Float {
+		if (steps <= 0)
+			return 0;
+		if (coreRows == null) {
+			coreRows = [];
+			var listed:Array<Dynamic> = tableOption("cores");
+			if (listed != null)
+				for (entry in listed)
+					coreRows.push(entry);
+		}
+		var shownGrade:String = untyped __global__["String"](grade);
+		var tail:String = "|" + shownGrade + "|" + (role == 1 ? "2" : "1") + "|";
+		var starts:Array<String> = [name + tail, family + tail];
+		for (start in starts)
+			for (entry in coreRows) {
+				if (!StringTools.startsWith(entry, start))
+					continue;
+				var values = entry.substr(start.length).split(",");
+				// A core of a low grade has no options past its first steps; it keeps the value of the last one it has.
+				var best:Float = 0;
+				for (i in 0...values.length)
+					if (i < steps && number(values[i]) > 0)
+						best = number(values[i]);
+				return best;
+			}
+		return 0;
 	}
 
 	/** Reads "[Atk. Power] Lv. 3" (an astrogem) or "Atk. Power Lv.12" (the grid's totals) into levels. */
@@ -1021,7 +1092,7 @@ class CombatPower {
 			return unpriced("open your Character Profile once to compare", false);
 		var kind:String = grid.kind;
 		if (kind == "core")
-			return unpriced("cores aren't priced yet: Arkive still needs to learn how your profile shows each core's points", false);
+			return corePrice(grid);
 		if (gridLevels == null)
 			return unpriced("open your profile's Ark Grid tab once to compare", false);
 		var change:Float = 1;
@@ -1036,6 +1107,39 @@ class CombatPower {
 			change *= (1 + after / 10000) / (1 + before / 10000);
 		}
 		return {change: change - 1, note: null, book: false, rough: true, against: "on top of your Ark Grid"};
+	}
+
+	/**
+		A core in place of yours of the same kind (Order Sun, Chaos Moon …): both priced with the steps your astrogems in
+		that slot light now. Needs the profile's Ark Grid tab, which lists your cores and their astrogems.
+	**/
+	static function corePrice(core:Dynamic):Dynamic {
+		if (gridCores == null)
+			return unpriced("open your profile's Ark Grid tab once to compare", false);
+		var family:String = core.family;
+		var mine:Dynamic = null;
+		for (owned in gridCores)
+			if (owned.family == family)
+				mine = owned;
+		var points:Float = mine == null ? 0 : mine.points;
+		var steps = coreSteps(points);
+		var name:String = core.name;
+		var grade:Int = core.grade;
+		var after = coreValue(name, family, grade, steps);
+		var before:Float = 0;
+		if (mine != null) {
+			var mineName:String = mine.name;
+			var mineGrade:Int = mine.grade;
+			before = coreValue(mineName, family, mineGrade, steps);
+		}
+		var change = (1 + after / 10000) / (1 + before / 10000) - 1;
+		var wornName:String = mine == null ? "" : mine.name;
+		var against:String = mine == null ? "in an empty slot" : "vs your " + wornName;
+		var supply:Float = core.supply;
+		var needs:Float = mine == null ? 0 : mine.willpower;
+		if (supply > 0 && needs > supply)
+			against += " (your astrogems there need more willpower than it supplies)";
+		return {change: change, note: null, book: false, rough: false, against: against};
 	}
 
 	/** An astrogem option's value at a total level for your role (type 31), or 0. */
@@ -1063,16 +1167,51 @@ class CombatPower {
 		var grid:Dynamic = window == null ? null : window.arkGridPanel;
 		var info:Dynamic = grid == null || grid.imageView == null ? null : grid.imageView.preResource;
 		var list:Dynamic = info == null || info.arkGridAbilityList == null ? null : info.arkGridAbilityList.dataProvider;
-		if (list == null || list.length == 0)
-			return;
-		var levels:Dynamic = {};
-		var count:Int = list.length;
-		for (i in 0...count) {
-			var row:Dynamic = list[i];
-			if (row != null && row.label != null)
-				addLevel(levels, Text.trim(Text.stripTags(row.label)));
+		if (list != null && list.length > 0) {
+			var levels:Dynamic = {};
+			var count:Int = list.length;
+			for (i in 0...count) {
+				var row:Dynamic = list[i];
+				if (row != null && row.label != null)
+					addLevel(levels, Text.trim(Text.stripTags(row.label)));
+			}
+			gridLevels = levels;
 		}
-		gridLevels = levels;
+		// Each core with the points and willpower of its astrogems, read through their slots' own tooltips.
+		var rows:Dynamic = grid == null || grid.arkGridList == null ? null : grid.arkGridList.dataProvider;
+		if (rows == null || rows.length == 0)
+			return;
+		var cores:Array<Dynamic> = [];
+		var rowCount:Int = rows.length;
+		for (i in 0...rowCount) {
+			var row:Dynamic = rows[i];
+			if (row == null || row.slotData == null)
+				continue;
+			var boxes = Tooltips.boxes(row.slotData, row.slotData);
+			var core:Dynamic = boxes == null ? null : gridItemOf(boxes);
+			if (core == null || core.kind != "core")
+				continue;
+			var points:Float = 0;
+			var willpower:Float = 0;
+			var gems:Array<Dynamic> = row.gemSlotData == null ? [] : row.gemSlotData;
+			for (data in gems) {
+				if (data == null)
+					continue;
+				var gemBoxes = Tooltips.boxes(data, data);
+				var gem:Dynamic = gemBoxes == null ? null : gridItemOf(gemBoxes);
+				if (gem == null)
+					continue;
+				var gemPoints:Float = gem.points;
+				var gemWillpower:Float = gem.willpower;
+				points += gemPoints;
+				willpower += gemWillpower;
+			}
+			core.points = points;
+			core.willpower = willpower;
+			cores.push(core);
+		}
+		if (cores.length > 0)
+			gridCores = cores;
 	}
 
 	// ---- Engraving books ----
@@ -1426,6 +1565,15 @@ class CombatPower {
 		var grid:Dynamic = window == null ? null : window.arkGridPanel;
 		var cores:Dynamic = grid == null || grid.arkGridList == null ? null : grid.arkGridList.dataProvider;
 		var info:Dynamic = grid == null || grid.imageView == null ? null : grid.imageView.preResource;
+		var read:Array<String> = [];
+		if (gridCores != null)
+			for (core in gridCores) {
+				var name:String = core.name;
+				var grade:String = untyped __global__["String"](core.grade);
+				var points:Float = core.points;
+				read.push(name + " grade " + grade + " " + money(points) + "P");
+			}
+		lines.push("Ark Grid cores read: " + read.join(", "));
 		lines.push("Ark Grid cores: " + listOf(cores));
 		lines.push("Ark Grid effects: " + listOf(info == null || info.arkGridEffectList == null ? null : info.arkGridEffectList.dataProvider));
 		lines.push("Ark Grid levels: " + listOf(info == null || info.arkGridAbilityList == null ? null : info.arkGridAbilityList.dataProvider));
