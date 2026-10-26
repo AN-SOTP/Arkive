@@ -65,7 +65,7 @@ class CombatPower {
 	static var WORD_SLOTS:Array<String> = ["vambrace", "necklace", "earring", "ring", "bracelet", "stone", "orb", "helm", "chest",
 		"pants", "gloves", "shoulder"];
 	/** Slots the tweak doesn't price yet. */
-	static var UNPRICED:Array<String> = ["orb"];
+	static var UNPRICED:Array<String> = [];
 	static var STATS:Array<String> = ["Strength", "Dexterity", "Intelligence"];
 	/** Combat stats that count for a DPS character, and the table's number for each. */
 	static var COMBAT_LABELS:Array<String> = ["Crit", "Specialization", "Swiftness"];
@@ -101,6 +101,7 @@ class CombatPower {
 	static var engravingRows:Array<String>;
 	static var braceletTexts:Array<String>;
 	static var braceletValues:Array<Float>;
+	static var orbRows:Array<String>;
 	/** What the profile showed last, for the showData listing. */
 	static var profileData:String = "";
 
@@ -350,6 +351,7 @@ class CombatPower {
 		var enlightenment = 0;
 		var leap = 0;
 		var stone:Dynamic = {};
+		var paradise:Float = 0;
 		var title = false;
 		var parts:Array<String> = [];
 		for (box in boxes) {
@@ -386,6 +388,11 @@ class CombatPower {
 				var heading = Text.trim(Text.stripTags(part[0]));
 				var body = splitLines(part[1]);
 				parts.push(heading + ":" + body.join(","));
+				for (line in body) {
+					var at = line.indexOf("Paradise Power:");
+					if (at >= 0)
+						paradise = number(line.substr(at + 15));
+				}
 				if (heading.indexOf("Refinement") >= 0) {
 					for (line in body) {
 						if (StringTools.startsWith(line, "Weapon Power +") && line.indexOf("%") >= 0)
@@ -446,7 +453,7 @@ class CombatPower {
 			slot = "";
 		return {slot: slot, name: name, text: name + "|" + parts.join("|"), stats: stats, weapon: weapon, weaponPct: weaponPct,
 			flat: flat, basicPct: basicPct, quality: slot == "weapon" ? quality : -1, refine: refine, effects: effects,
-			combat: combat, enlightenment: enlightenment, leap: leap, stone: stone};
+			combat: combat, enlightenment: enlightenment, leap: leap, stone: stone, paradise: paradise};
 	}
 
 	/** A refinement line's Combat Power factor (0.02 for +2.00%), or 0 when the tweak doesn't price that line. */
@@ -728,6 +735,7 @@ class CombatPower {
 			var effects:Array<Float> = item.effects;
 			for (factor in effects)
 				factors *= 1 + factor;
+			factors *= 1 + orbFactor(item);
 		}
 		factors *= 1 + enlightenment * perPoint(ENLIGHTENMENT);
 		factors *= 1 + leap * perPoint(LEAP);
@@ -802,6 +810,37 @@ class CombatPower {
 				continue;
 			var values = entry.substr(start.length).split(",");
 			return at >= 0 && at < values.length ? number(values[at]) * (values[at].indexOf("-") == 0 ? -1 : 1) : 0;
+		}
+		return 0;
+	}
+
+	/**
+		A paradise orb's factor: its cap (type 33's C) times how far its paradise power is towards B million, my reading
+		of the table (C is 40 × B for most orbs); support (type 34) has a fixed value in B. 0 for other items.
+	**/
+	static function orbFactor(item:Dynamic):Float {
+		var slot:String = item.slot;
+		if (slot != "orb")
+			return 0;
+		if (orbRows == null) {
+			orbRows = [];
+			var listed:Array<Dynamic> = tableOption("orbs");
+			if (listed != null)
+				for (entry in listed)
+					orbRows.push(entry);
+		}
+		var name:String = item.name;
+		var start:String = name + "|" + (role == 1 ? "2" : "1") + "|";
+		for (entry in orbRows) {
+			if (!StringTools.startsWith(entry, start))
+				continue;
+			var fields = entry.substr(start.length).split("|");
+			var b = number(fields[0]);
+			var c = fields.length > 1 ? number(fields[1]) : 0;
+			if (c <= 0)
+				return b / 10000;
+			var power:Float = item.paradise;
+			return b <= 0 ? 0 : c / 10000 * Math.min(1, power / (b * 1000000));
 		}
 		return 0;
 	}
@@ -1246,6 +1285,7 @@ class CombatPower {
 		}
 		lines.push("Engravings read: " + read.join(", "));
 		lines.push("Page lists: " + pageLists(page, 0));
+		lines.push("Ark Grid: " + (window == null ? "none" : pageLists(window.arkGridPanel, 0)));
 		var stat:Float = 0;
 		var weapon:Float = 0;
 		for (item in items) {
