@@ -124,6 +124,9 @@ internal static class TweakSmokeTests
         {
             var abc = AbcFile.Read(block.AbcData);
             if (abc.Pool.Strings.Contains(settings.ToGameJson())) withSettings++;
+            // Haxe's Boot adds String.charCodeAtHX (StringTools.trim and isSpace call it); Arkive's empty Boot doesn't.
+            Assert(!abc.Pool.Strings.Contains("charCodeAtHX"),
+                $"{block.AbcName} calls String.charCodeAtHX, which the game's player doesn't have (use Text.trim)");
             foreach (var body in abc.Bodies)
             {
                 var previous = -1;

@@ -86,7 +86,7 @@ class FavoriteRaids {
 			for (index in 0...count) {
 				var entry:Dynamic = data[index];
 				var title:String = entry.title;
-				if (entry.parentIndex != null && entry.parentIndex >= 0 && title != null && StringTools.trim(Text.stripTags(title)) == name) {
+				if (entry.parentIndex != null && entry.parentIndex >= 0 && title != null && Text.trim(Text.stripTags(title)) == name) {
 					found.push(index);
 					break;
 				}

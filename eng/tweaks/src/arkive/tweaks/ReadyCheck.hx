@@ -144,7 +144,7 @@ class ReadyCheck {
 				if (html == null)
 					continue;
 				for (text in plain(html).split("\n")) {
-					var shown = StringTools.trim(text);
+					var shown = Text.trim(text);
 					if (StringTools.endsWith(shown, "Feast") || shown.indexOf("Feast:") != -1)
 						return true;
 				}

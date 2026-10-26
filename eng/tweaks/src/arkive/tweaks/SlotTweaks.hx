@@ -179,7 +179,7 @@ class SlotTweaks {
 		var lines:String = value[1];
 		var found:Array<Int> = [];
 		for (line in lines.split("<BR>")) {
-			if (StringTools.trim(line) == "")
+			if (Text.trim(line) == "")
 				continue;
 			found.push(line.indexOf(OPEN_TEXT) >= 0 ? OPEN : statColor(line));
 		}

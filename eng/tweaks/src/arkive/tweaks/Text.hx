@@ -13,6 +13,24 @@ class Text {
 		return o != null && (untyped o.hasOwnProperty(field));
 	}
 
+	/**
+		The text without spaces, tabs and line breaks at either end. Use this instead of StringTools.trim, which calls
+		String.charCodeAtHX: a method Haxe's own Boot adds to String, which Arkive's empty Boot leaves out.
+	**/
+	public static function trim(text:String):String {
+		var start = 0;
+		var end = text.length;
+		while (start < end && blank(StringTools.fastCodeAt(text, start)))
+			start++;
+		while (end > start && blank(StringTools.fastCodeAt(text, end - 1)))
+			end--;
+		return start == 0 && end == text.length ? text : text.substring(start, end);
+	}
+
+	static function blank(c:Int):Bool {
+		return c == " ".code || (c > 8 && c < 14);
+	}
+
 	/** Removes <tags> from game HTML text. */
 	public static function stripTags(html:String):String {
 		if (html == null)

@@ -287,7 +287,7 @@ class CombatPower {
 				var part:Array<Dynamic> = box.value;
 				if (part.length < 2 || !Tooltips.isString(part[0]) || !Tooltips.isString(part[1]))
 					continue;
-				var heading = StringTools.trim(Text.stripTags(part[0]));
+				var heading = Text.trim(Text.stripTags(part[0]));
 				var body = splitLines(part[1]);
 				parts.push(heading + ":" + body.join(","));
 				if (heading.indexOf("Refinement") >= 0) {
@@ -498,7 +498,7 @@ class CombatPower {
 		var found:Array<String> = [];
 		var joined = html.split("<BR>").join(NEWLINE).split("<br>").join(NEWLINE);
 		for (piece in joined.split(NEWLINE)) {
-			var line = StringTools.trim(Text.stripTags(piece));
+			var line = Text.trim(Text.stripTags(piece));
 			if (line != "")
 				found.push(line);
 		}
