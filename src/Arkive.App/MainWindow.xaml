@@ -1237,7 +1237,7 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                <StackPanel Width="600">
+                                <StackPanel Width="760">
                                     <UniformGrid Columns="2">
                                         <Button x:Name="TweaksInstallAllButton" Height="76" Margin="0,0,6,0" Style="{StaticResource PrimaryButtonStyle}"
                                                 Click="TweaksInstallAllButton_Click"
@@ -1262,216 +1262,12 @@
                                     <TextBlock Text="Enable, Disable And Change Tweaks In Game" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,4" />
                                     <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                                Text="Once installed, every tweak is enabled, disabled and changed in game, not here. In Lost Ark, press Esc and click Arkive Tweaks in the bar at the bottom of the menu: tick a tweak to enable it, untick it to disable it, and change its options below it. Changes act straight away. Keep Arkive running so they are kept for your next session." />
-                                    <Border CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderStrongBrush}" Background="#FF07080A">
-                                        <Viewbox Stretch="Uniform">
-                                            <!-- A drawing of the escape menu (placeholder names and values) with the Arkive Tweaks button marked. -->
-                                            <Canvas Width="640" Height="360" ClipToBounds="True" TextElement.FontFamily="Segoe UI">
-                                                <Rectangle Width="640" Height="360">
-                                                    <Rectangle.Fill>
-                                                        <RadialGradientBrush Center="0.5,0.3" GradientOrigin="0.5,0.3" RadiusX="0.75" RadiusY="0.95">
-                                                            <GradientStop Color="#FF2D3038" Offset="0" />
-                                                            <GradientStop Color="#FF14161B" Offset="0.55" />
-                                                            <GradientStop Color="#FF060708" Offset="1" />
-                                                        </RadialGradientBrush>
-                                                    </Rectangle.Fill>
-                                                </Rectangle>
-                                                <!-- Character -->
-                                                <Border Canvas.Left="14" Canvas.Top="14" Width="148" Height="236" Background="#C80B0D11"
-                                                        BorderBrush="#FF3A3E47" BorderThickness="1">
-                                                    <StackPanel Margin="10,12,10,0">
-                                                        <Grid Width="54" Height="54">
-                                                            <Ellipse Stroke="#FFC9A65A" StrokeThickness="1.5">
-                                                                <Ellipse.Fill>
-                                                                    <RadialGradientBrush>
-                                                                        <GradientStop Color="#FF3B3527" Offset="0" />
-                                                                        <GradientStop Color="#FF15130F" Offset="1" />
-                                                                    </RadialGradientBrush>
-                                                                </Ellipse.Fill>
-                                                            </Ellipse>
-                                                            <Path Data="M27,10 L35,27 L27,44 L19,27 Z" Fill="#FFC9A65A" Opacity="0.85" />
-                                                        </Grid>
-                                                        <TextBlock Text="Character Name" Foreground="#FFEDE7D8" FontSize="12.5" FontWeight="SemiBold"
-                                                                   HorizontalAlignment="Center" Margin="0,7,0,0" />
-                                                        <TextBlock Text="Server Name" Foreground="#FF8E939B" FontSize="9.5" HorizontalAlignment="Center" />
-                                                        <TextBlock Text="Item Level" Foreground="#FF8E939B" FontSize="9.5" HorizontalAlignment="Center" Margin="0,10,0,0" />
-                                                        <TextBlock Text="1,700.00" Foreground="#FFE3C27A" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                                                        <Rectangle Height="1" Fill="#FF3A3E47" Margin="0,10,0,8" />
-                                                        <DockPanel Margin="0,0,0,4">
-                                                            <TextBlock DockPanel.Dock="Right" Text="2,000.00" Foreground="#FFD1D2D0" FontSize="9.5" />
-                                                            <TextBlock Text="Combat Power" Foreground="#FF8E939B" FontSize="9.5" />
-                                                        </DockPanel>
-                                                        <DockPanel Margin="0,0,0,4">
-                                                            <TextBlock DockPanel.Dock="Right" Text="250" Foreground="#FFD1D2D0" FontSize="9.5" />
-                                                            <TextBlock Text="Roster Level" Foreground="#FF8E939B" FontSize="9.5" />
-                                                        </DockPanel>
-                                                        <DockPanel>
-                                                            <TextBlock DockPanel.Dock="Right" Text="Class Name" Foreground="#FFD1D2D0" FontSize="9.5" />
-                                                            <TextBlock Text="Class" Foreground="#FF8E939B" FontSize="9.5" />
-                                                        </DockPanel>
-                                                    </StackPanel>
-                                                </Border>
-                                                <!-- Menus -->
-                                                <Border Canvas.Left="172" Canvas.Top="14" Width="282" Height="236" Background="#C80B0D11"
-                                                        BorderBrush="#FF3A3E47" BorderThickness="1">
-                                                    <Border.Resources>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Foreground" Value="#FFD1D2D0" />
-                                                            <Setter Property="FontSize" Value="9.5" />
-                                                            <Setter Property="Margin" Value="0,0,0,9" />
-                                                        </Style>
-                                                    </Border.Resources>
-                                                    <UniformGrid Columns="3" Margin="10,10,4,0" VerticalAlignment="Top">
-                                                        <StackPanel>
-                                                            <TextBlock Text="Character" Foreground="#FFE3C27A" FontSize="11" FontWeight="SemiBold" />
-                                                            <TextBlock Text="▪  Inventory" />
-                                                            <TextBlock Text="▪  Character Profile" />
-                                                            <TextBlock Text="▪  Skills" />
-                                                            <TextBlock Text="▪  Engravings" />
-                                                            <TextBlock Text="▪  Pets" />
-                                                            <TextBlock Text="▪  Card Book" />
-                                                        </StackPanel>
-                                                        <StackPanel>
-                                                            <TextBlock Text="Adventure" Foreground="#FFE3C27A" FontSize="11" FontWeight="SemiBold" />
-                                                            <TextBlock Text="▪  Quest Journal" />
-                                                            <TextBlock Text="▪  World Map" />
-                                                            <TextBlock Text="▪  Collections" />
-                                                            <TextBlock Text="▪  Achievements" />
-                                                            <TextBlock Text="▪  Calendar" />
-                                                            <TextBlock Text="▪  Daily Tasks" />
-                                                        </StackPanel>
-                                                        <StackPanel>
-                                                            <TextBlock Text="Community" Foreground="#FFE3C27A" FontSize="11" FontWeight="SemiBold" />
-                                                            <TextBlock Text="▪  Friends" />
-                                                            <TextBlock Text="▪  Guild" />
-                                                            <TextBlock Text="▪  Party Finder" />
-                                                            <TextBlock Text="▪  Mail" />
-                                                            <TextBlock Text="▪  Voice Chat" />
-                                                            <TextBlock Text="▪  Support" />
-                                                        </StackPanel>
-                                                    </UniformGrid>
-                                                </Border>
-                                                <!-- Content status -->
-                                                <Border Canvas.Left="464" Canvas.Top="14" Width="162" Height="236" Background="#C80B0D11"
-                                                        BorderBrush="#FF3A3E47" BorderThickness="1">
-                                                    <StackPanel Margin="10,10,10,0">
-                                                        <StackPanel.Resources>
-                                                            <Style TargetType="TextBlock">
-                                                                <Setter Property="Foreground" Value="#FFD1D2D0" />
-                                                                <Setter Property="FontSize" Value="9.5" />
-                                                            </Style>
-                                                            <Style TargetType="DockPanel">
-                                                                <Setter Property="Margin" Value="0,0,0,7" />
-                                                            </Style>
-                                                        </StackPanel.Resources>
-                                                        <TextBlock Text="Content Status" Foreground="#FFE3C27A" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8" />
-                                                        <TextBlock Text="Daily" Foreground="#FF8E939B" Margin="0,0,0,5" />
-                                                        <DockPanel>
-                                                            <TextBlock DockPanel.Dock="Right" Text="0 / 1" />
-                                                            <TextBlock Text="Content Name" />
-                                                        </DockPanel>
-                                                        <DockPanel>
-                                                            <TextBlock DockPanel.Dock="Right" Text="1 / 1" Foreground="#FF8FCB8F" />
-                                                            <TextBlock Text="Content Name" />
-                                                        </DockPanel>
-                                                        <DockPanel>
-                                                            <TextBlock DockPanel.Dock="Right" Text="2 / 3" />
-                                                            <TextBlock Text="Daily Tasks" />
-                                                        </DockPanel>
-                                                        <TextBlock Text="Weekly" Foreground="#FF8E939B" Margin="0,6,0,5" />
-                                                        <DockPanel>
-                                                            <TextBlock DockPanel.Dock="Right" Text="2 / 3" />
-                                                            <TextBlock Text="Raid Name" />
-                                                        </DockPanel>
-                                                        <DockPanel>
-                                                            <TextBlock DockPanel.Dock="Right" Text="0 / 2" />
-                                                            <TextBlock Text="Raid Name" />
-                                                        </DockPanel>
-                                                        <DockPanel>
-                                                            <TextBlock DockPanel.Dock="Right" Text="3 / 3" Foreground="#FF8FCB8F" />
-                                                            <TextBlock Text="Weekly Tasks" />
-                                                        </DockPanel>
-                                                    </StackPanel>
-                                                </Border>
-                                                <!-- Bottom bar -->
-                                                <Rectangle Canvas.Top="296" Width="640" Height="64">
-                                                    <Rectangle.Fill>
-                                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                                            <GradientStop Color="#F0141519" Offset="0" />
-                                                            <GradientStop Color="#FA08090B" Offset="1" />
-                                                        </LinearGradientBrush>
-                                                    </Rectangle.Fill>
-                                                </Rectangle>
-                                                <Rectangle Canvas.Top="296" Width="640" Height="1" Fill="#FF5A5040" />
-                                                <StackPanel Canvas.Left="75" Canvas.Top="302" Orientation="Horizontal">
-                                                    <StackPanel.Resources>
-                                                        <Style TargetType="Grid">
-                                                            <Setter Property="Width" Value="70" />
-                                                            <Setter Property="Height" Value="52" />
-                                                        </Style>
-                                                        <Style TargetType="Ellipse">
-                                                            <Setter Property="Width" Value="28" />
-                                                            <Setter Property="Height" Value="28" />
-                                                            <Setter Property="Stroke" Value="#FF8C8F95" />
-                                                            <Setter Property="StrokeThickness" Value="1.2" />
-                                                            <Setter Property="VerticalAlignment" Value="Top" />
-                                                            <Setter Property="Margin" Value="0,3,0,0" />
-                                                        </Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Foreground" Value="#FFD1D2D0" />
-                                                            <Setter Property="FontSize" Value="8.5" />
-                                                            <Setter Property="HorizontalAlignment" Value="Center" />
-                                                        </Style>
-                                                    </StackPanel.Resources>
-                                                    <Grid>
-                                                        <Border CornerRadius="4" BorderThickness="2" BorderBrush="#FFFFC94D" Background="#30FFC94D" Margin="1,-2,1,-2">
-                                                            <Border.Effect>
-                                                                <DropShadowEffect Color="#FFFFC94D" BlurRadius="16" ShadowDepth="0" Opacity="0.9" />
-                                                            </Border.Effect>
-                                                        </Border>
-                                                        <Ellipse Stroke="#FFD1D2D0" />
-                                                        <TextBlock Text="A" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,5,0,0" />
-                                                        <TextBlock Text="Arkive Tweaks" FontWeight="SemiBold" Foreground="#FFFFE2A0" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                                                    </Grid>
-                                                    <Grid>
-                                                        <Ellipse />
-                                                        <TextBlock Text="&#xE719;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Top" Margin="0,10,0,0" />
-                                                        <TextBlock Text="Store" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                                                    </Grid>
-                                                    <Grid>
-                                                        <Ellipse />
-                                                        <TextBlock Text="&#xE787;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Top" Margin="0,10,0,0" />
-                                                        <TextBlock Text="Events" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                                                    </Grid>
-                                                    <Grid>
-                                                        <Ellipse />
-                                                        <TextBlock Text="&#xE734;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Top" Margin="0,10,0,0" />
-                                                        <TextBlock Text="Pass" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                                                    </Grid>
-                                                    <Grid>
-                                                        <Ellipse />
-                                                        <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Top" Margin="0,10,0,0" />
-                                                        <TextBlock Text="Settings" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                                                    </Grid>
-                                                    <Grid>
-                                                        <Ellipse />
-                                                        <TextBlock Text="&#xE716;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Top" Margin="0,10,0,0" />
-                                                        <TextBlock Text="Switch Character" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                                                    </Grid>
-                                                    <Grid>
-                                                        <Ellipse />
-                                                        <TextBlock Text="&#xE7E8;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Top" Margin="0,10,0,0" />
-                                                        <TextBlock Text="Exit Game" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                                                    </Grid>
-                                                </StackPanel>
-                                                <!-- Callout over the marked button -->
-                                                <Border Canvas.Left="74" Canvas.Top="258" Width="72" Padding="0,3" CornerRadius="4" Background="#FFFFC94D">
-                                                    <TextBlock Text="Click Here" Foreground="#FF1A1408" FontSize="10.5" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                                                </Border>
-                                                <Path Data="M104,276 L116,276 L110,284 Z" Fill="#FFFFC94D" />
-                                            </Canvas>
-                                        </Viewbox>
+                                    <Border CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderStrongBrush}" Background="Black"
+                                            Cursor="Hand" MouseLeftButtonUp="TweaksEscapeMenuPicture_Click"
+                                            ToolTip="The escape menu in game with the Arkive Tweaks button marked. Click to see it full size.">
+                                        <Image x:Name="TweaksEscapeMenuImage" Height="272" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
                                     </Border>
-                                    <TextBlock Text="Example picture: names and values are placeholders." FontSize="11" FontStyle="Italic"
+                                    <TextBlock Text="Built from the game's own interface; names and values are placeholders. Click the picture to see it full size." FontSize="11" FontStyle="Italic" TextWrapping="Wrap"
                                                Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" />
                                 </StackPanel>
                             </ScrollViewer>
@@ -1486,7 +1282,7 @@
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <Border Width="420" Margin="4" Padding="12,9,12,10" CornerRadius="6" BorderThickness="1"
+                                                <Border Width="372" Margin="4" Padding="12,9,12,10" CornerRadius="6" BorderThickness="1"
                                                         BorderBrush="{DynamicResource BorderStrongBrush}" Background="{DynamicResource SurfaceBrush}">
                                                     <StackPanel>
                                                         <DockPanel>

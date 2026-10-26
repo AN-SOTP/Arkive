@@ -67,6 +67,7 @@ public partial class MainWindow
             .Select(tweak => new TweakRow(tweak, installed ? state.Settings.Enabled.ContainsKey(tweak.Id) : null))
             .ToArray();
         TweakList.ItemsSource = rows;
+        TweaksEscapeMenuImage.Source ??= EscapeMenuPicture;
         TweakListHeader.Text = $"All Tweaks ({rows.Length:N0})";
         var on = rows.Count(row => row.On == true);
         TweaksStatusText.Text = status ?? (!installed
@@ -85,6 +86,51 @@ public partial class MainWindow
     private async void TweaksInstallAllButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(Tweaks.EveryTweak());
 
     private async void TweaksRemoveAllButton_Click(object sender, RoutedEventArgs e) => await BuildTweaksAsync(new TweakSettings());
+
+    private static System.Windows.Media.Imaging.BitmapImage? _escapeMenuPicture;
+
+    /// <summary>
+    /// The escape menu with the Arkive Tweaks button marked, built from the game's own interface movie and art with
+    /// placeholder names (see eng/tweaks/escape-menu).
+    /// </summary>
+    private static System.Windows.Media.Imaging.BitmapImage EscapeMenuPicture
+    {
+        get
+        {
+            if (_escapeMenuPicture is null)
+            {
+                var image = new System.Windows.Media.Imaging.BitmapImage();
+                image.BeginInit();
+                image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                image.UriSource = new Uri("pack://application:,,,/Arkive.App;component/Assets/Tweaks/escape-menu.jpg", UriKind.Absolute);
+                image.EndInit();
+                image.Freeze();
+                _escapeMenuPicture = image;
+            }
+            return _escapeMenuPicture;
+        }
+    }
+
+    /// <summary>The escape menu picture at full size, for reading its labels.</summary>
+    private void TweaksEscapeMenuPicture_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var picture = EscapeMenuPicture;
+        new Window
+        {
+            Owner = this,
+            Title = "Arkive Tweaks In The Escape Menu",
+            Width = Math.Min(picture.PixelWidth + 40, SystemParameters.WorkArea.Width - 40),
+            Height = Math.Min(picture.PixelHeight + 60, SystemParameters.WorkArea.Height - 40),
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = System.Windows.Media.Brushes.Black,
+            Content = new System.Windows.Controls.ScrollViewer
+            {
+                HorizontalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
+                Content = new System.Windows.Controls.Image { Source = picture, Stretch = System.Windows.Media.Stretch.None },
+            },
+        }.Show();
+    }
 
     /// <summary>
     /// Installs exactly these tweaks (none takes them all out), like the Login Screen and Fonts tabs: Arkive rebuilds its

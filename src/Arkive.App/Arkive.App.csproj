@@ -8,6 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="../Arkive.Core/Arkive.Core.csproj" />
     <Resource Include="Assets/Banners/*.jpg" />
+    <Resource Include="Assets/Tweaks/*.jpg" />
     <Resource Include="Assets/Arkive.ico" />
     <Content Include="Viewer/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="../Arkive.Core/runtimes/win-x64/native/Arkive.Crunch.Native.dll" Link="Arkive.Crunch.Native.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
