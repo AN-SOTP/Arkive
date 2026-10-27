@@ -93,10 +93,6 @@ public static class TweakCatalog
 
     public static IReadOnlyList<TweakDefinition> All { get; } =
     [
-        new("logs", "Logs Tab", "Adds a \"Logs\" tab to the character profile and inspect windows with the player's recent lostark.bible logs, by raid. Keep Arkive running while you play: it fetches the logs for the tab.", TweakRisk.Display,
-        [
-            H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.LogsTab.onWndConfigUI"),
-        ]),
         new(TweakModService.CompareTweak, "Compare With Me", "Adds a \"Compare\" tab to the inspect window: your equipment, accessories, gems, engravings, Ark Passive, combat stats and Ark Grid beside the player's, drawn like the profile's own slots (point at one for its usual tooltip). The top shows the gap between your two Combat Power figures, and each line says how your part compares with theirs in Combat Power, with the same model as Combat Power on Tooltips.", TweakRisk.Display,
         [
             H("efui_characterinfo", "characterinfo", "ark.ui.charInfo.CharInfoWndContent", "configUI", "arkive.tweaks.Compare.onWndConfigUI"),
