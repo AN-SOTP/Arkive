@@ -72,7 +72,7 @@ Player classes, bosses and other NPCs play their skills from the game's own skil
 
 ### Tweaks (WIP)
 
-Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install them from Arkive's **Tweaks** tab, then switch each one on or off and change its options in game from the **Arkive Tweaks** menu.
+Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install them from Arkive's **Tweaks** tab, then switch each one on or off and change its options in game from the **Arkive Tweaks** menu. Logs tab NOT publically available at the moment.
 
 ![Arkive Tweaks tab with Install All Tweaks, Faster Launch and the list of tweaks](docs/screenshots/tweaks.png)
 
