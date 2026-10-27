@@ -1,0 +1,10 @@
+A new Tweaks tab (Early Preview) adds information, buttons and quicker steps to the game's own windows, and turning mods on or off and Apply are faster.
+
+- Tweaks (new tab, Early Preview): Install All Tweaks builds 22 tweaks into the game's interface files and installs them like a mod; Remove All Tweaks puts the files back. In game, press Esc and choose Arkive Tweaks to switch each tweak on or off and change its options; keep Arkive running so your choices are kept.
+- Information tweaks: Combat Power on Tooltips, Combat Power per Gold (auction house and market), Market Price on Tooltips, Compare With Me (your gear beside an inspected player's), Bracelet Reroll Judge, Astrogem Processing Advisor, Lobby CP, Slot Tweaks (now also marks bracelet effects), Buff Icon Stacking, Additional Top Currencies and Extended Escape Menu.
+- Quicker steps: Fast Advanced Honing, Fast Paradise, Auto-Dismiss Stone Faceting Results, Next Item Button, Chest Opening Tweaks, Market Tweaks, Exchange Max Button and Universal Storage Claim. Faster Launch (skips the publisher logos and seizure warning) is installed on its own.
+- Automation: Auto Pull Up presses a hosted lobby's Pull up again while its box is ticked; Ready Check Tweaks warns about missing gems or feast and can accept the ready check (off by default).
+- Mods: Apply shows its plan without reloading every package project first (34-50 s of the wait on a large library), and turning mods on or off, priorities and pack switches re-read only the working files that compete with the changed mods.
+- README: Tweaks section with the tab and the in-game menu.
+
+Known issues: Tweaks are an Early Preview. They change the game's own interface code, so a tweak can misbehave and the game can freeze or close; some tweaks only work on an English client; Batch and Automation tweaks act for you. Remove All Tweaks before a game update, and check Arkive for an update before installing them again. Outfit Swap is still not 100% accurate.
