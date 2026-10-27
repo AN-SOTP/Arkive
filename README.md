@@ -70,7 +70,7 @@ Player classes, bosses and other NPCs play their skills from the game's own skil
 | ![Thaemine playing a flying-sword skill in the skill preview](docs/screenshots/skill-thaemine.gif) | ![Serca with her broom starting an attack in the skill preview](docs/screenshots/skill-serca.gif) |
 | **Thaemine** | **Serca** |
 
-### Tweaks (Early Preview)
+### Tweaks (WIP)
 
 Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install them from Arkive's **Tweaks** tab, then switch each one on or off and change its options in game from the **Arkive Tweaks** menu.
 
