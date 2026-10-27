@@ -7,4 +7,4 @@ A new Tweaks tab (Early Preview) adds information, buttons and quicker steps to 
 - Mods: Apply shows its plan without reloading every package project first (34-50 s of the wait on a large library), and turning mods on or off, priorities and pack switches re-read only the working files that compete with the changed mods.
 - README: Tweaks section with the tab and the in-game menu.
 
-Known issues: Tweaks are an Early Preview. They change the game's own interface code, so a tweak can misbehave and the game can freeze or close; some tweaks only work on an English client; Batch and Automation tweaks act for you. Remove All Tweaks before a game update, and check Arkive for an update before installing them again. Outfit Swap is still not 100% accurate.
+Known issues: Tweaks are an Early Preview. They change the game's own interface code, so a tweak can misbehave and the game can freeze or close; some tweaks only work on an English client; Batch and Automation tweaks act for you. Remove All Tweaks before a game update, and check Arkive for an update before installing them again.
