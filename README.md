@@ -70,6 +70,14 @@ Player classes, bosses and other NPCs play their skills from the game's own skil
 | ![Thaemine playing a flying-sword skill in the skill preview](docs/screenshots/skill-thaemine.gif) | ![Serca with her broom starting an attack in the skill preview](docs/screenshots/skill-serca.gif) |
 | **Thaemine** | **Serca** |
 
+### Tweaks (WIP)
+
+Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install them from Arkive's **Tweaks** tab, then switch each one on or off and change its options in game from the **Arkive Tweaks** menu. Logs tab NOT publically available at the moment.
+
+![Arkive Tweaks tab with Install All Tweaks, Faster Launch and the list of tweaks](docs/screenshots/tweaks.png)
+
+![The Arkive Tweaks menu in Lost Ark, opened from the escape menu, with tweaks ticked and their options](docs/screenshots/tweaks-in-game.png)
+
 ### Live in game example
 
 Mods made with Arkive, running in Lost Ark.
@@ -136,7 +144,7 @@ Use a trusted local folder, not the game's Packages directory. Avoid simultaneou
 
 ## GUI workflow
 
-The main tabs are **Asset Library** (find assets), **Create Mod**, **Edit Mods**, **Simple Upscale** and **Outfit Swap** (make mods), **Sounds**, **Login Screen** and **Language**, and **Mods** (apply and restore). **Advanced** keeps native diagnostics and specialist workflows.
+The main tabs are **Asset Library** (find assets), **Create Mod**, **Edit Mods**, **Simple Upscale** and **Outfit Swap** (make mods), **Sounds**, **Login Screen**, **Fonts**, **Language** and **Tweaks**, and **Mods** (apply and restore). **Advanced** keeps native diagnostics and specialist workflows.
 
 ### Asset Library
 
@@ -180,7 +188,7 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 - **Loose clothing follows the body** and **Hair follows the body** (on by default) move skirts, capes, sashes and hair with the body so it does not grow through them.
 - Thickness, shape and placement change; height and limb length do not, because the skeleton and animations set them. Saving runs the usual skeleton and animation checks.
 - **Presets** keep a body's sliders. **Apply preset to selected outfits** reshapes several outfits into one mod without opening the editor, and **Apply preset to every outfit of its body** does every outfit of that body (about 290 outfits for Female Warrior, around half an hour, about 9 MB per piece). Arkive says how long and how much space it needs first, can work on several pieces at once on PCs with four or more threads, and **Stop** keeps the pieces done so far.
-- To change a saved upscale mod, open it in **Edit Mods** and choose **Edit in proportion editor**; **Save as mod** then updates that mod.
+- To change a saved upscale mod, right-click it in **Mods** and choose **Edit Simple Upscale** (or open it in **Edit Mods** and choose **Edit in proportion editor**). **Save as mod** then updates that mod; if it is on, choose **Apply changes** to put the new shape in the game. A body-wide mod (or one with more than 20 pieces) opens in one outfit as a preview, Nightwear when it has it; saving reshapes every outfit of its body again (or all of the mod's pieces), with progress and **Stop** in **Simple Upscale**.
 - A mod changes the outfit for every character you see wearing it. Very large values can still make pieces overlap.
 
 ### Outfit Swap
@@ -216,6 +224,18 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 ### Language
 
 **Language** shows the game's text in Spanish, French or German, which `data2.lpk` still holds even where the game removed them. Arkive writes the chosen language's lines over the English ones; untranslated lines stay in English, and French and German stopped getting new translations when they were removed. Each tile shows how much is translated. Arkive keeps a copy of every translation, so a language the game later drops can still be used. Voices are not changed. **Back to English** puts `data2.lpk` back byte for byte.
+
+### Tweaks
+
+**Tweaks** (Early Preview) changes the game's own interface code to add information, buttons and shortcuts. **Install All Tweaks** builds them into the game's interface files from clean copies and installs them like a mod; **Remove All Tweaks** puts those files back. **Faster Launch**, which skips the publisher logos and seizure warning, is installed on its own. Close Lost Ark before installing or removing.
+
+In game, press Esc and choose **Arkive Tweaks** at the bottom of the menu: tick a tweak to turn it on, untick it to turn it off, and change its options there. Keep Arkive running while you play so those choices are kept for next time.
+
+- **Information:** Combat Power on Tooltips (what an item would add to your Combat Power), Combat Power per Gold in the auction house and market, Market Price on Tooltips, Compare With Me (your gear beside an inspected player's), Bracelet Reroll Judge, Astrogem Processing Advisor, Lobby CP in the party finder, Slot Tweaks (item properties at a glance, including bracelet effects), Buff Icon Stacking, Additional Top Currencies and the Extended Escape Menu.
+- **Quicker steps:** Fast Advanced Honing, Fast Paradise, Auto-Dismiss Stone Faceting Results, Next Item Button, Chest Opening Tweaks, Market Tweaks, Exchange Max Button and Universal Storage Claim.
+- **Automation:** Auto Pull Up presses a hosted lobby's Pull up again while its box is ticked, and Ready Check Tweaks can accept the ready check (off by default).
+
+Tweaks are newer and less tested than other mods: some read English text and only work on an English client, and a game update can stop one working until Arkive is updated. See [Limitations and known issues](#limitations-and-known-issues).
 
 ### Game tables
 
@@ -486,6 +506,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 - Priority resolves target ownership, not semantic compatibility of all dependencies.
 - The Zone Viewer's 3D map is a very early, extremely rough preview: Lost Ark's layered materials are only roughly reproduced, so many areas look different from the game, the arenas and camera angle are guesses, and some detail drops out when zoomed in. Pieces whose material lives in a package the map does not reference are drawn plain grey. Map lights and height fog colours are level settings Arkive cannot change yet.
 - Recolour changes colours the game exposes (pixels, material colour settings, effect colour tables). Colour that comes from shared textures or base materials changes everything that uses them, and material edits are newer and less tested in game than texture edits.
+- **Tweaks are an Early Preview.** They change the game's own interface code, so a tweak that misreads a window can make it misbehave, and the game can freeze or close. Some match English text and only work on an English client. Batch and Automation tweaks act for you, which the game's terms may treat more strictly. Remove All Tweaks before a game update, and after one, check Arkive for an update before installing them again.
 - Login Screen edits game files outside the packages: one video in `EFGame\Movies` and two small sound banks in `WwiseAudioPackage`. Pictures need the game's own `bink2w64.dll` in `Binaries\Win64`.
 - Game Data mods change the game's own tables, which are not looks-only: a change the game's server disagrees with may show wrongly or be ignored, and no change has been confirmed in game yet. They rewrite `data2.lpk` too and keep a compressed copy of each table they change. Only changes to existing rows are supported.
 - Language rewrites `EFGame\data2.lpk` (about 1.4 GB) and keeps a compressed copy of the game's text (about 130 MB) plus the saved translations (about 85 MB) in Arkive's data folder. Grammar markers in translations (such as Spanish gender forms) are shown by the game's English text engine and are not yet confirmed in game.

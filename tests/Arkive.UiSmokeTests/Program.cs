@@ -162,6 +162,7 @@ internal static class Program
         await CheckProblemReportAsync(window, root);
         CheckSimpleUpscalePresets(window, root);
         CheckEditModsUpscaleAndMeshChecks(window);
+        CheckModsEditSimpleUpscale(window);
         CheckEditableComboBox();
         await CheckCleanUpWorkingFilesAsync(window);
         var advanced = Control<Button>(window, "AdvancedSectionsButton").ContextMenu;
@@ -345,6 +346,40 @@ internal static class Program
         Invoke<object?>(window, "UpdateAuthoringActions");
         Check(shown, "Edit in proportion editor is not offered for a saved upscale mod.");
         Console.WriteLine("PASS: Edit mods offers Edit in proportion editor for upscale mods and keeps the mesh check panel hidden until a mesh fails");
+    }
+
+    private static void CheckModsEditSimpleUpscale(MainWindow window)
+    {
+        var item = (MenuItem)typeof(MainWindow).GetField("ModLibraryRowEditUpscaleItem", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+        Check(item.Header.ToString() == "Edit Simple Upscale", "The Mods row menu has no Edit Simple Upscale item.");
+        Invoke<object?>(window, "ModLibraryRowMenu_Opened", item, new RoutedEventArgs());
+        Check(item.Visibility == Visibility.Collapsed, "Edit Simple Upscale is offered with no mod chosen.");
+        var editable = typeof(MainWindow).GetMethod("IsEditableUpscaleMod", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var warrior = BodyProfiles.All.First(profile => profile.Id == "female-warrior");
+        var settings = new BodyProportionModSettings(warrior, new Dictionary<string, double> { ["chest"] = 30 }, BodyProportionFollow.All);
+        bool Offered(int pieces, bool tagged, bool described)
+        {
+            var names = Enumerable.Range(0, pieces).Select(index => $"pc_wr_f_av_{226 + index}a_upper_sk").ToArray();
+            var assets = names.Select(name => new ArkiveModFileAsset(name, UnifiedPackageAssetKind.SkeletalMesh, name,
+                new("ui_upscale", "UI_UPSCALE", "SkeletalMesh", name, 1, new string('0', 64), new string('0', 64)), [])).ToArray();
+            var now = DateTimeOffset.UtcNow;
+            var manifest = new ArkiveModFileManifest("arkive.mod", 1, "ui-upscale", "UI upscale", "1.0.0", null,
+                described ? BodyProportionModTags.Description(settings, names) : "A mesh mod.", null,
+                tagged ? BodyProportionModTags.Write(settings) : [], "western-global-steam-v1", now, now,
+                ArkiveModAuthoringService.CurrentCreatedWith, assets);
+            return (bool)editable.Invoke(null, [manifest])!;
+        }
+        Check(Offered(2, tagged: true, described: true), "Edit Simple Upscale is not offered for a Simple upscale mod.");
+        Check(Offered(1, tagged: false, described: true), "Edit Simple Upscale is not offered for an upscale mod saved before its settings were tagged.");
+        Check(!Offered(2, tagged: false, described: false), "Edit Simple Upscale is offered for a mesh mod not made with Simple upscale.");
+        Check(Offered(21, tagged: true, described: true), "Edit Simple Upscale is not offered for an upscale mod too big to open whole.");
+        var preview = typeof(MainWindow).GetMethod("PreviewOutfit", BindingFlags.Static | BindingFlags.NonPublic)!;
+        string[] Preview(params string[] names) => [.. (IReadOnlyList<string>)preview.Invoke(null, [names])!];
+        Check(Preview("pc_wr_f_av_001a_upper_sk", "pc_wr_f_av_142c_dress_sk", "pc_wr_f_av_200a_dress_sk").SequenceEqual(["pc_wr_f_av_142c_dress_sk"]),
+            "A body-wide upscale mod is not previewed in Nightwear.");
+        Check(Preview("pc_dk_av_001a_lower_sk", "pc_dk_av_001a_upper_sk", "pc_dk_av_002a_lower_sk").SequenceEqual(["pc_dk_av_001a_lower_sk", "pc_dk_av_001a_upper_sk"]),
+            "A large upscale mod without Nightwear is not previewed with a whole outfit.");
+        Console.WriteLine("PASS: Mods offers Edit Simple Upscale for upscale mods and previews large ones in one outfit, Nightwear first");
     }
 
     // Nothing in a fresh library qualifies (and anything under an hour old is kept), so no confirmation opens.

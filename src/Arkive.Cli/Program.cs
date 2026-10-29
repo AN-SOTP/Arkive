@@ -354,7 +354,6 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--filter"), json),
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
-            "player-logs" => PlayerLogs(target, ReadTextOption(arguments, "--out"), json),
             "game-crashes" => GameCrashes(target, ReadPositiveIntOption(arguments, "--last") ?? 3, json),
             "astrogem-odds" => AstrogemOdds(target, ReadTextOption(arguments, "--target"), ReadTextOption(arguments, "--out"), json),
             "tweaks-install" => TweaksInstall(target, arguments.Contains("--saved", StringComparer.OrdinalIgnoreCase),
@@ -3161,32 +3160,6 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
 
 // Makes a Game Data mod from a LostArkPatcher-style .sql patch, or lists the table changes of one mod or of data2.lpk.
 /// <summary>
-/// Builds the "Arkive Tweaks" mod for the given tweaks from a Packages folder (read only) into a project root's library,
-/// as the Tweaks tab does; --movies DIR also writes each built movie there for decompiling.
-/// </summary>
-static int PlayerLogs(string name, string? outDirectory, bool json)
-{
-    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("Arkive/1 (+https://github.com/AN-SOTP/Arkive)");
-    var lookup = new Arkive.Core.Tweaks.PlayerLogsService(client).FetchAsync(name).GetAwaiter().GetResult();
-    var summary = Arkive.Core.Tweaks.PlayerLogsService.Summary(lookup);
-    string? path = null;
-    if (!string.IsNullOrWhiteSpace(outDirectory))
-    {
-        Directory.CreateDirectory(outDirectory);
-        path = Path.Combine(Path.GetFullPath(outDirectory), name + ".txt");
-        File.WriteAllText(path, summary);
-    }
-    if (json) WriteJson(new { lookup.Name, lookup.Region, Status = lookup.Status.ToString(), lookup.Logs, File = path });
-    else
-    {
-        Console.Write(summary);
-        if (path is not null) Console.WriteLine($"Written: {path}");
-    }
-    return 0;
-}
-
-/// <summary>
 /// What the game's own crash dumps (EFGame\Logs\*.dmp, newest first) say: the exception, where, and the names on the
 /// crashed thread's stack, with this build's tweak code named where the stack points into it.
 /// </summary>
@@ -4107,7 +4080,6 @@ static void PrintUsage()
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
-    Console.WriteLine("  arkive player-logs <character-name> [--out DIR] [--json]");
     Console.WriteLine("  arkive game-crashes <Lost-Ark-folder | EFGame\\Logs | file.dmp> [--last N] [--json]");
     Console.WriteLine("  arkive astrogem-odds <data2.lpk> [--target ID] [--out DIR] [--json]");
     Console.WriteLine("  arkive tweaks-install <Arkive-data-root> --saved [--include-other-mods]");

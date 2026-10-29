@@ -549,6 +549,9 @@ public partial class MainWindow : Window
             ModLibraryRowRenameItem.Visibility = ModLibraryRowAuthorItem.Visibility = single;
         ModLibraryRowUpdateItem.Header = several ? $"Update {rows.Length:N0} mods for this game version" : "Update for this game version";
         ModLibraryRowUpdateItem.IsEnabled = enabled && rows.All(item => !item.Status.FileMissing);
+        ModLibraryRowEditUpscaleItem.Visibility = !several && row is not null && IsEditableUpscaleMod(row.Entry.Manifest)
+            ? Visibility.Visible : Visibility.Collapsed;
+        ModLibraryRowEditUpscaleItem.IsEnabled = enabled && !row!.Status.FileMissing && CanOpenProportionEditor;
         FillAddToPackMenu(several ? null : row);
         if (several && rows.Any(item => item.Group?.Pack is not null))
         {

@@ -24,6 +24,9 @@ public sealed record ProportionSaveRequest(
 
     /// <summary>How many pieces to reshape and check at the same time (1: one after another).</summary>
     public int Parallelism { get; init; } = 1;
+
+    /// <summary>A body-wide mod: every outfit of its body, saved with that scope so editing it later covers them all again.</summary>
+    public bool EveryOutfit { get; init; }
 }
 
 /// <summary>
@@ -53,6 +56,9 @@ public partial class ProportionEditorWindow : Window
     public string? EditingModId { get; init; }
 
     public string? EditingModName { get; init; }
+
+    /// <summary>What saving does when it is more than saving the pieces shown (a large mod previewed with one outfit).</summary>
+    public string? EditingNote { get; init; }
 
     /// <summary>Finds the animations a mesh can play (null when it has none); set by Arkive's main window.</summary>
     public Func<ModelViewerRequest, CancellationToken, Task<ModelViewerAnimationOffer?>>? Animations { get; init; }
@@ -170,7 +176,9 @@ public partial class ProportionEditorWindow : Window
             LoadPresets(null);
             Status(EditingModId is null
                 ? $"{profiles[0].DisplayName} · {pieces.Count} piece(s). Move the sliders, then save as a mod."
-                : $"{profiles[0].DisplayName} · {pieces.Count} piece(s) with {EditingModName}'s sliders. Saving updates that mod.");
+                : EditingNote is { } note
+                    ? $"{profiles[0].DisplayName} · {EditingModName}'s sliders. {note}"
+                    : $"{profiles[0].DisplayName} · {pieces.Count} piece(s) with {EditingModName}'s sliders. Saving updates that mod.");
             _log($"Proportion editor ready: body={profiles[0].Id}, pieces={string.Join(", ", pieces.Select(piece => piece.Request.ObjectName))}.");
         }
         catch (OperationCanceledException) when (_closing.IsCancellationRequested)

@@ -21,18 +21,16 @@ import scaleform.clik.events.ButtonEvent;
 	The page never makes item slots of its own (a new ARKNewSlot binds itself to the game engine, ARKDataBinding), and
 	never makes symbols of the profile's own movie: the game froze and crashed (an access violation in the UI engine,
 	EFEngine.dll+0x1138318) making the profile's title art, CharInfo_Equip_AbilityPage_BasicAbilityTitleBG, by its class.
-	Only the shared component library's pieces are made (as Logs Tab copies the shared tab button); title rules and
+	Only the shared component library's pieces are made (a copy of the shared tab button); title rules and
 	refinement marks are drawn. Items are read only through the windows' own slots, as Combat Power reads them: theirs
 	from the inspect window when the page draws, yours from your profile while it shows (kept, with its lists and
 	labels, for later; Combat Power's model keeps your gear and totals from the same reading).
 
-	The tab sits before Logs Tab's. With both, the seven tabs share the row the game's five and Logs share alone. Like
-	the Logs tab it is a page of its own: the other tabs' pages hide while it shows, and any real tab (or a new inspect)
+	The tab is a page of its own: the other tabs' pages hide while it shows, and any real tab (or a new inspect)
 	closes it.
 **/
 @:keep
 @:access(arkive.tweaks.CombatPower)
-@:access(arkive.tweaks.LogsTab)
 class Compare {
 	static inline var TWEAK = "compare";
 	static inline var TAB_NAME = "arkiveCompareTab";
@@ -126,7 +124,6 @@ class Compare {
 	static var shownSignature:String = "";
 	static var listening = false;
 	static var originals:Dictionary = new Dictionary(true);
-	static var logsWatched:Dictionary = new Dictionary(true);
 	/** The slot whose tooltip a picture is showing. */
 	static var hovered:Dynamic;
 
@@ -179,8 +176,7 @@ class Compare {
 		button.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) show(self, group, button));
 		group.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) closeFor(button, true));
 		group.addEventListener("clikIndexChange", function(event:Dynamic) closeFor(button, true));
-		// Logs Tab adds its tab in the same call, before or after this one; the tabs are laid out once both are there,
-		// and again whenever the game lays its own tabs out afresh.
+		// The tabs are laid out again whenever the game lays its own tabs out afresh.
 		button.addEventListener(Event.ENTER_FRAME, function(event:Dynamic) keepTabs(self));
 		layout(self);
 	}
@@ -205,8 +201,7 @@ class Compare {
 	}
 
 	/**
-		Lays the tab row out: with one extra tab (Compare or Logs) the game's tabs keep their places and the extra one
-		follows; with both, the game's five, Compare and Logs share that same row evenly.
+		Lays the tab row out: the game's tabs keep their places and the Compare tab follows.
 	**/
 	static function layout(self:Dynamic):Void {
 		var group:Dynamic = self.tabGroupManager;
@@ -224,9 +219,6 @@ class Compare {
 		var extras:Array<Dynamic> = [];
 		if (Options.on(TWEAK))
 			extras.push(own);
-		var logs = logsTab(self, own);
-		if (logs != null && Options.on("logs"))
-			extras.push(logs);
 		var first:Dynamic = original(game[0]);
 		var last:Dynamic = original(game[game.length - 1]);
 		var lastX:Float = last.x;
@@ -272,31 +264,9 @@ class Compare {
 		}
 	}
 
-	/** Logs Tab's tab in this window (a copy of the same game tab, labelled "Logs"), or null. */
-	static function logsTab(self:Dynamic, own:Dynamic):Dynamic {
-		var count:Int = self.numChildren;
-		for (i in 0...count) {
-			var child:Dynamic = self.getChildAt(i);
-			if (child == own || child.constructor != own.constructor)
-				continue;
-			var label:Dynamic = child.label;
-			if (label != "Logs")
-				continue;
-			if (untyped logsWatched[child] != true) {
-				untyped logsWatched[child] = true;
-				// The Logs tab draws its own page over the hidden ones; this page just steps aside.
-				child.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) closeFor(own, false));
-			}
-			return child;
-		}
-		return null;
-	}
-
 	// ---- Showing and closing ----
 
 	static function show(self:Dynamic, group:Dynamic, button:Dynamic):Void {
-		if (LogsTab.showing && LogsTab.window == self && LogsTab.tab != null)
-			LogsTab.closeFor(LogsTab.tab);
 		var current:Dynamic = group.getButtonAt(group.selectedIndex);
 		if (current != null)
 			current.selected = false;
@@ -318,7 +288,7 @@ class Compare {
 		safeDraw();
 	}
 
-	/** Closes the page; `restore` shows the window's own tab again (not when Logs Tab's page takes over). */
+	/** Closes the page; `restore` shows the window's own tab again. */
 	static function closeFor(button:Dynamic, restore:Bool):Void {
 		if (button == null)
 			return;

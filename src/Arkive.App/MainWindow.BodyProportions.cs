@@ -252,75 +252,29 @@ public partial class MainWindow
         try
         {
             ProportionStatusText.Text = $"Finding every {profile.DisplayName} outfit…";
-            var found = await _packageIndexStore.SearchAsync(_libraryRootPath, "pc_", "SkeletalMesh", _gameMetadataIndex,
-                PackageIndexSearchScope.ObjectName, null, resultLimit: 200_000);
-            var pieces = found.Matches
-                .Where(match => CanReconnoitreSkeletalMesh(match.Kind, match.ClassName) && BodyProfiles.IsReshapeable(match.ObjectName) &&
-                                BodyProfiles.ForObjectName(match.ObjectName)?.Id == profile.Id)
-                .ToArray();
-            var outfits = pieces.Select(match => BodyProfiles.OutfitStem(match.ObjectName) ?? match.ObjectName)
-                .Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var pieces = await FindEveryOutfitAsync(profile);
             if (pieces.Length == 0)
             {
                 ProportionStatusText.Text = $"No {profile.DisplayName} outfits were found in the index.";
                 return;
             }
-            var minutes = pieces.Length * ProportionSecondsPerPiece / 60;
-            var gigabytes = pieces.Length * ProportionMegabytesPerPiece / 1024;
-            var answer = MessageBox.Show(this,
-                $"This reshapes all {outfits:N0} {profile.DisplayName} outfits ({pieces.Length:N0} pieces) with {preset.Name} " +
-                "and saves them as one new mod.\n\n" +
-                $"It takes a long time: about {Duration(minutes)} on this PC, " +
-                "since every piece gets a working copy and is checked against the game's skeleton and animations. " +
-                $"The working files and the mod take about {gigabytes:N1} GB. Arkive stays busy until it finishes; " +
-                "Stop ends it after the current piece and keeps the pieces done so far as a draft in Edit mods.\n\n" +
-                "Start now?",
-                "Apply preset to every outfit", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-            if (answer != MessageBoxResult.Yes)
+            if (ConfirmUpscaleBatch(this, "Apply preset to every outfit",
+                    $"This reshapes all {OutfitCount(pieces.Select(match => match.ObjectName)):N0} {profile.DisplayName} outfits " +
+                    $"({pieces.Length:N0} pieces) with {preset.Name} and saves them as one new mod.", pieces.Length) is not { } parallelism)
             {
                 ProportionStatusText.Text = "Nothing was changed.";
                 return;
             }
-            var parallelism = 1;
-            if (ProportionParallelism > 1)
-            {
-                var together = ProportionParallelism;
-                var faster = MessageBox.Show(this,
-                    $"Reshape {together} pieces at once?\n\n" +
-                    $"Working on {together} pieces at the same time takes about {Duration(minutes / ProportionSpeedUp(together))} " +
-                    $"instead of {Duration(minutes)}. It is more taxing on this PC: it keeps {together} of its " +
-                    $"{Environment.ProcessorCount} processor threads busy and uses about twice the memory (around 1 GB), so the PC " +
-                    "and other programs (and the game, if it is open) may feel slower and its fans louder until it finishes.\n\n" +
-                    $"Yes: {together} at once. No: one piece at a time.",
-                    "Apply preset to every outfit", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-                if (faster == MessageBoxResult.Yes) parallelism = together;
-            }
-            var requests = new List<BodyProportionPieceRequest>();
-            foreach (var package in pieces.GroupBy(match => match.SourcePath, StringComparer.OrdinalIgnoreCase))
-            {
-                var clean = await _arkiveModApply.ResolveCleanPackageAsync(package.Key);
-                foreach (var name in package.Select(match => match.ObjectName).Distinct(StringComparer.OrdinalIgnoreCase)
-                             .Order(StringComparer.OrdinalIgnoreCase))
-                    requests.Add(new BodyProportionPieceRequest(clean, package.First().PackageAlias, name, Path.GetDirectoryName(package.Key)));
-            }
-            _proportionBatchCancellation = new CancellationTokenSource();
-            ProportionCancelButton.Visibility = Visibility.Visible;
-            Log($"Proportion preset applied to every outfit of a body: preset={preset.Name}, body={profile.Id}, outfits={outfits}, " +
+            var requests = await CleanPieceRequestsAsync(pieces);
+            Log($"Proportion preset applied to every outfit of a body: preset={preset.Name}, body={profile.Id}, " +
                 $"pieces={requests.Count}, at once={parallelism}.");
-            var started = DateTime.UtcNow;
-            ProportionStatusText.Text = await SaveProportionModAsync(new ProportionSaveRequest(
+            ProportionStatusText.Text = await RunUpscaleBatchAsync(new ProportionSaveRequest(
                 $"{preset.Name} · every {profile.DisplayName} outfit", profile, requests,
                 new Dictionary<string, double>(preset.Settings), preset.Follow)
             {
-                Cancellation = _proportionBatchCancellation.Token,
                 Parallelism = parallelism,
-            });
-            Log($"Body-wide proportion mod finished in {(DateTime.UtcNow - started).TotalMinutes:N1} min for {requests.Count} pieces.");
-        }
-        catch (OperationCanceledException)
-        {
-            ProportionStatusText.Text = "Stopped. The pieces reshaped so far are in a draft in Edit mods: save it there to keep them as a mod, or remove it.";
-            Log("Body-wide proportion mod stopped by the user.");
+                EveryOutfit = true,
+            }, "The preset was not applied");
         }
         catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
         {
@@ -329,11 +283,102 @@ public partial class MainWindow
         }
         finally
         {
+            _proportionBusy = false;
+            UpdateProportionActions();
+        }
+    }
+
+    /// <summary>Every reshapeable piece of a player body's outfits in the index.</summary>
+    private async Task<PackageIndexMatch[]> FindEveryOutfitAsync(BodyProfile profile)
+    {
+        var found = await _packageIndexStore.SearchAsync(_libraryRootPath!, "pc_", "SkeletalMesh", _gameMetadataIndex,
+            PackageIndexSearchScope.ObjectName, null, resultLimit: 200_000);
+        return found.Matches
+            .Where(match => CanReconnoitreSkeletalMesh(match.Kind, match.ClassName) && BodyProfiles.IsReshapeable(match.ObjectName) &&
+                            BodyProfiles.ForObjectName(match.ObjectName)?.Id == profile.Id)
+            .ToArray();
+    }
+
+    private static int OutfitCount(IEnumerable<string> pieceNames) =>
+        pieceNames.Select(name => BodyProfiles.OutfitStem(name) ?? name).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+
+    /// <summary>Each piece read from its clean game package (the backup when a mod has changed the package).</summary>
+    private async Task<List<BodyProportionPieceRequest>> CleanPieceRequestsAsync(IEnumerable<PackageIndexMatch> pieces)
+    {
+        var requests = new List<BodyProportionPieceRequest>();
+        foreach (var package in pieces.GroupBy(match => match.SourcePath, StringComparer.OrdinalIgnoreCase))
+        {
+            var clean = await _arkiveModApply.ResolveCleanPackageAsync(package.Key);
+            foreach (var name in package.Select(match => match.ObjectName).Distinct(StringComparer.OrdinalIgnoreCase)
+                         .Order(StringComparer.OrdinalIgnoreCase))
+                requests.Add(new BodyProportionPieceRequest(clean, package.First().PackageAlias, name, Path.GetDirectoryName(package.Key)));
+        }
+        return requests;
+    }
+
+    /// <summary>
+    /// Asks before reshaping many pieces into one mod, saying roughly how long it takes and how much disk it needs,
+    /// then whether to work on several pieces at once. Returns how many at once, or null when the answer is no.
+    /// </summary>
+    private static int? ConfirmUpscaleBatch(Window owner, string title, string what, int pieces)
+    {
+        var minutes = pieces * ProportionSecondsPerPiece / 60;
+        var gigabytes = pieces * ProportionMegabytesPerPiece / 1024;
+        var answer = MessageBox.Show(owner,
+            $"{what}\n\n" +
+            $"It takes a long time: about {Duration(minutes)} on this PC, " +
+            "since every piece gets a working copy and is checked against the game's skeleton and animations. " +
+            $"The working files and the mod take about {gigabytes:N1} GB. Arkive stays busy until it finishes; " +
+            "Stop in Simple upscale ends it after the current piece and keeps the pieces done so far as a draft in Edit mods.\n\n" +
+            "Start now?",
+            title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes) return null;
+        if (ProportionParallelism <= 1) return 1;
+        var together = ProportionParallelism;
+        var faster = MessageBox.Show(owner,
+            $"Reshape {together} pieces at once?\n\n" +
+            $"Working on {together} pieces at the same time takes about {Duration(minutes / ProportionSpeedUp(together))} " +
+            $"instead of {Duration(minutes)}. It is more taxing on this PC: it keeps {together} of its " +
+            $"{Environment.ProcessorCount} processor threads busy and uses about twice the memory (around 1 GB), so the PC " +
+            "and other programs (and the game, if it is open) may feel slower and its fans louder until it finishes.\n\n" +
+            $"Yes: {together} at once. No: one piece at a time.",
+            title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        return faster == MessageBoxResult.Yes ? together : 1;
+    }
+
+    /// <summary>
+    /// Reshapes many pieces into one mod (a new one, or the upscale mod being edited) with progress and Stop in the
+    /// Simple upscale tab, and says what happened.
+    /// </summary>
+    private async Task<string> RunUpscaleBatchAsync(ProportionSaveRequest request, string failed)
+    {
+        _proportionBatchCancellation = new CancellationTokenSource();
+        ProportionCancelButton.Visibility = Visibility.Visible;
+        try
+        {
+            var started = DateTime.UtcNow;
+            var result = await SaveProportionModAsync(request with { Cancellation = _proportionBatchCancellation.Token });
+            Log($"Body-wide proportion mod finished in {(DateTime.UtcNow - started).TotalMinutes:N1} min for {request.Pieces.Count} pieces.");
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            Log("Body-wide proportion mod stopped by the user.");
+            return request.ExistingModId is null
+                ? "Stopped. The pieces reshaped so far are in a draft in Edit mods: save it there to keep them as a mod, or remove it."
+                : "Stopped. The mod file is unchanged; the pieces reshaped so far are in its draft in Edit mods. " +
+                  "Save it there to keep them, or discard the draft to keep the mod as it was.";
+        }
+        catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
+        {
+            Log($"Body-wide proportion mod failed: {exception}");
+            return $"{failed}: {exception.Message}";
+        }
+        finally
+        {
             _proportionBatchCancellation?.Dispose();
             _proportionBatchCancellation = null;
             ProportionCancelButton.Visibility = Visibility.Collapsed;
-            _proportionBusy = false;
-            UpdateProportionActions();
         }
     }
 
@@ -438,31 +483,74 @@ public partial class MainWindow
     /// <summary>Reopens the Simple upscale mod open in Edit mods in the proportion editor, with its sliders.</summary>
     private async void AuthoringProportionsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_authoringDraft?.ModId is not { } modId || _umodelBridge is null || _proportionBusy || string.IsNullOrWhiteSpace(_libraryRootPath) ||
-            BodyProportionModTags.Read(_authoringDraft.Metadata.Tags, _authoringDraft.Metadata.Description) is not { } settings) return;
+        if (_authoringDraft?.ModId is not { } modId) return;
+        await PersistAuthoringDraftAsync();
+        await OpenUpscaleModInEditorAsync(modId, text => AuthoringStatusText.Text = text);
+    }
+
+    /// <summary>Edit Simple Upscale in a Mods row's menu: the same as Edit in proportion editor, from the list.</summary>
+    private async void ModLibraryRowEditUpscaleItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (ModLibraryGrid.SelectedItem is ModLibraryRow row && ModLibraryIdle)
+            await OpenUpscaleModInEditorAsync(row.Entry.ModId, text => ModLibraryStatusText.Text = StatusText.Text = text);
+    }
+
+    /// <summary>Whether a mod can be reopened in the proportion editor: a Simple upscale mod with outfit pieces.</summary>
+    private static bool IsEditableUpscaleMod(ArkiveModFileManifest manifest) =>
+        BodyProportionModTags.Read(manifest.Tags, manifest.Description) is not null && UpscalePieces(manifest).Any();
+
+    private static IEnumerable<ArkiveModFileAsset> UpscalePieces(ArkiveModFileManifest manifest) =>
+        manifest.Assets.Where(asset => asset.Kind == UnifiedPackageAssetKind.SkeletalMesh && BodyProfiles.IsReshapeable(asset.Target.ObjectName));
+
+    private bool CanOpenProportionEditor => _umodelBridge is not null && !_proportionBusy && !string.IsNullOrWhiteSpace(_libraryRootPath);
+
+    /// <summary>
+    /// The outfit a large upscale mod is previewed with in the editor: Nightwear (costume 142c, which every player
+    /// body has and which shows the body's shape best) when the mod has it, otherwise its first one-piece dress, otherwise
+    /// its first outfit with a top.
+    /// </summary>
+    internal static IReadOnlyList<string> PreviewOutfit(IReadOnlyList<string> pieceNames)
+    {
+        var outfits = pieceNames.Where(name => BodyProfiles.OutfitStem(name) is not null)
+            .GroupBy(name => BodyProfiles.OutfitStem(name)!, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(outfit => outfit.Key, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var chosen = outfits.FirstOrDefault(outfit => outfit.Key.EndsWith("_av_142c", StringComparison.OrdinalIgnoreCase)) ??
+                     outfits.FirstOrDefault(outfit => outfit.Any(name => BodyProfiles.PieceName(name) == "dress")) ??
+                     outfits.FirstOrDefault(outfit => outfit.Any(name => BodyProfiles.PieceName(name) == "upper")) ??
+                     outfits.FirstOrDefault();
+        return chosen is null ? pieceNames.Take(1).ToArray() : chosen.Take(MaximumEditorPieces).ToArray();
+    }
+
+    /// <summary>
+    /// Opens a saved Simple upscale mod in the proportion editor with the mod's sliders, from the clean game files;
+    /// saving there updates the same mod, which Apply changes then puts in the game if it is enabled. A mod of up to
+    /// <see cref="MaximumEditorPieces"/> pieces opens whole. A larger one opens one of its outfits as a preview, and
+    /// saving reshapes all of it again: every outfit of its body for a body-wide mod (so outfits it left out, or new
+    /// ones from a game update, fit the new shape too), otherwise its own pieces.
+    /// </summary>
+    private async Task OpenUpscaleModInEditorAsync(string modId, Action<string> report)
+    {
+        if (!CanOpenProportionEditor) return;
         _proportionBusy = true;
         UpdateAuthoringActions();
         try
         {
-            await PersistAuthoringDraftAsync();
             var library = await _arkiveModLibrary.LoadAsync();
             var mod = library.Find(modId) ?? throw new InvalidOperationException("The mod is no longer in the library.");
-            var requests = new List<BodyProportionPieceRequest>();
-            foreach (var asset in mod.Manifest.Assets.Where(asset => asset.Kind == UnifiedPackageAssetKind.SkeletalMesh &&
-                                                                    BodyProfiles.IsReshapeable(asset.Target.ObjectName)))
-            {
-                var gamePackage = Path.Combine(_libraryRootPath, asset.Target.PhysicalPackageName);
-                if (!File.Exists(gamePackage))
-                    throw new FileNotFoundException($"{asset.Target.PhysicalPackageName} ({asset.Target.PackageAlias}) is not in the game folder.");
-                var clean = await _arkiveModApply.ResolveCleanPackageAsync(gamePackage);
-                requests.Add(new BodyProportionPieceRequest(clean, asset.Target.PackageAlias, asset.Target.ObjectName, _libraryRootPath));
-            }
-            if (requests.Count == 0) throw new InvalidOperationException("This mod has no outfit pieces the proportion editor can open.");
-            if (requests.Count > MaximumEditorPieces)
-                throw new InvalidOperationException($"This mod reshapes {requests.Count:N0} pieces, too many to open in the editor together. " +
-                    "To change it, adjust its preset and use Apply preset to every outfit of its body again.");
-            var window = new ProportionEditorWindow(ModelViewerService(), BodyProportionPieces(), requests,
-                Path.Combine(_projectRoot, "cache", "webview2"), _effectiveAppearanceTheme, SaveProportionModAsync,
+            if (BodyProportionModTags.Read(mod.Manifest.Tags, mod.Manifest.Description, mod.Manifest.Name) is not { } settings)
+                throw new InvalidOperationException("This mod was not made with Simple upscale.");
+            var pieces = UpscalePieces(mod.Manifest).ToArray();
+            if (pieces.Length == 0) throw new InvalidOperationException("This mod has no outfit pieces the proportion editor can open.");
+            var large = settings.EveryOutfit || pieces.Length > MaximumEditorPieces;
+            var shown = large
+                ? PreviewOutfit(pieces.Select(asset => asset.Target.ObjectName).ToArray()).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
+            var requests = await PieceRequestsAsync(shown is null ? pieces : pieces.Where(asset => shown.Contains(asset.Target.ObjectName)));
+            ProportionEditorWindow? window = null;
+            window = new ProportionEditorWindow(ModelViewerService(), BodyProportionPieces(), requests,
+                Path.Combine(_projectRoot, "cache", "webview2"), _effectiveAppearanceTheme,
+                large ? request => SaveLargeUpscaleModAsync(request, window!, settings.EveryOutfit ? null : pieces) : SaveProportionModAsync,
                 BodyProportionPresets(), Log)
             {
                 Animations = FindViewerAnimationsAsync,
@@ -470,22 +558,105 @@ public partial class MainWindow
                 InitialSettings = settings,
                 EditingModId = modId,
                 EditingModName = mod.Manifest.Name,
+                EditingNote = !large ? null : settings.EveryOutfit
+                    ? $"Previewing one outfit. Saving reshapes every {settings.Profile.DisplayName} outfit again."
+                    : $"Previewing one outfit. Saving reshapes all {pieces.Length:N0} pieces of the mod again.",
                 Owner = this,
             };
             window.Show();
-            AuthoringStatusText.Text = $"Opened {mod.Manifest.Name} in the proportion editor. Saving there updates this mod.";
-            Log($"Proportion editor opened for an upscale mod: mod={mod.Manifest.Name}, pieces={requests.Count}, settings=" +
+            report($"Opened {mod.Manifest.Name} in the proportion editor. Saving there updates this mod.");
+            Log($"Proportion editor opened for an upscale mod: mod={mod.Manifest.Name}, pieces={pieces.Length}, shown={requests.Count}, " +
+                $"every outfit={settings.EveryOutfit}, settings=" +
                 string.Join(", ", settings.Settings.Select(pair => $"{pair.Key}={pair.Value}")) + $", follow={settings.Follow}.");
         }
         catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
         {
-            AuthoringStatusText.Text = $"The proportion editor could not open this mod: {exception.Message}";
+            report($"The proportion editor could not open this mod: {exception.Message}");
             Log($"Proportion editor could not open an upscale mod: {exception}");
         }
         finally
         {
             _proportionBusy = false;
             UpdateAuthoringActions();
+            UpdateProportionActions();
+        }
+    }
+
+    /// <summary>A mod's pieces read from their clean game packages.</summary>
+    private async Task<List<BodyProportionPieceRequest>> PieceRequestsAsync(IEnumerable<ArkiveModFileAsset> pieces)
+    {
+        var requests = new List<BodyProportionPieceRequest>();
+        foreach (var asset in pieces)
+        {
+            var gamePackage = Path.Combine(_libraryRootPath!, asset.Target.PhysicalPackageName);
+            if (!File.Exists(gamePackage))
+                throw new FileNotFoundException($"{asset.Target.PhysicalPackageName} ({asset.Target.PackageAlias}) is not in the game folder.");
+            var clean = await _arkiveModApply.ResolveCleanPackageAsync(gamePackage);
+            requests.Add(new BodyProportionPieceRequest(clean, asset.Target.PackageAlias, asset.Target.ObjectName, _libraryRootPath!));
+        }
+        return requests;
+    }
+
+    /// <summary>
+    /// Saving a large upscale mod from the editor: asks as Apply preset to every outfit does, then reshapes every
+    /// outfit of the body (ownPieces null) or the mod's own pieces into the same mod. That runs on after this returns,
+    /// with progress and Stop in Simple upscale, so the editor can be closed meanwhile.
+    /// </summary>
+    private async Task<string> SaveLargeUpscaleModAsync(ProportionSaveRequest request, Window owner, IReadOnlyList<ArkiveModFileAsset>? ownPieces)
+    {
+        if (_proportionBusy) throw new InvalidOperationException("Arkive is already reshaping outfits. Try again when it finishes.");
+        if (_authoringBusy || _modLibraryBusy || _guidedTextureModInProgress || _modSetBusy || _workshopBusy)
+            throw new InvalidOperationException("Arkive is busy with another mod task. Try again when it finishes.");
+        _proportionBusy = true;
+        UpdateProportionActions();
+        var running = false;
+        try
+        {
+            List<BodyProportionPieceRequest> requests;
+            int? parallelism;
+            if (ownPieces is null)
+            {
+                var found = await FindEveryOutfitAsync(request.Profile);
+                if (found.Length == 0) return $"No {request.Profile.DisplayName} outfits were found in the index. Nothing was changed.";
+                parallelism = ConfirmUpscaleBatch(owner, "Update every outfit",
+                    $"This reshapes all {OutfitCount(found.Select(match => match.ObjectName)):N0} {request.Profile.DisplayName} outfits " +
+                    $"({found.Length:N0} pieces) with these sliders and updates {request.ModName} with them.", found.Length);
+                requests = parallelism is null ? [] : await CleanPieceRequestsAsync(found);
+            }
+            else
+            {
+                parallelism = ConfirmUpscaleBatch(owner, "Update the mod",
+                    $"This reshapes all {ownPieces.Count:N0} pieces of {request.ModName} with these sliders and updates the mod.", ownPieces.Count);
+                requests = parallelism is null ? [] : await PieceRequestsAsync(ownPieces);
+            }
+            if (parallelism is null) return "Nothing was changed.";
+            Log($"Large upscale mod update started: mod={request.ModName}, body={request.Profile.Id}, pieces={requests.Count}, " +
+                $"every outfit={ownPieces is null}, at once={parallelism}.");
+            running = true;
+            _ = FinishLargeUpscaleAsync(request with { Pieces = requests, Parallelism = parallelism.Value, EveryOutfit = ownPieces is null });
+            return $"Updating {request.ModName}: reshaping {requests.Count:N0} pieces. Progress and Stop are in Simple upscale, and " +
+                   "this window can be closed. When it finishes, choose Apply changes in Mods if the mod is on.";
+        }
+        finally
+        {
+            if (!running)
+            {
+                _proportionBusy = false;
+                UpdateProportionActions();
+            }
+        }
+    }
+
+    private async Task FinishLargeUpscaleAsync(ProportionSaveRequest request)
+    {
+        try
+        {
+            ProportionStatusText.Text = $"Updating {request.ModName}…";
+            ProportionStatusText.Text = StatusText.Text = await RunUpscaleBatchAsync(request, $"{request.ModName} was not updated");
+        }
+        finally
+        {
+            _proportionBusy = false;
             UpdateProportionActions();
         }
     }
@@ -587,7 +758,7 @@ public partial class MainWindow
     private async Task<ArkiveModLibraryEntry> CreateProportionModAsync(ProportionSaveRequest request, List<string> skipped)
     {
         await PersistAuthoringDraftAsync();
-        var modSettings = new BodyProportionModSettings(request.Profile, request.Settings, request.Follow);
+        var modSettings = new BodyProportionModSettings(request.Profile, request.Settings, request.Follow, request.EveryOutfit);
         var description = BodyProportionModTags.Description(modSettings, request.Pieces.Select(piece => piece.ObjectName).ToArray());
         // The sliders travel with the mod in its tags, so it can be reopened in the proportion editor later.
         var tags = BodyProportionModTags.Write(modSettings);
