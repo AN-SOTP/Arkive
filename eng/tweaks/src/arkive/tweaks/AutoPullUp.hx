@@ -1,15 +1,19 @@
 package arkive.tweaks;
 
+import flash.events.TimerEvent;
+import flash.utils.Timer;
 import scaleform.clik.events.ButtonEvent;
 
 /**
 	Auto Pull Up, in the party finder's waiting room: an "Auto Pull Up" tick box beside the host's Pull up button. While
-	it is ticked and the Find Party window is open, the button is pressed again 1 to 4 seconds (at random) after the game
-	ends its wait. The box unticks itself when the party is full, when the time limit runs out, or when a press doesn't
-	take. It starts unticked each time the game starts.
+	it is ticked, the button is pressed again 1 to 4 seconds (at random) after the game ends its wait, also while the Find
+	Party window is closed. The box unticks itself when the party is full, when the time limit runs out, or when a press
+	doesn't take. It starts unticked each time the game starts.
 
 	The game itself sends the pull up and runs the wait (the button has no handler in the movie and is greyed out by the
-	engine), so this only presses the button the way a click does.
+	engine), so this only presses the button the way a click does. Closing the window hides it, so the button is still
+	there to press; the checks run on a timer of their own rather than on the window's frames. Each pull up and each
+	stop is reported to Arkive (channel "autopullup"), which logs it.
 **/
 @:keep
 class AutoPullUp {
@@ -19,6 +23,7 @@ class AutoPullUp {
 	static inline var MAX_DELAY_MS = 4000;
 	/** A press the game took greys the button out well within this; still enabled after it, the press didn't take. */
 	static inline var PRESS_CHECK_MS = 5000;
+	static inline var TICK_MS = 250;
 	static inline var GROUPS = 4;
 	static inline var GROUP_SIZE = 4;
 	static inline var GAP = 8;
@@ -29,31 +34,33 @@ class AutoPullUp {
 	static var dueAt = 0;
 	static var pressedAt = 0;
 
+	/** The party finder last built: its content, its Pull up button and the tick box beside it. */
+	static var content:Dynamic;
+	static var pull:Dynamic;
+	static var box:Dynamic;
+
+	static var timer:Timer;
+
 	/** FindPartyNewContent.configUI: put the tick box beside Pull up, right of the game's countdown. */
 	public static function onContentConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
 		var page:Dynamic = self.settingPage;
-		var pull:Dynamic = page == null ? null : page.pullUp_btn;
-		if (pull == null || pull.parent == null)
+		var button:Dynamic = page == null ? null : page.pullUp_btn;
+		if (button == null || button.parent == null)
 			return;
-		var box:Dynamic = tickBox(page.privateCheckBox);
-		if (box == null)
+		var made:Dynamic = tickBox(page.privateCheckBox);
+		if (made == null)
 			return;
 		// The countdown ("59s left") sits right of the button and is half as wide.
-		box.x = pull.x + pull.width * 1.5 + 2 * GAP;
-		GameUi.addAbove(box, pull);
-		box.validateNow();
-		box.y = pull.y + (pull.height - box.height) / 2;
-		box.selected = armed;
-		Options.own(ID, box);
-		box.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) ticked(box));
-		box.addEventListener("enterFrame", function(event:Dynamic) {
-			// Runs outside the hook's guard: a lobby shaped other than expected stops the tweak, not the window.
-			try {
-				onFrame(self, pull, box);
-			} catch (error:Dynamic) {
-				armed = false;
-			}
-		});
+		made.x = button.x + button.width * 1.5 + 2 * GAP;
+		GameUi.addAbove(made, button);
+		made.validateNow();
+		made.y = button.y + (button.height - made.height) / 2;
+		made.selected = armed;
+		Options.own(ID, made);
+		made.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) ticked(made));
+		content = self;
+		pull = button;
+		box = made;
 	}
 
 	/** A tick box like the page's own ones (the game's settings tick box when the page has none). */
@@ -61,49 +68,87 @@ class AutoPullUp {
 		var type:Dynamic = like != null ? like.constructor : GameUi.definition("DefaultCheckBox_V2");
 		if (type == null)
 			return null;
-		var box:Dynamic = untyped __new__(type);
-		box.autoSize = "left";
-		box.label = LABEL;
-		return box;
+		var made:Dynamic = untyped __new__(type);
+		made.autoSize = "left";
+		made.label = LABEL;
+		return made;
 	}
 
-	static function ticked(box:Dynamic):Void {
-		armed = box.selected == true;
+	static function ticked(clicked:Dynamic):Void {
+		armed = clicked.selected == true;
 		armedAt = flash.Lib.getTimer();
 		dueAt = 0;
 		pressedAt = 0;
+		if (!armed) {
+			Bus.send(ID, "off");
+			return;
+		}
+		Bus.send(ID, "on");
+		if (timer == null) {
+			timer = new Timer(TICK_MS);
+			timer.addEventListener(TimerEvent.TIMER, onTick);
+		}
+		timer.start();
 	}
 
-	static function untick(box:Dynamic):Void {
+	/** Stops, unticks the box and tells Arkive why. */
+	static function stop(reason:String):Void {
 		armed = false;
 		dueAt = 0;
 		pressedAt = 0;
-		if (box.selected == true)
+		if (timer != null)
+			timer.stop();
+		if (box != null && box.selected == true)
 			box.selected = false;
+		Bus.send(ID, "stop\t" + reason + "\t" + where());
 	}
 
-	static function onFrame(content:Dynamic, pull:Dynamic, box:Dynamic):Void {
+	static function onTick(event:Dynamic):Void {
+		// Runs outside any hook's guard: a lobby shaped other than expected stops the tweak, not the game's interface.
+		try {
+			step();
+		} catch (error:Dynamic) {
+			stop("error");
+		}
+	}
+
+	static function step():Void {
 		if (!armed) {
-			if (box.selected == true)
-				box.selected = false;
+			timer.stop();
 			return;
 		}
-		if (!Options.on(ID) || full(content) || timeUp()) {
-			untick(box);
+		if (!Options.on(ID)) {
+			stop("off");
+			return;
+		}
+		// Gone from the stage: the party finder was taken down. Wait for the next one (its configUI hands it over).
+		if (pull == null || pull.stage == null) {
+			dueAt = 0;
+			pressedAt = 0;
+			return;
+		}
+		if (full(content)) {
+			stop("full");
+			return;
+		}
+		if (timeUp()) {
+			stop("time");
 			return;
 		}
 		var now = flash.Lib.getTimer();
 		var ready = pull.enabled == true && pull.visible == true;
 		if (pressedAt != 0) {
 			if (ready && now - pressedAt >= PRESS_CHECK_MS) {
-				untick(box);
+				stop("no effect");
 				return;
 			}
-			if (!ready)
+			if (!ready) {
 				pressedAt = 0;
+				Bus.send(ID, "pulled\t" + where());
+			}
 			return;
 		}
-		if (!ready || !shown(content)) {
+		if (!ready) {
 			dueAt = 0;
 			return;
 		}
@@ -116,6 +161,19 @@ class AutoPullUp {
 		dueAt = 0;
 		pressedAt = now;
 		GameUi.press(pull);
+	}
+
+	/** "open" while the Find Party window shows, "closed" while it is hidden (or anything above it is). */
+	static function where():String {
+		var at:Dynamic = content;
+		if (at == null || at.stage == null)
+			return "gone";
+		while (at != null) {
+			if (at.visible != true)
+				return "closed";
+			at = at.parent;
+		}
+		return "open";
 	}
 
 	/** True when the time limit (minutes; "0" for none) has passed since the box was ticked. */
@@ -132,25 +190,12 @@ class AutoPullUp {
 		return minutes > 0 && flash.Lib.getTimer() - armedAt >= minutes * 60000;
 	}
 
-	/** True while the Find Party window is open: the waiting room and every parent up to the stage are shown. */
-	static function shown(content:Dynamic):Bool {
-		if (content.stage == null || content.waitingTabList == null || content.waitingTabList.visible != true)
-			return false;
-		var at:Dynamic = content;
-		while (at != null) {
-			if (at.visible != true)
-				return false;
-			at = at.parent;
-		}
-		return true;
-	}
-
 	/**
 		True when every party of the lobby (the member groups not locked or hidden) has all its places taken. A group with
 		fewer rows than places, or rows the game doesn't mark, never counts as full.
 	**/
 	static function full(content:Dynamic):Bool {
-		var joining:Dynamic = content.joiningPage;
+		var joining:Dynamic = content == null ? null : content.joiningPage;
 		if (joining == null)
 			return false;
 		var counted = 0;

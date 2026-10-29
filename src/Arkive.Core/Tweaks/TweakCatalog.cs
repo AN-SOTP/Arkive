@@ -263,7 +263,7 @@ public static class TweakCatalog
             H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "configUI", "arkive.tweaks.LobbyCp.onConfigUI"),
             H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewPreviewListRendererMember", "memberData", "arkive.tweaks.LobbyCp.onMemberData"),
         ]),
-        new("autopullup", "Auto Pull Up", "Adds an \"Auto Pull Up\" tick box beside the Pull up button of a lobby you host. While it is ticked and the Find Party window is open, Pull up is pressed again 1 to 4 seconds after each wait ends. It unticks itself when the party is full or the time limit runs out.", TweakRisk.Automation,
+        new("autopullup", "Auto Pull Up", "Adds an \"Auto Pull Up\" tick box beside the Pull up button of a lobby you host. While it is ticked, Pull up is pressed again 1 to 4 seconds after each wait ends, also with the Find Party window closed. It unticks itself when the party is full or the time limit runs out. With Arkive running, each pull up is written to Arkive's log.", TweakRisk.Automation,
         [
             H(FindParty, "findpartynew", "ark.ui.findPartyNew.FindPartyNewContent", "configUI", "arkive.tweaks.AutoPullUp.onContentConfigUI"),
         ],

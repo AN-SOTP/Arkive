@@ -17,6 +17,8 @@ public partial class MainWindow
     {
         [TweakModService.SettingsChannel] = SaveInGameTweakChange,
         [MarketPriceStore.Channel] = SaveMarketPrices,
+        [TweakModService.AutoPullUpChannel] = text =>
+            Dispatcher.InvokeAsync(() => Log(TweakModService.DescribeAutoPullUp(text) ?? "Auto Pull Up: an unreadable report was ignored.")),
     };
 
     /// <summary>Prices the player saw on the market, kept so tooltips have them next session too.</summary>

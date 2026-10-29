@@ -21,7 +21,18 @@ internal static class TweakSmokeTests
         new("keeps the market prices Market Price sends, the newest per item, for the next session", TestMarketPrices),
         new("works out astrogem processing odds from the game's weights and writes the table the advisor reads", TestAstrogemOdds),
         new("reads a game crash dump: the exception, where, the names on the stack and the tweak code it points into", TestGameCrash),
+        new("turns Auto Pull Up's Data Bus reports into log lines and ignores unreadable ones", TestAutoPullUpReports),
     ];
+
+    private static void TestAutoPullUpReports()
+    {
+        static string? Line(string text) => Arkive.Core.Tweaks.TweakModService.DescribeAutoPullUp(text);
+        Assert(Line("pulled\tclosed") == "Auto Pull Up: pulled up (Find Party window closed)." &&
+               Line("stop\tfull\topen") == "Auto Pull Up: stopped, the party is full (Find Party window open)." &&
+               Line("on") == "Auto Pull Up: ticked." && Line("stop\tno effect\tclosed")!.Contains("didn't grey"),
+            "an Auto Pull Up report reads wrong");
+        Assert(Line("pulled") is null && Line("") is null && Line("stop\tfull") is null, "an unreadable Auto Pull Up report was read");
+    }
 
     /// <summary>
     /// A minidump shaped like the game's: an access violation in EFEngine.dll whose stack holds a return address and a
