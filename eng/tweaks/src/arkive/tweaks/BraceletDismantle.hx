@@ -6,8 +6,8 @@ import scaleform.clik.events.ButtonEvent;
 
 /**
 	Bracelet Dismantle by Stat. The bracelet tab of the auto-dismantle settings gets six stat tick boxes. Each time the
-	Dismantle window opens with the bag beside it, every bag bracelet whose stats are all ticked goes into the dismantle
-	list, the same way a right-click puts it there. The player checks the list and presses Dismantle.
+	Dismantle window opens with the bag beside it, every bag bracelet with a ticked stat goes into the dismantle list,
+	the same way a right-click puts it there. The player checks the list and presses Dismantle.
 
 	The game's own auto-dismantle runs in the engine and only knows its own settings, so these boxes are the tweak's.
 	A bracelet's stats are read from its tooltip's "Bracelet Bonus" lines ("Crit +90"), English client only.
@@ -62,7 +62,7 @@ class BraceletDismantle {
 		if (like == null || below == null)
 			return;
 		rows = [];
-		var heading = label("Add to the dismantle list when a bracelet only has (Arkive)", fontOf(below), 0xFFFFFF, 420);
+		var heading = label("Add to the dismantle list when a bracelet has (Arkive)", fontOf(below), 0xFFFFFF, 420);
 		self.addChild(heading);
 		Options.own(ID, heading);
 		rows.push(heading);
@@ -199,7 +199,7 @@ class BraceletDismantle {
 		}
 	}
 
-	/** A bag bracelet that isn't greyed out, locked or already added, whose stats are all ticked. */
+	/** A bag bracelet that isn't greyed out, locked or already added, with at least one ticked stat. */
 	static function wanted(slot:Dynamic):Bool {
 		if (slot == null || slot.data == null || slot.enabled != true)
 			return false;
@@ -210,13 +210,13 @@ class BraceletDismantle {
 		if (lock != null && lock > 0)
 			return false;
 		var stats = statsOf(slot);
-		if (stats == null || stats.length == 0)
+		if (stats == null)
 			return false;
 		var chosen = picked();
 		for (stat in stats)
-			if (!contains(chosen, stat))
-				return false;
-		return true;
+			if (contains(chosen, stat))
+				return true;
+		return false;
 	}
 
 	/** The stat values ("crit", …) of a bracelet's bonus lines; null when the item isn't a bracelet. */
