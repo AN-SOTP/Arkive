@@ -48,6 +48,7 @@ public sealed class ArkiveModAuthoringService
             MaterialInstanceEditEntry material => await CaptureMaterialAsync(edit, material, id, cancellationToken)
                 .ConfigureAwait(false),
             Particles.ParticleEffectEditEntry particle => CaptureParticle(edit, particle, id),
+            Physics.PhysicsAssetEditEntry physics => CapturePhysics(edit, physics, id),
             InterfaceMovieEditEntry movie => await CaptureInterfaceMovieAsync(edit, movie, id, cancellationToken)
                 .ConfigureAwait(false),
             _ => throw new ArkiveModRefusalException("AUT001", $"{edit.DisplayName} is not a supported edit."),
@@ -229,6 +230,24 @@ public sealed class ArkiveModAuthoringService
             [])
         {
             Particle = new ArkiveModParticleData(document.Recipe, document.Patches),
+        };
+        return new ArkiveModCapturedAsset(descriptor, [], edit);
+    }
+
+    private static ArkiveModCapturedAsset CapturePhysics(ArkiveModLocalEdit edit, Physics.PhysicsAssetEditEntry physics, string assetId)
+    {
+        var document = physics.Document;
+        if (document.Patches.Count == 0)
+            Refuse("AUT046", $"{document.DisplayName} changes nothing in {document.AssetObjectName}.");
+        var descriptor = new ArkiveModFileAsset(
+            assetId, UnifiedPackageAssetKind.PhysicsAsset, document.DisplayName,
+            new ArkiveModAssetTarget(
+                document.PackageAlias, PhysicalName(document.SourcePackagePath), "physicsasset",
+                document.AssetObjectName, document.AssetExportIndex, document.SourcePackageSha256.ToUpperInvariant(),
+                document.AssetExportSha256.ToUpperInvariant()),
+            [])
+        {
+            Physics = new ArkiveModPhysicsData(document.Fit, document.Patches),
         };
         return new ArkiveModCapturedAsset(descriptor, [], edit);
     }
@@ -559,6 +578,7 @@ public sealed class ArkiveModAuthoringService
         CancellationToken cancellationToken)
     {
         if (edit.Entry is Particles.ParticleEffectEditEntry particle) return particle.Document.ContentSha256;
+        if (edit.Entry is Physics.PhysicsAssetEditEntry physics) return physics.Document.ContentSha256;
         if (edit.Entry is not MaterialInstanceEditEntry material)
         {
             var path = edit.Entry switch

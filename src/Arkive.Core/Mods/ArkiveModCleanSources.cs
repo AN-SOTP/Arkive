@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Arkive.Core.Materials;
 using Arkive.Core.Particles;
+using Arkive.Core.Physics;
 using Arkive.Core.Textures;
 
 namespace Arkive.Core.Mods;
@@ -44,6 +45,8 @@ public static class ArkiveModCleanSources
                     MaterialInstanceEditEntry material => await RepointMaterialAsync(edits, material, resolve, cancellationToken)
                         .ConfigureAwait(false),
                     ParticleEffectEditEntry particle => await RepointParticleAsync(edits, particle, resolve, cancellationToken)
+                        .ConfigureAwait(false),
+                    PhysicsAssetEditEntry physics => await RepointPhysicsAsync(edits, physics, resolve, cancellationToken)
                         .ConfigureAwait(false),
                     _ => false,
                 };
@@ -117,6 +120,19 @@ public static class ArkiveModCleanSources
         if (await CleanCopyAsync(document.SourcePackagePath, document.SourcePackageSha256, resolve, cancellationToken)
                 .ConfigureAwait(false) is not { } clean) return false;
         await edits.ParticleEdits.SaveAsync(particle with { Document = document with { SourcePackagePath = clean.FullName } },
+            cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private static async Task<bool> RepointPhysicsAsync(ArkiveModEditWorkspaces edits, PhysicsAssetEditEntry physics,
+        Resolver resolve, CancellationToken cancellationToken)
+    {
+        var document = physics.Document;
+        if (await IsSameFileAsync(document.SourcePackagePath, document.SourcePackageSha256, cancellationToken).ConfigureAwait(false))
+            return false;
+        if (await CleanCopyAsync(document.SourcePackagePath, document.SourcePackageSha256, resolve, cancellationToken)
+                .ConfigureAwait(false) is not { } clean) return false;
+        await edits.PhysicsEdits.SaveAsync(physics with { Document = document with { SourcePackagePath = clean.FullName } },
             cancellationToken).ConfigureAwait(false);
         return true;
     }

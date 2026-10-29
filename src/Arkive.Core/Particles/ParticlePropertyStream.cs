@@ -46,6 +46,19 @@ public static class ParticlePropertyStream
     }
 
     /// <summary>
+    /// The properties of an export whose property stream is followed by native data (a physics body's cached shapes),
+    /// read from <paramref name="start"/>; null when they do not read as a stream ending in None.
+    /// </summary>
+    public static IReadOnlyList<ParticleProperty>? ReadLeading(ReadOnlySpan<byte> export, IReadOnlyList<UnrealNameEntry> names,
+        int start, out int end)
+    {
+        var properties = new List<ParticleProperty>();
+        if (TryParse(export, start, export.Length, names, properties, out end) && properties.Count > 0) return properties;
+        end = 0;
+        return null;
+    }
+
+    /// <summary>
     /// The elements of an array of structs (a spawn module's BurstList…): its count, then each element's own property
     /// stream ending in None. Null when the array does not read that way.
     /// </summary>

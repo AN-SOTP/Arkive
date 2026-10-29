@@ -1278,6 +1278,7 @@ public sealed class ArkiveModApplyService
                     MaterialEdits = materials,
                     StaticMeshEdits = included.Select(edit => edit.Entry).OfType<StaticMeshEditEntry>().ToArray(),
                     ParticleEdits = included.Select(edit => edit.Entry).OfType<Particles.ParticleEffectEditEntry>().ToArray(),
+                    PhysicsEdits = included.Select(edit => edit.Entry).OfType<Physics.PhysicsAssetEditEntry>().ToArray(),
                     InterfaceMovieEdits = included.Select(edit => edit.Entry).OfType<InterfaceMovieEditEntry>().ToArray(),
                 },
                 cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -1476,7 +1477,8 @@ public sealed class ArkiveModApplyService
         edit.Entry is SkeletalMeshEditWorkspaceEntry mesh &&
         mesh.Manifest.Preflight?.Readiness == SkeletalMeshEditReadiness.ReadyNoChanges ||
         edit.Entry is InterfaceMovieEditEntry movie && InterfaceMovieEditWorkspaceStore.IsUnchanged(movie) ||
-        edit.Entry is Particles.ParticleEffectEditEntry particle && particle.Document.Patches.Count == 0;
+        edit.Entry is Particles.ParticleEffectEditEntry particle && particle.Document.Patches.Count == 0 ||
+        edit.Entry is Physics.PhysicsAssetEditEntry physics && physics.Document.Patches.Count == 0;
 
     public static HashSet<string> RevisionContent(GuidedTexturePackageRevision revision)
     {
@@ -1486,6 +1488,7 @@ public sealed class ArkiveModApplyService
             .Concat(revision.StaticMeshAssets.Select(asset => ContentKey(asset.EditId, asset.EditedGlbSha256)))
             .Concat(revision.MaterialAssets.Select(asset => ContentKey(asset.EditId, asset.CandidateExportSha256)))
             .Concat(revision.ParticleAssets.Select(asset => ContentKey(asset.EditId, asset.ContentSha256)))
+            .Concat(revision.PhysicsAssets.Select(asset => ContentKey(asset.EditId, asset.ContentSha256)))
             .Concat(revision.InterfaceMovieAssets.Select(asset => ContentKey(asset.EditId, asset.EditedMovieSha256)))
             .ToHashSet(StringComparer.Ordinal);
     }

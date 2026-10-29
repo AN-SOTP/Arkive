@@ -323,7 +323,8 @@ public partial class MainWindow : Window
                 ? Visibility.Visible : Visibility.Collapsed;
         AuthoringRemoveButton.IsEnabled = idle && hasMod && selectionCount > 0;
         AuthoringRemoveButton.Content = selectionCount > 0 ? $"Remove selected ({selectionCount:N0})" : "Remove selected assets";
-        AuthoringOpenButton.IsEnabled = idle && selected?.Edit is not null;
+        // Matched physics have no file to open; Simple upscale's editor changes them with the mod's sliders.
+        AuthoringOpenButton.IsEnabled = idle && selected?.Edit is { Kind: not UnifiedPackageAssetKind.PhysicsAsset };
         AuthoringColoursButton.IsEnabled = idle && selected?.Edit?.Entry is GuidedTextureModProjectEntry;
         var tintable = (selectionCount > 0 ? AuthoringAssetsGrid.SelectedItems.OfType<AuthoringAssetRow>()
                 : AuthoringAssetsGrid.Items.OfType<AuthoringAssetRow>())

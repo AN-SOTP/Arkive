@@ -187,6 +187,7 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 - Each area is found from the bones that move it, so tight clothing and the body under it change together and an outfit's pieces keep meeting at their seams. Every class of a base body shares its tuning.
 - **Loose clothing follows the body** and **Hair follows the body** (on by default) move skirts, capes, sashes and hair with the body so it does not grow through them.
 - Thickness, shape and placement change; height and limb length do not, because the skeleton and animations set them. Saving runs the usual skeleton and animation checks.
+- **Match physics** (in the editor beside **Save as mod**, and beside the preset buttons) also fits the body's collision shapes, the chest, pelvis, thigh and spine capsules that hair, skirts and capes swing against, to the new shape and saves them in the mod. The game keeps one set per class (every Slayer and Female Warrior class shares one), so a mod with Match physics changes the physics for all of that class's outfits; when several such mods are on, the one with the higher priority wins, and at the same priority the most recently saved one.
 - **Presets** keep a body's sliders. **Apply preset to selected outfits** reshapes several outfits into one mod without opening the editor, and **Apply preset to every outfit of its body** does every outfit of that body (about 290 outfits for Female Warrior, around half an hour, about 9 MB per piece). Arkive says how long and how much space it needs first, can work on several pieces at once on PCs with four or more threads, and **Stop** keeps the pieces done so far.
 - To change a saved upscale mod, right-click it in **Mods** and choose **Edit Simple Upscale** (or open it in **Edit Mods** and choose **Edit in proportion editor**). **Save as mod** then updates that mod; if it is on, choose **Apply changes** to put the new shape in the game. A body-wide mod (or one with more than 20 pieces) opens in one outfit as a preview, Nightwear when it has it; saving reshapes every outfit of its body again (or all of the mod's pieces), with progress and **Stop** in **Simple Upscale**.
 - A mod changes the outfit for every character you see wearing it. Very large values can still make pieces overlap.
@@ -339,6 +340,8 @@ The CLI exposes native project stages rather than the GUI's interactive named dr
 
 # Simple upscale: reshape an editable player or supported NPC mesh GLB by area (percent), optionally moving loose cloth and hair too:
 & $cli body-proportions 'PATH\editable.glb' --set chest=20 --set hips=10 --loose-clothing --hair --out 'PATH\edit.glb'
+# Match physics: print how a class's body collision shapes would fit reshaped pieces (no files change):
+& $cli body-physics "$packages\PACKAGE.upk" --object pc_wr_f_00_physics --glb 'PATH\editable.glb' --set chest=20
 # Viewer animations: convert a character's AnimSet into the viewer's cached clips:
 & $cli model-viewer-animations "$packages\PACKAGE.upk" --animset pc_wr_f_00_ani --cache 'PATH\animations'
 # Skeletal mesh: recon, editable export, external GLB edit, validation/registration:

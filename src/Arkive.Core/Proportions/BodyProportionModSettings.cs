@@ -6,16 +6,18 @@ namespace Arkive.Core.Proportions;
 /// <summary>
 /// The slider settings a Simple upscale mod was made with, so it can be reopened in the proportion editor. EveryOutfit
 /// marks a body-wide mod (Apply preset to every outfit of its body), which is saved again over every outfit of its body.
+/// MatchPhysics fits the body's collision shapes (what hair, skirts and capes rest on) to the new shape too.
 /// </summary>
 public sealed record BodyProportionModSettings(
     BodyProfile Profile,
     IReadOnlyDictionary<string, double> Settings,
     BodyProportionFollow Follow,
-    bool EveryOutfit = false);
+    bool EveryOutfit = false,
+    bool MatchPhysics = false);
 
 /// <summary>
 /// Stores a Simple upscale mod's settings in its tags ("upscale:body=female-warrior", "upscale:chest=25",
-/// "upscale:follow=clothing+hair", "upscale:scope=every-outfit"), which travel with the .arkive file, and reads them back. Mods made before the tags
+/// "upscale:follow=clothing+hair", "upscale:scope=every-outfit", "upscale:physics=match"), which travel with the .arkive file, and reads them back. Mods made before the tags
 /// existed are read from the description Arkive wrote for them ("Body proportions for Female Warrior: Chest size +25%, …").
 /// </summary>
 public static partial class BodyProportionModTags
@@ -35,6 +37,7 @@ public static partial class BodyProportionModTags
         return $"Body proportions for {settings.Profile.DisplayName}: {string.Join(", ", changes)}" +
                (settings.Follow.LooseClothing ? "; loose clothing follows the body" : "") +
                (settings.Follow.Hair ? "; hair follows the body" : "") +
+               (settings.MatchPhysics ? "; physics match the new shape" : "") +
                (pieceNames.Count <= 20
                    ? $". Pieces: {string.Join(", ", pieceNames)}."
                    : $". {pieceNames.Count.ToString("N0", CultureInfo.InvariantCulture)} pieces of {outfits.ToString("N0", CultureInfo.InvariantCulture)} outfits.");
@@ -48,6 +51,7 @@ public static partial class BodyProportionModTags
             $"{Prefix}body={settings.Profile.Id}",
             $"{Prefix}follow={follow}",
             .. settings.EveryOutfit ? [$"{Prefix}scope=every-outfit"] : Array.Empty<string>(),
+            .. settings.MatchPhysics ? [$"{Prefix}physics=match"] : Array.Empty<string>(),
             .. settings.Profile.Zones
                 .Where(zone => settings.Settings.TryGetValue(zone.Id, out var value) && Math.Abs(value) > 1e-6)
                 .Select(zone => $"{Prefix}{zone.Id}={settings.Settings[zone.Id].ToString("0.##", CultureInfo.InvariantCulture)}"),
@@ -87,7 +91,8 @@ public static partial class BodyProportionModTags
                 .ToDictionary(zone => zone.Id, zone => double.Parse(values[zone.Id], CultureInfo.InvariantCulture), StringComparer.Ordinal);
             return new BodyProportionModSettings(body, settings,
                 new BodyProportionFollow(follow.Contains("clothing", StringComparer.OrdinalIgnoreCase), follow.Contains("hair", StringComparer.OrdinalIgnoreCase)),
-                values.GetValueOrDefault("scope")?.Equals("every-outfit", StringComparison.OrdinalIgnoreCase) == true);
+                values.GetValueOrDefault("scope")?.Equals("every-outfit", StringComparison.OrdinalIgnoreCase) == true,
+                values.GetValueOrDefault("physics")?.Equals("match", StringComparison.OrdinalIgnoreCase) == true);
         }
         return description is null ? null : ReadDescription(description);
     }

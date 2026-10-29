@@ -90,8 +90,17 @@ public static class AssetTypes
         CanEditClass: IsInterfaceMovieClass, AcceptsClass: IsInterfaceMovieClass,
         Previewable: false, DiscoveryScore: 3, SearchCategory: "InterfaceMovie");
 
+    /// <summary>
+    /// A character's physics asset: the collision shapes of its body and the hanging bones (hair, skirts, capes) that
+    /// collide with them. Simple upscale mods fit its body shapes to the new proportions; it has no working copy of its own.
+    /// </summary>
+    public static readonly AssetType PhysicsAsset = new(
+        AssetKind.PhysicsAsset, UnifiedPackageAssetKind.PhysicsAsset, "Physics", "physics asset", "physics assets",
+        CanEditClass: _ => false, AcceptsClass: IsPhysicsAsset,
+        Previewable: false, DiscoveryScore: 1, SearchCategory: "PhysicsAsset");
+
     /// <summary>Every type that can be put in a mod.</summary>
-    public static IReadOnlyList<AssetType> Moddable { get; } = [Texture, SkeletalMesh, StaticMesh, Material, ParticleEffect, InterfaceMovie];
+    public static IReadOnlyList<AssetType> Moddable { get; } = [Texture, SkeletalMesh, StaticMesh, Material, ParticleEffect, InterfaceMovie, PhysicsAsset];
 
     /// <summary>The type a mod stores as <paramref name="kind"/>.</summary>
     public static AssetType For(UnifiedPackageAssetKind kind) =>
@@ -117,6 +126,7 @@ public static class AssetTypes
         if (className.Contains("Material", StringComparison.OrdinalIgnoreCase)) return AssetKind.Material;
         if (IsParticleSystem(className)) return AssetKind.ParticleSystem;
         if (IsInterfaceMovieClass(className)) return AssetKind.InterfaceMovie;
+        if (IsPhysicsAsset(className)) return AssetKind.PhysicsAsset;
         return AssetKind.Object;
     }
 
@@ -160,6 +170,9 @@ public static class AssetTypes
 
     private static bool IsParticleSystem(string className) =>
         className.Equals("ParticleSystem", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPhysicsAsset(string className) =>
+        className.Equals("PhysicsAsset", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsInterfaceMovieClass(string className) =>
         className.Equals("EFSwfMovie", StringComparison.OrdinalIgnoreCase);

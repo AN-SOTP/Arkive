@@ -205,6 +205,8 @@ public static class ArkiveModConflictResolver
     public static ArkiveModResolution Resolve(IReadOnlyList<ArkiveModLibraryEntry> mods)
     {
         ArgumentNullException.ThrowIfNull(mods);
+        var saved = mods.GroupBy(mod => mod.ModId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Manifest.UpdatedAt, StringComparer.OrdinalIgnoreCase);
         var targets = mods
             .SelectMany(mod => mod.Manifest.Assets.Select(asset => new ArkiveModAssetContender(
                 mod.ModId, mod.Manifest.Name, mod.Priority, mod.Enabled, asset)))
@@ -222,6 +224,13 @@ public static class ArkiveModConflictResolver
                 var tied = top is null
                     ? []
                     : enabled.Where(item => item.Priority == top.Priority).ToArray();
+                // Matched physics come with Simple upscale mods, and several are often on at once (one per outfit):
+                // at the same priority the most recently saved one's physics win instead of blocking the package.
+                if (tied.Length > 1 && tied.All(item => item.Asset.Kind == UnifiedPackageAssetKind.PhysicsAsset))
+                {
+                    top = tied.MaxBy(item => saved[item.ModId])!;
+                    tied = [top];
+                }
                 var first = contenders[0].Asset.Target;
                 return new ArkiveModTargetResolution(
                     group.Key, first.PackageAlias,

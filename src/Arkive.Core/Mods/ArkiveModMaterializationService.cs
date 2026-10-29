@@ -352,6 +352,8 @@ public sealed class ArkiveModMaterializationService
                     asset, check, cancellationToken).ConfigureAwait(false),
                 UnifiedPackageAssetKind.ParticleSystem => await MaterializeParticleAsync(
                     asset, check, cancellationToken).ConfigureAwait(false),
+                UnifiedPackageAssetKind.PhysicsAsset => await MaterializePhysicsAsync(
+                    asset, check, cancellationToken).ConfigureAwait(false),
                 UnifiedPackageAssetKind.InterfaceMovie => await MaterializeInterfaceMovieAsync(
                     asset, check, files, cancellationToken).ConfigureAwait(false),
                 _ => throw new ArkiveModRefusalException("AMM004", $"{asset.Kind} is not supported."),
@@ -606,6 +608,34 @@ public sealed class ArkiveModMaterializationService
         catch
         {
             await _edits.ParticleEdits.DeleteAsync(created, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// A physics asset from a mod: its body shape changes written into this client's asset, found again by bone, so a
+    /// game update that moves the asset's bytes keeps the matched shapes.
+    /// </summary>
+    private async Task<(string EditId, string ManifestPath)> MaterializePhysicsAsync(
+        ArkiveModFileAsset asset,
+        ArkiveModTargetCheck check,
+        CancellationToken cancellationToken)
+    {
+        var export = check.Export!;
+        var data = asset.Physics!;
+        var report = Physics.PhysicsAssets.Inspect(check.PackagePath, check.PackageSha256!, export.ObjectName, export.ObjectPath,
+            _services.ProtectionProvider, cancellationToken);
+        var created = await _edits.PhysicsEdits.CreateAsync(report, asset.Target.PackageAlias, asset.DisplayName, data.Fit,
+            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (created.Document.Patches.Count == 0)
+                Refuse("AMM063", $"{asset.DisplayName} makes no change to this client's {export.ObjectName}.");
+            return (created.Document.EditId, created.DocumentPath);
+        }
+        catch
+        {
+            await _edits.PhysicsEdits.DeleteAsync(created, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }

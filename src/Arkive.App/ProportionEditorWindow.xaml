@@ -30,6 +30,8 @@
                               ToolTip="Choose a saved preset for this body to set every slider, or type a name and choose Save preset." />
                     <Button x:Name="SavePresetButton" Content="Save preset" Margin="6,0,18,0" IsEnabled="False" Click="SavePresetButton_Click"
                             ToolTip="Saves the current sliders and follow options under the typed name, for this body. Presets can be applied to many outfits at once from the Simple upscale tab." />
+                    <CheckBox x:Name="MatchPhysicsCheckBox" Content="Match physics" VerticalAlignment="Center" Margin="0,0,14,0"
+                              ToolTip="Also fits the body's collision shapes (chest, pelvis, thighs…) to the new shape, so hair, skirts and capes rest on the reshaped body instead of sinking into it. It changes the physics of every outfit of this body's classes." />
                     <TextBlock Text="Mod name" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <TextBox x:Name="ModNameTextBox" Width="260" VerticalAlignment="Center" />
                     <Button x:Name="SaveButton" Content="Save as mod" Margin="8,0,0,0" IsEnabled="False"

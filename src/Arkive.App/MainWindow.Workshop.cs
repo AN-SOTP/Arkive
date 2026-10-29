@@ -113,7 +113,8 @@ public partial class MainWindow : Window
     /// <summary>One entry per moddable asset type, then All moddable assets (the default).</summary>
     private void InitializeWorkshopKinds()
     {
-        foreach (var type in AssetTypes.Moddable)
+        // Physics assets are only changed by Simple upscale; there is nothing to search them for.
+        foreach (var type in AssetTypes.Moddable.Where(type => type != AssetTypes.PhysicsAsset))
             WorkshopKindComboBox.Items.Add(new ComboBoxItem { Content = type.PluralTitle, Tag = type.SearchCategory });
         WorkshopKindComboBox.Items.Add(new ComboBoxItem { Content = "All moddable assets", Tag = string.Empty });
         WorkshopKindComboBox.SelectedIndex = WorkshopKindComboBox.Items.Count - 1;

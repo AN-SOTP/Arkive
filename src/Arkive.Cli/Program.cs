@@ -16,6 +16,7 @@ using Arkive.Core.Outfits;
 using Arkive.Core.Meshes;
 using Arkive.Core.Materials;
 using Arkive.Core.Packages;
+using Arkive.Core.Physics;
 using Arkive.Core.Proportions;
 using Arkive.Core.Scanning;
 using Arkive.Core.Textures;
@@ -167,6 +168,14 @@ static int Run(string[] arguments)
             "body-proportions" => BodyProportions(
                 target,
                 ReadTextOption(arguments, "--out"),
+                ReadTextOptions(arguments, "--set"),
+                new BodyProportionFollow(arguments.Contains("--loose-clothing", StringComparer.OrdinalIgnoreCase),
+                    arguments.Contains("--hair", StringComparer.OrdinalIgnoreCase)),
+                json),
+            "body-physics" => BodyPhysics(
+                target,
+                ReadTextOption(arguments, "--object"),
+                ReadTextOptions(arguments, "--glb"),
                 ReadTextOptions(arguments, "--set"),
                 new BodyProportionFollow(arguments.Contains("--loose-clothing", StringComparer.OrdinalIgnoreCase),
                     arguments.Contains("--hair", StringComparer.OrdinalIgnoreCase)),
@@ -340,6 +349,14 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--match") ?? throw new ArgumentException("arkive-particle-tint requires --match NAME[,NAME...]."),
                 ReadTextOption(arguments, "--color") ?? throw new ArgumentException("arkive-particle-tint requires --color R,G,B."),
                 ReadTextOption(arguments, "--name") ?? throw new ArgumentException("arkive-particle-tint requires --name TEXT."),
+                json),
+            "arkive-physics-mod" => ArkivePhysicsMod(
+                target,
+                ReadTextOption(arguments, "--package") ?? throw new ArgumentException("arkive-physics-mod requires --package FILE.upk."),
+                ReadTextOption(arguments, "--object") ?? throw new ArgumentException("arkive-physics-mod requires --object PHYSICS_ASSET."),
+                ReadTextOptions(arguments, "--glb"),
+                ReadTextOptions(arguments, "--set"),
+                ReadTextOption(arguments, "--name") ?? throw new ArgumentException("arkive-physics-mod requires --name TEXT."),
                 json),
             "skill-actions" => SkillActions(target, ReadTextOption(arguments, "--class"), ReadIntegerOption(arguments, "--skill"), json),
             "arkive-apply" => ArkiveApply(
@@ -1385,6 +1402,55 @@ static int BodyProportions(string glbPath, string? outPath, IReadOnlyList<string
     Console.WriteLine($"Loose cloth:   {model.LooseVertexCount:N0} vertices{(follow.LooseClothing ? " (follow the body)" : " (unchanged)")}");
     Console.WriteLine($"Hair:          {model.HairVertexCount:N0} vertices{(follow.Hair ? " (follows the body)" : " (unchanged)")}");
     if (outPath is not null) Console.WriteLine($"Reshaped GLB:  {Path.GetFullPath(outPath)}");
+    return 0;
+}
+
+/// <summary>
+/// Fits a character physics asset's body capsules to reshaped pieces and prints each capsule before and after; no
+/// files change. The pieces are editable GLBs of that body's outfits.
+/// </summary>
+static int BodyPhysics(string packagePath, string? objectName, IReadOnlyList<string> glbs, IReadOnlyList<string> settings,
+    BodyProportionFollow follow, bool json)
+{
+    if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("body-physics requires --object PHYSICS_ASSET.");
+    if (glbs.Count == 0) throw new ArgumentException("body-physics requires at least one --glb PIECE.arkive-edit.glb.");
+    var values = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+    foreach (var setting in settings)
+    {
+        var parts = setting.Split('=', 2);
+        if (parts.Length != 2 || !double.TryParse(parts[1], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
+            throw new ArgumentException($"--set expects AREA=PERCENT, for example chest=20; got '{setting}'.");
+        values[parts[0]] = value;
+    }
+    var package = Path.GetFullPath(packagePath);
+    var report = PhysicsAssets.Inspect(package, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(package))),
+        objectName, null, ChunkProtectionProviderFactory.CreateWesternGlobal());
+    var fitter = new BodyPhysicsFitter(report);
+    foreach (var glb in glbs)
+    {
+        var bytes = File.ReadAllBytes(glb);
+        var model = BodyProportionEngine.Build(bytes, follow, objectName: Path.GetFileName(glb).Split('.')[0]);
+        var canonical = model.Profile.Zones.Where(zone => values.ContainsKey(zone.Id)).ToDictionary(zone => zone.Id, zone => values[zone.Id]);
+        fitter.Add(bytes, BodyProportionEngine.Apply(bytes, model, canonical));
+    }
+    var fit = fitter.Result();
+    var patches = PhysicsAssets.Patches(report, fit);
+    if (json)
+    {
+        WriteJson(new { report.Asset.ObjectName, fitter.VerticesUsed, fit.Shapes, patches });
+        return 0;
+    }
+    Console.WriteLine($"{report.Asset.ObjectName}: {report.Shapes.Count} shapes, {fitter.VerticesUsed:N0} body vertices used");
+    foreach (var shape in report.Shapes.Where(shape => shape.Fixed && shape.Kind == PhysicsShapeKind.Capsule))
+    {
+        var change = fit.Shapes.FirstOrDefault(item => item.Bone == shape.Bone && item.Element == shape.Element && item.Kind == shape.Kind);
+        var centre = shape.Transform.Translation;
+        Console.WriteLine($"  {shape.Bone,-20} #{shape.Element} r {shape.Radius,6:0.00} len {shape.Length,6:0.00} at ({centre.X:0.00}, {centre.Y:0.00}, {centre.Z:0.00})" +
+                          (change is null ? "  unchanged" :
+                              $"  -> r {shape.Radius + change.RadiusChange:0.00}, moved ({change.ShiftX:0.00}, {change.ShiftY:0.00}, {change.ShiftZ:0.00}) from {change.Vertices:N0} vertices"));
+    }
+    Console.WriteLine($"  {patches.Count} value patches");
     return 0;
 }
 
@@ -2746,6 +2812,55 @@ static int ArkiveParticleTint(string projectRoot, IReadOnlyList<string> packages
     }
 }
 
+/// <summary>
+/// Creates a mod (disabled) holding only a physics asset fitted to the pieces reshaped with --set, the same physics
+/// Simple upscale's Match physics saves. For testing the physics path on a scratch client without reshaping meshes.
+/// </summary>
+static int ArkivePhysicsMod(string projectRoot, string package, string objectName, IReadOnlyList<string> glbs,
+    IReadOnlyList<string> settings, string name, bool json)
+{
+    if (glbs.Count == 0) throw new ArgumentException("arkive-physics-mod requires at least one --glb PIECE.arkive-edit.glb.");
+    var values = settings.Select(setting => setting.Split('=', 2)).ToDictionary(parts => parts[0],
+        parts => double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture), StringComparer.OrdinalIgnoreCase);
+    var environment = CreateModEnvironment(projectRoot);
+    var provider = ChunkProtectionProviderFactory.CreateWesternGlobal();
+    var gamePackage = Path.GetFullPath(package);
+    var clean = environment.Apply.ResolveCleanPackageAsync(gamePackage).GetAwaiter().GetResult();
+    // The same path Simple upscale's Match physics takes: the pieces' class names their physics asset.
+    var pieces = glbs.Select(glb => Path.GetFileName(glb).Split('.')[0]).ToArray();
+    var match = BodyPhysicsMatch.PrepareAsync(pieces, (target, _) => Task.FromResult(
+            target.ObjectName.Equals(objectName, StringComparison.OrdinalIgnoreCase) ? clean : null), provider)
+        .GetAwaiter().GetResult();
+    for (var index = 0; index < glbs.Count; index++)
+    {
+        var bytes = File.ReadAllBytes(glbs[index]);
+        var model = BodyProportionEngine.Build(bytes, BodyProportionFollow.All, objectName: pieces[index]);
+        var canonical = model.Profile.Zones.Where(zone => values.ContainsKey(zone.Id)).ToDictionary(zone => zone.Id, zone => values[zone.Id]);
+        match.Add(pieces[index], bytes, BodyProportionEngine.Apply(bytes, model, canonical));
+    }
+    if (match.Results() is not [var (_, report, fit)])
+        throw new InvalidOperationException($"These pieces and settings change no body collision shape of {objectName}.");
+    var alias = Arkive.Core.Discovery.LostArkPackageName.GetDisplayName(gamePackage);
+    var edit = environment.Context.Edits.PhysicsEdits.CreateAsync(report, alias, objectName, fit).GetAwaiter().GetResult();
+    try
+    {
+        var local = new ArkiveModLocalEdit(UnifiedPackageAssetKind.PhysicsAsset, edit.Document.EditId, edit.DocumentPath,
+            objectName, Path.GetFullPath(clean), objectName, false, edit);
+        var captured = ArkiveModAuthoringService.CaptureAsync(local).GetAwaiter().GetResult();
+        var mod = environment.Authoring.CreateModAsync(new ArkiveModMetadata(name, "1.0.0", "Arkive",
+                $"Body physics of {objectName} matched to {string.Join(", ", values.Select(pair => $"{pair.Key} {pair.Value}"))}."),
+            [captured], ArkiveModOrigin.Created, enabled: false).GetAwaiter().GetResult();
+        if (json) WriteJson(new { mod.ModId, mod.FileName, fit.Shapes, Patches = edit.Document.Patches.Count });
+        else Console.WriteLine($"Created {mod.FileName}: {fit.Shapes.Count:N0} body shape(s), {edit.Document.Patches.Count:N0} value patch(es). " +
+                               $"Enable it with arkive-set --mod {mod.ModId[..8]} --enable.");
+        return 0;
+    }
+    finally
+    {
+        environment.Context.Edits.PhysicsEdits.DeleteAsync(edit).GetAwaiter().GetResult();
+    }
+}
+
 static int SkillActions(string archivePath, string? className, int? skillId, bool json)
 {
     using var stream = File.OpenRead(archivePath);
@@ -4062,6 +4177,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive material-build-candidate <arkive-material-edit.json> [--out DIR] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-reconstruct-noop <arkive-skeletalmesh-recon.json> [--out DIR] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-export-editable <arkive-skeletalmesh-recon.json> [--out DIR] [--json]");
+    Console.WriteLine("  arkive body-physics <character.upk> --object PHYSICS_ASSET --glb PIECE.glb [--glb ...] [--set AREA=PERCENT ...] [--json]");
     Console.WriteLine("  arkive body-proportions <player-mesh.arkive-edit.glb> [--set AREA=PERCENT ...] [--loose-clothing] [--hair] [--out FILE.glb] [--json]");
     Console.WriteLine("  arkive model-viewer-animations <package.upk> --animset NAME [--cache DIR] [--all] [--json]");
     Console.WriteLine("  arkive skeletal-mesh-preflight <arkive-editable-skeletalmesh.json> --edited FILE.glb [--json]");

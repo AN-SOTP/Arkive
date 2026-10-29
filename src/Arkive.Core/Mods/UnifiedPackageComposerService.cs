@@ -21,6 +21,7 @@ public enum UnifiedPackageAssetKind
     StaticMesh,
     ParticleSystem,
     InterfaceMovie,
+    PhysicsAsset,
 }
 
 public sealed record UnifiedPackageBuildProgress(
@@ -92,6 +93,7 @@ public sealed record UnifiedPackageCompositionManifest(
     public int StaticMeshCount { get; init; }
 
     public int ParticleEffectCount { get; init; }
+    public int PhysicsAssetCount { get; init; }
     public int InterfaceMovieCount { get; init; }
 
     public bool MaterialsAppliedBeforeMeshes { get; init; }
@@ -145,6 +147,7 @@ public sealed record UnifiedPackageCompositionRequest(
     public IReadOnlyList<StaticMeshEditEntry> StaticMeshEdits { get; init; } = [];
 
     public IReadOnlyList<Particles.ParticleEffectEditEntry> ParticleEdits { get; init; } = [];
+    public IReadOnlyList<Physics.PhysicsAssetEditEntry> PhysicsEdits { get; init; } = [];
     public IReadOnlyList<InterfaceMovieEditEntry> InterfaceMovieEdits { get; init; } = [];
 
     public bool ForcePreviewOnly { get; init; }
@@ -412,12 +415,15 @@ public sealed class UnifiedPackageComposerService
         ArgumentNullException.ThrowIfNull(request.Package);
         if (request.TextureProjects.Count == 0 && request.MaterialEdits.Count == 0 &&
             request.MeshEdits.Count == 0 && request.StaticMeshEdits.Count == 0 && request.ParticleEdits.Count == 0 &&
-            request.InterfaceMovieEdits.Count == 0)
+            request.PhysicsEdits.Count == 0 && request.InterfaceMovieEdits.Count == 0)
             throw new NotSupportedException(
                 "Select at least one texture, material, skeletal mesh, static mesh, particle effect or interface movie before rebuilding the package.");
         foreach (var particle in request.ParticleEdits)
             if (particle.Document.Patches.Count == 0)
                 throw new NotSupportedException($"{particle.Document.DisplayName} has no colour change to write.");
+        foreach (var physics in request.PhysicsEdits)
+            if (physics.Document.Patches.Count == 0)
+                throw new NotSupportedException($"{physics.Document.DisplayName} has no body shape change to write.");
         if (string.IsNullOrWhiteSpace(request.DisplayName))
             throw new NotSupportedException("The package mod display name is empty.");
 
@@ -519,11 +525,17 @@ public sealed class UnifiedPackageComposerService
                 !particle.Document.SourcePackageSha256.Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
                 throw new NotSupportedException(
                     $"{particle.Document.SystemObjectName} was created from a different client package version. Run the game-update check before rebuilding.");
+        foreach (var physics in request.PhysicsEdits)
+            if (!SamePath(physics.Document.SourcePackagePath, sourcePath) ||
+                !physics.Document.SourcePackageSha256.Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
+                throw new NotSupportedException(
+                    $"{physics.Document.AssetObjectName} was created from a different client package version. Run the game-update check before rebuilding.");
         var targetIndices = textureNativeIndices
             .Concat(materialInputs.Select(input => input.Report.NativeExportIndex!.Value))
             .Concat(meshInputs.Select(input => input.Source.NativeExportIndex))
             .Concat(staticMeshInputs.Select(input => input.Source.NativeExportIndex))
             .Concat(request.ParticleEdits.SelectMany(particle => particle.Document.Patches.Select(patch => patch.ExportIndex).Distinct()))
+            .Concat(request.PhysicsEdits.SelectMany(physics => physics.Document.Patches.Select(patch => patch.ExportIndex).Distinct()))
             .Concat(request.InterfaceMovieEdits.Select(edit => edit.Manifest.NativeExportIndex)).ToArray();
         var duplicate = targetIndices.GroupBy(value => value).FirstOrDefault(group => group.Count() > 1);
         if (duplicate is not null)
@@ -547,7 +559,7 @@ public sealed class UnifiedPackageComposerService
                                  request.MaterialEdits.Count * MaterialSteps +
                                  request.MeshEdits.Count * MeshSteps +
                                  request.StaticMeshEdits.Count * MeshSteps +
-                                 request.ParticleEdits.Count +
+                                 request.ParticleEdits.Count + request.PhysicsEdits.Count +
                                  request.InterfaceMovieEdits.Count * InterfaceMovieSteps + 2);
         var step = 0;
         void Report(string objectName, string stage, string message) => progress?.Report(
@@ -591,7 +603,8 @@ public sealed class UnifiedPackageComposerService
         // export by export (unrelated bytes identical, blocks decode back, catalogue unchanged).
         var materialAssets = new List<GuidedMaterialPackageAssetRevision>(materialInputs.Count);
         var particleAssets = new List<GuidedParticlePackageAssetRevision>(request.ParticleEdits.Count);
-        if (materialInputs.Count > 0 || request.ParticleEdits.Count > 0)
+        var physicsAssets = new List<GuidedParticlePackageAssetRevision>(request.PhysicsEdits.Count);
+        if (materialInputs.Count > 0 || request.ParticleEdits.Count > 0 || request.PhysicsEdits.Count > 0)
         {
             var valuesRoot = Path.Combine(root, "v01-values");
             Directory.CreateDirectory(valuesRoot);
@@ -635,15 +648,14 @@ public sealed class UnifiedPackageComposerService
             }
 
             var particleExports = new List<(Particles.ParticleEffectEditEntry Particle, int[] ExportIndices)>();
+            var physicsExports = new List<(Physics.PhysicsAssetEditEntry Physics, int[] ExportIndices)>();
             using (var logical = new LogicalPackageStream(catalogue.Summary, _protectionProvider))
             {
-                foreach (var particle in request.ParticleEdits.OrderBy(edit => edit.Document.SystemExportIndex))
+                // Writes value patches (effect tables, physics shape sizes) into their exports; returns the exports written.
+                int[] WritePatches(IEnumerable<Particles.ParticleEffectPatch> patches)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var document = particle.Document;
-                    Report(document.SystemObjectName, "Particle effect", "Writing the effect's new colour values into the package...");
                     var indices = new List<int>();
-                    foreach (var group in document.Patches.GroupBy(patch => patch.ExportIndex))
+                    foreach (var group in patches.GroupBy(patch => patch.ExportIndex))
                     {
                         var first = group.First();
                         var asset = catalogue.Assets.SingleOrDefault(candidate => candidate.ExportIndex == group.Key) ??
@@ -662,7 +674,20 @@ public sealed class UnifiedPackageComposerService
                             Particles.ParticleEffects.ApplyPatches(bytes, group)));
                         indices.Add(asset.ExportIndex);
                     }
-                    particleExports.Add((particle, [.. indices]));
+                    return [.. indices];
+                }
+
+                foreach (var particle in request.ParticleEdits.OrderBy(edit => edit.Document.SystemExportIndex))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Report(particle.Document.SystemObjectName, "Particle effect", "Writing the effect's new colour values into the package...");
+                    particleExports.Add((particle, WritePatches(particle.Document.Patches)));
+                }
+                foreach (var physics in request.PhysicsEdits.OrderBy(edit => edit.Document.AssetExportIndex))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Report(physics.Document.AssetObjectName, "Physics", "Writing the body's new collision shapes into the package...");
+                    physicsExports.Add((physics, WritePatches(physics.Document.Patches)));
                 }
             }
 
@@ -672,6 +697,7 @@ public sealed class UnifiedPackageComposerService
             {
                 Materials = materialCandidates.Select(item => new { item.Edit.DocumentPath, item.Candidate.ManifestPath }),
                 ParticleEffects = particleExports.Select(item => new { item.Particle.DocumentPath, item.Particle.Document.ContentSha256 }),
+                PhysicsAssets = physicsExports.Select(item => new { item.Physics.DocumentPath, item.Physics.Document.ContentSha256 }),
             }, JsonOptions), cancellationToken).ConfigureAwait(false);
             var staged = await _meshStaging.BuildSerializedExportsAsync(
                 new SerializedExportsStagedUpkRequest(
@@ -703,6 +729,18 @@ public sealed class UnifiedPackageComposerService
                 particleAssets.Add(new GuidedParticlePackageAssetRevision(
                     document.EditId, document.DisplayName, document.SystemObjectName, document.SystemExportIndex,
                     particle.DocumentPath, document.ContentSha256, staged.ManifestPath,
+                    indices.Select(index => stagedExports[index]).ToArray()));
+            }
+            foreach (var (physics, indices) in physicsExports)
+            {
+                var document = physics.Document;
+                stages.Add(new UnifiedPackageCompositionStage(
+                    stages.Count + 1, UnifiedPackageAssetKind.PhysicsAsset, document.AssetObjectName,
+                    document.AssetExportIndex, inputPackageHash, staged.Manifest.OutputPackageSha256,
+                    staged.OutputUpkPath, staged.ManifestPath));
+                physicsAssets.Add(new GuidedParticlePackageAssetRevision(
+                    document.EditId, document.DisplayName, document.AssetObjectName, document.AssetExportIndex,
+                    physics.DocumentPath, document.ContentSha256, staged.ManifestPath,
                     indices.Select(index => stagedExports[index]).ToArray()));
             }
         }
@@ -1203,6 +1241,23 @@ public sealed class UnifiedPackageComposerService
                 particle.ContentSha256, finalExportHash, catalogueAsset.SerialOffset, catalogueAsset.SerialSize,
                 particle.StagedUpkManifestPath));
         }
+        foreach (var physics in physicsAssets)
+        foreach (var export in physics.Exports)
+        {
+            var catalogueAsset = finalCatalogue.Assets.SingleOrDefault(candidate =>
+                candidate.ExportIndex == export.NativeExportIndex &&
+                candidate.ObjectName.Equals(export.ObjectName, StringComparison.OrdinalIgnoreCase)) ??
+                                 throw new InvalidDataException($"The final package lost {export.ObjectName} of {physics.SystemObjectName}.");
+            var finalExportHash = await HashLogicalExportAsync(finalCatalogue.Summary, catalogueAsset, cancellationToken)
+                .ConfigureAwait(false);
+            if (!finalExportHash.Equals(export.CandidateExportSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"The final package no longer contains the new body shapes of {physics.SystemObjectName}.");
+            compositionAssets.Add(new UnifiedPackageCompositionAsset(
+                UnifiedPackageAssetKind.PhysicsAsset, physics.EditId, physics.DisplayName,
+                request.Package.Manifest.PackageAlias, export.NativeExportIndex, catalogueAsset.ClassName, export.ObjectName,
+                physics.ContentSha256, finalExportHash, catalogueAsset.SerialOffset, catalogueAsset.SerialSize,
+                physics.StagedUpkManifestPath));
+        }
         foreach (var asset in movieAssets)
         {
             var catalogueAsset = finalCatalogue.Assets.SingleOrDefault(candidate =>
@@ -1245,6 +1300,7 @@ public sealed class UnifiedPackageComposerService
                     .Manifest.PixelFormat,
                 UnifiedPackageAssetKind.MaterialInstanceConstant => "MaterialInstanceParameters",
                 UnifiedPackageAssetKind.ParticleSystem => ArkivePackageModBundleService.ParticleSystemValuesFormat,
+                UnifiedPackageAssetKind.PhysicsAsset => ArkivePackageModBundleService.PhysicsAssetValuesFormat,
                 UnifiedPackageAssetKind.StaticMesh => "NativeStaticMesh",
                 UnifiedPackageAssetKind.InterfaceMovie => "ScaleformMovie",
                 _ => "NativeSkeletalMesh",
@@ -1432,6 +1488,7 @@ public sealed class UnifiedPackageComposerService
             MaterialCount = materialAssets.Count,
             StaticMeshCount = staticMeshAssets.Count,
             ParticleEffectCount = particleAssets.Count,
+            PhysicsAssetCount = physicsAssets.Count,
             InterfaceMovieCount = movieAssets.Count,
             MaterialsAppliedBeforeMeshes = true,
             VariableSizeMeshCount = variableSizeMeshCount,
@@ -1452,6 +1509,7 @@ public sealed class UnifiedPackageComposerService
             StaticMeshAssets = staticMeshAssets,
             MaterialAssets = materialAssets,
             ParticleAssets = particleAssets,
+            PhysicsAssets = physicsAssets,
             InterfaceMovieAssets = movieAssets,
             CompositionManifestPath = manifestPath,
             PreviewOnly = previewOnly,

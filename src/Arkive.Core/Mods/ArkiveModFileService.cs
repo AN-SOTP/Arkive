@@ -144,7 +144,7 @@ public static class ArkiveModFileService
         {
             Format = ArkiveModFileFormat.FormatId,
             // Older Arkive versions read version 1, so only mods that need a later version are written as it.
-            FormatVersion = ArkiveModFileFormat.VersionFor(manifest),
+            FormatVersion = ArkiveModFileFormat.VersionFor(manifest with { Assets = packedAssets }),
             Assets = packedAssets,
         };
         ValidateManifest(finalManifest);
@@ -363,6 +363,8 @@ public static class ArkiveModFileService
             return ComputeMaterialChangesSha256(asset.Material);
         if (asset.Kind == UnifiedPackageAssetKind.ParticleSystem && asset.Particle is not null)
             return Particles.ParticleEffects.ContentSha256(asset.Particle.Patches);
+        if (asset.Kind == UnifiedPackageAssetKind.PhysicsAsset && asset.Physics is not null)
+            return Particles.ParticleEffects.ContentSha256(asset.Physics.Patches);
         var files = string.Join("|", asset.Files
             .OrderBy(file => file.Role, StringComparer.Ordinal)
             .Select(file => $"{file.Role}:{file.Sha256.ToUpperInvariant()}"));
@@ -452,6 +454,10 @@ public static class ArkiveModFileService
                 Refuse("ARK047", "Item look changes go with the outfit meshes a mod changes; this mod changes none.");
             ValidateLooks(manifest.Looks);
         }
+
+        if (manifest.Assets.Any(asset => asset.Kind == UnifiedPackageAssetKind.PhysicsAsset) &&
+            manifest.FormatVersion < ArkiveModFileFormat.PhysicsFormatVersion)
+            Refuse("ARK048", $"Physics asset changes need format version {ArkiveModFileFormat.PhysicsFormatVersion}.");
 
         var assetIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var targets = new HashSet<ArkiveModTargetKey>();
@@ -558,11 +564,30 @@ public static class ArkiveModFileService
                                                   patch.Value.Any(value => !float.IsFinite(value)) || !IsSha256(patch.SourceExportSha256)))
                     Refuse("ARK044", $"Particle asset {asset.AssetId} has a malformed value patch.");
                 break;
+            case UnifiedPackageAssetKind.PhysicsAsset:
+                var physics = asset.Physics;
+                if (physics?.Fit?.Shapes is not { Count: > 0 and <= 4096 } || physics.Patches is not { Count: > 0 and <= 8192 } ||
+                    files.Count != 0 || asset.Texture is not null || asset.Mesh is not null || asset.Material is not null ||
+                    asset.Particle is not null)
+                    Refuse("ARK048", $"Physics asset {asset.AssetId} must contain only its body shape changes and their value patches.");
+                if (physics.Fit.Shapes.Any(shape => string.IsNullOrWhiteSpace(shape.Bone) || !Enum.IsDefined(shape.Kind) ||
+                                                     shape.Element is < 0 or > 64 || !float.IsFinite(shape.RadiusChange) ||
+                                                     !float.IsFinite(shape.ShiftX) || !float.IsFinite(shape.ShiftY) ||
+                                                     !float.IsFinite(shape.ShiftZ) || Math.Abs(shape.RadiusChange) > 100 ||
+                                                     shape.CentreShift.Length() > 100))
+                    Refuse("ARK048", $"Physics asset {asset.AssetId} has a malformed body shape change.");
+                if (physics.Patches.Any(patch => patch.Original is null || patch.Value is null ||
+                                                 patch.Original.Length != patch.Value.Length || patch.Value.Length is 0 or > 16 ||
+                                                 patch.ValueOffset < 0 || string.IsNullOrWhiteSpace(patch.ObjectPath) ||
+                                                 patch.Value.Any(value => !float.IsFinite(value)) || !IsSha256(patch.SourceExportSha256)))
+                    Refuse("ARK048", $"Physics asset {asset.AssetId} has a malformed value patch.");
+                break;
             case UnifiedPackageAssetKind.InterfaceMovie:
                 if (files.Count != 1 || files[0].Role != ArkiveModFileFormat.MovieRole ||
                     !files[0].Path.EndsWith(".gfx", StringComparison.OrdinalIgnoreCase))
                     Refuse("ARK045", $"Interface movie asset {asset.AssetId} must contain exactly one GFX movie.");
-                if (asset.Texture is not null || asset.Mesh is not null || asset.Material is not null || asset.Particle is not null)
+                if (asset.Texture is not null || asset.Mesh is not null || asset.Material is not null || asset.Particle is not null ||
+                    asset.Physics is not null)
                     Refuse("ARK045", $"Interface movie asset {asset.AssetId} contains unrelated data.");
                 break;
         }

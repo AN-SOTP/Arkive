@@ -7,6 +7,7 @@ using Arkive.Core.Assets;
 using Arkive.Core.Discovery;
 using Arkive.Core.Inspection;
 using Arkive.Core.Mods;
+using Arkive.Core.Physics;
 using Arkive.Core.Proportions;
 
 namespace Arkive.App;
@@ -207,7 +208,10 @@ public partial class MainWindow
             ProportionStatusText.Text = $"Reshaping {requests.Count:N0} piece(s) of {outfits:N0} outfit(s) with {preset.Name}. " +
                                         "Each piece is checked against the game's animations, which takes a few seconds per piece…";
             var result = await SaveProportionModAsync(new ProportionSaveRequest(name, profile[0], requests,
-                new Dictionary<string, double>(preset.Settings), preset.Follow));
+                new Dictionary<string, double>(preset.Settings), preset.Follow)
+            {
+                MatchPhysics = ProportionMatchPhysicsCheckBox.IsChecked == true && !profile[0].IsNpc,
+            });
             ProportionStatusText.Text = result;
             Log($"Proportion preset applied to outfits: preset={preset.Name}, outfits={outfits}, pieces={requests.Count}.");
         }
@@ -274,6 +278,7 @@ public partial class MainWindow
             {
                 Parallelism = parallelism,
                 EveryOutfit = true,
+                MatchPhysics = ProportionMatchPhysicsCheckBox.IsChecked == true,
             }, "The preset was not applied");
         }
         catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
@@ -421,6 +426,12 @@ public partial class MainWindow
         var unchanged = new System.Collections.Concurrent.ConcurrentBag<string>();
         var finished = 0;
         var started = DateTime.UtcNow;
+        var physics = request.MatchPhysics
+            ? await BodyPhysicsMatch.PrepareAsync(request.Pieces.Select(piece => piece.ObjectName), FindPhysicsPackageAsync,
+                _protectionProvider, request.Cancellation)
+            : null;
+        foreach (var missing in physics?.Missing ?? [])
+            Log($"Match physics: {missing.ObjectName} ({missing.PackageAlias}) was not found in the index; its physics stay as they are.");
         void Report(int done) => ShowProportionProgress(
             $"Step 1 of 2 · Reshaping pieces: {done:N0} of {request.Pieces.Count:N0}" +
             (request.Parallelism > 1 ? $" ({request.Parallelism} at a time)" : ""), done, request.Pieces.Count, started);
@@ -441,6 +452,7 @@ public partial class MainWindow
                     var bytes = await File.ReadAllBytesAsync(glb, token);
                     var model = BodyProportionEngine.Build(bytes, request.Follow, request.Profile, piece.ObjectName);
                     var reshaped = BodyProportionEngine.Apply(bytes, model, request.Settings);
+                    physics?.Add(piece.ObjectName, bytes, reshaped);
                     if (request.Pieces.Count > 1 && reshaped.AsSpan().SequenceEqual(bytes)) unchanged.Add(created.EditId);
                     else
                     {
@@ -466,6 +478,46 @@ public partial class MainWindow
                 await CleanUpReplacedProportionPiecesAsync(unchanged.ToArray());
             }
         }
+        if (physics is not null) await AddMatchedPhysicsAsync(physics, request);
+    }
+
+    /// <summary>
+    /// Adds the fitted body shapes of every physics asset the reshaped pieces are worn with to the draft: one physics
+    /// edit per asset, read from its clean package like the pieces.
+    /// </summary>
+    private async Task AddMatchedPhysicsAsync(BodyPhysicsMatch physics, ProportionSaveRequest request)
+    {
+        var added = new List<string>();
+        foreach (var (target, report, fit) in physics.Results())
+        {
+            var edit = await _arkiveModEdits.PhysicsEdits.CreateAsync(report, target.PackageAlias,
+                $"{target.ObjectName} matched to {request.ModName}", fit, request.Cancellation);
+            added.Add(edit.Document.EditId);
+            Log($"Match physics: {target.ObjectName} fitted from {fit.Shapes.Sum(shape => shape.Vertices):N0} body vertices: " +
+                string.Join(", ", fit.Shapes.Select(shape =>
+                    $"{shape.Bone}#{shape.Element} r{shape.RadiusChange:+0.0;-0.0} cm move {shape.CentreShift.Length():0.0} cm")) + ".");
+        }
+        if (added.Count == 0)
+        {
+            Log("Match physics: the new shape moves no body collision shape enough to change it.");
+            return;
+        }
+        _authoringDraft = await _modAuthoringWorkspace.SaveAsync(_authoringDraft! with
+        {
+            EditIds = _authoringDraft.EditIds.Concat(added).ToArray(),
+        });
+    }
+
+    /// <summary>The clean game package holding a class's physics asset (the backup when a mod has changed it).</summary>
+    private async Task<string?> FindPhysicsPackageAsync(BodyPhysicsTarget target, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_libraryRootPath)) return null;
+        var found = await _packageIndexStore.SearchAsync(_libraryRootPath, target.ObjectName, AssetTypes.PhysicsAsset.SearchCategory,
+            _gameMetadataIndex, PackageIndexSearchScope.ObjectName, null, resultLimit: 50, cancellationToken: cancellationToken);
+        var match = found.Matches.FirstOrDefault(item => item.ObjectName.Equals(target.ObjectName, StringComparison.OrdinalIgnoreCase) &&
+                                                         item.ClassName.Equals("physicsasset", StringComparison.OrdinalIgnoreCase) &&
+                                                         item.PackageAlias.Equals(target.PackageAlias, StringComparison.OrdinalIgnoreCase));
+        return match is null ? null : await _arkiveModApply.ResolveCleanPackageAsync(match.SourcePath);
     }
 
     /// <summary>
@@ -758,7 +810,8 @@ public partial class MainWindow
     private async Task<ArkiveModLibraryEntry> CreateProportionModAsync(ProportionSaveRequest request, List<string> skipped)
     {
         await PersistAuthoringDraftAsync();
-        var modSettings = new BodyProportionModSettings(request.Profile, request.Settings, request.Follow, request.EveryOutfit);
+        var modSettings = new BodyProportionModSettings(request.Profile, request.Settings, request.Follow, request.EveryOutfit,
+            request.MatchPhysics);
         var description = BodyProportionModTags.Description(modSettings, request.Pieces.Select(piece => piece.ObjectName).ToArray());
         // The sliders travel with the mod in its tags, so it can be reopened in the proportion editor later.
         var tags = BodyProportionModTags.Write(modSettings);
@@ -780,8 +833,9 @@ public partial class MainWindow
                     Tags = [.. BodyProportionModTags.Others(draft.Metadata.Tags), .. tags],
                 },
                 EditIds = draft.EditIds.Where(id => snapshot.Find(id) is not { } edit ||
-                                                    edit.Kind != UnifiedPackageAssetKind.SkeletalMesh ||
-                                                    !pieceNames.Contains(edit.ObjectName)).ToArray(),
+                                                    edit.Kind != UnifiedPackageAssetKind.PhysicsAsset &&
+                                                    (edit.Kind != UnifiedPackageAssetKind.SkeletalMesh || !pieceNames.Contains(edit.ObjectName)))
+                    .ToArray(),
             });
         }
         else
@@ -813,7 +867,7 @@ public partial class MainWindow
         foreach (var piece in skipped) Log($"Proportion piece left out of the mod (failed the mesh check): {piece}");
         Log($"Proportion mod saved: name={request.ModName}, body={request.Profile.Id}, pieces={request.Pieces.Count}, " +
             $"settings={string.Join(", ", request.Settings.Where(pair => pair.Value != 0).Select(pair => $"{pair.Key}={pair.Value}"))}, " +
-            $"follow={request.Follow}.");
+            $"follow={request.Follow}, match physics={request.MatchPhysics}.");
         return saved;
     }
 }

@@ -20,6 +20,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     ZoneSmokeTests.Cases,
     AssetTypeSmokeTests.Cases,
     ParticleSmokeTests.Cases,
+    PhysicsSmokeTests.Cases,
     SkillActionSmokeTests.Cases,
     InterfaceSmokeTests.Cases,
     TweakSmokeTests.Cases,

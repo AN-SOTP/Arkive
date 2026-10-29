@@ -5,6 +5,7 @@ using Arkive.Core.Interface;
 using Arkive.Core.Materials;
 using Arkive.Core.Meshes;
 using Arkive.Core.Particles;
+using Arkive.Core.Physics;
 using Arkive.Core.StaticMeshes;
 using Arkive.Core.Textures;
 
@@ -19,6 +20,9 @@ public sealed record ArkiveModEditWorkspaces(
     /// <summary>Particle effect working copies, in staging\particle-edits beside the material edits.</summary>
     public ParticleEffectEditWorkspaceStore ParticleEdits { get; init; } = new(
         Path.Combine(Path.GetDirectoryName(MaterialEdits.RootDirectory)!, "particle-edits"));
+    /// <summary>Physics asset working copies (Simple upscale's matched body shapes), in staging\physics-edits.</summary>
+    public PhysicsAssetEditWorkspaceStore PhysicsEdits { get; init; } = new(
+        Path.Combine(Path.GetDirectoryName(MaterialEdits.RootDirectory)!, "physics-edits"));
     /// <summary>Interface movie working copies; null where a caller does not edit interface movies.</summary>
     public InterfaceMovieEditWorkspaceStore? InterfaceMovies { get; init; }
 }
@@ -112,6 +116,8 @@ public sealed class ArkiveModEditSnapshot
             edits.Add(From(material));
         foreach (var particle in await workspaces.ParticleEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
             edits.Add(From(particle));
+        foreach (var physics in await workspaces.PhysicsEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
+            edits.Add(From(physics));
         if (workspaces.InterfaceMovies is { } movies)
             foreach (var movie in await movies.LoadAsync(cancellationToken).ConfigureAwait(false))
                 edits.Add(From(movie));
@@ -143,6 +149,8 @@ public sealed class ArkiveModEditSnapshot
                 MaterialInstanceEditEntry => From(await workspaces.MaterialEdits.LoadEntryAsync(
                     edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
                 ParticleEffectEditEntry => From(await workspaces.ParticleEdits.LoadEntryAsync(
+                    edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                PhysicsAssetEditEntry => From(await workspaces.PhysicsEdits.LoadEntryAsync(
                     edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
                 InterfaceMovieEditEntry => From(await InterfaceMovieEditWorkspaceStore.LoadEntryAsync(
                     edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
@@ -190,6 +198,11 @@ public sealed class ArkiveModEditSnapshot
         particle.Document.DisplayName, Path.GetFullPath(particle.Document.SourcePackagePath),
         particle.Document.SystemObjectName, particle.Document.IncludedInPackageBuild, particle);
 
+    private static ArkiveModLocalEdit From(PhysicsAssetEditEntry physics) => new(
+        UnifiedPackageAssetKind.PhysicsAsset, physics.Document.EditId, physics.DocumentPath,
+        physics.Document.DisplayName, Path.GetFullPath(physics.Document.SourcePackagePath),
+        physics.Document.AssetObjectName, physics.Document.IncludedInPackageBuild, physics);
+
     private static ArkiveModLocalEdit From(InterfaceMovieEditEntry movie) => new(
         UnifiedPackageAssetKind.InterfaceMovie, movie.Manifest.EditId, movie.ManifestPath,
         movie.Manifest.DisplayName, Path.GetFullPath(movie.Manifest.SourcePackagePath),
@@ -217,6 +230,7 @@ public sealed class ArkiveModEditSnapshot
                     ? material.Document.LatestCandidateSha256?.ToUpperInvariant()
                     : null,
             ParticleEffectEditEntry particle => particle.Document.ContentSha256,
+            PhysicsAssetEditEntry physics => physics.Document.ContentSha256,
             InterfaceMovieEditEntry movie => File.Exists(movie.Manifest.EditedMoviePath)
                 ? await HashFileCachedAsync(movie.Manifest.EditedMoviePath, cancellationToken).ConfigureAwait(false)
                 : null,
@@ -243,6 +257,7 @@ public sealed class ArkiveModEditSnapshot
                     .SourcePackageSha256.ToUpperInvariant(),
                 MaterialInstanceEditEntry material => material.Document.SourcePackageSha256.ToUpperInvariant(),
                 ParticleEffectEditEntry particle => particle.Document.SourcePackageSha256.ToUpperInvariant(),
+                PhysicsAssetEditEntry physics => physics.Document.SourcePackageSha256.ToUpperInvariant(),
                 InterfaceMovieEditEntry movie => movie.Manifest.SourcePackageSha256.ToUpperInvariant(),
                 _ => null,
             };

@@ -107,6 +107,8 @@ public sealed record GuidedTexturePackageRevision(
     public IReadOnlyList<GuidedStaticMeshPackageAssetRevision> StaticMeshAssets { get; init; } = [];
 
     public IReadOnlyList<GuidedParticlePackageAssetRevision> ParticleAssets { get; init; } = [];
+    /// <summary>Physics assets written in the same values pass as effects (SystemObjectName is the physics asset).</summary>
+    public IReadOnlyList<GuidedParticlePackageAssetRevision> PhysicsAssets { get; init; } = [];
     public IReadOnlyList<GuidedInterfaceMoviePackageAssetRevision> InterfaceMovieAssets { get; init; } = [];
 
     public string? CompositionManifestPath { get; init; }
@@ -120,7 +122,7 @@ public sealed record GuidedTexturePackageRevision(
     public string? VariableSizeDeploymentGateManifestPath { get; init; }
 
     public int TotalAssetCount => Assets.Count + MeshAssets.Count + StaticMeshAssets.Count + MaterialAssets.Count +
-                                  ParticleAssets.Count + InterfaceMovieAssets.Count;
+                                  ParticleAssets.Count + PhysicsAssets.Count + InterfaceMovieAssets.Count;
 }
 
 public sealed record GuidedTexturePackageManifest(
