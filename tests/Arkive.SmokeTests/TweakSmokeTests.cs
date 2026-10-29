@@ -15,6 +15,7 @@ internal static class TweakSmokeTests
         new("exposes a private field to tweak code through a public getter and setter", TestExposeField),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
+        new("reads a player's logs from a lostark.bible page and writes the summary the Logs tab draws", TestPlayerLogs),
         new("deletes tweak working edits left by replaced tweak mods and keeps everyone else's", TestStaleTweakDrafts),
         new("reads Data Bus messages and saves tweak switches and options changed in game", TestInGameSettings),
         new("keeps the market prices Market Price sends, the newest per item, for the next session", TestMarketPrices),
@@ -277,6 +278,66 @@ internal static class TweakSmokeTests
         service.SaveState(state);
         Assert(!service.LoadState().Settings.Enabled.ContainsKey("fastlaunch") && !service.EveryTweak().Enabled.ContainsKey("fastlaunch"),
             "Faster Launch was kept in the saved choices or put into Install All Tweaks");
+    }
+
+    /// <summary>
+    /// The Logs tab draws Arkive's summary file. The page data is "devalue" encoded (objects hold indexes into one flat
+    /// array); a page for a name that isn't in that region has no logs node but suggests the character's region.
+    /// </summary>
+    private static void TestPlayerLogs()
+    {
+        const string page = """
+            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},null,
+            {"type":"data","data":[{"logsEnabled":1,"isOwner":2,"isPublic":1,"logs":3},true,false,[4],
+            {"boss":5,"difficulty":6,"class":7,"spec":8,"dps":9,"percentile":10,"duration":11,"timestamp":12,"isDead":1},
+            "Archbishop Arcenos","Level 3","Slayer","Punisher",1681234567.5,0.888,327000,1792875478152]}]}
+            """;
+        using var document = System.Text.Json.JsonDocument.Parse(page);
+        var lookup = Arkive.Core.Tweaks.PlayerLogsService.Read("Chillidari", "CE", document.RootElement);
+        Assert(lookup is { Status: Arkive.Core.Tweaks.PlayerLogsStatus.Found, Logs.Count: 1 } &&
+               lookup.Logs[0] is { Boss: "Archbishop Arcenos", Difficulty: "Level 3", ClassName: "Slayer", Died: true },
+            "the logs page was not read");
+        var summary = Arkive.Core.Tweaks.PlayerLogsService.Summary(lookup!, "123x45").Split('\n');
+        Assert(summary[0] == "found\tEU Central\tChillidari\t1\t123x45\t", $"summary head: {summary[0]}");
+        Assert(summary[1].StartsWith("#raids\tBelgardin\tHorizon Cathedral\t", StringComparison.Ordinal), $"summary raids: {summary[1]}");
+        Assert(summary[2].StartsWith("Horizon Cathedral\tG1\tArchbishop Arcenos\tLevel 3\tSlayer\t1.68b\t88\t", StringComparison.Ordinal) &&
+               summary[2].EndsWith("\t5:27\tdied", StringComparison.Ordinal), $"summary row: {summary[2]}");
+
+        // A character whose owner keeps logs private (Zurmos on EU Central): the page has the character but no logs.
+        const string hidden = """
+            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},{"type":"data","data":[
+            {"header":1,"redirectedFrom":4,"suggestions":5},{"id":2,"rid":3},270889558,27179,null,[]]},
+            {"type":"data","data":[{"logsEnabled":1,"isOwner":1},false]}]}
+            """;
+        using var hiddenPage = System.Text.Json.JsonDocument.Parse(hidden);
+        Assert(Arkive.Core.Tweaks.PlayerLogsService.Read("Zurmos", "CE", hiddenPage.RootElement) is
+               { Status: Arkive.Core.Tweaks.PlayerLogsStatus.Hidden, CharacterId: 270889558, RosterId: 27179 },
+            "a character with private logs was not told apart from a missing one");
+
+        // The tab spells request id, raid, name (4 hex digits per character) and a checksum; Arkive reads it back and
+        // rejects a message with a missed or extra read.
+        var spelled = Arkive.Core.Tweaks.PlayerLogsSignal.Encode("0a1f", 3, "Améthyst");
+        Assert(Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled, out var request, out var raid, out var name) &&
+               request == "0a1f" && raid == 3 && name == "Améthyst",
+            $"the signal message did not decode: {spelled}");
+        Assert(!Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled.Remove(9, 1) + "0", out _, out _, out _) &&
+               !Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled[..^4] + "0000", out _, out _, out _),
+            "a damaged signal message was accepted");
+        var signal = new Arkive.Core.Tweaks.PlayerLogsSignal(Path.GetTempPath());
+        string? heard = null;
+        signal.Requested += (who, _, _) => heard = who;
+        foreach (var symbol in (string[])["5", "go", .. spelled.Select(digit => digit.ToString()), "end"])
+            signal.Receive(symbol);
+        Assert(heard == "Améthyst", "the reads between go and end were not put together");
+
+        const string missing = """
+            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},{"type":"data","data":[
+            {"header":-1,"redirectedFrom":1,"suggestions":2},null,[3],{"name":4,"region":5},"Chillidari","CE"]}]}
+            """;
+        using var other = System.Text.Json.JsonDocument.Parse(missing);
+        Assert(Arkive.Core.Tweaks.PlayerLogsService.Read("Chillidari", "NA", other.RootElement) is null &&
+               Arkive.Core.Tweaks.PlayerLogsService.SuggestedRegion("Chillidari", other.RootElement) == "CE",
+            "a page without the character should give no logs and suggest its region");
     }
 
     /// <summary>

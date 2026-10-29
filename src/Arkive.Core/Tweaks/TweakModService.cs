@@ -74,7 +74,7 @@ public sealed class TweakModService(
 
     /// <summary>
     /// The settings the tweak code gets (Options.hx): every built tweak's options ("tweaks"), the ones that act ("on"),
-    /// Arkive's tweak folder ("home"), plus the game's Combat Power
+    /// Arkive's tweak folder ("home"), plus the folder the Logs tab reads its answers from and the game's Combat Power
     /// tables (left out when there is no data2.lpk, so that tweak shows nothing). With In-game Tweak Settings built,
     /// "live" tells the code to follow live.json and "panel" lists what the escape menu panel shows.
     /// </summary>
@@ -82,6 +82,8 @@ public sealed class TweakModService(
     {
         var settings = state.Settings;
         var tweaks = built.ToDictionary(tweak => tweak.Id, tweak => OptionsOf(state, tweak));
+        if (tweaks.TryGetValue(PlayerLogsTweak, out var logs))
+            logs["folder"] = JsonSerializer.SerializeToElement(PlayerLogsFolder.Replace('\\', '/'));
         var data2 = GameDataFile ?? Path.GetFullPath(Path.Combine(packagesDirectory, "..", "..", "data2.lpk"));
         // Combat Power per Gold, the bracelet judge and Compare With Me price with the Combat Power tables. They go in once:
         // under Combat Power's id (baked, not switched on) when it, the judge or Compare is built, else under Combat Power
@@ -309,6 +311,11 @@ public sealed class TweakModService(
     }
 
     private string StatePath => Path.Combine(root, "state.json");
+
+    /// <summary>The tweak whose tab reads the logs Arkive fetches, and the folder it reads them from.</summary>
+    public const string PlayerLogsTweak = "logs";
+
+    public string PlayerLogsFolder => Path.Combine(root, "player-logs");
 
     /// <summary>Where Market Price on Tooltips' prices are kept (the tweak reads prices/prices.txt under "home").</summary>
     public string PricesFolder => Path.Combine(root, "prices");
