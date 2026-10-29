@@ -301,7 +301,14 @@ internal static class TweakSmokeTests
         Assert(summary[0] == "found\tEU Central\tChillidari\t1\t123x45\t", $"summary head: {summary[0]}");
         Assert(summary[1].StartsWith("#raids\tBelgardin\tHorizon Cathedral\t", StringComparison.Ordinal), $"summary raids: {summary[1]}");
         Assert(summary[2].StartsWith("Horizon Cathedral\tG1\tArchbishop Arcenos\tLevel 3\tSlayer\t1.68b\t88\t", StringComparison.Ordinal) &&
-               summary[2].EndsWith("\t5:27\tdied", StringComparison.Ordinal), $"summary row: {summary[2]}");
+               summary[2].EndsWith("\t5:27\tdied\t", StringComparison.Ordinal), $"summary row: {summary[2]}");
+        // A support's row carries its buff uptimes (AP, Brand, Identity, T), which the tab shows in place of DPS.
+        var support = lookup! with
+        {
+            Logs = [lookup!.Logs[0] with { ClassName = "Bard", Spec = "Desperate Salvation", Buffs = [0.955, 0.9625, 0.7449, 0.3951] }],
+        };
+        var supportRow = Arkive.Core.Tweaks.PlayerLogsService.Summary(support).Split('\n')[2];
+        Assert(supportRow.EndsWith("\tdied\t96/96/74/40", StringComparison.Ordinal), $"support row: {supportRow}");
 
         // A character whose owner keeps logs private (Zurmos on EU Central): the page has the character but no logs.
         const string hidden = """

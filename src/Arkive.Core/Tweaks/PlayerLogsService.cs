@@ -20,7 +20,11 @@ public enum PlayerLogsStatus
 
 /// <summary>One log of a character, as lostark.bible lists it.</summary>
 public sealed record PlayerLog(string Boss, string Difficulty, string ClassName, string Spec, double Dps, double? Percentile,
-    long DurationMs, DateTimeOffset When, bool Died);
+    long DurationMs, DateTimeOffset When, bool Died, IReadOnlyList<double>? Buffs = null)
+{
+    /// <summary>A support's log (lostark.bible tells them by spec), which shows buff uptimes instead of DPS.</summary>
+    public bool IsSupport => Spec is "Desperate Salvation" or "Full Bloom" or "Blessed Aura" or "Liberator";
+}
 
 /// <summary>A character's logs: its region and ids on lostark.bible (for raid filters), and the logs found.</summary>
 public sealed record PlayerLogsLookup(string Name, string? Region, PlayerLogsStatus Status, IReadOnlyList<PlayerLog> Logs,
@@ -144,7 +148,7 @@ public sealed class PlayerLogsService(HttpClient client)
         if (document.RootElement.ValueKind == JsonValueKind.Array)
             foreach (var row in document.RootElement.EnumerateArray())
                 if (row.ValueKind == JsonValueKind.Object)
-                    rows.Add(Log(property => row.TryGetProperty(property, out var value) ? value : default));
+                    rows.Add(Log(property => row.TryGetProperty(property, out var value) ? value : default, item => item));
         return character with { Logs = rows };
     }
 
@@ -198,7 +202,7 @@ public sealed class PlayerLogsService(HttpClient client)
                 {
                     var row = At(node, item);
                     if (row.ValueKind == JsonValueKind.Object)
-                        rows.Add(Log(property => Resolve(node, row, property)));
+                        rows.Add(Log(property => Resolve(node, row, property), item => At(node, item)));
                 }
             return new PlayerLogsLookup(name, region, PlayerLogsStatus.Found, rows, characterId, rosterId);
         }
@@ -206,13 +210,17 @@ public sealed class PlayerLogsService(HttpClient client)
     }
 
     /// <summary>A log row from its fields (devalue-resolved on the logs page, plain in the raid filter's answer).</summary>
-    private static PlayerLog Log(Func<string, JsonElement> field)
+    /// <param name="item">Resolves an array item (a devalue index on the logs page, the value itself in the raid filter's answer).</param>
+    private static PlayerLog Log(Func<string, JsonElement> field, Func<JsonElement, JsonElement> item)
     {
         string Text(string property) => field(property) is { ValueKind: JsonValueKind.String } value ? value.GetString() ?? "" : "";
         double? Number(string property) => field(property) is { ValueKind: JsonValueKind.Number } value ? value.GetDouble() : null;
+        var buffs = field("buffs") is { ValueKind: JsonValueKind.Array } list
+            ? list.EnumerateArray().Select(item).Select(value => value.ValueKind == JsonValueKind.Number ? value.GetDouble() : 0).ToArray()
+            : null;
         return new PlayerLog(Text("boss"), Text("difficulty"), Text("class"), Text("spec"), Number("dps") ?? 0, Number("percentile"),
             (long)(Number("duration") ?? 0), DateTimeOffset.FromUnixTimeMilliseconds((long)(Number("timestamp") ?? 0)),
-            field("isDead").ValueKind == JsonValueKind.True);
+            field("isDead").ValueKind == JsonValueKind.True, buffs);
     }
 
     /// <summary>The region of an exact-name suggestion on a page that didn't find the character, or null.</summary>
@@ -267,7 +275,8 @@ public sealed class PlayerLogsService(HttpClient client)
     /// only splits and draws. First line: status, region, name, count, the tab's request id (so it never shows an
     /// answer to an earlier click) and the raid shown ("" for recent logs). Second line: "#raids" and the raid names
     /// in filter order, for the tab's raid tabs. Then per log: raid, gate, boss, difficulty, class, DPS, parse (whole
-    /// percent, empty when the site has none), date, duration, "died".
+    /// percent, empty when the site has none), date, duration, "died", and for a support its buff uptimes in whole
+    /// percent as lostark.bible lists them (AP, Brand, Identity, T; "95/96/74/40"), empty for anyone else.
     /// </summary>
     public static string Summary(PlayerLogsLookup lookup, string request = "", string raid = "")
     {
@@ -296,7 +305,10 @@ public sealed class PlayerLogsService(HttpClient client)
                 .Append(log.Percentile is { } percentile ? Math.Floor(percentile * 100).ToString(CultureInfo.InvariantCulture) : "").Append('\t')
                 .Append(log.When.ToLocalTime().ToString("MMM d", CultureInfo.InvariantCulture)).Append('\t')
                 .Append(TimeSpan.FromMilliseconds(log.DurationMs).ToString(@"m\:ss", CultureInfo.InvariantCulture)).Append('\t')
-                .Append(log.Died ? "died" : "").Append('\n');
+                .Append(log.Died ? "died" : "").Append('\t')
+                .Append(log.IsSupport && log.Buffs is { Count: > 0 } buffs
+                    ? string.Join("/", buffs.Select(buff => Math.Round(buff * 100, MidpointRounding.AwayFromZero).ToString(CultureInfo.InvariantCulture)))
+                    : "").Append('\n');
         }
         return builder.ToString();
     }
