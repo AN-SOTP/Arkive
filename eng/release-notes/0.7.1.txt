@@ -1,0 +1,9 @@
+The Logs Tab tweak, editing saved Simple Upscale mods, Match physics, and Bracelet Dismantle by Stat.
+
+- Tweaks: Logs Tab adds a "Logs" tab to the character profile and inspect windows with the player's recent lostark.bible logs, by raid. Supports show their buff uptimes instead of DPS. Keep Arkive running while you play: it fetches the logs for the tab.
+- Tweaks: Auto Pull Up keeps pressing Pull up with the Find Party window closed. With Arkive running, each pull up is written to Arkive's log.
+- Tweaks: Bracelet Dismantle by Stat adds stat tick boxes to the bracelet tab of the auto-dismantle settings. Bracelets in your bag whose stats are all ticked go into the dismantle list when you open the Dismantle window; you check the list and press Dismantle yourself.
+- Simple Upscale: right-click a Simple Upscale mod in Mods and choose Edit Simple Upscale to reopen it with its sliders. The button reads Update mod and saves into the same mod. Body-wide mods open one outfit as a preview and reshape every outfit of the body again when saved.
+- Simple Upscale: Match physics (in the editor and beside the preset buttons) also fits the body's collision shapes, which hair, skirts and capes swing against, to the new shape, so they no longer sink into a fuller chest, hips or buttocks.
+
+Known issues: Auto Pull Up with the window closed, the Logs Tab's support uptimes, Match physics and Bracelet Dismantle by Stat have not been tried in game yet. Mods made with Match physics use a newer .arkive format: older versions of Arkive can't read them, and going back to an older Arkive with one in the library stops its Mods list from loading until that mod is deleted. Tweaks are an Early Preview.

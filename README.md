@@ -72,7 +72,7 @@ Player classes, bosses and other NPCs play their skills from the game's own skil
 
 ### Tweaks (WIP)
 
-Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install them from Arkive's **Tweaks** tab, then switch each one on or off and change its options in game from the **Arkive Tweaks** menu. Logs tab NOT publically available at the moment.
+Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install them from Arkive's **Tweaks** tab, then switch each one on or off and change its options in game from the **Arkive Tweaks** menu.
 
 ![Arkive Tweaks tab with Install All Tweaks, Faster Launch and the list of tweaks](docs/screenshots/tweaks.png)
 
@@ -232,9 +232,9 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 
 In game, press Esc and choose **Arkive Tweaks** at the bottom of the menu: tick a tweak to turn it on, untick it to turn it off, and change its options there. Keep Arkive running while you play so those choices are kept for next time.
 
-- **Information:** Combat Power on Tooltips (what an item would add to your Combat Power), Combat Power per Gold in the auction house and market, Market Price on Tooltips, Compare With Me (your gear beside an inspected player's), Bracelet Reroll Judge, Astrogem Processing Advisor, Lobby CP in the party finder, Slot Tweaks (item properties at a glance, including bracelet effects), Buff Icon Stacking, Additional Top Currencies and the Extended Escape Menu.
-- **Quicker steps:** Fast Advanced Honing, Fast Paradise, Auto-Dismiss Stone Faceting Results, Next Item Button, Chest Opening Tweaks, Market Tweaks, Exchange Max Button and Universal Storage Claim.
-- **Automation:** Auto Pull Up presses a hosted lobby's Pull up again while its box is ticked, and Ready Check Tweaks can accept the ready check (off by default).
+- **Information:** Logs Tab (a player's recent lostark.bible logs in the profile and inspect windows), Combat Power on Tooltips (what an item would add to your Combat Power), Combat Power per Gold in the auction house and market, Market Price on Tooltips, Compare With Me (your gear beside an inspected player's), Bracelet Reroll Judge, Astrogem Processing Advisor, Lobby CP in the party finder, Slot Tweaks (item properties at a glance, including bracelet effects), Buff Icon Stacking, Additional Top Currencies and the Extended Escape Menu.
+- **Quicker steps:** Fast Advanced Honing, Fast Paradise, Auto-Dismiss Stone Faceting Results, Next Item Button, Chest Opening Tweaks, Market Tweaks, Exchange Max Button, Universal Storage Claim and Bracelet Dismantle by Stat (puts bracelets with the stats you tick in the dismantle list; you press Dismantle).
+- **Automation:** Auto Pull Up presses a hosted lobby's Pull up again while its box is ticked, also with the Find Party window closed, and Ready Check Tweaks can accept the ready check (off by default).
 
 Tweaks are newer and less tested than other mods: some read English text and only work on an English client, and a game update can stop one working until Arkive is updated. See [Limitations and known issues](#limitations-and-known-issues).
 
@@ -519,7 +519,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 
 ## Privacy, security and licensing
 
-No telemetry or credential upload is implemented. Asset operations run locally. Optional update checks contact GitHub with normal request metadata such as IP/user-agent. Local settings/logs contain local paths and asset identities; sanitize them before sharing.
+No telemetry or credential upload is implemented. Asset operations run locally. Optional update checks contact GitHub with normal request metadata such as IP/user-agent. The Logs Tab tweak, when installed and switched on, asks lostark.bible for the logs of the characters you open in game. Local settings/logs contain local paths and asset identities; sanitize them before sharing.
 
 Publication starts from a clean snapshot instead of prior commits. Mods, database/asset exports, caches, backups, builds, personal settings and AI configs are excluded. Application banners/icon and the interoperability key are intentionally retained. `THIRD-PARTY-NOTICES.txt` contains dependency licenses and artwork credits.
 
