@@ -205,6 +205,36 @@ public sealed class TweakModService(
     /// <summary>The Data Bus channel the escape menu panel sends its changes on.</summary>
     public const string SettingsChannel = "settings";
 
+    /// <summary>The Data Bus channel Auto Pull Up reports on: "on", "off", "pulled\twhere", "stop\treason\twhere".</summary>
+    public const string AutoPullUpChannel = "autopullup";
+
+    /// <summary>A log line for an Auto Pull Up report, or null when the text isn't one.</summary>
+    public static string? DescribeAutoPullUp(string text)
+    {
+        var parts = text.Split('\t');
+        static string Window(string where) => where switch
+        {
+            "open" => "Find Party window open",
+            "closed" => "Find Party window closed",
+            _ => "party finder not loaded",
+        };
+        return parts switch
+        {
+            ["on"] => "Auto Pull Up: ticked.",
+            ["off"] => "Auto Pull Up: unticked.",
+            ["pulled", var where] => $"Auto Pull Up: pulled up ({Window(where)}).",
+            ["stop", var reason, var where] => $"Auto Pull Up: stopped, {reason switch
+            {
+                "full" => "the party is full",
+                "time" => "the time limit ran out",
+                "off" => "the tweak was switched off",
+                "no effect" => "a press didn't grey the button out, so it may not have reached the game",
+                _ => "something unexpected happened in the party finder",
+            }} ({Window(where)}).",
+            _ => null,
+        };
+    }
+
     /// <summary>
     /// Saves a change made in the escape menu panel: "request&lt;tab&gt;tweak&lt;tab&gt;&lt;tab&gt;1|0" switches a tweak,
     /// "request&lt;tab&gt;tweak&lt;tab&gt;option&lt;tab&gt;value" sets an option (1|0 for a switch, the choice's value for a single
