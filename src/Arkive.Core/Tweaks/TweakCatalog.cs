@@ -165,6 +165,23 @@ public static class TweakCatalog
         [
             new("showText", "Show the effect text Arkive matches (for testing)", false),
         ], Note: "Open your Character Profile once after logging in: Crit, Specialization and Swiftness lines are priced from your totals there. DPS characters only for now."),
+        new("braceletdismantle", "Bracelet Dismantle by Stat", "Adds stat tick boxes to the bracelet tab of the auto-dismantle settings. Each time you open the Dismantle window with your bag open, every bracelet in the bag whose stats are all ticked is put in the dismantle list, the same way a right-click puts it there. You check the list and press Dismantle yourself.", TweakRisk.Batch,
+        [
+            H("efui_inventory", "inventory", "ark.ui.inventory_new.MainBag", "configUI", "arkive.tweaks.BraceletDismantle.onBagConfigUI"),
+            H("efui_itemcraft", "itemdisassemble", "ark.ui.itemDisassemble.ItemDisassembleBraceletPage", "configUI", "arkive.tweaks.BraceletDismantle.onBraceletConfigUI"),
+            H("efui_itemcraft", "itemdisassemble", "ark.ui.itemDisassemble.ItemDisassembleWndContent", "configUI", "arkive.tweaks.BraceletDismantle.onWindowConfigUI"),
+        ],
+        [
+            new("stats", "Add bracelets that only have these stats", false,
+            [
+                new TweakChoice("crit", "Crit"),
+                new TweakChoice("spec", "Specialization"),
+                new TweakChoice("swift", "Swiftness"),
+                new TweakChoice("dom", "Domination", Default: true),
+                new TweakChoice("endur", "Endurance", Default: true),
+                new TweakChoice("exp", "Expertise", Default: true),
+            ]),
+        ], Note: "Bracelet stats are read from the English text of their tooltips, so this needs the English game client. A bracelet with any unticked stat is left alone, and so is one with none of these six stats."),
         new("astrogem", "Astrogem Processing Advisor", "In astrogem processing, a box beside the gem's levels shows your chance to reach your target and the gold it takes if you process the offered effects, reroll them or reset the gem, worked out from the game's own odds tables, and suggests the best move. Advice only: it never presses anything.", TweakRisk.Display,
         [
             H("efui_arkgridgem", "arkgridgem", "ark.ui.arkGridGem.ArkGridGemProgressPanel", "configUI", "arkive.tweaks.Astrogem.onConfigUI"),
