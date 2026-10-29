@@ -136,6 +136,8 @@ public partial class ProportionEditorWindow : Window
         {
             ModNameTextBox.Text = modName;
             Title = $"Arkive simple upscale · editing {modName}";
+            SaveButton.Content = "Update mod";
+            SaveButton.ToolTip = $"Saves these sliders into {modName}, replacing its reshaped pieces. Game files stay unchanged until you apply it in Mods.";
         }
         try
         {
