@@ -99,6 +99,11 @@ internal static class ProportionSmokeTests
                old.Settings["chestHeight"] == 50 && old.Settings["belly"] == 30 && old.Settings["buttocks"] == 10 && old.Settings.Count == 4,
             "an older upscale mod's sliders were not read from its description");
         Assert(BodyProportionModTags.Read(["outfit"], "A recoloured dress.") is null, "an ordinary mod was taken for an upscale mod");
+        Assert(read!.EveryOutfit is false && BodyProportionModTags.Read(BodyProportionModTags.Write(read with { EveryOutfit = true }), null)
+                   is { EveryOutfit: true }, "a body-wide upscale mod's scope did not survive the tags");
+        Assert(BodyProportionModTags.Read(tags, null, "preset 2 · every Female Warrior outfit") is { EveryOutfit: true } &&
+               BodyProportionModTags.Read(tags, null, "nightwear female warrior upscale") is { EveryOutfit: false },
+            "an older body-wide upscale mod was not known by its name");
     }
 
     private static void TestFoldGuard()
