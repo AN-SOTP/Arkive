@@ -209,7 +209,7 @@ internal static class ProportionSmokeTests
     }
 
     /// <summary>A one-triangle skinned GLB; each vertex is fully weighted to one bone.</summary>
-    private static byte[] BuildMesh((string Name, Vector3 Position)[] bones, (Vector3 Position, int Bone)[] vertices)
+    internal static byte[] BuildMesh((string Name, Vector3 Position)[] bones, (Vector3 Position, int Bone)[] vertices)
     {
         var bin = new MemoryStream();
         var writer = new BinaryWriter(bin);

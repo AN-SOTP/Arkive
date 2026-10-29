@@ -168,6 +168,8 @@ public static class ArkiveModSelectionService
                 .SetIncludedAsync(material, included, cancellationToken).ConfigureAwait(false),
             Particles.ParticleEffectEditEntry particle => await edits.ParticleEdits
                 .SetIncludedAsync(particle, included, cancellationToken).ConfigureAwait(false),
+            Physics.PhysicsAssetEditEntry physics => await edits.PhysicsEdits
+                .SetIncludedAsync(physics, included, cancellationToken).ConfigureAwait(false),
             InterfaceMovieEditEntry movie when edits.InterfaceMovies is { } movies => await movies
                 .SetIncludedAsync(movie, included, cancellationToken).ConfigureAwait(false),
             _ => null,
@@ -197,6 +199,9 @@ public static class ArkiveModSelectionService
                 break;
             case Particles.ParticleEffectEditEntry particle:
                 await edits.ParticleEdits.DeleteAsync(particle, cancellationToken).ConfigureAwait(false);
+                break;
+            case Physics.PhysicsAssetEditEntry physics:
+                await edits.PhysicsEdits.DeleteAsync(physics, cancellationToken).ConfigureAwait(false);
                 break;
             case InterfaceMovieEditEntry movie when edits.InterfaceMovies is { } movies:
                 await movies.DeleteAsync(movie, cancellationToken).ConfigureAwait(false);

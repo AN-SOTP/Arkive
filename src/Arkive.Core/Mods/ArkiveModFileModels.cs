@@ -11,14 +11,16 @@ public static class ArkiveModFileFormat
 {
     public const string Extension = ".arkive";
     public const string FormatId = "arkive.mod";
-    public const int CurrentFormatVersion = 3;
-    // Version 2 added game table edits (GameData) and version 3 item look edits (Looks); mods without them are still
-    // written as version 1, so older Arkive versions keep reading them.
+    public const int CurrentFormatVersion = 4;
+    // Version 2 added game table edits (GameData), version 3 item look edits (Looks) and version 4 physics assets; mods
+    // without them are still written as version 1, so older Arkive versions keep reading them.
     public const int GameDataFormatVersion = 2;
     public const int LooksFormatVersion = 3;
+    public const int PhysicsFormatVersion = 4;
 
     public static int VersionFor(ArkiveModFileManifest manifest) =>
-        manifest.Looks is not null ? LooksFormatVersion : manifest.GameData is not null ? GameDataFormatVersion : 1;
+        manifest.Assets.Any(asset => asset.Kind == UnifiedPackageAssetKind.PhysicsAsset) ? PhysicsFormatVersion
+        : manifest.Looks is not null ? LooksFormatVersion : manifest.GameData is not null ? GameDataFormatVersion : 1;
     public const string ManifestEntryName = "arkive.json";
     public const string AssetDirectory = "assets";
     public const string ImageRole = "image";
@@ -97,6 +99,9 @@ public sealed record ArkiveModFileAsset(
     public ArkiveModMaterialData? Material { get; init; }
 
     public ArkiveModParticleData? Particle { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ArkiveModPhysicsData? Physics { get; init; }
 }
 
 /// <summary>
@@ -104,6 +109,12 @@ public sealed record ArkiveModFileAsset(
 /// byte-identical the patches are written as they are; after a game update the recipe is applied again to the new effect.
 /// </summary>
 public sealed record ArkiveModParticleData(ParticleEffectRecipe Recipe, IReadOnlyList<ParticleEffectPatch> Patches);
+
+/// <summary>
+/// A physics asset change: the body shapes matched to a Simple upscale (by bone, so they can be written again after a
+/// game update) and the values they write on the client the mod was made on.
+/// </summary>
+public sealed record ArkiveModPhysicsData(Physics.BodyPhysicsFit Fit, IReadOnlyList<ParticleEffectPatch> Patches);
 
 /// <summary>A mod's changes to the game's tables (see <see cref="GameDataArchive"/>), each one table cell.</summary>
 public sealed record ArkiveModGameData(IReadOnlyList<GameDataCellEdit> Edits);

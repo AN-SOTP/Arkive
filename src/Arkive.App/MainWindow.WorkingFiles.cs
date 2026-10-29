@@ -80,8 +80,9 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// The edited meshes a saved Simple upscale mod (and its open draft) holds for these pieces. Saving the mod again
-    /// replaces them with newly reshaped ones, so they can be deleted once the save has succeeded.
+    /// The edited meshes a saved Simple upscale mod (and its open draft) holds for these pieces, and its matched
+    /// physics. Saving the mod again replaces them with newly reshaped ones, so they can be deleted once the save has
+    /// succeeded.
     /// </summary>
     private async Task<IReadOnlyList<string>> ProportionPieceEditIdsAsync(string modId, IEnumerable<string> pieceNames)
     {
@@ -92,7 +93,8 @@ public partial class MainWindow
         return (library.Find(modId)?.Bindings.Select(binding => binding.EditId) ?? [])
             .Concat(draft?.EditIds ?? [])
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(id => snapshot.Find(id) is { Kind: UnifiedPackageAssetKind.SkeletalMesh } edit && names.Contains(edit.ObjectName))
+            .Where(id => snapshot.Find(id) is { Kind: UnifiedPackageAssetKind.SkeletalMesh } edit && names.Contains(edit.ObjectName) ||
+                         snapshot.Find(id) is { Kind: UnifiedPackageAssetKind.PhysicsAsset })
             .ToArray();
     }
 

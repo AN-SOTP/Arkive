@@ -185,6 +185,12 @@ public sealed class ArkivePackageModBundleService
                 externalResults.Add(ValidatePropertyStream(catalogue, asset, "Arkive particle property check"));
                 continue;
             }
+            if (asset.PixelFormat == PhysicsAssetValuesFormat)
+            {
+                // Physics bodies keep a native cache after their properties; the properties must still read up to it.
+                externalResults.Add(ValidatePhysicsBody(catalogue, asset));
+                continue;
+            }
             if (AssetTypes.InterfaceMovie.CanEditClass(asset.ClassName))
             {
                 externalResults.Add(ValidateInterfaceMovie(catalogue, asset));
@@ -483,6 +489,23 @@ public sealed class ArkivePackageModBundleService
 
     /// <summary>The bundle format of a particle effect's value-table exports.</summary>
     public const string ParticleSystemValuesFormat = "ParticleSystemValues";
+
+    /// <summary>The bundle format of a physics asset's body exports (shape sizes and centres).</summary>
+    public const string PhysicsAssetValuesFormat = "PhysicsAssetValues";
+
+    private ModExternalValidationResult ValidatePhysicsBody(AssetCatalog catalogue, ArkiveModAsset asset)
+    {
+        var match = catalogue.Assets.Single(candidate => candidate.ExportIndex == asset.NativeExportIndex);
+        using var logical = new LogicalPackageStream(catalogue.Summary, _protectionProvider);
+        var bytes = new byte[match.SerialSize];
+        logical.Position = match.SerialOffset;
+        logical.ReadExactly(bytes);
+        if (Particles.ParticlePropertyStream.ReadLeading(bytes, catalogue.Names, 4, out _) is null)
+            Refuse("CPB016", $"{asset.ObjectName}'s physics properties no longer read in the combined payload.");
+        return new ModExternalValidationResult("Arkive physics property check", 1, 1,
+            CataloguePassed: true, NativeLoadPassed: true, ExpectedObjectFound: true,
+            [$"{asset.ObjectName}: body properties read through to the body's cache."], TimeSpan.Zero);
+    }
 
     private ModExternalValidationResult ValidatePropertyStream(AssetCatalog catalogue, ArkiveModAsset asset, string validator)
     {

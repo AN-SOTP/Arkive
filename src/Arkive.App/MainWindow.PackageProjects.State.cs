@@ -166,11 +166,14 @@ public partial class MainWindow : Window
                 var package = await PackageFor(source.PackageAlias, source.PhysicalPackageName, source.SourcePackagePath);
                 packageEntries[Path.GetFullPath(package.Manifest.SourcePackagePath)] = package;
             }
-            // Effect and interface movie edits are built into packages too; without a row, a package they alone change has
-            // no install state, and the Mods list never counts their mod as applied.
+            // Effect, physics and interface movie edits are built into packages too; without a row, a package they alone
+            // change has no install state, and the Mods list never counts their mod as applied.
             var otherEditSources = (await _arkiveModEdits.ParticleEdits.LoadAsync())
                 .Select(edit => (Alias: edit.Document.PackageAlias, Physical: edit.Document.PhysicalPackageName,
                     Source: edit.Document.SourcePackagePath))
+                .Concat((await _arkiveModEdits.PhysicsEdits.LoadAsync())
+                    .Select(edit => (Alias: edit.Document.PackageAlias, Physical: edit.Document.PhysicalPackageName,
+                        Source: edit.Document.SourcePackagePath)))
                 .Concat(_arkiveModEdits.InterfaceMovies is { } movies
                     ? (await movies.LoadAsync()).Select(movie => (Alias: movie.Manifest.PackageAlias,
                         Physical: Path.GetFileName(movie.Manifest.SourcePackagePath), Source: movie.Manifest.SourcePackagePath))

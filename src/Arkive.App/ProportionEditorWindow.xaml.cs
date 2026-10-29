@@ -27,6 +27,9 @@ public sealed record ProportionSaveRequest(
 
     /// <summary>A body-wide mod: every outfit of its body, saved with that scope so editing it later covers them all again.</summary>
     public bool EveryOutfit { get; init; }
+
+    /// <summary>Fit the body's physics collision shapes to the new shape and save them in the mod too.</summary>
+    public bool MatchPhysics { get; init; }
 }
 
 /// <summary>
@@ -131,6 +134,7 @@ public partial class ProportionEditorWindow : Window
         {
             _values = new Dictionary<string, double>(initial.Settings, StringComparer.Ordinal);
             _follow = initial.Follow;
+            MatchPhysicsCheckBox.IsChecked = initial.MatchPhysics;
         }
         if (EditingModName is { } modName)
         {
@@ -273,6 +277,7 @@ public partial class ProportionEditorWindow : Window
                 _pieces.Select(piece => piece.Request).ToArray(), new Dictionary<string, double>(_values), _follow)
             {
                 ExistingModId = EditingModId,
+                MatchPhysics = MatchPhysicsCheckBox.IsChecked == true && !_pieces[0].Profile.IsNpc,
             });
             Status(result);
         }

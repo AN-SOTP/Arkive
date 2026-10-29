@@ -869,6 +869,8 @@
                                 <Button x:Name="ProportionApplyBodyButton" Content="Apply preset to every outfit of its body" IsEnabled="False"
                                         Click="ProportionApplyBodyButton_Click"
                                         ToolTip="Reshape every player outfit of the preset's body (for example every Female Warrior outfit) with the chosen preset and save them all as one new mod. This takes a long time; Arkive asks first." />
+                                <CheckBox x:Name="ProportionMatchPhysicsCheckBox" Content="Match physics" VerticalAlignment="Center" Margin="8,0,0,0"
+                                          ToolTip="When applying a preset, also fit the body's collision shapes (chest, pelvis, thighs…) to the new shape, so hair, skirts and capes rest on the reshaped body instead of sinking into it. It changes the physics of every outfit of that body's classes." />
                                 <Button x:Name="ProportionCancelButton" Content="Stop" Visibility="Collapsed"
                                         Click="ProportionCancelButton_Click"
                                         ToolTip="Stop after the piece being reshaped. The pieces done so far stay in a draft in Edit mods." />

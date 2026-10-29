@@ -9,4 +9,5 @@ public enum AssetKind
     Material,
     ParticleSystem,
     InterfaceMovie,
+    PhysicsAsset,
 }

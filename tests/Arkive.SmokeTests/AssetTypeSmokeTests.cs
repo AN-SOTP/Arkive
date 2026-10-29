@@ -31,7 +31,7 @@ internal static class AssetTypeSmokeTests
             "objects filed as plain objects by older package indexes are not given their newer kind");
         // Saved by number in the package index and by name in .arkive files: existing values never move.
         Assert((int)AssetKind.Texture == 1 && (int)AssetKind.StaticMesh == 2 && (int)AssetKind.SkeletalMesh == 3 && (int)AssetKind.Material == 4 &&
-               (int)AssetKind.ParticleSystem == 5 && (int)AssetKind.InterfaceMovie == 6,
+               (int)AssetKind.ParticleSystem == 5 && (int)AssetKind.InterfaceMovie == 6 && (int)AssetKind.PhysicsAsset == 7,
             "AssetKind values were reordered; existing package indexes would be read wrongly");
         Assert(AssetTypes.For(UnifiedPackageAssetKind.SkeletalMesh).Count(1) == "1 skeletal mesh" &&
                AssetTypes.For(UnifiedPackageAssetKind.Texture2D).Count(3) == "3 textures" &&
@@ -67,6 +67,9 @@ internal static class AssetTypeSmokeTests
             ("particlesystem", AssetKind.ParticleSystem, AssetKind.Object, UnifiedPackageAssetKind.ParticleSystem,
                 [UnifiedPackageAssetKind.ParticleSystem]),
             ("particlemodulecolor", AssetKind.Object, AssetKind.Object, null, []),
+            // Physics assets are only changed by Simple upscale, never opened as a working copy of their own.
+            ("physicsasset", AssetKind.PhysicsAsset, AssetKind.Object, null, [UnifiedPackageAssetKind.PhysicsAsset]),
+            ("rb_bodysetup", AssetKind.Object, AssetKind.Object, null, []),
             ("AnimSet", AssetKind.Object, AssetKind.Object, null, []),
         ];
         foreach (var (className, catalog, umodel, editable, accepts) in cases)

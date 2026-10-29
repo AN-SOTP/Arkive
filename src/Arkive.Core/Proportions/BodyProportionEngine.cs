@@ -330,7 +330,10 @@ public static partial class BodyProportionEngine
     }
 
     // Arkive's GLBs make repeated bone names unique with a __ARKIVE_n suffix.
-    private static string BoneName(string node) => ArkiveSuffix().Replace(node, "");
+    internal static string BoneName(string node) => ArkiveSuffix().Replace(node, "");
+
+    /// <summary>True for a bone of hanging cloth or hair, which the body's own shape does not include.</summary>
+    internal static bool IsHangingBone(string bone) => LooseBone().IsMatch(bone) || HairBone().IsMatch(bone);
 
     private sealed record Vertex(Vector3 Position, (string Bone, float Weight)[] Influences, float Loose, float Hair);
 
