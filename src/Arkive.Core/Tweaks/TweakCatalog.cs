@@ -182,6 +182,26 @@ public static class TweakCatalog
                 new TweakChoice("exp", "Expertise", Default: true),
             ]),
         ], Note: "Bracelet stats are read from the English text of their tooltips, so this needs the English game client. A bracelet with any unticked stat is left alone, and so is one with none of these six stats."),
+        new("lootauction", "Loot Auction Fair Bid", "In the loot auction, a line under Market Lowest Price shows the most you can bid and still come out ahead of losing, since the winning bid is split among the other players after the auction fee: one price to use the item, one to resell it after the market's 5% fee. A \"Fill\" button types a price into the bid box; you press Bid yourself. The line turns red when the minimum bid is already higher.", TweakRisk.Display,
+        [
+            H("efui_dropitemauction", "dropitemauction", "ark.ui.dropItemAuction.DropItemAuctionWindowContent", "configUI", "arkive.tweaks.LootAuction.onWindowConfigUI"),
+            H("efui_raidmemberframe", "raidmemberframe", "ark.ui.raidMemberFrame.RaidMemberFrame", "configUI", "arkive.tweaks.LootAuction.onRaidConfigUI"),
+        ],
+        [
+            new("fill", "\"Fill\" types the price to", false,
+            [
+                new TweakChoice("resell", "Resell the item (the lower price)", Default: true),
+                new TweakChoice("use", "Use the item"),
+            ], Single: true),
+            new("players", "Players sharing the bid", false,
+            [
+                new TweakChoice("auto", "Count the raid", Default: true),
+                new TweakChoice("4", "4"),
+                new TweakChoice("8", "8"),
+                new TweakChoice("16", "16"),
+            ], Single: true),
+            new("showData", "Show the numbers Arkive reads instead (for testing)", false),
+        ], Note: "The player count comes from the raid member frame; when it has none, 8 is used. The fee is read from the window: the game's Currency Security Fee brackets when that button shows, else the percentage in the fee tooltip."),
         new("astrogem", "Astrogem Processing Advisor", "In astrogem processing, a box beside the gem's levels shows your chance to reach your target and the gold it takes if you process the offered effects, reroll them or reset the gem, worked out from the game's own odds tables, and suggests the best move. Advice only: it never presses anything.", TweakRisk.Display,
         [
             H("efui_arkgridgem", "arkgridgem", "ark.ui.arkGridGem.ArkGridGemProgressPanel", "configUI", "arkive.tweaks.Astrogem.onConfigUI"),
