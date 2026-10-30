@@ -355,11 +355,6 @@ public sealed class TweakModService(
 
     /// <summary>Where Market Price on Tooltips' prices are kept (the tweak reads prices/prices.txt under "home").</summary>
     public string PricesFolder => Path.Combine(root, "prices");
-
-    /// <summary>The Data Bus channel Netherworld Advisor's run log arrives on, and the file Arkive keeps it in.</summary>
-    public const string NetherworldChannel = "netherworld";
-
-    public string NetherworldLogFile => Path.Combine(root, "netherworld-runs.txt");
     /// <summary>The tweak that advises astrogem processing, from odds tables Arkive writes for every target.</summary>
     public const string AstrogemTweak = "astrogem";
 

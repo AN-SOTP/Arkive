@@ -210,19 +210,6 @@ public static class TweakCatalog
             ], Single: true),
             new("showData", "Show the numbers Arkive reads instead (for testing)", false),
         ], Note: "The player count comes from the raid member frame; when it has none, 8 is used. The fee is read from the window: the game's Currency Security Fee brackets when that button shows, else the percentage in the fee tooltip."),
-        new("netherworld", "Netherworld Advisor", "In Paradise's Netherworld, two lines under the floor tracker say whether to descend or to quit and claim this floor's chest, with the expected change in reward and the chance to lose it all, in green or red. They update after every descent and death, worked out from the game's own rules: 1 to 20 floors a descent, a new chest every 10 floors, and death on every other floor once your revive is gone. Regular Hell keys can't lose their rewards, so it stays out of Hell.", TweakRisk.Display,
-        [
-            H("efui_trinityinfernoprogress", "trinityinfernoprogress", "ark.ui.trinityInfernoProgress.TrinityInfernoProgressFrame", "configUI", "arkive.tweaks.Netherworld.onFrameConfigUI"),
-            H("efui_trinityinfernoprogress", "trinityinfernoprogress", "ark.ui.trinityInfernoProgress.TrinityInfernoProgressFrame", "setAbyssInitHeartCount", "arkive.tweaks.Netherworld.onInitHearts"),
-            H("efui_trinityinfernoprogress", "trinityinfernoprogress", "ark.ui.trinityInfernoProgress.TrinityInfernoProgressFrame", "setAbyssCurrentHeartCount", "arkive.tweaks.Netherworld.onCurrentHearts"),
-            H("efui_trinityinfernoprogress", "trinityinfernoprogress", "ark.ui.trinityInfernoProgress.TrinityInfernoFloorGroup", "allClear", "arkive.tweaks.Netherworld.onAllClear"),
-            H("efui_trinityinfernoprogress", "trinityinfernoprogress", "ark.ui.trinityInfernoProgress.TrinityInfernoFloorGroup", "setData", "arkive.tweaks.Netherworld.onSetData"),
-            H("efui_trinityinfernoprogress", "trinityinfernoprogress", "ark.ui.trinityInfernoProgress.TrinityInfernoFloorGroup", "rowUpdate", "arkive.tweaks.Netherworld.onRowUpdate"),
-        ],
-        [
-            new("logRuns", "Keep a log of each run in Arkive's tweaks folder (for testing; Arkive must be running)", false),
-            new("showData", "Show the numbers Arkive reads under the advice (for testing)", false),
-        ], Note: "The percentages compare the chest you'd claim on each floor (they scale the same for every chest type). Not yet checked in game: that a descent past Floor 100 stops on it and that Floor 100 is safe."),
         new("astrogem", "Astrogem Processing Advisor", "In astrogem processing, a box beside the gem's levels shows your chance to reach your target and the gold it takes if you process the offered effects, reroll them or reset the gem, worked out from the game's own odds tables, and suggests the best move. Advice only: it never presses anything.", TweakRisk.Display,
         [
             H("efui_arkgridgem", "arkgridgem", "ark.ui.arkGridGem.ArkGridGemProgressPanel", "configUI", "arkive.tweaks.Astrogem.onConfigUI"),
