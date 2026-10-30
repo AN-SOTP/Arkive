@@ -42,6 +42,7 @@ class BraceletDismantle {
 	static var bag:Dynamic;
 	static var rows:Array<Dynamic> = [];
 	static var status:TextField;
+	static var statusBottom:Float = 0;
 
 	/** The current opening of the window: shown, frames left to wait, next bag slot, bindIDs added, count added. */
 	static var open = false;
@@ -49,6 +50,13 @@ class BraceletDismantle {
 	static var next = 0;
 	static var added:Dynamic = {};
 	static var count = 0;
+
+	/** What the last scan saw, shown when nothing matched: bracelets read, greyed out, locked, stats and a first line. */
+	static var bracelets = 0;
+	static var greyed = 0;
+	static var locked = 0;
+	static var seen:Array<String> = [];
+	static var sample = "";
 
 	/** MainBag.configUI: keep the bag, whose slots are the ones a right-click puts in the dismantle list. */
 	public static function onBagConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
@@ -138,8 +146,11 @@ class BraceletDismantle {
 		if (button != null && button.parent != null) {
 			status = label("", fontOf(self.info_lb), 0xD9B26B, 360);
 			status.autoSize = flash.text.TextFieldAutoSize.CENTER;
+			status.multiline = true;
+			status.wordWrap = true;
 			status.x = button.x + button.width / 2 - 180;
-			status.y = button.y - 24;
+			statusBottom = button.y - 2;
+			status.y = statusBottom - status.height;
 			button.parent.addChild(status);
 			Options.own(ID, status);
 		}
@@ -166,6 +177,11 @@ class BraceletDismantle {
 			next = 0;
 			added = {};
 			count = 0;
+			bracelets = 0;
+			greyed = 0;
+			locked = 0;
+			seen = [];
+			sample = "";
 			say("");
 			return;
 		}
@@ -194,24 +210,34 @@ class BraceletDismantle {
 		if (next >= total) {
 			// A typed String: "text" + an Int could go through Std.string, which needs Boot's patches.
 			var number:String = untyped __global__["String"](count);
-			say(count == 0 ? "Arkive: no bracelets matched your stat picks" : "Arkive added " + number + (count == 1 ? " bracelet" : " bracelets")
-				+ " by stat. Check the list before you dismantle.");
+			say(count == 0 ? "Arkive: no bracelets matched your stat picks. " + scanned() : "Arkive added " + number
+				+ (count == 1 ? " bracelet" : " bracelets") + " by stat. Check the list before you dismantle.");
 		}
 	}
 
 	/** A bag bracelet that isn't greyed out, locked or already added, with at least one ticked stat. */
 	static function wanted(slot:Dynamic):Bool {
-		if (slot == null || slot.data == null || slot.enabled != true)
+		if (slot == null || slot.data == null)
 			return false;
 		var id:Dynamic = slot.bindID;
 		if (!Tooltips.isString(id) || id == "" || Text.has(added, id))
 			return false;
-		var lock:Dynamic = slot.lock;
-		if (lock != null && lock > 0)
-			return false;
 		var stats = statsOf(slot);
 		if (stats == null)
 			return false;
+		bracelets++;
+		for (stat in stats)
+			if (!contains(seen, stat))
+				seen.push(stat);
+		if (slot.enabled != true) {
+			greyed++;
+			return false;
+		}
+		var lock:Dynamic = slot.lock;
+		if (lock != null && lock > 0) {
+			locked++;
+			return false;
+		}
 		var chosen = picked();
 		for (stat in stats)
 			if (contains(chosen, stat))
@@ -242,13 +268,31 @@ class BraceletDismantle {
 		if (title.indexOf(BONUS_TITLE) < 0)
 			return null;
 		var lines:String = value[1];
+		if (sample == "")
+			sample = Text.trim(Text.stripTags(lines.split("<br>").join("<BR>").split("<BR>")[0]));
 		return lines;
+	}
+
+	/** "Read 2 bracelets (1 greyed out, 0 locked), stats: Domination, Expertise. First line: …" */
+	static function scanned():String {
+		var names:Array<String> = [];
+		for (stat in STATS) {
+			var value:String = stat.value;
+			var name:String = stat.label;
+			if (contains(seen, value))
+				names.push(name);
+		}
+		var read:String = untyped __global__["String"](bracelets);
+		var grey:String = untyped __global__["String"](greyed);
+		var lock:String = untyped __global__["String"](locked);
+		return "Read " + read + " bracelets (" + grey + " greyed out, " + lock + " locked), stats: "
+			+ (names.length == 0 ? "none" : names.join(", ")) + (sample == "" ? "" : ". First line: " + sample);
 	}
 
 	/** Every stat named at the start of a line ("Crit +90"); special effects and empty bonuses add nothing. */
 	public static function statsIn(lines:String):Array<String> {
 		var found:Array<String> = [];
-		for (line in lines.split("<BR>")) {
+		for (line in lines.split("<br>").join("<BR>").split("<BR>")) {
 			var text = Text.trim(Text.stripTags(line));
 			for (stat in STATS) {
 				var name:String = stat.label;
@@ -273,9 +317,12 @@ class BraceletDismantle {
 		return true;
 	}
 
+	/** The status line, grown upwards from just above the Dismantle button. */
 	static function say(text:String):Void {
-		if (status != null && status.text != text)
-			status.text = text;
+		if (status == null || status.text == text)
+			return;
+		status.text = text;
+		status.y = statusBottom - status.height;
 	}
 
 	/** The ticked stats as a new array; Domination, Endurance and Expertise until changed. */
