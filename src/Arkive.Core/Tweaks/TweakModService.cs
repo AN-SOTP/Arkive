@@ -105,6 +105,9 @@ public sealed class TweakModService(
         if (tweaks.TryGetValue(HiddenAchievementsTweak, out var achievements) && File.Exists(data2))
             foreach (var (key, value) in AchievementTable.Options(data2, Path.Combine(root, "cache")))
                 achievements[key] = value;
+        if (tweaks.TryGetValue(BoxOddsTweak, out var boxOdds) && File.Exists(data2))
+            boxOdds["table"] = JsonSerializer.SerializeToElement(
+                BoxOddsTable.Write(data2, Path.Combine(root, "boxodds"), Path.Combine(root, "cache")).Replace('\\', '/'));
         if (tweaks.ContainsKey(MarketPriceTweak) && File.Exists(data2))
             MarketItemTable.Write(data2, PricesFolder, Path.Combine(root, "cache"));
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
@@ -327,6 +330,9 @@ public sealed class TweakModService(
 
     /// <summary>The tweak that reveals hidden achievements, from the game's achievement tables baked into its options.</summary>
     public const string HiddenAchievementsTweak = "hiddenachievements";
+
+    /// <summary>The tweak that shows box odds, from a table of the game's drops Arkive writes when it builds.</summary>
+    public const string BoxOddsTweak = "boxodds";
 
     /// <summary>The tweak that shows market prices; its build writes the market's item list beside the prices.</summary>
     public const string MarketPriceTweak = "marketprice";

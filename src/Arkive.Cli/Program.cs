@@ -374,6 +374,7 @@ static int Run(string[] arguments)
             "player-logs" => PlayerLogs(target, ReadTextOption(arguments, "--out"), json),
             "game-crashes" => GameCrashes(target, ReadPositiveIntOption(arguments, "--last") ?? 3, json),
             "astrogem-odds" => AstrogemOdds(target, ReadTextOption(arguments, "--target"), ReadTextOption(arguments, "--out"), json),
+            "box-odds" => BoxOdds(target, ReadTextOption(arguments, "--out"), ReadTextOption(arguments, "--filter")),
             "tweaks-install" => TweaksInstall(target, arguments.Contains("--saved", StringComparer.OrdinalIgnoreCase),
                 arguments.Contains("--include-other-mods", StringComparer.OrdinalIgnoreCase)),
             "tweaks-mod" => TweaksMod(target, ReadTextOption(arguments, "--root"), ReadTextOption(arguments, "--tweaks"),
@@ -3367,6 +3368,37 @@ static int AstrogemOdds(string data2, string? targetId, string? outDirectory, bo
 }
 
 /// <summary>
+/// Box Odds on Tooltips' table from a data2.lpk: every box with something left to chance and its items' odds (names
+/// containing --filter only), and with --out the table file the tweak reads.
+/// </summary>
+static int BoxOdds(string data2, string? outDirectory, string? filter)
+{
+    var work = Path.Combine(Path.GetTempPath(), "arkive-boxodds-" + Guid.NewGuid().ToString("N")[..8]);
+    try
+    {
+        var boxes = Arkive.Core.Tweaks.BoxOddsTable.Read(data2, work);
+        if (!string.IsNullOrWhiteSpace(outDirectory))
+        {
+            Directory.CreateDirectory(outDirectory);
+            var path = Path.Combine(Path.GetFullPath(outDirectory), "boxes.txt");
+            File.WriteAllText(path, Arkive.Core.Tweaks.BoxOddsTable.Encode(boxes));
+            Console.WriteLine($"{boxes.Count} boxes -> {path}");
+        }
+        foreach (var box in boxes.Where(box => filter is null || box.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+        {
+            Console.WriteLine($"{box.Id} {box.Name}");
+            foreach (var item in box.Items)
+                Console.WriteLine(item.Server ? $"  {item.Name}: decided by the server" : $"  {item.Name}: {item.Chance:P3}, {item.Expected:0.###} on average");
+        }
+        return 0;
+    }
+    finally
+    {
+        if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+    }
+}
+
+/// <summary>
 /// What the Tweaks tab's Apply tweaks does, for an Arkive data root: installs the saved tweak choices (--saved, from
 /// tweaks\state.json), cleaning up earlier tweak mods and their working edits, and applies only the game packages the
 /// tweaks touch. Other mods' waiting changes stop it unless --include-other-mods.
@@ -4226,6 +4258,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive player-logs <character-name> [--out DIR] [--json]");
     Console.WriteLine("  arkive game-crashes <Lost-Ark-folder | EFGame\\Logs | file.dmp> [--last N] [--json]");
     Console.WriteLine("  arkive astrogem-odds <data2.lpk> [--target ID] [--out DIR] [--json]");
+    Console.WriteLine("  arkive box-odds <data2.lpk> [--out DIR] [--filter TEXT]");
     Console.WriteLine("  arkive tweaks-install <Arkive-data-root> --saved [--include-other-mods]");
     Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf] [--diagnostic] [--data2 data2.lpk] [--json]");
     Console.WriteLine("  arkive game-data-mod <Arkive-project-root> [--sql PATCH.sql [--name NAME | --mod ID|NAME]] [--mod ID|NAME] [--json]");

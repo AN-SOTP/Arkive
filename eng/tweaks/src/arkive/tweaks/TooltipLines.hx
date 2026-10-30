@@ -12,6 +12,7 @@ class TooltipLines {
 	/** Orders of the tweaks' lines, top first. Leave gaps so new lines can go between. */
 	public static inline var COMBAT_POWER = 10;
 	public static inline var MARKET_PRICE = 20;
+	public static inline var BOX_VALUE = 25;
 	public static inline var VALUE_PER_GOLD = 30;
 	public static inline var JUDGE = 40;
 
