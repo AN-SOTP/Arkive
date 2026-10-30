@@ -102,6 +102,9 @@ public sealed class TweakModService(
             astrogem["tables"] = JsonSerializer.SerializeToElement(
                 AstrogemOdds.WriteTables(data2, Path.Combine(root, "cache"), Path.Combine(root, "astrogem"))
                     .ToDictionary(table => table.Key, table => table.Value.Replace('\\', '/')));
+        if (tweaks.TryGetValue(HiddenAchievementsTweak, out var achievements) && File.Exists(data2))
+            foreach (var (key, value) in AchievementTable.Options(data2, Path.Combine(root, "cache")))
+                achievements[key] = value;
         if (tweaks.ContainsKey(MarketPriceTweak) && File.Exists(data2))
             MarketItemTable.Write(data2, PricesFolder, Path.Combine(root, "cache"));
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
@@ -321,6 +324,9 @@ public sealed class TweakModService(
     public string PricesFolder => Path.Combine(root, "prices");
     /// <summary>The tweak that advises astrogem processing, from odds tables Arkive writes for every target.</summary>
     public const string AstrogemTweak = "astrogem";
+
+    /// <summary>The tweak that reveals hidden achievements, from the game's achievement tables baked into its options.</summary>
+    public const string HiddenAchievementsTweak = "hiddenachievements";
 
     /// <summary>The tweak that shows market prices; its build writes the market's item list beside the prices.</summary>
     public const string MarketPriceTweak = "marketprice";
