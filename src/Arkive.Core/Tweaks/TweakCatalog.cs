@@ -154,6 +154,14 @@ public static class TweakCatalog
             new("average", "The average price beside the lowest", true),
             new("showData", "Show the price data Arkive reads (for testing)", false),
         ], Note: "Only items you have looked up on the market have a price. Bundle sizes are read from the English market text."),
+        new("boxodds", "Box Odds on Tooltips", "A box's tooltip shows the chance of each item it lists, worked out from the game's own drop tables, and what opening it is worth at the market prices you've seen, next to what the box itself sells for. Shop boxes whose odds the game files don't hold (gem chests, card packs) show nothing extra.", TweakRisk.Display,
+        [
+            H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.BoxOdds.onMainTooltip", AbcHookKind.Before),
+        ],
+        [
+            new("value", "What opening it is worth, from the market prices you've seen", true),
+            new("showData", "Show the box data Arkive reads (for testing)", false),
+        ], Note: "Prices come from Market Price on Tooltips: turn it on and look items up on the market once. Item names are matched in English."),
         new("braceletjudge", "Bracelet Reroll Judge", "On the bracelet page that asks whether to keep the current effects or take the new ones, every effect line shows what it adds to your Combat Power, each side shows its total, and the better side says \"Keep\". It only advises: you still pick. Priced with the same game table as Combat Power on Tooltips.", TweakRisk.Display,
         [
             H("efui_itembraceletenchant", "itembraceletenchant", "ark.ui.itemBraceletEnchant.ItemBEChoiceResultPage", "setData", "arkive.tweaks.BraceletJudge.onSetData", AbcHookKind.Before),
