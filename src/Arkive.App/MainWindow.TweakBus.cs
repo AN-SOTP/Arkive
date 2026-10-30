@@ -18,6 +18,8 @@ public partial class MainWindow
         [TweakModService.SettingsChannel] = SaveInGameTweakChange,
         [MarketPriceStore.Channel] = SaveMarketPrices,
         [TweakModService.NetherworldChannel] = SaveNetherworldLog,
+        [TweakModService.AutoPullUpChannel] = text =>
+            Dispatcher.InvokeAsync(() => Log(TweakModService.DescribeAutoPullUp(text) ?? "Auto Pull Up: an unreadable report was ignored.")),
     };
 
     /// <summary>One line of Netherworld Advisor's run log (with its "Keep a log" option on), for checking its rules.</summary>
