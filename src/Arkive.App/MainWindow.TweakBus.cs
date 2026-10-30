@@ -17,7 +17,21 @@ public partial class MainWindow
     {
         [TweakModService.SettingsChannel] = SaveInGameTweakChange,
         [MarketPriceStore.Channel] = SaveMarketPrices,
+        [TweakModService.NetherworldChannel] = SaveNetherworldLog,
     };
+
+    /// <summary>One line of Netherworld Advisor's run log (with its "Keep a log" option on), for checking its rules.</summary>
+    private void SaveNetherworldLog(string text)
+    {
+        try
+        {
+            File.AppendAllText(Tweaks.NetherworldLogFile, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}	{text}{Environment.NewLine}");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Dispatcher.InvokeAsync(() => Log($"Tweaks: could not keep the Netherworld log: {exception.Message}"));
+        }
+    }
 
     /// <summary>Prices the player saw on the market, kept so tooltips have them next session too.</summary>
     private void SaveMarketPrices(string text)
