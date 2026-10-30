@@ -182,7 +182,7 @@ public static class TweakCatalog
                 new TweakChoice("exp", "Expertise", Default: true),
             ]),
         ], Note: "Bracelet stats are read from the English text of their tooltips, so this needs the English game client. A bracelet with any unticked stat is left alone, and so is one with none of these six stats."),
-        new("lootauction", "Loot Auction Fair Bid", "In the loot auction, a line under Market Lowest Price shows the most you can bid and still come out ahead of losing, since the winning bid is split among the other players after the auction fee: one price to use the item, one to resell it after the market's 5% fee. A \"Fill\" button types a price into the bid box; you press Bid yourself. The line turns red when the minimum bid is already higher.", TweakRisk.Display,
+        new("lootauction", "Loot Auction Fair Bid", "In the loot auction, rows in the game's own style under Market Lowest Price show the most you can bid and still come out ahead of losing, since the winning bid is split among the other players after the auction fee: to resell the item (after the market's 5% fee) and, when the window has room, to use it. A \"Fill\" button types the first price into the bid box; you press Bid yourself. A price turns red when the minimum bid is already higher.", TweakRisk.Display,
         [
             H("efui_dropitemauction", "dropitemauction", "ark.ui.dropItemAuction.DropItemAuctionWindowContent", "configUI", "arkive.tweaks.LootAuction.onWindowConfigUI"),
             H("efui_raidmemberframe", "raidmemberframe", "ark.ui.raidMemberFrame.RaidMemberFrame", "configUI", "arkive.tweaks.LootAuction.onRaidConfigUI"),

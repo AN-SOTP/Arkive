@@ -6,9 +6,10 @@ import flash.text.TextFormat;
 import scaleform.clik.events.ButtonEvent;
 
 /**
-	Loot Auction Fair Bid. Under the auction window's Market Lowest Price, a line with the most a bid can be and still
-	beat losing the auction: "Fair bid (8 players): 44,025 g to use, 41,823 g to resell". A Fill button types the chosen
-	one into the bid box the way typing does; the player still presses Bid.
+	Loot Auction Fair Bid. Under the auction window's Market Lowest Price, rows made like that row (its words' format, a
+	money label of its class with the gold icon, in the same columns) with the most a bid can be and still beat losing
+	the auction: "Fair Bid to Resell 41,823" and, when there's room, "Fair Bid to Use 44,025". The game's small Fill
+	button types the first row's price into the bid box the way typing does; the player still presses Bid.
 
 	The winning bid B is split among everyone but the winner after a fee F(B), so winning leaves you value - B and
 	losing leaves you (B - F(B)) / (N - 1). They are equal at B = ((N - 1) * value + F(B)) / N, worked out by
@@ -20,12 +21,12 @@ import scaleform.clik.events.ButtonEvent;
 	- otherwise the percentage in the fee tooltip ("minus the 5% fee"), 5% when it names none, none when it's empty.
 
 	N is the number of named players in the raid member frame (another movie; every movie shares this class), or the
-	"players" option, else 8. The line turns red and Fill greys out when the minimum bid is already above the price
-	Fill would type; Fill also greys out when that price is more than your balance.
+	"players" option, else 8. A price below the minimum bid turns red (the game's own way of colouring money labels),
+	and Fill greys out when its price is below the minimum bid or more than your balance.
 
 	The game hands the market price and the raid's players to setters, which hooks can't wrap, so both windows are
-	hooked where they're built and the line reads the game's own labels every frame, working the price out again when
-	anything it shows changes.
+	hooked where they're built and the rows read the game's own labels every frame, working the prices out again when
+	anything they show changes.
 **/
 @:keep
 class LootAuction {
@@ -33,8 +34,8 @@ class LootAuction {
 	static inline var MARKET_FEE = 0.05;
 	static inline var DEFAULT_FEE = 0.05;
 	static inline var DEFAULT_PLAYERS = 8;
-	static inline var GOLD = 0xFFD200;
-	static inline var LOSS = 0xFF8A80;
+	/** Used only when the Market Lowest Price label shows no text to copy its format from. */
+	static inline var DESC = 0xA9A9A9;
 	static inline var FONT = "$YG760";
 	static inline var SIZE = 14;
 	static inline var LINE_HEIGHT = 20;
@@ -58,40 +59,29 @@ class LootAuction {
 		untyped raidFrames[self] = true;
 	}
 
-	/** DropItemAuctionWindowContent.configUI: add the line and the Fill button, which follow the window from then on. */
+	/**
+		DropItemAuctionWindowContent.configUI: add two rows made like the window's own Market Lowest Price row (its label's
+		text format, and a money label of the same class with the gold icon) and the game's small button for Fill.
+	**/
 	public static function onWindowConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
 		var window:Dynamic = self;
 		if (window.marketPrice_lb == null || window.marketPriceDesc_lb == null || window.tender_btn == null
 			|| window.priceInput_lb == null)
 			return;
-		var label = new TextField();
-		var format = new TextFormat();
-		format.font = fontOf([window.marketPriceDesc_lb, window.chName_txt, window.itemName_lb]);
-		format.size = SIZE;
-		label.embedFonts = true;
-		label.defaultTextFormat = format;
-		label.selectable = false;
-		label.mouseEnabled = false;
-		label.multiline = false;
-		label.wordWrap = false;
-		label.height = LINE_HEIGHT + 2;
-		label.textColor = GOLD;
-		label.visible = false;
-		GameUi.addAbove(label, window.marketPrice_lb);
-		Options.own(TWEAK, label);
+		var rows:Array<Dynamic> = [row(window), row(window)];
 		// The game's small 12 px button, as on Currency Security Fee (its class is there even while it's hidden).
 		var button:Dynamic = GameUi.copy(window.counterFees_btn != null ? window.counterFees_btn : window.tender_btn, "Fill");
 		button.visible = false;
 		GameUi.addAbove(button, window.marketPrice_lb);
 		Options.own(TWEAK, button);
-		var state:Dynamic = {label: label, button: button, key: "", toUse: 0, resell: 0};
+		var state:Dynamic = {rows: rows, button: button, key: "", toUse: 0, resell: 0};
 		button.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) {
 			try {
 				fill(window, state);
 			} catch (error:Dynamic) {}
 		});
-		label.addEventListener(Event.ENTER_FRAME, function(event:Dynamic) {
-			// Runs outside the hook's guard: a window shaped other than expected stops the line, not the window.
+		button.addEventListener(Event.ENTER_FRAME, function(event:Dynamic) {
+			// Runs outside the hook's guard: a window shaped other than expected stops the rows, not the window.
 			try {
 				refresh(window, state);
 			} catch (error:Dynamic) {
@@ -100,7 +90,60 @@ class LootAuction {
 		});
 	}
 
-	/** Works the line out again when the market price, bids, balance, fee, raid, options or layout have changed. */
+	/** One row: {desc, money}. The words take the Market Lowest Price label's format, so they look like the game's own. */
+	static function row(window:Dynamic):Dynamic {
+		var desc = new TextField();
+		var format:TextFormat = formatOf(window.marketPriceDesc_lb);
+		if (format == null) {
+			format = new TextFormat();
+			format.font = FONT;
+			format.size = SIZE;
+			format.color = DESC;
+		}
+		format.align = flash.text.TextFormatAlign.LEFT;
+		desc.embedFonts = true;
+		desc.defaultTextFormat = format;
+		desc.selectable = false;
+		desc.mouseEnabled = false;
+		desc.multiline = false;
+		desc.wordWrap = false;
+		desc.visible = false;
+		GameUi.addAbove(desc, window.marketPrice_lb);
+		Options.own(TWEAK, desc);
+		var money:Dynamic = moneyLike(window.marketPrice_lb);
+		money.visible = false;
+		GameUi.addAbove(money, window.marketPrice_lb);
+		Options.own(TWEAK, money);
+		return {desc: desc, money: money};
+	}
+
+	/** A money label of the market price's own class and settings: the same digits and gold icon. */
+	static function moneyLike(like:Dynamic):Dynamic {
+		var type:Dynamic = like.constructor;
+		var made:Dynamic = untyped __new__(type);
+		made.autoSize = like.autoSize;
+		made.fontSize = like.fontSize;
+		made.icon = like.icon;
+		made.iconX = like.iconX;
+		made.iconY = like.iconY;
+		made.useMotion = false;
+		made.updateDelay = 0;
+		return made;
+	}
+
+	/** The text format of a game label's first character (font, size, colour); null when it shows no text. */
+	static function formatOf(owner:Dynamic):TextFormat {
+		var field:Dynamic = owner == null ? null : GameUi.isA(owner, "flash.text.TextField") ? owner : owner.textField;
+		if (field == null || field.text == null)
+			return null;
+		var text:String = field.text;
+		if (text.length == 0)
+			return null;
+		var format:TextFormat = field.getTextFormat(0, 1);
+		return format == null || format.font == null || format.font == "" ? null : format;
+	}
+
+	/** Works the rows out again when the market price, bids, balance, fee, raid, options or layout have changed. */
 	static function refresh(window:Dynamic, state:Dynamic):Void {
 		var on = Options.on(TWEAK);
 		var price:Dynamic = window.marketPrice_lb;
@@ -111,8 +154,8 @@ class LootAuction {
 		var fee = feeOf(window);
 		var fill:String = Options.get(TWEAK, "fill", "resell");
 		var data = Options.get(TWEAK, "showData", false) == true;
-		var y:Float = price.y;
-		// "on" is in the key: switching the tweak back on shows its items again, and an empty line must hide them.
+		var y:Float = window.marketPriceDesc_lb.y;
+		// "on" is in the key: switching the tweak back on shows its items again, and empty rows must hide them.
 		var key = (on ? "on|" : "off|") + whole(Math.round(market)) + "|" + whole(Math.round(least)) + "|"
 			+ whole(Math.round(balance)) + "|" + whole(count) + "|" + fee.text + "|" + fill + "|" + (data ? "data|" : "|")
 			+ whole(Math.round(y));
@@ -127,26 +170,31 @@ class LootAuction {
 		var resell = fair(market - Math.ceil(market * MARKET_FEE), count, fee);
 		state.toUse = toUse;
 		state.resell = resell;
-		layout(window, state);
-		var label:TextField = state.label;
-		var forms = data ? ["M " + gold(market) + " N " + whole(count) + " fee " + fee.text + " min " + gold(least) + " bal "
-			+ gold(balance)] : [
-			"Fair bid (" + whole(count) + " players): " + gold(toUse) + " g to use, " + gold(resell) + " g to resell",
-			"Fair bid: " + gold(toUse) + " g to use, " + gold(resell) + " g to resell",
-			"Fair: " + gold(toUse) + " use, " + gold(resell) + " resell"
-		];
-		// Plain text and textColor: the game's player drops a new field's font for HTML text, which then draws as boxes.
-		for (form in forms) {
-			label.text = form;
-			if (label.textWidth + 4 <= label.width)
-				break;
-		}
 		var target = fill == "use" ? toUse : resell;
-		var under = least > 0 && target < least;
-		label.textColor = under ? LOSS : GOLD;
-		label.visible = true;
-		state.button.visible = true;
-		GameUi.enable(state.button, !under && (balance <= 0 || target <= balance));
+		var other = fill == "use" ? resell : toUse;
+		var names = fill == "use" ? ["Fair Bid to Use", "Fair Bid to Resell"] : ["Fair Bid to Resell", "Fair Bid to Use"];
+		if (data)
+			names[0] = "N " + whole(count) + " fee " + fee.text + " M " + gold(market);
+		var rows:Array<Dynamic> = state.rows;
+		var values = [target, other];
+		for (i in 0...rows.length) {
+			var line:Dynamic = rows[i];
+			var desc:TextField = line.desc;
+			desc.text = names[i];
+			var value:Float = values[i];
+			// The game colours its own money labels with a font tag (Highest Bid when you're outbid).
+			line.money.htmlText = least > 0 && value < least ? "<font color='#FF8A80'>" + gold(value) + "</font>" : gold(value);
+			line.money.validateNow();
+		}
+		var shown = layout(window, state);
+		for (i in 0...rows.length) {
+			var line:Dynamic = rows[i];
+			line.desc.visible = i < shown;
+			line.money.visible = i < shown;
+		}
+		var button:Dynamic = state.button;
+		button.visible = true;
+		GameUi.enable(button, !(least > 0 && target < least) && (balance <= 0 || target <= balance));
 	}
 
 	/** The highest bid that leaves winning and losing level: B = ((N - 1) * value + F(B)) / N, floored. */
@@ -234,29 +282,48 @@ class LootAuction {
 		return -1;
 	}
 
-	/** The line goes just under the market price, from the left edge of the bid rows to the right edge of Bid. */
-	static function layout(window:Dynamic, state:Dynamic):Void {
+	/**
+		Puts the rows under Market Lowest Price, one row apart, in the window's own columns: words under its words, money
+		right-aligned with the market price, Fill just right of the first row's money. A second row shows only when it
+		fits above Highest Bidder (items without an item level leave room for it). Returns how many rows show.
+	**/
+	static function layout(window:Dynamic, state:Dynamic):Int {
 		var price:Dynamic = window.marketPrice_lb;
-		var bid:Dynamic = window.tender_btn;
-		var rows:Dynamic = window.minimumPriceDesc_lb;
-		var left:Float = rows != null ? rows.x : window.marketPriceDesc_lb.x;
-		var right:Float = bid.x + bid.width;
-		var y:Float = price.y + price.height + 2;
+		var desc:Dynamic = window.marketPriceDesc_lb;
+		var step:Float = desc.height > 0 ? desc.height : LINE_HEIGHT;
+		var below:Dynamic = window.topTenderDesc_lb;
+		var limit:Float = below != null ? below.y - 4 : desc.y + 2 * step;
+		var shown = desc.y + 3 * step <= limit ? 2 : 1;
+		var inner:Float = desc.textField != null ? desc.textField.y : 0;
+		var rows:Array<Dynamic> = state.rows;
+		for (i in 0...rows.length) {
+			var line:Dynamic = rows[i];
+			var words:TextField = line.desc;
+			words.x = desc.x + (desc.textField != null ? desc.textField.x : 0);
+			words.y = desc.y + (i + 1) * step + inner;
+			words.width = price.x - words.x;
+			words.height = step;
+			line.money.x = price.x;
+			line.money.y = price.y + (i + 1) * step;
+		}
 		var button:Dynamic = state.button;
+		var bid:Dynamic = window.tender_btn;
 		button.width = BUTTON_WIDTH;
 		button.validateNow();
-		button.x = right - BUTTON_WIDTH;
-		button.y = y + (LINE_HEIGHT - button.height) / 2;
-		var label:TextField = state.label;
-		label.x = left;
-		label.y = y;
-		label.width = right - BUTTON_WIDTH - GAP - left;
+		var right:Float = bid.x + bid.width;
+		var bounds:Dynamic = rows[0].money.getBounds(price.parent);
+		var x:Float = bounds.width > 0 ? bounds.x + bounds.width + GAP : right - button.width;
+		button.x = x + button.width > right ? right - button.width : x;
+		button.y = desc.y + step + (step - button.height) / 2;
+		return shown;
 	}
 
 	static function hide(state:Dynamic):Void {
-		var label:TextField = state.label;
-		label.text = "";
-		label.visible = false;
+		var rows:Array<Dynamic> = state.rows;
+		for (line in rows) {
+			line.desc.visible = false;
+			line.money.visible = false;
+		}
 		state.button.visible = false;
 		state.toUse = 0;
 		state.resell = 0;
@@ -307,22 +374,6 @@ class LootAuction {
 			}
 		}
 		return count >= 2 ? count : DEFAULT_PLAYERS;
-	}
-
-	static function fontOf(labels:Array<Dynamic>):String {
-		for (owner in labels) {
-			var field:Dynamic = owner == null ? null : GameUi.isA(owner, "flash.text.TextField") ? owner : owner.textField;
-			if (field == null || field.text == null)
-				continue;
-			var text:String = field.text;
-			if (text.length == 0)
-				continue;
-			var format:Dynamic = field.getTextFormat(0, 1);
-			var name:String = format == null ? null : format.font;
-			if (name != null && name != "")
-				return name;
-		}
-		return FONT;
 	}
 
 	/** The gold a shown money label holds; 0 when it's hidden or empty. */
