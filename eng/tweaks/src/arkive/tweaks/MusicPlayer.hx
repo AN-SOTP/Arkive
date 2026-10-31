@@ -13,40 +13,56 @@ import flash.utils.Timer;
 import scaleform.clik.events.ButtonEvent;
 
 /**
-	Spotify Player: a small player under the minimap for the Spotify app running on the PC. It shows the song and
-	artist with the time, and has previous, play or pause, stop and next, Spotify's volume, and shuffle and repeat when
-	Spotify lets them be changed. Drag it by its background; the fold button turns it into a thin now-playing strip.
+	Spotify Player: a small player under the minimap for the Spotify app running on the PC, laid out like Spotify's own
+	bar but in the game's pieces. The track's cover sits in the game's item slot frame with the song and artist beside
+	it; under them shuffle, previous, play or pause, next and repeat (gold with a mark under them while on, a "1" for
+	repeat one); then the game's gauge with the time at both ends (click it to jump there), and Spotify's volume on the
+	game's slider. Drag it by its background; the fold button turns it into a thin strip with a small cover.
 
 	The game can't reach Spotify, so Arkive does it (through Windows' media controls): it writes Spotify's state to
-	<home>/spotify/now.txt every second, which the player reads, and the player sends its buttons, volume and position
-	on the Data Bus (channel "spotify"). Without Arkive running the player says so and shows no buttons.
-
-	The game's own controls are used: its small plain buttons with the media marks drawn in its label colour, its tick
-	boxes and slider (componentsV2), and the minimap's label font.
+	<home>/spotify/now.txt every second and the pictures to art.txt (the cover, plus the song and artist drawn when the
+	game's fonts lack their letters, as with Japanese or Korean), which the player reads; the player sends its buttons,
+	volume, jumps and position on the Data Bus (channel "spotify"). Pictures arrive as pixel values and are drawn into a
+	BitmapData here, the way the game builds bitmaps itself; nothing is loaded as an image file.
 **/
 @:keep
 class MusicPlayer {
 	static inline var ID = "spotify";
-	static inline var POLL_MS = 1000;
+	static inline var TICK_MS = 250;
+	/** Ticks between reads of Arkive's file (one second). */
+	static inline var READ_EVERY = 4;
 	/** Reads without a new write from Arkive after which it counts as not running. */
 	static inline var STALE_READS = 4;
 	/** After a volume drag, the file's volume is ignored this long, so the slider doesn't jump back. */
 	static inline var VOLUME_HOLD_MS = 2500;
 	static inline var VOLUME_SEND_MS = 200;
 
-	static inline var WIDTH = 260;
+	/** The player is as wide as the minimap's backing, within these bounds. */
+	static inline var MIN_WIDTH = 270;
+	static inline var MAX_WIDTH = 360;
 	static inline var PAD = 10;
 	static inline var GAP = 6;
-	static inline var BUTTON = 28;
+	static inline var SLOT = 56;
+	static inline var TEXT_X = 76;
+	static inline var BUTTON = 26;
 	static inline var BUTTON_HEIGHT = 24;
-	static inline var STRIP = 26;
-	/** The game's small plain button (12 px label), the base of the media buttons. */
-	static inline var SMALL_BUTTON = "AnimatedButton_renew12_V2";
+	static inline var PLAY = 34;
+	static inline var PLAY_HEIGHT = 30;
+	static inline var CONTROLS_Y = 74;
+	static inline var GAUGE_Y = 114;
+	static inline var VOLUME_Y = 132;
+	static inline var FULL_HEIGHT = 162;
+	static inline var STRIP = 30;
+	static inline var MINI = 22;
 
 	static inline var WHITE = 0xFFFFFF;
 	static inline var TEXT = 0xD8D8D8;
-	static inline var DIM = 0x8C8C8C;
-	static inline var GOLD = 0xE3C27F;
+	static inline var DIM = 0x9A9A9A;
+	/** The game's highlight gold (switched-on toggles, the gauge when drawn by hand). */
+	static inline var GOLD = 0xFFD200;
+
+	/** The game's small plain button (12 px label), the base of the media buttons. */
+	static inline var SMALL_BUTTON = "AnimatedButton_renew12_V2";
 
 	/** Everything the player says, in one place for translating. */
 	static var WORDS:Dynamic = {
@@ -58,16 +74,18 @@ class MusicPlayer {
 		previous: "Previous",
 		play: "Play",
 		pause: "Pause",
-		stop: "Stop",
 		next: "Next",
 		fold: "Fold",
 		unfold: "Unfold",
-		volume: "Volume",
-		shuffle: "Shuffle",
-		repeat: "Repeat",
-		repeatAll: "Repeat All",
-		repeatOne: "Repeat One"
+		shuffleOn: "Shuffle: On",
+		shuffleOff: "Shuffle: Off",
+		repeatOff: "Repeat: Off",
+		repeatAll: "Repeat: All",
+		repeatOne: "Repeat: One"
 	};
+
+	/** The player's width, set from the first minimap it is built under. */
+	static var panelWidth:Float = 280;
 
 	static var font:String = "$YG760";
 	static var embed = true;
@@ -77,27 +95,45 @@ class MusicPlayer {
 	static var host:Dynamic;
 
 	static var player:Sprite;
-	static var back:Shape;
+	static var panel:Dynamic;
+	/** True when the game's window backing wasn't there and the panel is drawn. */
+	static var drawnPanel = false;
+	static var slot:Sprite;
+	static var slotFrame:Dynamic;
+	static var cover:Sprite;
+	static var mini:Sprite;
 	static var title:TextField;
 	static var artist:TextField;
-	static var time:TextField;
-	static var progress:Shape;
+	static var stripTitle:TextField;
+	static var titleImage:Sprite;
+	static var artistImage:Sprite;
+	static var stripImage:Sprite;
+	static var elapsed:TextField;
+	static var total:TextField;
+	static var gauge:Dynamic;
+	static var gaugeDrawn:Shape;
+	static var gaugeHit:Sprite;
 	static var volumeText:TextField;
 	static var speaker:Shape;
+	static var shuffleButton:Dynamic;
+	static var shuffleMark:Shape;
+	static var shuffleDot:Shape;
 	static var previousButton:Dynamic;
 	static var playButton:Dynamic;
 	static var playMark:Shape;
-	static var stopButton:Dynamic;
 	static var nextButton:Dynamic;
+	static var repeatButton:Dynamic;
+	static var repeatMark:Shape;
+	static var repeatDot:Shape;
+	static var repeatOne:TextField;
 	static var stripPlay:Dynamic;
 	static var stripMark:Shape;
 	static var foldButton:Dynamic;
 	static var unfoldButton:Dynamic;
 	static var slider:Dynamic;
-	static var shuffleBox:Dynamic;
-	static var repeatBox:Dynamic;
 
 	static var timer:Timer;
+	static var ticks = 0;
 	static var reading = false;
 	static var lastSequence = "";
 	static var staleReads = STALE_READS;
@@ -106,12 +142,20 @@ class MusicPlayer {
 	static var state = "noarkive";
 	static var song = "";
 	static var singer = "";
-	static var position = 0;
+	static var position:Float = 0;
+	static var readAt = 0;
 	static var length = 0;
 	static var can = "";
 	static var shuffle = "";
 	static var repeat = "";
 	static var volume = -1;
+
+	/** The pictures: the art id shown and being read, and whether the game has drawn one yet (reported once). */
+	static var art = "";
+	static var artWanted = "";
+	static var artReading = false;
+	static var artReported = false;
+	static var hasCover = false;
 
 	static var folded = false;
 	static var offsetX:Float = 0;
@@ -132,12 +176,16 @@ class MusicPlayer {
 		// The map's own backing (MiniMapExFrame has its mask instead); the player goes under it, right edges lined up.
 		var area:Dynamic = self.background != null ? self.background : self.minimapMaskMc != null ? self.minimapMaskMc : self;
 		var bounds:Dynamic = area.getBounds(self);
-		untyped hosts[self] = {x: bounds.x + bounds.width - WIDTH, y: bounds.y + bounds.height + GAP};
+		if (player == null) {
+			var wide:Float = Math.round(bounds.width);
+			panelWidth = wide < MIN_WIDTH ? MIN_WIDTH : wide > MAX_WIDTH ? MAX_WIDTH : wide;
+		}
+		untyped hosts[self] = {x: bounds.x + bounds.width - panelWidth, y: bounds.y + bounds.height + GAP};
 		gameFont(self);
 		if (player == null && !build())
 			return;
 		if (timer == null) {
-			timer = new Timer(POLL_MS);
+			timer = new Timer(TICK_MS);
 			timer.addEventListener(TimerEvent.TIMER, onTick);
 			timer.start();
 		}
@@ -160,42 +208,125 @@ class MusicPlayer {
 
 	/** Builds the player from the game's controls; false while componentsV2 isn't loaded (the next configUI tries again). */
 	static function build():Bool {
-		if (GameUi.definition(SMALL_BUTTON) == null || GameUi.definition("DefaultCheckBox_V2") == null)
+		if (GameUi.definition(SMALL_BUTTON) == null)
 			return false;
 		player = new Sprite();
 		player.name = "arkiveSpotifyPlayer";
-		back = new Shape();
-		player.addChild(back);
 		player.addEventListener(MouseEvent.MOUSE_DOWN, grab);
 
-		title = text(PAD, 6, WIDTH - 2 * PAD - 24, 14, WHITE, false);
-		artist = text(PAD, 26, WIDTH - 2 * PAD - 80, 12, DIM, false);
-		time = text(WIDTH - PAD - 80, 26, 80, 12, DIM, true);
-		progress = new Shape();
-		progress.x = PAD;
-		progress.y = 47;
-		player.addChild(progress);
+		// The game's window backing (nine-slice, so it keeps its edges at this size); a drawn one without it.
+		panel = make("WindowBG_renew_V2");
+		if (panel == null)
+			panel = make("WindowBG_V2");
+		if (panel == null) {
+			panel = new Shape();
+			drawnPanel = true;
+		} else {
+			panel.mouseChildren = false;
+		}
+		player.addChild(panel);
 
-		var x:Float = PAD;
-		previousButton = button(x, 54, WORDS.previous, "previous");
-		previousButton.addChild(mark("previous"));
-		x += BUTTON + 4;
-		playButton = button(x, 54, WORDS.play, "playpause");
-		playMark = mark("play");
-		playButton.addChild(playMark);
-		x += BUTTON + 4;
-		stopButton = button(x, 54, WORDS.stop, "stop");
-		stopButton.addChild(mark("stop"));
-		x += BUTTON + 4;
-		nextButton = button(x, 54, WORDS.next, "next");
-		nextButton.addChild(mark("next"));
-		x += BUTTON + 12;
+		// The cover in the game's item slot: its backing, the picture, its frame on top.
+		slot = new Sprite();
+		slot.x = PAD;
+		slot.y = PAD;
+		slot.mouseChildren = false;
+		var backing:Dynamic = make("ARKSlotBackgroundV2");
+		if (backing != null) {
+			backing.width = SLOT;
+			backing.height = SLOT;
+			slot.addChild(backing);
+		} else {
+			var g = slot.graphics;
+			g.beginFill(0x101215, 1);
+			g.drawRect(0, 0, SLOT, SLOT);
+			g.endFill();
+		}
+		cover = new Sprite();
+		cover.x = 3;
+		cover.y = 3;
+		slot.addChild(cover);
+		// The game's slot edge (a bitmap of its shared image library, as item slots draw it).
+		slotFrame = image("V2Slot_border");
+		if (slotFrame != null) {
+			slotFrame.width = SLOT;
+			slotFrame.height = SLOT;
+			slot.addChild(slotFrame);
+		} else {
+			var frame = new Shape();
+			frame.graphics.lineStyle(1, 0x6E675C, 1);
+			frame.graphics.drawRect(0, 0, SLOT, SLOT);
+			slot.addChild(frame);
+		}
+		player.addChild(slot);
+		drawNote(cover, SLOT - 6);
 
-		speaker = mark("speaker");
-		speaker.x = x;
-		speaker.y = 54 + (BUTTON_HEIGHT - 12) / 2;
+		title = text(TEXT_X, 14, panelWidth - TEXT_X - PAD - 22, 14, WHITE, false);
+		artist = text(TEXT_X, 35, panelWidth - TEXT_X - PAD, 12, DIM, false);
+		titleImage = picture(TEXT_X, 14);
+		artistImage = picture(TEXT_X, 35);
+
+		shuffleButton = button(BUTTON, BUTTON_HEIGHT, WORDS.shuffleOff, "shuffle");
+		shuffleMark = mark(shuffleButton, "shuffle", 12, BUTTON, BUTTON_HEIGHT);
+		shuffleDot = dot(shuffleButton, BUTTON, BUTTON_HEIGHT);
+		previousButton = button(BUTTON, BUTTON_HEIGHT, WORDS.previous, "previous");
+		mark(previousButton, "previous", 12, BUTTON, BUTTON_HEIGHT);
+		playButton = button(PLAY, PLAY_HEIGHT, WORDS.play, "playpause");
+		playMark = mark(playButton, "play", 14, PLAY, PLAY_HEIGHT);
+		nextButton = button(BUTTON, BUTTON_HEIGHT, WORDS.next, "next");
+		mark(nextButton, "next", 12, BUTTON, BUTTON_HEIGHT);
+		repeatButton = button(BUTTON, BUTTON_HEIGHT, WORDS.repeatOff, "repeat");
+		repeatMark = mark(repeatButton, "repeat", 12, BUTTON, BUTTON_HEIGHT);
+		repeatDot = dot(repeatButton, BUTTON, BUTTON_HEIGHT);
+		repeatOne = text(BUTTON - 10, 0, 10, 9, GOLD, false);
+		repeatOne.text = "1";
+		repeatOne.visible = false;
+		player.removeChild(repeatOne);
+		overlay(repeatButton).addChild(repeatOne);
+
+		// The time and the game's gauge (a drawn bar without it); a click on it jumps there.
+		elapsed = text(PAD, GAUGE_Y - 7, 40, 11, DIM, false);
+		total = text(panelWidth - PAD - 40, GAUGE_Y - 7, 40, 11, DIM, true);
+		gauge = make("SimpleProgressBar_01");
+		if (gauge != null) {
+			try {
+				gauge.minimum = 0;
+				gauge.maximum = 100;
+				gauge.completeTime = 0;
+				gauge.targetFixed = -1;
+				gauge.width = panelWidth - 2 * PAD - 84;
+				gauge.height = 8;
+				gauge.x = PAD + 42;
+				gauge.y = GAUGE_Y - 4;
+				gauge.mouseEnabled = false;
+				gauge.mouseChildren = false;
+				player.addChild(gauge);
+			} catch (error:Dynamic) {
+				gauge = null;
+			}
+		}
+		gaugeDrawn = new Shape();
+		gaugeDrawn.x = PAD + 42;
+		gaugeDrawn.y = GAUGE_Y - 2;
+		player.addChild(gaugeDrawn);
+		gaugeHit = new Sprite();
+		gaugeHit.x = PAD + 42;
+		gaugeHit.y = GAUGE_Y - 7;
+		gaugeHit.graphics.beginFill(0x000000, 0.01);
+		gaugeHit.graphics.drawRect(0, 0, panelWidth - 2 * PAD - 84, 14);
+		gaugeHit.graphics.endFill();
+		gaugeHit.buttonMode = true;
+		gaugeHit.addEventListener(MouseEvent.MOUSE_DOWN, function(event:Dynamic) event.stopPropagation());
+		gaugeHit.addEventListener(MouseEvent.CLICK, seek);
+		player.addChild(gaugeHit);
+
+		// Spotify's volume on the game's slider, centred under the gauge.
+		speaker = new Shape();
+		drawMark(speaker.graphics, "speaker", 12, TEXT);
+		var middle:Float = Math.round(panelWidth / 2);
+		speaker.x = middle - 68;
+		speaker.y = VOLUME_Y + 5;
 		player.addChild(speaker);
-		x += 16;
 		slider = make("ARKDefaultSlider_V2");
 		if (slider != null) {
 			slider.minimum = 0;
@@ -205,25 +336,25 @@ class MusicPlayer {
 			try {
 				slider.showValue = false;
 			} catch (error:Dynamic) {}
-			slider.width = WIDTH - PAD - 28 - x;
-			slider.x = x;
-			slider.y = 54 + (BUTTON_HEIGHT - 22) / 2;
+			slider.width = 120;
+			slider.x = middle - 50;
+			slider.y = VOLUME_Y;
 			slider.addEventListener("valueChange", slid);
 			player.addChild(slider);
 		}
-		volumeText = text(WIDTH - PAD - 26, 58, 26, 12, DIM, true);
+		volumeText = text(middle + 74, VOLUME_Y + 3, 34, 11, DIM, false);
 
-		shuffleBox = tickBox(PAD, 84, WORDS.shuffle, "shuffle");
-		repeatBox = tickBox(PAD + 100, 84, WORDS.repeat, "repeat");
-
-		// The strip: play or pause, then the song, and the unfold button.
-		stripPlay = button(PAD - 4, 2, WORDS.play, "playpause");
-		stripPlay.width = 24;
-		stripPlay.height = 22;
-		stripMark = mark("play");
-		stripMark.x = 6;
-		stripMark.y = 5;
-		stripPlay.addChild(stripMark);
+		// The strip: a small cover, play or pause, the song, and the unfold button.
+		mini = new Sprite();
+		mini.x = 5;
+		mini.y = (STRIP - MINI) / 2;
+		mini.mouseChildren = false;
+		player.addChild(mini);
+		stripPlay = button(24, 22, WORDS.play, "playpause");
+		stripMark = mark(stripPlay, "play", 10, 24, 22);
+		put(stripPlay, 32, (STRIP - 22) / 2);
+		stripTitle = text(62, (STRIP - 20) / 2, panelWidth - 62 - 30, 13, WHITE, false);
+		stripImage = picture(62, (STRIP - 20) / 2);
 
 		foldButton = foldControl("AnimatedButton_Minus_V2", WORDS.fold, true);
 		unfoldButton = foldControl("AnimatedButton_Plus_V2", WORDS.unfold, false);
@@ -232,13 +363,11 @@ class MusicPlayer {
 		return true;
 	}
 
-	/** A small plain game button that sends `command` when clicked. */
-	static function button(x:Float, y:Float, tooltip:String, command:String):Dynamic {
+	/** A small plain game button of this size that sends `command` when clicked. */
+	static function button(width:Float, height:Float, tooltip:String, command:String):Dynamic {
 		var made:Dynamic = GameUi.buttonOf("", [SMALL_BUTTON, GameUi.PLAIN_BUTTON]);
-		made.x = x;
-		made.y = y;
-		made.width = BUTTON;
-		made.height = BUTTON_HEIGHT;
+		made.width = width;
+		made.height = height;
 		try {
 			made.tooltip = tooltip;
 		} catch (error:Dynamic) {}
@@ -250,21 +379,6 @@ class MusicPlayer {
 		return made;
 	}
 
-	/** The game's tick box with this label, sending `command` when clicked. */
-	static function tickBox(x:Float, y:Float, label:String, command:String):Dynamic {
-		var box:Dynamic = make("DefaultCheckBox_V2");
-		box.autoSize = "left";
-		box.label = label;
-		box.x = x;
-		box.y = y;
-		box.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) {
-			event.stopPropagation();
-			pressed(command);
-		});
-		player.addChild(box);
-		return box;
-	}
-
 	/** The fold (minus) or unfold (plus) button at the top right; a small plain button with a drawn mark without the symbol. */
 	static function foldControl(symbol:String, tooltip:String, fold:Bool):Dynamic {
 		var made:Dynamic = make(symbol);
@@ -272,7 +386,10 @@ class MusicPlayer {
 			made = GameUi.buttonOf("", [SMALL_BUTTON, GameUi.PLAIN_BUTTON]);
 			made.width = 20;
 			made.height = 18;
-			made.addChild(mark(fold ? "minus" : "plus"));
+			player.addChild(made);
+			mark(made, fold ? "minus" : "plus", 10, 20, 18);
+		} else {
+			player.addChild(made);
 		}
 		try {
 			made.tooltip = tooltip;
@@ -283,7 +400,6 @@ class MusicPlayer {
 			render();
 			sendLayout();
 		});
-		player.addChild(made);
 		return made;
 	}
 
@@ -292,64 +408,190 @@ class MusicPlayer {
 		return type == null ? null : untyped __new__(type);
 	}
 
+	/** A Bitmap of one of the game's shared images (a BitmapData class, made as the game makes them), or null. */
+	static function image(name:String):Dynamic {
+		var type:Dynamic = GameUi.definition(name);
+		if (type == null)
+			return null;
+		try {
+			var data:Dynamic = untyped __new__(type, 0, 0);
+			return untyped __new__(flash.display.Bitmap, data, "auto", true);
+		} catch (error:Dynamic) {
+			return null;
+		}
+	}
+
 	/**
-		A media mark drawn in the game's label colour, about 10 px, for a 28 x 24 button: "previous", "next", "play",
-		"pause", "stop", "speaker", "minus" or "plus".
+		The layer over a button that holds its marks. A game button takes its size by scaling itself (its nine-slice keeps
+		the edges), so anything inside it would be squeezed; the layer lies on top instead, moves and hides with the
+		button, and lets the mouse through to it.
 	**/
-	static function mark(kind:String):Shape {
+	static function overlay(button:Dynamic):Sprite {
+		var layer:Sprite = untyped overlays[button];
+		if (layer != null)
+			return layer;
+		layer = new Sprite();
+		layer.mouseEnabled = false;
+		layer.mouseChildren = false;
+		try {
+			scaleform.gfx.InteractiveObjectEx.setHitTestDisable(layer, true);
+		} catch (error:Dynamic) {}
+		layer.x = button.x;
+		layer.y = button.y;
+		player.addChildAt(layer, player.getChildIndex(button) + 1);
+		untyped overlays[button] = layer;
+		return layer;
+	}
+
+	static var overlays = new flash.utils.Dictionary(true);
+
+	/** A media mark drawn in the label colour, centred on the button. */
+	static function mark(button:Dynamic, kind:String, size:Int, width:Float, height:Float):Shape {
 		var shape = new Shape();
-		drawMark(shape, kind);
-		shape.x = (BUTTON - 12) / 2;
-		shape.y = (BUTTON_HEIGHT - 12) / 2;
+		drawMark(shape.graphics, kind, size, TEXT);
+		shape.x = Math.round((width - size) / 2);
+		shape.y = Math.round((height - size) / 2);
+		overlay(button).addChild(shape);
 		return shape;
 	}
 
-	static function drawMark(shape:Shape, kind:String):Void {
-		var g = shape.graphics;
+	/** The small gold mark under a switched-on toggle. */
+	static function dot(button:Dynamic, width:Float, height:Float):Shape {
+		var shape = new Shape();
+		shape.graphics.beginFill(GOLD, 1);
+		shape.graphics.drawRect(0, 0, 4, 2);
+		shape.graphics.endFill();
+		shape.x = Math.round((width - 4) / 2);
+		shape.y = height - 4;
+		shape.visible = false;
+		overlay(button).addChild(shape);
+		return shape;
+	}
+
+	/** Moves a control and the layer of marks over it. */
+	static function put(control:Dynamic, x:Float, y:Float):Void {
+		control.x = x;
+		control.y = y;
+		var layer:Sprite = untyped overlays[control];
+		if (layer != null) {
+			layer.x = x;
+			layer.y = y;
+		}
+	}
+
+	/**
+		Draws a mark into a box of `size` pixels: "previous", "next", "play", "pause", "shuffle", "repeat", "speaker",
+		"minus" or "plus".
+	**/
+	static function drawMark(g:flash.display.Graphics, kind:String, size:Int, color:Int):Void {
+		var s:Float = size / 12;
 		g.clear();
-		g.beginFill(TEXT, 1);
+		switch (kind) {
+			case "shuffle":
+				g.lineStyle(1.5 * s, color, 1);
+				g.moveTo(0, 3 * s);
+				g.lineTo(3 * s, 3 * s);
+				g.lineTo(8 * s, 9 * s);
+				g.lineTo(11 * s, 9 * s);
+				g.moveTo(0, 9 * s);
+				g.lineTo(3 * s, 9 * s);
+				g.lineTo(8 * s, 3 * s);
+				g.lineTo(11 * s, 3 * s);
+				g.lineStyle();
+				g.beginFill(color, 1);
+				g.moveTo(9 * s, 0.5 * s);
+				g.lineTo(12 * s, 3 * s);
+				g.lineTo(9 * s, 5.5 * s);
+				g.lineTo(9 * s, 0.5 * s);
+				g.moveTo(9 * s, 6.5 * s);
+				g.lineTo(12 * s, 9 * s);
+				g.lineTo(9 * s, 11.5 * s);
+				g.lineTo(9 * s, 6.5 * s);
+				g.endFill();
+				return;
+			case "repeat":
+				g.lineStyle(1.5 * s, color, 1);
+				g.moveTo(9 * s, 3 * s);
+				g.lineTo(2 * s, 3 * s);
+				g.lineTo(1 * s, 4 * s);
+				g.lineTo(1 * s, 8 * s);
+				g.lineTo(2 * s, 9 * s);
+				g.lineTo(10 * s, 9 * s);
+				g.lineTo(11 * s, 8 * s);
+				g.lineTo(11 * s, 5 * s);
+				g.lineStyle();
+				g.beginFill(color, 1);
+				g.moveTo(8 * s, 0.5 * s);
+				g.lineTo(11 * s, 3 * s);
+				g.lineTo(8 * s, 5.5 * s);
+				g.lineTo(8 * s, 0.5 * s);
+				g.endFill();
+				return;
+			case "speaker":
+				g.beginFill(color, 1);
+				g.drawRect(0, 4 * s, 3 * s, 4 * s);
+				g.moveTo(3 * s, 4 * s);
+				g.lineTo(7 * s, 1 * s);
+				g.lineTo(7 * s, 11 * s);
+				g.lineTo(3 * s, 8 * s);
+				g.lineTo(3 * s, 4 * s);
+				g.endFill();
+				g.lineStyle(1, color, 0.8);
+				g.moveTo(9 * s, 4 * s);
+				g.curveTo(10.5 * s, 6 * s, 9 * s, 8 * s);
+				return;
+			default:
+		}
+		g.beginFill(color, 1);
 		switch (kind) {
 			case "previous":
-				g.drawRect(1, 1, 2, 10);
-				g.moveTo(11, 1);
-				g.lineTo(4, 6);
-				g.lineTo(11, 11);
-				g.lineTo(11, 1);
+				g.drawRect(1 * s, 1 * s, 2 * s, 10 * s);
+				g.moveTo(11 * s, 1 * s);
+				g.lineTo(4 * s, 6 * s);
+				g.lineTo(11 * s, 11 * s);
+				g.lineTo(11 * s, 1 * s);
 			case "next":
-				g.moveTo(1, 1);
-				g.lineTo(8, 6);
-				g.lineTo(1, 11);
-				g.lineTo(1, 1);
-				g.drawRect(9, 1, 2, 10);
+				g.moveTo(1 * s, 1 * s);
+				g.lineTo(8 * s, 6 * s);
+				g.lineTo(1 * s, 11 * s);
+				g.lineTo(1 * s, 1 * s);
+				g.drawRect(9 * s, 1 * s, 2 * s, 10 * s);
 			case "play":
-				g.moveTo(2, 0);
-				g.lineTo(11, 6);
-				g.lineTo(2, 12);
-				g.lineTo(2, 0);
+				g.moveTo(2 * s, 0);
+				g.lineTo(11 * s, 6 * s);
+				g.lineTo(2 * s, 12 * s);
+				g.lineTo(2 * s, 0);
 			case "pause":
-				g.drawRect(2, 1, 3, 10);
-				g.drawRect(7, 1, 3, 10);
-			case "stop":
-				g.drawRect(1, 1, 10, 10);
-			case "speaker":
-				g.drawRect(0, 4, 3, 4);
-				g.moveTo(3, 4);
-				g.lineTo(7, 1);
-				g.lineTo(7, 11);
-				g.lineTo(3, 8);
-				g.lineTo(3, 4);
-				g.endFill();
-				g.lineStyle(1, TEXT, 0.8);
-				g.moveTo(9, 4);
-				g.curveTo(10.5, 6, 9, 8);
-				return;
+				g.drawRect(2 * s, 1 * s, 3 * s, 10 * s);
+				g.drawRect(7 * s, 1 * s, 3 * s, 10 * s);
 			case "minus":
-				g.drawRect(1, 5, 10, 2);
+				g.drawRect(1 * s, 5 * s, 10 * s, 2 * s);
 			case "plus":
-				g.drawRect(1, 5, 10, 2);
-				g.drawRect(5, 1, 2, 10);
+				g.drawRect(1 * s, 5 * s, 10 * s, 2 * s);
+				g.drawRect(5 * s, 1 * s, 2 * s, 10 * s);
 		}
 		g.endFill();
+	}
+
+	/** The empty slot's music note, while there is no cover. */
+	static function drawNote(holder:Sprite, size:Float):Void {
+		while (holder.numChildren > 0)
+			holder.removeChildAt(0);
+		var note = new Shape();
+		var g = note.graphics;
+		var s:Float = size / 50;
+		g.beginFill(0x5A5650, 1);
+		g.drawEllipse(14 * s, 30 * s, 10 * s, 8 * s);
+		g.drawEllipse(28 * s, 27 * s, 10 * s, 8 * s);
+		g.drawRect(22 * s, 13 * s, 2 * s, 21 * s);
+		g.drawRect(36 * s, 10 * s, 2 * s, 21 * s);
+		g.moveTo(22 * s, 13 * s);
+		g.lineTo(38 * s, 10 * s);
+		g.lineTo(38 * s, 14 * s);
+		g.lineTo(22 * s, 17 * s);
+		g.lineTo(22 * s, 13 * s);
+		g.endFill();
+		holder.addChild(note);
 	}
 
 	/** Puts the player on the minimap that shows (moving it when the game swaps minimaps), at its saved place. */
@@ -394,11 +636,16 @@ class MusicPlayer {
 		try {
 			if (!Options.on(ID) || player == null)
 				return;
-			if (host == null || host.stage == null || !showing(host)) {
-				host = null;
-				attach();
+			ticks++;
+			if (ticks % READ_EVERY == 0) {
+				if (host == null || host.stage == null || !showing(host)) {
+					host = null;
+					attach();
+				}
+				poll();
 			}
-			poll();
+			if (state == "playing")
+				showTime();
 		} catch (error:Dynamic) {}
 	}
 
@@ -465,6 +712,7 @@ class MusicPlayer {
 		song = value(fields, "title", 1, "");
 		singer = value(fields, "artist", 1, "");
 		position = number(value(fields, "time", 1, ""), 0);
+		readAt = flash.Lib.getTimer();
 		length = number(value(fields, "time", 2, ""), 0);
 		can = value(fields, "can", 1, "");
 		shuffle = value(fields, "shuffle", 1, "");
@@ -482,6 +730,9 @@ class MusicPlayer {
 			}
 			folded = value(fields, "layout", 3, "0") == "1";
 		}
+		var wanted = value(fields, "art", 1, "");
+		if (wanted != art && wanted != artWanted)
+			readArt(wanted);
 		render();
 	}
 
@@ -498,6 +749,118 @@ class MusicPlayer {
 		return Math.isNaN(parsed) ? fallback : Std.int(parsed);
 	}
 
+	/** Reads art.txt for a new track and draws its pictures; "" clears them. */
+	static function readArt(id:String):Void {
+		artWanted = id;
+		if (id == "") {
+			showPictures({});
+			art = "";
+			return;
+		}
+		if (artReading)
+			return;
+		artReading = true;
+		var loader = new URLLoader();
+		loader.addEventListener("complete", function(e:Dynamic) {
+			artReading = false;
+			var data:String = loader.data;
+			var pictures:Dynamic = {};
+			try {
+				pictures = decode(data);
+				art = id;
+				showPictures(pictures);
+				if (!artReported && hasCover) {
+					artReported = true;
+					Bus.send(ID, "art\tshown");
+				}
+			} catch (error:Dynamic) {
+				art = id;
+				showPictures({});
+				if (!artReported) {
+					artReported = true;
+					Bus.send(ID, "art\tfailed");
+				}
+			}
+			// A newer track came while reading: read again.
+			if (artWanted != art)
+				readArt(artWanted);
+		});
+		loader.addEventListener("ioError", function(e:Dynamic) {
+			artReading = false;
+			artWanted = "";
+		});
+		loader.addEventListener("securityError", function(e:Dynamic) {
+			artReading = false;
+			artWanted = "";
+		});
+		loader.load(new URLRequest(Options.home() + "/spotify/art.txt"));
+	}
+
+	/** The pictures of art.txt, by name, as BitmapData filled from their pixel values (8 hex digits each, ARGB). */
+	static function decode(data:String):Dynamic {
+		var pictures:Dynamic = {};
+		if (data == null)
+			return pictures;
+		var lines = data.split("\n");
+		for (line in lines) {
+			var parts = line.split("\t");
+			if (parts.length != 5 || parts[0] != "image")
+				continue;
+			var name:String = parts[1];
+			var width = number(parts[2], 0);
+			var height = number(parts[3], 0);
+			var pixels:String = parts[4];
+			if (width <= 0 || height <= 0 || width > 512 || height > 128 || pixels.length != width * height * 8)
+				continue;
+			var bitmap:Dynamic = new flash.display.BitmapData(width, height, true, 0);
+			bitmap.lock();
+			var at = 0;
+			for (y in 0...height) {
+				for (x in 0...width) {
+					var color:Float = untyped __global__["parseInt"](pixels.substr(at, 8), 16);
+					at += 8;
+					bitmap.setPixel32(x, y, color);
+				}
+			}
+			bitmap.unlock();
+			untyped pictures[name] = bitmap;
+		}
+		return pictures;
+	}
+
+	/** Puts the cover in the slot and the strip, and the drawn song and artist in place of the text (when sent). */
+	static function showPictures(pictures:Dynamic):Void {
+		var picture:Dynamic = untyped pictures["cover"];
+		hasCover = picture != null;
+		if (picture != null) {
+			fill(cover, picture, SLOT - 6, SLOT - 6);
+			fill(mini, picture, MINI, MINI);
+		} else {
+			drawNote(cover, SLOT - 6);
+			drawNote(mini, MINI);
+		}
+		var name:Dynamic = untyped pictures["title"];
+		var who:Dynamic = untyped pictures["artist"];
+		fill(titleImage, name, -1, -1);
+		fill(stripImage, name, -1, -1);
+		fill(artistImage, who, -1, -1);
+		render();
+	}
+
+	/** Shows the picture in the holder, scaled smoothly to width x height (-1: its own size); null empties it. */
+	static function fill(holder:Sprite, picture:Dynamic, width:Float, height:Float):Void {
+		while (holder.numChildren > kept(holder))
+			holder.removeChildAt(holder.numChildren - 1);
+		if (picture == null)
+			return;
+		var shown:Dynamic = untyped __new__(flash.display.Bitmap, picture, "auto", true);
+		if (width > 0) {
+			shown.width = width;
+			shown.height = height;
+		}
+		holder.addChild(shown);
+	}
+
 	/** Draws the player for the last state read: the full player or the strip, with only the buttons that work. */
 	static function render():Void {
 		if (player == null)
@@ -510,8 +873,8 @@ class MusicPlayer {
 			heading = song;
 			line = singer != "" ? singer : WORDS.unknown;
 		}
-		drawMark(playMark, playing ? "pause" : "play");
-		drawMark(stripMark, playing ? "pause" : "play");
+		drawMark(playMark.graphics, playing ? "pause" : "play", 14, TEXT);
+		drawMark(stripMark.graphics, playing ? "pause" : "play", 10, TEXT);
 		var playTip:String = playing ? WORDS.pause : WORDS.play;
 		try {
 			playButton.tooltip = playTip;
@@ -519,101 +882,177 @@ class MusicPlayer {
 		} catch (error:Dynamic) {}
 
 		var full = !folded;
-		var toggles = live && full && (has("h") || has("r"));
-		var height:Float = full ? (live ? (toggles ? 112 : 86) : 50) : STRIP;
-		drawBack(height);
+		var track = live && song != "";
+		var height:Float = full ? (live ? FULL_HEIGHT : 54) : STRIP;
+		drawPanel(height);
 
-		title.visible = true;
-		artist.visible = full;
-		time.visible = full && live && length > 0;
-		progress.visible = time.visible;
-		show(previousButton, full && live && has("b"));
-		show(playButton, full && live && has("p"));
-		show(stopButton, full && live && has("s"));
-		show(nextButton, full && live && has("n"));
+		// The full player: the slot, the song and artist (drawn by Arkive when the font lacks the letters).
+		slot.visible = full && live;
+		var textX:Float = slot.visible ? TEXT_X : PAD;
+		var textWidth:Float = panelWidth - textX - PAD;
+		var drawnTitle = track && titleImage.numChildren > kept(titleImage);
+		var drawnArtist = track && singer != "" && artistImage.numChildren > kept(artistImage);
+		title.visible = full && !drawnTitle;
+		titleImage.visible = full && drawnTitle;
+		artist.visible = full && !drawnArtist;
+		artistImage.visible = full && drawnArtist;
+		clip(titleImage, textWidth - 22);
+		clip(artistImage, textWidth);
+		title.x = textX;
+		artist.x = textX;
+		title.y = live ? 14 : 8;
+		artist.y = live ? 35 : 28;
+		if (title.visible)
+			fit(title, heading, textWidth - 22);
+		if (artist.visible)
+			fit(artist, line, textWidth);
+
+		// The buttons Spotify allows, centred in one row.
+		var row:Array<Dynamic> = [];
+		var shown:Array<Bool> = [has("h"), has("b"), has("p"), has("n"), has("r")];
+		var controls:Array<Dynamic> = [shuffleButton, previousButton, playButton, nextButton, repeatButton];
+		for (i in 0...controls.length) {
+			var on = full && live && shown[i];
+			show(controls[i], on);
+			if (on)
+				row.push(controls[i]);
+		}
+		var span:Float = 0;
+		for (control in row) {
+			var w:Float = control.width;
+			span += w + GAP;
+		}
+		var x:Float = Math.round((panelWidth - span + GAP) / 2);
+		for (control in row) {
+			var w:Float = control.width;
+			var h:Float = control.height;
+			put(control, x, CONTROLS_Y + (PLAY_HEIGHT - h) / 2);
+			x += w + GAP;
+		}
+		var shuffleOn = shuffle == "on";
+		drawMark(shuffleMark.graphics, "shuffle", 12, shuffleOn ? GOLD : TEXT);
+		shuffleDot.visible = shuffleOn;
+		var repeatOn = repeat == "list" || repeat == "track";
+		drawMark(repeatMark.graphics, "repeat", 12, repeatOn ? GOLD : TEXT);
+		repeatDot.visible = repeatOn;
+		repeatOne.visible = repeat == "track";
+		try {
+			var shuffleTip:String = shuffleOn ? WORDS.shuffleOn : WORDS.shuffleOff;
+			var repeatTip:String = repeat == "track" ? WORDS.repeatOne : repeat == "list" ? WORDS.repeatAll : WORDS.repeatOff;
+			shuffleButton.tooltip = shuffleTip;
+			repeatButton.tooltip = repeatTip;
+		} catch (error:Dynamic) {}
+
+		var timed = full && live && length > 0;
+		elapsed.visible = timed;
+		total.visible = timed;
+		gaugeHit.visible = timed && has("k");
+		if (gauge != null)
+			show(gauge, timed);
+		gaugeDrawn.visible = timed && gauge == null;
+		showTime();
+
 		var loud = full && live && slider != null && volume >= 0;
 		show(slider, loud);
 		speaker.visible = loud;
 		volumeText.visible = loud;
-		show(stripPlay, !full && live && has("p"));
-		show(shuffleBox, toggles && has("h"));
-		show(repeatBox, toggles && has("r"));
-		show(foldButton, full);
-		show(unfoldButton, !full);
-
-		var corner:Dynamic = full ? foldButton : unfoldButton;
-		if (corner != null) {
-			corner.x = WIDTH - PAD + 2 - (corner.width > 0 ? corner.width : 20);
-			corner.y = full ? 5 : (STRIP - (corner.height > 0 ? corner.height : 18)) / 2;
-		}
-		if (full) {
-			title.x = PAD;
-			title.y = 6;
-			fit(title, heading, WIDTH - 2 * PAD - 26);
-			fit(artist, line, time.visible ? WIDTH - 2 * PAD - 84 : WIDTH - 2 * PAD);
-			if (time.visible) {
-				time.text = clock(position) + " / " + clock(length);
-				var g = progress.graphics;
-				var span:Float = WIDTH - 2 * PAD;
-				g.clear();
-				g.beginFill(WHITE, 0.15);
-				g.drawRect(0, 0, span, 2);
-				g.endFill();
-				var done:Float = position >= length ? span : span * position / length;
-				g.beginFill(GOLD, 1);
-				g.drawRect(0, 0, done, 2);
-				g.endFill();
-			}
-		} else {
-			title.x = stripPlay.visible ? PAD + 24 : PAD;
-			title.y = (STRIP - 22) / 2;
-			var both = live && song != "" ? song + " - " + line : line;
-			fit(title, both, WIDTH - title.x - PAD - 24);
-		}
 		if (loud) {
 			if (slider.value != volume) {
 				settingSlider = true;
 				slider.value = volume;
 				settingSlider = false;
 			}
-			volumeText.text = "" + volume;
+			volumeText.text = volume + "%";
 		}
-		if (shuffleBox != null && shuffleBox.visible == true)
-			setTick(shuffleBox, shuffle == "on", WORDS.shuffle);
-		if (repeatBox != null && repeatBox.visible == true)
-			setTick(repeatBox, repeat == "list" || repeat == "track", repeat == "track" ? WORDS.repeatOne : repeat == "list" ? WORDS.repeatAll : WORDS.repeat);
+
+		// The strip: small cover, play or pause, and the song.
+		mini.visible = !full && live;
+		show(stripPlay, !full && live && has("p"));
+		var stripX:Float = !full && live ? (stripPlay.visible ? 62 : 32) : PAD;
+		var drawnStrip = !full && track && stripImage.numChildren > kept(stripImage);
+		stripImage.visible = drawnStrip;
+		stripImage.x = stripX;
+		clip(stripImage, panelWidth - stripX - 30);
+		stripTitle.visible = !full && !drawnStrip;
+		stripTitle.x = stripX;
+		if (stripTitle.visible)
+			fit(stripTitle, track ? song + " - " + line : line, panelWidth - stripX - 30);
+
+		show(foldButton, full);
+		show(unfoldButton, !full);
+		var corner:Dynamic = full ? foldButton : unfoldButton;
+		if (corner != null) {
+			var w:Float = corner.width > 0 ? corner.width : 20;
+			var h:Float = corner.height > 0 ? corner.height : 18;
+			corner.x = panelWidth - PAD + 3 - w;
+			corner.y = full ? 7 : (STRIP - h) / 2;
+		}
+	}
+
+	/** The time at both ends and the gauge, moved on since the last read while playing. */
+	static function showTime():Void {
+		if (!elapsed.visible)
+			return;
+		var now:Float = position;
+		if (state == "playing")
+			now += (flash.Lib.getTimer() - readAt) / 1000;
+		if (now > length)
+			now = length;
+		var seconds = Std.int(now);
+		var text = clock(seconds);
+		if (elapsed.text != text)
+			elapsed.text = text;
+		var end = clock(length);
+		if (total.text != end)
+			total.text = end;
+		var share:Float = length > 0 ? now / length : 0;
+		if (gauge != null) {
+			var percent:Float = Math.round(share * 1000) / 10;
+			if (gauge.value != percent)
+				gauge.value = percent;
+		} else {
+			var g = gaugeDrawn.graphics;
+			var span:Float = panelWidth - 2 * PAD - 84;
+			g.clear();
+			g.beginFill(WHITE, 0.15);
+			g.drawRect(0, 0, span, 3);
+			g.endFill();
+			g.beginFill(GOLD, 1);
+			g.drawRect(0, 0, span * share, 3);
+			g.endFill();
+		}
+	}
+
+	/** The game's window backing at this height; drawn in the HUD's dark shade without the symbol. */
+	static function drawPanel(height:Float):Void {
+		if (drawnPanel) {
+			var g = panel.graphics;
+			g.clear();
+			g.lineStyle(1, WHITE, 0.12);
+			var matrix = new flash.geom.Matrix();
+			matrix.createGradientBox(panelWidth, height, Math.PI / 2, 0, 0);
+			g.beginGradientFill(flash.display.GradientType.LINEAR, [0x000000, 0x000000], [0.72, 0.55], [0, 255], matrix);
+			g.drawRect(0, 0, panelWidth, height);
+			g.endFill();
+			return;
+		}
+		panel.width = panelWidth;
+		panel.height = height;
 	}
 
 	static function has(letter:String):Bool {
 		return can.indexOf(letter) >= 0;
 	}
 
+	/** Shows or hides a control and the layer of marks over it. */
 	static function show(control:Dynamic, on:Bool):Void {
-		if (control != null && control.visible != on)
+		if (control == null)
+			return;
+		if (control.visible != on)
 			control.visible = on;
-	}
-
-	static function setTick(box:Dynamic, on:Bool, label:String):Void {
-		if (box.selected != on)
-			box.selected = on;
-		var now:String = box.label;
-		if (now != label)
-			box.label = label;
-	}
-
-	/**
-		The HUD's dark backing (the shade the game's HUD panels use) with a faint edge; it is what the player is dragged
-		by, and it keeps clicks on the player from reaching the world.
-	**/
-	static function drawBack(height:Float):Void {
-		var g = back.graphics;
-		g.clear();
-		g.lineStyle(1, WHITE, 0.12);
-		var matrix = new flash.geom.Matrix();
-		matrix.createGradientBox(WIDTH, height, Math.PI / 2, 0, 0);
-		g.beginGradientFill(flash.display.GradientType.LINEAR, [0x000000, 0x000000], [0.62, 0.45], [0, 255], matrix);
-		g.drawRect(0, 0, WIDTH, height);
-		g.endFill();
+		var layer:Sprite = untyped overlays[control];
+		if (layer != null && layer.visible != on)
+			layer.visible = on;
 	}
 
 	/** "m:ss" for seconds. */
@@ -649,10 +1088,10 @@ class MusicPlayer {
 			return;
 		// Shows the change straight away; Arkive's next write confirms it.
 		if (command == "playpause") {
+			if (state == "playing")
+				position += (flash.Lib.getTimer() - readAt) / 1000;
+			readAt = flash.Lib.getTimer();
 			state = state == "playing" ? "paused" : "playing";
-		} else if (command == "stop") {
-			state = "stopped";
-			position = 0;
 		} else if (command == "shuffle") {
 			shuffle = shuffle == "on" ? "off" : "on";
 		} else if (command == "repeat") {
@@ -660,6 +1099,25 @@ class MusicPlayer {
 		}
 		render();
 		Bus.send(ID, command);
+	}
+
+	/** A click on the gauge: jump to that point of the track. */
+	static function seek(event:Dynamic):Void {
+		event.stopPropagation();
+		if (!Options.on(ID) || length <= 0)
+			return;
+		var at:Dynamic = gaugeHit.globalToLocal(new Point(event.stageX, event.stageY));
+		var span:Float = panelWidth - 2 * PAD - 84;
+		var share:Float = at.x / span;
+		if (share < 0)
+			share = 0;
+		if (share > 1)
+			share = 1;
+		var seconds = Std.int(share * length);
+		position = seconds;
+		readAt = flash.Lib.getTimer();
+		showTime();
+		Bus.send(ID, "seek\t" + seconds);
 	}
 
 	/** The volume slider moved: send the newest value a moment later, so a drag sends a few messages, not dozens. */
@@ -670,7 +1128,7 @@ class MusicPlayer {
 		volumeWanted = Std.int(at);
 		volume = volumeWanted;
 		volumeAt = flash.Lib.getTimer();
-		volumeText.text = "" + volumeWanted;
+		volumeText.text = volumeWanted + "%";
 		if (volumeSender == null) {
 			volumeSender = new Timer(VOLUME_SEND_MS, 1);
 			volumeSender.addEventListener(TimerEvent.TIMER, function(e:Dynamic) {
@@ -685,11 +1143,12 @@ class MusicPlayer {
 		}
 	}
 
-	/** Mouse down on the backing (not on a control): drag the player until the button is let go. */
+	/** Mouse down on the backing, the cover or the text (not a control): drag the player until the button is let go. */
 	static function grab(event:Dynamic):Void {
 		// The minimap frame's own mouse handling (focus, its sliders closing) stays out of it.
 		event.stopPropagation();
-		if (event.target != player || player.parent == null || player.stage == null)
+		var target:Dynamic = event.target;
+		if ((target != player && target != panel && target != slot && target != mini) || player.parent == null || player.stage == null)
 			return;
 		var at:Dynamic = player.parent.globalToLocal(new Point(event.stageX, event.stageY));
 		grabX = at.x - player.x;
@@ -748,6 +1207,47 @@ class MusicPlayer {
 		var x:Int = Math.round(offsetX);
 		var y:Int = Math.round(offsetY);
 		Bus.send(ID, "layout\t" + x + "\t" + y + "\t" + (folded ? "1" : "0"));
+	}
+
+	/** An empty holder for a drawn picture (song or artist), placed like the text it stands in for. */
+	static function picture(x:Float, y:Float):Sprite {
+		var holder = new Sprite();
+		holder.x = x;
+		holder.y = y;
+		holder.mouseEnabled = false;
+		holder.mouseChildren = false;
+		holder.visible = false;
+		player.addChild(holder);
+		var mask = new Shape();
+		holder.addChild(mask);
+		untyped masks[holder] = mask;
+		return holder;
+	}
+
+	/** The drawn pictures' masks, so a picture sent wider than its column is cut at the column's edge. */
+	static var masks = new flash.utils.Dictionary(true);
+
+	/** How many children of a holder aren't pictures (a drawn name's holder keeps its mask first). */
+	static function kept(holder:Sprite):Int {
+		var mask:Shape = untyped masks[holder];
+		return mask == null ? 0 : 1;
+	}
+
+	/** Cuts a drawn picture at this width (it is drawn as wide as the widest player allows). */
+	static function clip(holder:Sprite, width:Float):Void {
+		var mask:Shape = untyped masks[holder];
+		if (mask == null)
+			return;
+		var g = mask.graphics;
+		g.clear();
+		g.beginFill(0xFFFFFF, 1);
+		g.drawRect(0, 0, width, 24);
+		g.endFill();
+		if (holder.numChildren > 1) {
+			var shown:Dynamic = holder.getChildAt(1);
+			if (shown.mask != mask)
+				shown.mask = mask;
+		}
 	}
 
 	static function text(x:Float, y:Float, width:Float, size:Int, color:Int, right:Bool):TextField {

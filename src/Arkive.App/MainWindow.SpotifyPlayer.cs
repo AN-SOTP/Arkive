@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using Arkive.Core.Tweaks;
 
 namespace Arkive.App;
@@ -19,6 +21,9 @@ public partial class MainWindow
 
     /// <summary>How long to let Spotify act on a button before writing its state again.</summary>
     private const int SpotifySettleMs = 150;
+
+    /// <summary>Spotify can hand over a new track's cover a moment after its name: look again this many seconds after a change.</summary>
+    private const int SpotifyCoverLooks = 4;
 
     private readonly BlockingCollection<SpotifyRequest> _spotifyRequests = new();
 
@@ -45,6 +50,11 @@ public partial class MainWindow
         using var volume = new SpotifyVolume();
         var layoutPath = Path.Combine(folder, SpotifyPlayer.LayoutFile);
         var statePath = Path.Combine(folder, SpotifyPlayer.StateFile);
+        var artPath = Path.Combine(folder, SpotifyPlayer.ArtFile);
+        var track = "";
+        var coverHash = "";
+        var art = "";
+        var coverLooks = 0;
         var layout = "";
         try
         {
@@ -87,6 +97,12 @@ public partial class MainWindow
                     Report($"Spotify didn't take {command} (is it running and playing something?).");
                 if (request?.Volume is { } percent && !volume.Set(percent))
                     Report("Spotify's volume can't be set until it has played something since it started.");
+                if (request?.Seek is { } seconds && !media.Seek(TimeSpan.FromSeconds(seconds)))
+                    Report("Spotify didn't move to the point clicked.");
+                if (request?.Art is { } shown)
+                    Dispatcher.InvokeAsync(() => Log(shown == "shown"
+                        ? "Spotify Player: the game drew the cover art."
+                        : "Spotify Player: the game couldn't draw the cover art, so the player shows an empty slot."));
                 if (request is not null)
                     Thread.Sleep(SpotifySettleMs);
                 if (!active)
@@ -106,7 +122,33 @@ public partial class MainWindow
                 catch (COMException)
                 {
                 }
-                var text = SpotifyPlayer.Describe(now, percentNow, layout, ++sequence);
+                if (now is not null)
+                {
+                    // A new track: read its cover now and for a few seconds after, as Spotify may send it late.
+                    var key = now.Title + "\n" + now.Artist + "\n" + now.Album;
+                    if (key != track)
+                    {
+                        track = key;
+                        coverHash = "";
+                        coverLooks = SpotifyCoverLooks;
+                    }
+                    if (coverLooks > 0)
+                    {
+                        coverLooks--;
+                        var cover = media.ReadCover();
+                        var hash = Convert.ToHexString(SHA1.HashData(cover ?? [])) + key;
+                        if (hash != coverHash || art.Length == 0)
+                        {
+                            coverHash = hash;
+                            var pictures = Dispatcher.Invoke(() => SpotifyArt.Build(cover, now.Title, now.Artist));
+                            art = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(pictures)))[..12].ToLowerInvariant();
+                            Directory.CreateDirectory(folder);
+                            File.WriteAllText(artPath + ".tmp", pictures);
+                            File.Move(artPath + ".tmp", artPath, overwrite: true);
+                        }
+                    }
+                }
+                var text = SpotifyPlayer.Describe(now, percentNow, layout, ++sequence, art);
                 Directory.CreateDirectory(folder);
                 var temporary = statePath + ".tmp";
                 File.WriteAllText(temporary, text);

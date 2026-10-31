@@ -74,6 +74,10 @@ public sealed class SpotifyMediaSession : IDisposable
 
     private static readonly Guid ManagerStatics = new("2050c4ee-11a0-57de-aed7-c97c70338245");
     private static readonly Guid AsyncInfo = new("00000036-0000-0000-c000-000000000046");
+    private static readonly Guid ComStream = new("0000000c-0000-0000-c000-000000000046");
+
+    /// <summary>The largest cover image read; Spotify's are about 300 x 300 JPEGs of a few tens of kilobytes.</summary>
+    private const int MaxCoverBytes = 4 << 20;
     private const string ManagerClass = "Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager";
 
     // Slots in each interface's method table: IUnknown and IInspectable take the first six.
@@ -82,7 +86,8 @@ public sealed class SpotifyMediaSession : IDisposable
     private const int SessionAppId = 6, SessionMediaProperties = 7, SessionTimeline = 8, SessionPlaybackInfo = 9;
     private const int SessionPause = 11, SessionStop = 12, SessionNext = 16, SessionPrevious = 17, SessionTogglePlayPause = 20;
     private const int SessionChangeRepeat = 21, SessionChangeShuffle = 23, SessionChangePosition = 24;
-    private const int PropertiesTitle = 6, PropertiesArtist = 9, PropertiesAlbum = 10;
+    private const int PropertiesTitle = 6, PropertiesArtist = 9, PropertiesAlbum = 10, PropertiesThumbnail = 15;
+    private const int StreamReferenceOpenRead = 6, ComStreamRead = 3;
     private const int TimelineStart = 6, TimelineEnd = 7, TimelinePosition = 10, TimelineUpdated = 11;
     private const int InfoControls = 6, InfoStatus = 7, InfoRepeat = 9, InfoShuffle = 11;
     private const int ControlsPlay = 6, ControlsPause = 7, ControlsStop = 8, ControlsNext = 12, ControlsPrevious = 13;
@@ -204,6 +209,133 @@ public sealed class SpotifyMediaSession : IDisposable
                     return Finish(Method<WithInt32>(session, SessionChangeRepeat)(session, (int)next, out var repeated), repeated);
                 default:
                     return false;
+            }
+        }
+        finally
+        {
+            Marshal.Release(session);
+        }
+    }
+
+    /// <summary>Moves Spotify to this point of the track; false when Spotify isn't there or doesn't allow seeking.</summary>
+    public bool Seek(TimeSpan position)
+    {
+        var session = FindSpotify();
+        if (session == IntPtr.Zero)
+            return false;
+        try
+        {
+            var info = Pointer(session, SessionPlaybackInfo);
+            SpotifyControls controls;
+            try
+            {
+                controls = ReadControls(info);
+            }
+            finally
+            {
+                Marshal.Release(info);
+            }
+            if (!controls.HasFlag(SpotifyControls.Seek))
+                return false;
+            var timeline = Pointer(session, SessionTimeline);
+            long start;
+            try
+            {
+                start = Int64(timeline, TimelineStart);
+            }
+            finally
+            {
+                Marshal.Release(timeline);
+            }
+            return Finish(Method<WithInt64>(session, SessionChangePosition)(session, start + Math.Max(0, position.Ticks), out var moved), moved);
+        }
+        finally
+        {
+            Marshal.Release(session);
+        }
+    }
+
+    /// <summary>
+    /// The cover image of Spotify's track as Spotify hands it to Windows (a JPEG or PNG file's bytes), or null when
+    /// Spotify isn't running or has none.
+    /// </summary>
+    public byte[]? ReadCover()
+    {
+        var session = FindSpotify();
+        if (session == IntPtr.Zero)
+            return null;
+        try
+        {
+            var operation = Pointer(session, SessionMediaProperties);
+            IntPtr properties;
+            try
+            {
+                Wait(operation);
+                Check(Method<GetPointer>(operation, OperationGetResults)(operation, out properties));
+            }
+            finally
+            {
+                Marshal.Release(operation);
+            }
+            if (properties == IntPtr.Zero)
+                return null;
+            IntPtr reference;
+            try
+            {
+                Check(Method<GetPointer>(properties, PropertiesThumbnail)(properties, out reference));
+            }
+            finally
+            {
+                Marshal.Release(properties);
+            }
+            if (reference == IntPtr.Zero)
+                return null;
+            IntPtr stream;
+            try
+            {
+                var opening = Pointer(reference, StreamReferenceOpenRead);
+                try
+                {
+                    Wait(opening);
+                    Check(Method<GetPointer>(opening, OperationGetResults)(opening, out stream));
+                }
+                finally
+                {
+                    Marshal.Release(opening);
+                }
+            }
+            finally
+            {
+                Marshal.Release(reference);
+            }
+            if (stream == IntPtr.Zero)
+                return null;
+            try
+            {
+                // Windows hands a Windows Runtime stream; shcore turns it into a plain COM IStream to read from.
+                var id = ComStream;
+                Check(CreateStreamOverRandomAccessStream(stream, ref id, out var reader));
+                try
+                {
+                    var bytes = new MemoryStream();
+                    var buffer = new byte[64 * 1024];
+                    while (bytes.Length < MaxCoverBytes)
+                    {
+                        Check(Method<ReadBytes>(reader, ComStreamRead)(reader, buffer, buffer.Length, out var read));
+                        if (read <= 0)
+                            break;
+                        bytes.Write(buffer, 0, read);
+                    }
+                    return bytes.Length is > 0 and < MaxCoverBytes ? bytes.ToArray() : null;
+                }
+                finally
+                {
+                    Marshal.Release(reader);
+                }
+            }
+            finally
+            {
+                Marshal.Release(stream);
             }
         }
         finally
@@ -490,6 +622,9 @@ public sealed class SpotifyMediaSession : IDisposable
     private delegate int GetAt(IntPtr self, uint index, out IntPtr value);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int ReadBytes(IntPtr self, [Out] byte[] buffer, int count, out int read);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int WithByte(IntPtr self, byte value, out IntPtr operation);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -500,6 +635,9 @@ public sealed class SpotifyMediaSession : IDisposable
 
     [DllImport("combase.dll")]
     private static extern int RoInitialize(int type);
+
+    [DllImport("shcore.dll")]
+    private static extern int CreateStreamOverRandomAccessStream(IntPtr stream, ref Guid iid, out IntPtr comStream);
 
     [DllImport("combase.dll")]
     private static extern int RoGetActivationFactory(IntPtr classId, ref Guid iid, out IntPtr factory);

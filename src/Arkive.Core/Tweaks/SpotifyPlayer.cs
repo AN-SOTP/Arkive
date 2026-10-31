@@ -4,10 +4,12 @@ using System.Text;
 namespace Arkive.Core.Tweaks;
 
 /// <summary>
-/// A message from the Spotify Player tweak: a button (<see cref="Command"/>), Spotify's volume in percent, or where the
-/// player was dragged to and whether it is folded ("x&lt;tab&gt;y&lt;tab&gt;0|1").
+/// A message from the Spotify Player tweak: a button (<see cref="Command"/>), Spotify's volume in percent, where the
+/// player was dragged to and whether it is folded ("x&lt;tab&gt;y&lt;tab&gt;0|1"), a point of the track to go to (seconds),
+/// or whether the game could draw the pictures Arkive sent ("shown" or "failed", for the log).
 /// </summary>
-public sealed record SpotifyRequest(SpotifyCommand? Command = null, int? Volume = null, string? Layout = null);
+public sealed record SpotifyRequest(SpotifyCommand? Command = null, int? Volume = null, string? Layout = null, int? Seek = null,
+    string? Art = null);
 
 /// <summary>
 /// The Arkive half of the Spotify Player tweak's files. While the game runs, Arkive writes Spotify's state to
@@ -15,8 +17,14 @@ public sealed record SpotifyRequest(SpotifyCommand? Command = null, int? Volume 
 /// sends its buttons on the Data Bus channel "spotify". The file is lines of tab-separated fields:
 /// "spotify, sequence" (the sequence goes up with every write, so the tweak sees when Arkive stops), "state, none |
 /// playing | paused | stopped", "title", "artist", "album", "time, seconds in, seconds long", "can, letters" (p play and
-/// pause, b back, n next, s stop, h shuffle, r repeat), "shuffle, on | off", "repeat, off | track | list" (empty when
-/// Spotify doesn't say), "volume, percent" (empty when Spotify plays no sound yet) and "layout, x, y, 0 | 1".
+/// pause, b back, n next, s stop, h shuffle, r repeat, k jump to a point), "shuffle, on | off", "repeat, off | track | list" (empty when
+/// Spotify doesn't say), "volume, percent" (empty when Spotify plays no sound yet), "layout, x, y, 0 | 1" and "art, id".
+/// <para>
+/// The pictures are in art.txt beside it, one line each: "image, name, width, height, pixels" with the pixels as eight
+/// hex digits per pixel (alpha, red, green, blue), row by row. "cover" is the track's cover; "title" and "artist" are
+/// the song's name and artist drawn by Arkive when they have letters the game's fonts lack (Japanese, Korean...). The
+/// art id changes with them, so the tweak reads art.txt again only for a new track.
+/// </para>
 /// </summary>
 public static class SpotifyPlayer
 {
@@ -31,11 +39,23 @@ public static class SpotifyPlayer
     /// <summary>Where the player was last left, in the same folder ("x&lt;tab&gt;y&lt;tab&gt;0|1").</summary>
     public const string LayoutFile = "layout.txt";
 
+    /// <summary>The cover and drawn titles, in the same folder.</summary>
+    public const string ArtFile = "art.txt";
+
+    /// <summary>The cover's size in pixels; the player shows it a little smaller.</summary>
+    public const int CoverSize = 64;
+
+    /// <summary>
+    /// The widest the drawn song name and artist may be: their columns beside the cover when the player is as wide as
+    /// the game's default minimap (327 px). The tweak cuts them at its own columns when it is narrower.
+    /// </summary>
+    public const int TitleWidth = 219, ArtistWidth = 241;
+
     /// <summary>The farthest a dragged player may sit from its spot under the minimap, in interface pixels.</summary>
     private const int MaxOffset = 8000;
 
     /// <summary>The file's text for Spotify's state (null: Spotify isn't running), its volume and the saved layout.</summary>
-    public static string Describe(SpotifyNowPlaying? now, int? volume, string layout, long sequence)
+    public static string Describe(SpotifyNowPlaying? now, int? volume, string layout, long sequence, string art = "")
     {
         var text = new StringBuilder();
         void Line(params string[] fields) => text.Append(string.Join('\t', fields.Select(Clean))).Append('\n');
@@ -65,6 +85,7 @@ public static class SpotifyPlayer
                 (now.Controls.HasFlag(SpotifyControls.PlayPause) && now.Controls.HasFlag(SpotifyControls.Seek))) can.Append('s');
             if (now.Controls.HasFlag(SpotifyControls.Shuffle)) can.Append('h');
             if (now.Controls.HasFlag(SpotifyControls.Repeat)) can.Append('r');
+            if (now.Controls.HasFlag(SpotifyControls.Seek)) can.Append('k');
             Line("can", can.ToString());
             Line("shuffle", now.Shuffle switch { true => "on", false => "off", null => "" });
             Line("repeat", now.Repeat switch
@@ -76,6 +97,8 @@ public static class SpotifyPlayer
             });
         }
         Line("volume", volume is { } percent ? percent.ToString(CultureInfo.InvariantCulture) : "");
+        if (now is not null)
+            Line("art", art);
         text.Append("layout\t").Append(ReadLayout(layout) ?? "\t\t0").Append('\n');
         return text.ToString();
     }
@@ -94,6 +117,9 @@ public static class SpotifyPlayer
             ["repeat"] => new(SpotifyCommand.Repeat),
             ["volume", var value] when int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var percent) && percent <= 100
                 => new(Volume: percent),
+            ["seek", var value] when int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) && seconds < 24 * 3600
+                => new(Seek: seconds),
+            ["art", "shown" or "failed"] => new(Art: parts[1]),
             ["layout", _, _, _] when ReadLayout(string.Join('\t', parts[1..])) is { } layout => new(Layout: layout),
             _ => null,
         };
@@ -109,6 +135,26 @@ public static class SpotifyPlayer
             Math.Abs(x) > MaxOffset || Math.Abs(y) > MaxOffset)
             return null;
         return string.Create(CultureInfo.InvariantCulture, $"{x}\t{y}\t{parts[2]}");
+    }
+
+    /// <summary>
+    /// True when the text has letters past Latin (the game's English, French, German and Spanish fonts have Latin only),
+    /// so Arkive draws it as a picture rather than leave the game to show empty boxes.
+    /// </summary>
+    public static bool NeedsDrawing(string text) =>
+        text.Any(character => character is > '\u017f' and not (>= '\u2010' and <= '\u203a') and not '\u20ac');
+
+    /// <summary>One "image" line of art.txt: pixels as ARGB values, row by row.</summary>
+    public static string ImageLine(string name, int width, int height, ReadOnlySpan<uint> pixels)
+    {
+        if (pixels.Length != width * height)
+            throw new ArgumentException("The picture's pixels don't match its size.", nameof(pixels));
+        var text = new StringBuilder(name.Length + 24 + pixels.Length * 8);
+        text.Append("image\t").Append(name).Append('\t').Append(width.ToString(CultureInfo.InvariantCulture))
+            .Append('\t').Append(height.ToString(CultureInfo.InvariantCulture)).Append('\t');
+        foreach (var pixel in pixels)
+            text.Append(pixel.ToString("x8", CultureInfo.InvariantCulture));
+        return text.Append('\n').ToString();
     }
 
     private static string Seconds(TimeSpan time) =>
