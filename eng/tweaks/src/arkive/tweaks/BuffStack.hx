@@ -53,10 +53,17 @@ class BuffStack {
 		var margin:Float = bar.margin;
 		var counts = [0, 0];
 		var active:Int = pool.activeList.length;
+		var itemWidth:Float = bar.itemWidth;
+		var itemHeight:Float = bar.itemHeight;
 		for (i in 0...active) {
 			var item:Dynamic = pool.getActiveItem(i);
 			if (item == null || item.data == null)
 				continue;
+			// Sized as the game's own align sizes them; without it a reused icon keeps whatever size it last had.
+			if (itemWidth != 0 && item.width != itemWidth)
+				item.width = itemWidth;
+			if (itemHeight != 0 && item.height != itemHeight)
+				item.height = itemHeight;
 			var row = rowOf(item.data);
 			var column = counts[row];
 			counts[row] = column + 1;

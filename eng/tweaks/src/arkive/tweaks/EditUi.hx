@@ -104,6 +104,8 @@ class EditUi {
 	// The edit screen.
 	static var overlay:Sprite;
 	static var grid:Shape;
+	/** The grid lines the dragged piece snaps onto, in yellow. */
+	static var guides:Shape;
 	static var boxes:Sprite;
 	static var bar:Sprite;
 	static var status:TextField;
@@ -253,6 +255,13 @@ class EditUi {
 	**/
 	static function restoreAll():Void {
 		var objects:Array<Dynamic> = untyped __keys__(bases);
+		// The frames to lay out again: the moved ones and those whose parts moved.
+		var touched:Array<String> = [];
+		for (object in objects) {
+			var frame = frameOf(object);
+			if (frame != null && touched.indexOf(frame) < 0)
+				touched.push(frame);
+		}
 		// Parts before frames: the frames are measured with their parts at home.
 		for (object in objects)
 			if (!isFrame(object))
@@ -261,7 +270,20 @@ class EditUi {
 			if (isFrame(object))
 				place(object, null, null);
 		bases = new Dictionary(true);
-		reflowGame(null);
+		for (frame in touched)
+			reflowGame(frame);
+	}
+
+	/** The HUD frame an object is or belongs to (by walking up to one the game lays out); null when none. */
+	static function frameOf(object:Dynamic):String {
+		var at:Dynamic = object;
+		while (at != null) {
+			var name:String = at.name;
+			if (name != null && widgetOf(name) == at)
+				return name;
+			at = at.parent;
+		}
+		return null;
 	}
 
 	static function isFrame(object:Dynamic):Bool {
@@ -269,20 +291,12 @@ class EditUi {
 		return name != null && widgetOf(name) == object;
 	}
 
-	/** The game's own layout pass: one frame's (setter.reflow), or every HUD frame's, twice for frames placed beside others. */
+	/** The game's own layout pass for one frame (its LayoutSetter's reflow), as it runs when the screen changes size. */
 	static function reflowGame(name:String):Void {
 		try {
-			if (name != null) {
-				if (Text.has(setters, name)) {
-					var setter:Dynamic = untyped setters[name];
-					setter.reflow();
-				}
-				return;
-			}
-			var manager:Dynamic = GameUi.definition("ark.managers.LayoutManager");
-			if (manager != null) {
-				manager.reflowAllManagingWidgets();
-				manager.reflowAllManagingWidgets();
+			if (Text.has(setters, name)) {
+				var setter:Dynamic = untyped setters[name];
+				setter.reflow();
 			}
 		} catch (error:Dynamic) {}
 	}
@@ -673,6 +687,7 @@ class EditUi {
 	static function close():Void {
 		if (overlay == null)
 			return;
+		clearGuides();
 		endDrag(null);
 		overlay.visible = false;
 		if (overlay.parent != null)
@@ -684,6 +699,8 @@ class EditUi {
 		overlay.name = "arkiveEditUi";
 		grid = new Shape();
 		overlay.addChild(grid);
+		guides = new Shape();
+		overlay.addChild(guides);
 		boxes = new Sprite();
 		overlay.addChild(boxes);
 		bar = new Sprite();
@@ -1011,18 +1028,102 @@ class EditUi {
 	/** The union of the piece's objects' bounds on the stage. */
 	static function boundsOf(piece:Dynamic):Dynamic {
 		var objects:Array<Dynamic> = piece.objects;
-		var stage:Dynamic = overlay.stage;
 		var result:Dynamic = null;
 		for (object in objects) {
 			if (object.stage == null)
 				continue;
-			var b:Dynamic = object.getBounds(stage);
-			var bw:Float = b.width;
-			if (bw <= 0)
+			var local:Dynamic = visualOf(object);
+			if (local == null)
 				continue;
-			result = result == null ? b : result.union(b);
+			var lx:Float = local.x;
+			var ly:Float = local.y;
+			var lw:Float = local.width;
+			var lh:Float = local.height;
+			var a:Point = object.localToGlobal(new Point(lx, ly));
+			var b:Point = object.localToGlobal(new Point(lx + lw, ly + lh));
+			var box = new flash.geom.Rectangle(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+			result = result == null ? box : result.union(box);
 		}
 		return result;
+	}
+
+	/** What each object shows, in its own coordinates, measured about once a second (weak keys). */
+	static var visuals = new Dictionary(true);
+
+	static var containerType:Dynamic;
+	static var textType:Dynamic;
+
+	/**
+		The part of the object that shows: the union of its visible pieces, leaving out hidden ones (the HP bar keeps its
+		flash and warning effects hidden around the bar, and getBounds counts them), so the outline and the snapping
+		follow what you see. Falls back to the plain bounds when nothing shows.
+	**/
+	static function visualOf(object:Dynamic):Dynamic {
+		var cached:Dynamic = untyped visuals[object];
+		if (cached != null) {
+			var at:Int = cached.at;
+			if (frames - at < 60 && frames >= at)
+				return cached.rect;
+		}
+		if (containerType == null) {
+			containerType = GameUi.definition("flash.display.DisplayObjectContainer");
+			textType = GameUi.definition("flash.text.TextField");
+		}
+		var rect:Dynamic = null;
+		try {
+			rect = visibleRect(object, object, 0);
+		} catch (error:Dynamic) {}
+		if (rect == null) {
+			rect = object.getBounds(object);
+			var rw:Float = rect.width;
+			if (rw <= 0)
+				rect = null;
+		}
+		untyped visuals[object] = {rect: rect, at: frames};
+		return rect;
+	}
+
+	/** The union of the visible leaves under `node`, in `root`'s coordinates; null when nothing shows. */
+	static function visibleRect(node:Dynamic, root:Dynamic, depth:Int):Dynamic {
+		if (node != root && (node.visible != true || node.alpha < 0.02))
+			return null;
+		if (node.mask != null && node != root) {
+			// Masked art shows only inside its mask.
+			var masked:Dynamic = node.mask.getBounds(root);
+			var mw:Float = masked.width;
+			return mw > 0 ? masked : null;
+		}
+		if (depth < 12 && containerType != null && (untyped __is__(node, containerType))) {
+			var count:Int = node.numChildren;
+			if (count > 0) {
+				var result:Dynamic = null;
+				// A child that masks another only clips it; it isn't drawn.
+				var masks:Array<Dynamic> = [];
+				for (i in 0...count) {
+					var other:Dynamic = node.getChildAt(i);
+					if (other != null && other.mask != null)
+						masks.push(other.mask);
+				}
+				for (i in 0...count) {
+					var child:Dynamic = node.getChildAt(i);
+					if (child == null || masks.indexOf(child) >= 0)
+						continue;
+					var r:Dynamic = visibleRect(child, root, depth + 1);
+					if (r != null)
+						result = result == null ? r : result.union(r);
+				}
+				return result;
+			}
+		}
+		if (textType != null && (untyped __is__(node, textType))) {
+			var text:String = node.text;
+			if (text == null || text.length == 0)
+				return null;
+		}
+		var bounds:Dynamic = node.getBounds(root);
+		var bw:Float = bounds.width;
+		var bh:Float = bounds.height;
+		return bw > 0 && bh > 0 ? bounds : null;
 	}
 
 	static function onFrame(event:Dynamic):Void {
@@ -1086,6 +1187,9 @@ class EditUi {
 		dragStart = new Point(overlay.mouseX, overlay.mouseY);
 		var entry:Dynamic = entryOf(piece.id);
 		dragFrom = entry == null ? {x: 0.0, y: 0.0, s: 1.0} : {x: entry.x, y: entry.y, s: entry.s};
+		var objects:Array<Dynamic> = piece.objects;
+		for (object in objects)
+			untyped __delete__(visuals, object);
 		dragBounds = boundsOf(piece);
 		say(describe(piece));
 		drawBoxes();
@@ -1110,6 +1214,9 @@ class EditUi {
 				top = ry + Math.round((top - ry) / step) * step;
 				dx = left - dragBounds.x;
 				dy = top - dragBounds.y;
+				var width:Float = dragBounds.width;
+				var height:Float = dragBounds.height;
+				drawGuides(left, top, width, height, rect);
 			}
 			var fromX:Float = dragFrom.x;
 			var fromY:Float = dragFrom.y;
@@ -1119,7 +1226,51 @@ class EditUi {
 		} catch (error:Dynamic) {}
 	}
 
+	/**
+		The grid lines under the piece's left and top edges (what it snaps onto) across the screen in yellow, brighter
+		along the piece, and the lines its right and bottom edges sit on when those land on the grid too.
+	**/
+	static function drawGuides(left:Float, top:Float, width:Float, height:Float, rect:Dynamic):Void {
+		if (guides == null)
+			return;
+		var rx:Float = rect.x;
+		var ry:Float = rect.y;
+		var rw:Float = rect.width;
+		var rh:Float = rect.height;
+		var step:Float = GRID * unitSize();
+		var g = guides.graphics;
+		g.clear();
+		g.lineStyle(1, GOLD, 0.45);
+		g.moveTo(left, ry);
+		g.lineTo(left, ry + rh);
+		g.moveTo(rx, top);
+		g.lineTo(rx + rw, top);
+		var right = left + width;
+		var bottom = top + height;
+		var onRight = Math.abs((right - rx) / step - Math.round((right - rx) / step)) < 0.08;
+		var onBottom = Math.abs((bottom - ry) / step - Math.round((bottom - ry) / step)) < 0.08;
+		if (onRight) {
+			g.moveTo(right, ry);
+			g.lineTo(right, ry + rh);
+		}
+		if (onBottom) {
+			g.moveTo(rx, bottom);
+			g.lineTo(rx + rw, bottom);
+		}
+		g.lineStyle(2, GOLD, 1);
+		g.moveTo(left, top - step);
+		g.lineTo(left, bottom + step);
+		g.moveTo(left - step, top);
+		g.lineTo(right + step, top);
+	}
+
+	static function clearGuides():Void {
+		if (guides != null)
+			guides.graphics.clear();
+	}
+
 	static function endDrag(event:Dynamic):Void {
+		clearGuides();
 		barDrag = null;
 		if (dragging == null)
 			return;
