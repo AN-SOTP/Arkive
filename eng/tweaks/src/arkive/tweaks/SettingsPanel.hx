@@ -118,8 +118,11 @@ class SettingsPanel {
 		var self:Dynamic = item.parent;
 		var bar:Dynamic = self == null ? null : self.bottomBtnList;
 		var frame:Dynamic = self == null ? null : self.parent;
-		if (bar == null || self.visible != true || (frame != null && frame.visible != true))
+		if (bar == null || self.visible != true || (frame != null && frame.visible != true)) {
+			// The menu closed (Esc closes it with our window open): close ours too, so it doesn't come back with the menu.
+			hide();
 			return;
+		}
 		// Hides with Store (the bar or the buttons hidden, as on the switch character screen); every frame, it's cheap.
 		if (item.visible == true && !shown(anchor, self)) {
 			item.visible = false;
@@ -369,8 +372,44 @@ class SettingsPanel {
 		status = text(SIDE, HEIGHT - BODY_BOTTOM + 14, WIDTH - 2 * SIDE, 13, DIM, "", font);
 		window.addChild(status);
 		window.addEventListener(MouseEvent.MOUSE_WHEEL, wheel);
+		// Esc: the game closes its menu on Esc by itself, without asking the interface. While a text input has the
+		// keyboard, the game leaves keys to the interface (as with chat), so an invisible input takes the keyboard while
+		// our window is open, and Esc there closes only our window.
+		keys = new TextField();
+		keys.type = flash.text.TextFieldType.INPUT;
+		keys.width = 1;
+		keys.height = 1;
+		keys.alpha = 0;
+		keys.mouseEnabled = false;
+		keys.tabEnabled = false;
+		keys.addEventListener(flash.events.KeyboardEvent.KEY_DOWN, keyDown);
+		window.addChild(keys);
+		window.addEventListener(MouseEvent.MOUSE_UP, function(event:Dynamic) takeKeys());
 		shade.addChild(window);
 		self.addChild(shade);
+	}
+
+	static var keys:TextField;
+
+	static function keyDown(event:Dynamic):Void {
+		var code:Int = event.keyCode;
+		if (code != 27)
+			return;
+		event.stopImmediatePropagation();
+		hide();
+	}
+
+	/** Gives the invisible input the keyboard while the window shows (a click on a control may have taken it). */
+	static function takeKeys():Void {
+		if (keys == null || shade == null || shade.visible != true || keys.stage == null)
+			return;
+		// Not while a drop-down's list is open: taking the keyboard from it would close it.
+		for (holder in holders)
+			if (holder.numChildren > 0)
+				return;
+		keys.text = "";
+		if (keys.stage.focus != keys)
+			keys.stage.focus = keys;
 	}
 
 	static function toggle():Void {
@@ -385,11 +424,15 @@ class SettingsPanel {
 		Options.readLive(null);
 		say("Changes act straight away. Arkive keeps them while it's running.");
 		render();
+		takeKeys();
 	}
 
 	static function hide():Void {
-		if (shade != null)
-			shade.visible = false;
+		if (shade == null || shade.visible != true)
+			return;
+		shade.visible = false;
+		if (keys != null && keys.stage != null && keys.stage.focus == keys)
+			keys.stage.focus = null;
 	}
 
 	/** The shade covers the screen and the window sits in its middle, in the menu's own coordinates. */
@@ -418,6 +461,7 @@ class SettingsPanel {
 		timer.addEventListener(TimerEvent.TIMER, function(event:Dynamic) {
 			pending = false;
 			render();
+			takeKeys();
 		});
 		timer.start();
 	}
