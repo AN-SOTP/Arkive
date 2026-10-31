@@ -209,7 +209,7 @@ class EditUi {
 				var x:Float = Std.parseFloat(parts[1]);
 				var y:Float = Std.parseFloat(parts[2]);
 				var s:Float = Std.parseFloat(parts[3]);
-				if (Math.isNaN(x) || Math.isNaN(y) || Math.isNaN(s))
+				if (isNaN(x) || isNaN(y) || isNaN(s))
 					continue;
 				untyped layout[parts[0]] = {x: x, y: y, s: clampScale(s)};
 			}
@@ -394,7 +394,7 @@ class EditUi {
 		if (base == null) {
 			if (!create)
 				return null;
-			base = {bx: object.x, by: object.y, bsx: object.scaleX, bsy: object.scaleY, ax: Math.NaN, ay: Math.NaN, asx: Math.NaN, asy: Math.NaN};
+			base = {bx: object.x, by: object.y, bsx: object.scaleX, bsy: object.scaleY, ax: nothing(), ay: nothing(), asx: nothing(), asy: nothing()};
 			untyped bases[object] = base;
 			return base;
 		}
@@ -470,10 +470,10 @@ class EditUi {
 			object.scaleX = base.bsx;
 			object.scaleY = base.bsy;
 		}
-		base.ax = Math.NaN;
-		base.ay = Math.NaN;
-		base.asx = Math.NaN;
-		base.asy = Math.NaN;
+		base.ax = nothing();
+		base.ay = nothing();
+		base.asx = nothing();
+		base.asy = nothing();
 	}
 
 	/** The game's visible screen area, in stage coordinates (the area the HUD is laid out in). */
@@ -1385,5 +1385,15 @@ class EditUi {
 	static function say(message:String):Void {
 		if (status != null)
 			status.text = message;
+	}
+
+	/** Number.NaN: Haxe's Math.NaN needs its Boot, which Arkive leaves empty. */
+	static function nothing():Float {
+		return untyped __global__["Number"].NaN;
+	}
+
+	/** The player's isNaN: Haxe's Math.isNaN is set up by Haxe's Boot, which Arkive's empty Boot leaves out. */
+	static function isNaN(value:Float):Bool {
+		return untyped __global__["isNaN"](value);
 	}
 }
