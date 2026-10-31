@@ -49,6 +49,11 @@ internal static class TweakSmokeTests
                SpotifyPlayer.ReadRequest("seek\t95") == new SpotifyRequest(Seek: 95) &&
                SpotifyPlayer.ReadRequest("art\tshown") == new SpotifyRequest(Art: "shown"),
             "a Spotify Player message was read wrong");
+        // Arkive once started its "is the tweak on and the game running" clock at long.MinValue: the subtraction
+        // overflowed, the check never ran and the player said "Start Arkive" with Arkive open.
+        Assert(SpotifyPlayer.IsDue(Environment.TickCount64, null, 5000) && SpotifyPlayer.IsDue(long.MaxValue, null, 5000) &&
+               !SpotifyPlayer.IsDue(20_000, 16_000, 5000) && SpotifyPlayer.IsDue(21_000, 16_000, 5000),
+            "the Spotify Player's state check isn't due when it should be");
         Assert(SpotifyPlayer.ReadRequest("seek\t-3") is null && SpotifyPlayer.ReadRequest("art\tmaybe") is null,
             "a jump or picture report the Spotify Player never sends was accepted");
         // The English client's fonts have Latin letters only: Japanese and Korean names are drawn by Arkive.

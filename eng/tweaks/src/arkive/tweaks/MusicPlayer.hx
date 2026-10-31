@@ -629,6 +629,51 @@ class MusicPlayer {
 			return;
 		player.x = Math.round(spot.x + offsetX);
 		player.y = Math.round(spot.y + offsetY);
+		keepOnScreen();
+	}
+
+	/** Pulls the player back inside the game's visible screen, the area the game keeps its own windows in. */
+	static function keepOnScreen():Void {
+		var parent:Dynamic = player.parent;
+		if (parent == null || parent.stage == null)
+			return;
+		var screen:Dynamic = screenArea(parent.stage);
+		var topLeft:Dynamic = parent.globalToLocal(new Point(screen.x, screen.y));
+		var bottomRight:Dynamic = parent.globalToLocal(new Point(screen.x + screen.width, screen.y + screen.height));
+		var box:Dynamic = player.getBounds(parent);
+		var left:Float = topLeft.x;
+		var top:Float = topLeft.y;
+		var right:Float = bottomRight.x;
+		var bottom:Float = bottomRight.y;
+		var boxX:Float = box.x;
+		var boxY:Float = box.y;
+		var boxWidth:Float = box.width;
+		var boxHeight:Float = box.height;
+		if (!Math.isFinite(left + top + right + bottom + boxX + boxY + boxWidth + boxHeight))
+			return;
+		var dx:Float = 0;
+		var dy:Float = 0;
+		if (boxX + boxWidth > right)
+			dx = right - boxX - boxWidth;
+		if (boxX + dx < left)
+			dx = left - boxX;
+		if (boxY + boxHeight > bottom)
+			dy = bottom - boxY - boxHeight;
+		if (boxY + dy < top)
+			dy = top - boxY;
+		if (dx != 0 || dy != 0) {
+			player.x = Math.round(player.x + dx);
+			player.y = Math.round(player.y + dy);
+		}
+	}
+
+	/** The game's visible screen in stage coordinates (Scaleform's visibleRect; the stage's own size can differ). */
+	static function screenArea(stage:Dynamic):Dynamic {
+		var extensions:Dynamic = GameUi.definition("scaleform.gfx.Extensions");
+		var rect:Dynamic = extensions == null ? null : extensions.visibleRect;
+		if (rect != null && rect.width > 0 && rect.height > 0)
+			return rect;
+		return {x: 0, y: 0, width: stage.stageWidth, height: stage.stageHeight};
 	}
 
 	static function onTick(event:Dynamic):Void {
@@ -1106,9 +1151,10 @@ class MusicPlayer {
 		event.stopPropagation();
 		if (!Options.on(ID) || length <= 0)
 			return;
-		var at:Dynamic = gaugeHit.globalToLocal(new Point(event.stageX, event.stageY));
 		var span:Float = panelWidth - 2 * PAD - 84;
-		var share:Float = at.x / span;
+		var share:Float = gaugeHit.mouseX / span;
+		if (!Math.isFinite(share))
+			return;
 		if (share < 0)
 			share = 0;
 		if (share > 1)
@@ -1150,9 +1196,12 @@ class MusicPlayer {
 		var target:Dynamic = event.target;
 		if ((target != player && target != panel && target != slot && target != mini) || player.parent == null || player.stage == null)
 			return;
-		var at:Dynamic = player.parent.globalToLocal(new Point(event.stageX, event.stageY));
-		grabX = at.x - player.x;
-		grabY = at.y - player.y;
+		// The parent's own mouse position, as the game's windows read it: no stage coordinates to mix up.
+		var parent:Dynamic = player.parent;
+		grabX = parent.mouseX - player.x;
+		grabY = parent.mouseY - player.y;
+		if (!Math.isFinite(grabX) || !Math.isFinite(grabY))
+			return;
 		dragging = true;
 		player.stage.addEventListener(MouseEvent.MOUSE_MOVE, drag);
 		player.stage.addEventListener(MouseEvent.MOUSE_UP, drop);
@@ -1161,9 +1210,14 @@ class MusicPlayer {
 	static function drag(event:Dynamic):Void {
 		if (!dragging || player.parent == null)
 			return;
-		var at:Dynamic = player.parent.globalToLocal(new Point(event.stageX, event.stageY));
-		player.x = Math.round(at.x - grabX);
-		player.y = Math.round(at.y - grabY);
+		var parent:Dynamic = player.parent;
+		var x:Float = parent.mouseX - grabX;
+		var y:Float = parent.mouseY - grabY;
+		// Math.round makes a missing number 0, which would throw the player to the minimap's corner.
+		if (Math.isFinite(x) && Math.isFinite(y)) {
+			player.x = Math.round(x);
+			player.y = Math.round(y);
+		}
 	}
 
 	/** Let go: keep the player on screen and remember where it is, as an offset from its spot under the minimap. */
@@ -1174,25 +1228,7 @@ class MusicPlayer {
 		stage.removeEventListener(MouseEvent.MOUSE_UP, drop);
 		if (player.parent == null || host == null)
 			return;
-		var box:Dynamic = player.getBounds(stage);
-		var dx:Float = 0;
-		var dy:Float = 0;
-		var stageWidth:Float = stage.stageWidth;
-		var stageHeight:Float = stage.stageHeight;
-		if (box.x < 0)
-			dx = -box.x;
-		else if (box.x + box.width > stageWidth)
-			dx = stageWidth - box.x - box.width;
-		if (box.y < 0)
-			dy = -box.y;
-		else if (box.y + box.height > stageHeight)
-			dy = stageHeight - box.y - box.height;
-		if (dx != 0 || dy != 0) {
-			var from:Dynamic = player.parent.globalToLocal(new Point(box.x, box.y));
-			var to:Dynamic = player.parent.globalToLocal(new Point(box.x + dx, box.y + dy));
-			player.x = Math.round(player.x + to.x - from.x);
-			player.y = Math.round(player.y + to.y - from.y);
-		}
+		keepOnScreen();
 		var spot:Dynamic = untyped hosts[host];
 		if (spot == null)
 			return;

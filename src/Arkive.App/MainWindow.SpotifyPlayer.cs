@@ -65,7 +65,7 @@ public partial class MainWindow
         {
         }
         long sequence = 0;
-        var checkedAt = long.MinValue;
+        long? checkedAt = null;
         var active = false;
         bool? found = null;
         var problem = "";
@@ -80,7 +80,7 @@ public partial class MainWindow
         while (true)
         {
             var request = _spotifyRequests.TryTake(out var taken, SpotifyTickMs) ? taken : null;
-            if (Environment.TickCount64 - checkedAt >= SpotifyCheckMs)
+            if (SpotifyPlayer.IsDue(Environment.TickCount64, checkedAt, SpotifyCheckMs))
             {
                 checkedAt = Environment.TickCount64;
                 active = SpotifyWanted();
