@@ -198,6 +198,7 @@ public static class TweakCatalog
                 new TweakChoice("endur", "Endurance", Default: true),
                 new TweakChoice("exp", "Expertise", Default: true),
             ]),
+            new("showText", "Show what the tweak reads, under the Dismantle window (for testing)", false),
         ], Note: "Bracelet stats are read from the English text of their tooltips, so this needs the English game client. A bracelet with any ticked stat is added, even if it also has an unticked one."),
         new("lootauction", "Loot Auction Fair Bid", "In the loot auction, rows in the game's own style under Market Lowest Price show the most you can bid and still come out ahead of losing, since the winning bid is split among the other players after the auction fee: to resell the item (after the market's 5% fee) and, when the window has room, to use it. A \"Fill\" button types the first price into the bid box; you press Bid yourself. A price turns red when the minimum bid is already higher.", TweakRisk.Display,
         [
