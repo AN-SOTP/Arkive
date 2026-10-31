@@ -72,7 +72,7 @@ Player classes, bosses and other NPCs play their skills from the game's own skil
 
 ### Tweaks (WIP)
 
-Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install them from Arkive's **Tweaks** tab, then switch each one on or off and change its options in game from the **Arkive Tweaks** menu. Logs tab NOT publically available at the moment.
+Small changes to the game's own windows: extra information, extra buttons and quicker steps. Install them from Arkive's **Tweaks** tab, then switch each one on or off and change its options in game from the **Arkive Tweaks** menu.
 
 ![Arkive Tweaks tab with Install All Tweaks, Faster Launch and the list of tweaks](docs/screenshots/tweaks.png)
 
@@ -189,7 +189,7 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 - Thickness, shape and placement change; height and limb length do not, because the skeleton and animations set them. Saving runs the usual skeleton and animation checks.
 - **Match physics** (in the editor beside **Save as mod**, and beside the preset buttons) also fits the body's collision shapes, the chest, pelvis, thigh and spine capsules that hair, skirts and capes swing against, to the new shape and saves them in the mod. The game keeps one set per class (every Slayer and Female Warrior class shares one), so a mod with Match physics changes the physics for all of that class's outfits; when several such mods are on, the one with the higher priority wins, and at the same priority the most recently saved one.
 - **Presets** keep a body's sliders. **Apply preset to selected outfits** reshapes several outfits into one mod without opening the editor, and **Apply preset to every outfit of its body** does every outfit of that body (about 290 outfits for Female Warrior, around half an hour, about 9 MB per piece). Arkive says how long and how much space it needs first, can work on several pieces at once on PCs with four or more threads, and **Stop** keeps the pieces done so far.
-- To change a saved upscale mod, right-click it in **Mods** and choose **Edit Simple Upscale** (or open it in **Edit Mods** and choose **Edit in proportion editor**). **Save as mod** then updates that mod; if it is on, choose **Apply changes** to put the new shape in the game. A body-wide mod (or one with more than 20 pieces) opens in one outfit as a preview, Nightwear when it has it; saving reshapes every outfit of its body again (or all of the mod's pieces), with progress and **Stop** in **Simple Upscale**.
+- To change a saved upscale mod, right-click it in **Mods** and choose **Edit Simple Upscale** (or open it in **Edit Mods** and choose **Edit in proportion editor**). The editor's button then reads **Update mod** and saves into that mod; if it is on, choose **Apply changes** to put the new shape in the game. A body-wide mod (or one with more than 20 pieces) opens in one outfit as a preview, Nightwear when it has it; saving reshapes every outfit of its body again (or all of the mod's pieces), with progress and **Stop** in **Simple Upscale**.
 - A mod changes the outfit for every character you see wearing it. Very large values can still make pieces overlap.
 
 ### Outfit Swap
@@ -232,9 +232,9 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 
 In game, press Esc and choose **Arkive Tweaks** at the bottom of the menu: tick a tweak to turn it on, untick it to turn it off, and change its options there. Keep Arkive running while you play so those choices are kept for next time.
 
-- **Information:** Combat Power on Tooltips (what an item would add to your Combat Power), Combat Power per Gold in the auction house and market, Market Price on Tooltips, Compare With Me (your gear beside an inspected player's), Bracelet Reroll Judge, Astrogem Processing Advisor, Lobby CP in the party finder, Slot Tweaks (item properties at a glance, including bracelet effects), Buff Icon Stacking, Additional Top Currencies and the Extended Escape Menu.
-- **Quicker steps:** Fast Advanced Honing, Fast Paradise, Auto-Dismiss Stone Faceting Results, Next Item Button, Chest Opening Tweaks, Market Tweaks, Exchange Max Button and Universal Storage Claim.
-- **Automation:** Auto Pull Up presses a hosted lobby's Pull up again while its box is ticked, and Ready Check Tweaks can accept the ready check (off by default).
+- **Information:** Logs Tab (a player's recent lostark.bible logs in the profile and inspect windows), Combat Power on Tooltips (what an item would add to your Combat Power), Combat Power per Gold in the auction house and market, Market Price on Tooltips, Compare With Me (your gear beside an inspected player's), Bracelet Reroll Judge, Astrogem Processing Advisor, Lobby CP in the party finder, Slot Tweaks (item properties at a glance, including bracelet effects), Buff Icon Stacking, Additional Top Currencies and the Extended Escape Menu.
+- **Quicker steps:** Fast Advanced Honing, Fast Paradise, Auto-Dismiss Stone Faceting Results, Next Item Button, Chest Opening Tweaks, Market Tweaks, Exchange Max Button, Universal Storage Claim and Bracelet Dismantle by Stat (puts bracelets with the stats you tick in the dismantle list; you press Dismantle).
+- **Automation:** Auto Pull Up presses a hosted lobby's Pull up again while its box is ticked, also with the Find Party window closed, and Ready Check Tweaks can accept the ready check (off by default).
 
 Tweaks are newer and less tested than other mods: some read English text and only work on an English client, and a game update can stop one working until Arkive is updated. See [Limitations and known issues](#limitations-and-known-issues).
 
@@ -519,7 +519,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 
 ## Privacy, security and licensing
 
-No telemetry or credential upload is implemented. Asset operations run locally. Optional update checks contact GitHub with normal request metadata such as IP/user-agent. Local settings/logs contain local paths and asset identities; sanitize them before sharing.
+No telemetry or credential upload is implemented. Asset operations run locally. Optional update checks contact GitHub with normal request metadata such as IP/user-agent. The Logs Tab tweak, when installed and switched on, asks lostark.bible for the logs of the characters you open in game. Local settings/logs contain local paths and asset identities; sanitize them before sharing.
 
 Publication starts from a clean snapshot instead of prior commits. Mods, database/asset exports, caches, backups, builds, personal settings and AI configs are excluded. Application banners/icon and the interoperability key are intentionally retained. `THIRD-PARTY-NOTICES.txt` contains dependency licenses and artwork credits.
 

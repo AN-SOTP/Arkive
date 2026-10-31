@@ -40,9 +40,11 @@ class LogsTab {
 	static inline var RAID_BUTTON_WIDTH = 168;
 
 	/** Columns: boss, difficulty, class, DPS, parse, date, time, died. */
-	static var LEFTS:Array<Int> = [34, 430, 560, 690, 790, 890, 970, 1050];
-	static var WIDTHS:Array<Int> = [390, 125, 125, 95, 95, 75, 75, 70];
-	static var TITLES:Array<String> = ["Boss", "Difficulty", "Class", "DPS", "Parse %", "Date", "Time", ""];
+	static var LEFTS:Array<Int> = [34, 430, 560, 690, 845, 940, 1015, 1090];
+	static var WIDTHS:Array<Int> = [390, 125, 125, 150, 90, 70, 70, 60];
+	static var TITLES:Array<String> = ["Boss", "Difficulty", "Class", "DPS / Uptime", "Parse %", "Date", "Time", ""];
+	/** lostark.bible's colours for a support's uptimes: AP, Brand, Identity, T. */
+	static var BUFF_COLORS:Array<String> = ["#FCA5A5", "#86EFAC", "#FDE047", "#93C5FD"];
 
 	static var window:Dynamic;
 	static var tabs:Dynamic;
@@ -586,9 +588,27 @@ class LogsTab {
 		var parse:String = row[6];
 		var values = [row[2], row[3], row[4], row[5], parse.length > 0 ? parse : "-", row[7], row[8], row[9] == "died" ? "Died" : ""];
 		var colors = [TEXT, difficultyColor(row[3]), TEXT, TEXT, parseColor(parse), DIM, DIM, 0xC86464];
-		for (i in 0...LEFTS.length)
-			line.addChild(text(LEFTS[i], 3, WIDTHS[i], 14, colors[i], values[i]));
+		for (i in 0...LEFTS.length) {
+			var cell = text(LEFTS[i], 3, WIDTHS[i], 14, colors[i], values[i]);
+			// A support shows its buff uptimes (AP, Brand, Identity, T) where others show DPS, as lostark.bible does.
+			if (i == 3 && row.length > 10 && row[10].length > 0)
+				cell.htmlText = uptimes(row[10]);
+			line.addChild(cell);
+		}
 		return line;
+	}
+
+	/** "95/96/74/40" as coloured numbers with dim separators. */
+	static function uptimes(list:String):String {
+		var parts = list.split("/");
+		var html:String = "";
+		for (i in 0...parts.length) {
+			var color:String = i < BUFF_COLORS.length ? BUFF_COLORS[i] : "#E6E6E6";
+			if (i > 0)
+				html = html + "<font color='#8C8C8C'> / </font>";
+			html = html + "<font color='" + color + "'>" + parts[i] + "</font>";
+		}
+		return html;
 	}
 
 	/** lostark.bible's parse colours: grey, green 25+, blue 50+, purple 75+, orange 95+, pink 99, gold 100. */

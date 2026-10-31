@@ -1,5 +1,6 @@
 using Arkive.Core.Interface;
 using Arkive.Core.Interface.Abc;
+using Arkive.Core.Tweaks;
 
 namespace Arkive.SmokeTests;
 
@@ -22,7 +23,46 @@ internal static class TweakSmokeTests
         new("works out astrogem processing odds from the game's weights and writes the table the advisor reads", TestAstrogemOdds),
         new("reads a game crash dump: the exception, where, the names on the stack and the tweak code it points into", TestGameCrash),
         new("turns Auto Pull Up's Data Bus reports into log lines and ignores unreadable ones", TestAutoPullUpReports),
+        new("writes Spotify's state for the Spotify Player and reads its buttons, volume and moves", TestSpotifyPlayer),
     ];
+
+    private static void TestSpotifyPlayer()
+    {
+        var now = new SpotifyNowPlaying("Song\twith tab", "Artist", "Album\nline", SpotifyPlayback.Playing,
+            TimeSpan.FromSeconds(83.7), TimeSpan.FromSeconds(225), SpotifyControls.PlayPause | SpotifyControls.Next |
+            SpotifyControls.Previous | SpotifyControls.Seek | SpotifyControls.Shuffle, Shuffle: true, Repeat: null);
+        var text = SpotifyPlayer.Describe(now, 55, "-12\t30\t1", 9);
+        Assert(text == "spotify\t9\nstate\tplaying\ntitle\tSong with tab\nartist\tArtist\nalbum\tAlbum line\ntime\t83\t225\n" +
+                       "can\tpbnsh\nshuffle\ton\nrepeat\t\nvolume\t55\nlayout\t-12\t30\t1\n",
+            $"the Spotify Player file reads wrong: {text.Replace('\n', '|')}");
+        var none = SpotifyPlayer.Describe(null, null, "junk", 10);
+        Assert(none == "spotify\t10\nstate\tnone\nvolume\t\nlayout\t\t\t0\n", $"the file without Spotify reads wrong: {none.Replace('\n', '|')}");
+        // Without a stop of its own and without seeking, Arkive can't stop, so the button isn't offered.
+        var bare = now with { Controls = SpotifyControls.PlayPause };
+        Assert(SpotifyPlayer.Describe(bare, null, "", 1).Contains("\ncan\tp\n"), "stop was offered without a way to stop");
+
+        Assert(SpotifyPlayer.ReadRequest("playpause") == new SpotifyRequest(SpotifyCommand.PlayPause) &&
+               SpotifyPlayer.ReadRequest("repeat") == new SpotifyRequest(SpotifyCommand.Repeat) &&
+               SpotifyPlayer.ReadRequest("volume\t100") == new SpotifyRequest(Volume: 100) &&
+               SpotifyPlayer.ReadRequest("layout\t-40\t12\t0") == new SpotifyRequest(Layout: "-40\t12\t0"),
+            "a Spotify Player message was read wrong");
+        Assert(SpotifyPlayer.ReadRequest("volume\t101") is null && SpotifyPlayer.ReadRequest("volume\t-1") is null &&
+               SpotifyPlayer.ReadRequest("layout\t1\t2\t3") is null && SpotifyPlayer.ReadRequest("layout\t99999\t0\t0") is null &&
+               SpotifyPlayer.ReadRequest("play") is null && SpotifyPlayer.ReadRequest("") is null,
+            "a message the Spotify Player never sends was accepted");
+        // The tweak spells its messages on the Data Bus; Arkive reads them back whole.
+        var bus = new TweakBus(Path.Combine(fixtureDirectory, "spotify-bus"));
+        string? got = null;
+        bus.Received += (channel, message) => got = channel + "|" + message;
+        bus.Receive("go");
+        foreach (var digit in TweakBus.Encode(SpotifyPlayer.Channel, "volume\t42"))
+            bus.Receive(digit.ToString());
+        bus.Receive("end");
+        Assert(got == "spotify|volume\t42" && SpotifyPlayer.ReadRequest(got[8..]) == new SpotifyRequest(Volume: 42),
+            $"the Spotify Player's volume message didn't come through the bus ({got})");
+        Assert(TweakCatalog.Find(SpotifyPlayer.Tweak) is { Available: true, RestartOnly: false, Hooks.Count: 2 },
+            "the Spotify Player isn't in the tweak catalog with its two minimap hooks");
+    }
 
     private static void TestAutoPullUpReports()
     {
@@ -312,7 +352,14 @@ internal static class TweakSmokeTests
         Assert(summary[0] == "found\tEU Central\tChillidari\t1\t123x45\t", $"summary head: {summary[0]}");
         Assert(summary[1].StartsWith("#raids\tBelgardin\tHorizon Cathedral\t", StringComparison.Ordinal), $"summary raids: {summary[1]}");
         Assert(summary[2].StartsWith("Horizon Cathedral\tG1\tArchbishop Arcenos\tLevel 3\tSlayer\t1.68b\t88\t", StringComparison.Ordinal) &&
-               summary[2].EndsWith("\t5:27\tdied", StringComparison.Ordinal), $"summary row: {summary[2]}");
+               summary[2].EndsWith("\t5:27\tdied\t", StringComparison.Ordinal), $"summary row: {summary[2]}");
+        // A support's row carries its buff uptimes (AP, Brand, Identity, T), which the tab shows in place of DPS.
+        var support = lookup! with
+        {
+            Logs = [lookup!.Logs[0] with { ClassName = "Bard", Spec = "Desperate Salvation", Buffs = [0.955, 0.9625, 0.7449, 0.3951] }],
+        };
+        var supportRow = Arkive.Core.Tweaks.PlayerLogsService.Summary(support).Split('\n')[2];
+        Assert(supportRow.EndsWith("\tdied\t96/96/74/40", StringComparison.Ordinal), $"support row: {supportRow}");
 
         // A character whose owner keeps logs private (Zurmos on EU Central): the page has the character but no logs.
         const string hidden = """

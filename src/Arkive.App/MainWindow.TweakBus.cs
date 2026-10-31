@@ -19,6 +19,7 @@ public partial class MainWindow
         [MarketPriceStore.Channel] = SaveMarketPrices,
         [TweakModService.AutoPullUpChannel] = text =>
             Dispatcher.InvokeAsync(() => Log(TweakModService.DescribeAutoPullUp(text) ?? "Auto Pull Up: an unreadable report was ignored.")),
+        [SpotifyPlayer.Channel] = QueueSpotifyRequest,
     };
 
     /// <summary>Prices the player saw on the market, kept so tooltips have them next session too.</summary>
