@@ -36,8 +36,11 @@ public static class SpotifyPlayer
     /// <summary>The file the tweak reads, in <see cref="TweakModService.SpotifyFolder"/>.</summary>
     public const string StateFile = "now.txt";
 
-    /// <summary>Where the player was last left, in the same folder ("x&lt;tab&gt;y&lt;tab&gt;0|1").</summary>
-    public const string LayoutFile = "layout.txt";
+    /// <summary>
+    /// Where the player was last left, in the same folder ("x&lt;tab&gt;y&lt;tab&gt;0|1"). Not layout.txt: the first
+    /// drag code saved the minimap's corner there, so a player kept from then would open in the wrong place.
+    /// </summary>
+    public const string LayoutFile = "place.txt";
 
     /// <summary>The cover and drawn titles, in the same folder.</summary>
     public const string ArtFile = "art.txt";
@@ -124,6 +127,9 @@ public static class SpotifyPlayer
             _ => null,
         };
     }
+
+    /// <summary>True when a check last made at <paramref name="last"/> (null: never) is due again, every <paramref name="every"/> ms.</summary>
+    public static bool IsDue(long now, long? last, long every) => last is not { } at || now - at >= every;
 
     /// <summary>"x&lt;tab&gt;y&lt;tab&gt;0|1" checked and tidied, or null when it isn't a layout.</summary>
     public static string? ReadLayout(string text)
