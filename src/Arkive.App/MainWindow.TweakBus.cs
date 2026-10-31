@@ -17,6 +17,7 @@ public partial class MainWindow
     {
         [TweakModService.SettingsChannel] = SaveInGameTweakChange,
         [MarketPriceStore.Channel] = SaveMarketPrices,
+        [EditUiLayout.Channel] = SaveEditUiLayout,
         [TweakModService.AutoPullUpChannel] = text =>
             Dispatcher.InvokeAsync(() => Log(TweakModService.DescribeAutoPullUp(text) ?? "Auto Pull Up: an unreadable report was ignored.")),
         [SpotifyPlayer.Channel] = QueueSpotifyRequest,
@@ -33,6 +34,24 @@ public partial class MainWindow
         {
             Dispatcher.InvokeAsync(() => Log($"Tweaks: could not keep market prices: {exception.Message}"));
         }
+    }
+
+    /// <summary>A change to the HUD layout made with Edit UI, kept for the next game session.</summary>
+    private void SaveEditUiLayout(string text)
+    {
+        string? change;
+        try
+        {
+            change = EditUiLayout.Save(Tweaks.EditUiFolder, text);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Dispatcher.InvokeAsync(() => Log($"Tweaks: could not keep the Edit UI layout: {exception.Message}"));
+            return;
+        }
+        Dispatcher.InvokeAsync(() => Log(change is null
+            ? $"Edit UI: ignored a layout change Arkive doesn't understand ({text.Replace('\t', '|')})."
+            : $"Edit UI: {change}."));
     }
 
     private void StartTweakBus()

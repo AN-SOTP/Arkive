@@ -358,6 +358,8 @@ public sealed class TweakModService(
 
     /// <summary>Where Arkive writes Spotify's state for the Spotify Player tweak (it reads spotify/now.txt under "home").</summary>
     public string SpotifyFolder => Path.Combine(root, "spotify");
+    /// <summary>Where Edit UI's layout is kept: edit-ui.txt directly under "home" (see <see cref="EditUiLayout"/>).</summary>
+    public string EditUiFolder => root;
     /// <summary>The tweak that advises astrogem processing, from odds tables Arkive writes for every target.</summary>
     public const string AstrogemTweak = "astrogem";
 
