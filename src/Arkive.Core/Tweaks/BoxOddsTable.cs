@@ -10,16 +10,20 @@ namespace Arkive.Core.Tweaks;
 /// and a roll that hits gives one row of its entity group (EFTable_DropEntity) picked evenly, so a group lists an item
 /// several times to make it likelier. A row of a group with no item id gives each class its own item. Rows that go
 /// through EFTable_SmartDrop are decided by the server (daily limits and the like); their items are listed as such.
-/// Boxes of type 2 and 3 only list their contents: the game files have no odds for them, so they're left out.
+/// Boxes of type 2 and 3 only list their contents: the game files have no odds for them (the server rolls them), so
+/// only their names are kept, to say so. Selection boxes (the player picks) are left out.
 /// <para>
 /// Written to boxodds/boxes-&lt;stamp&gt;.txt: "arkive-boxodds 1", then per box a "B name" line followed by its items,
 /// "I name|chance|expected" (the chance to get at least one, and how many on average) or "S name" (decided by the
-/// server). Only boxes with something left to chance are kept; several boxes can share a name.
+/// server), and an "N name" line per box the server rolls. Only boxes with something left to chance get items; several
+/// boxes can share a name.
 /// </para>
 /// </summary>
 public static partial class BoxOddsTable
 {
     public const string Header = "arkive-boxodds 1";
+    /// <summary>Goes in the file name, so a table an older Arkive wrote for the same data2.lpk is replaced.</summary>
+    private const int Version = 2;
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
 
     /// <summary>The money types boxes give that have a name players know (others are left out).</summary>
@@ -46,7 +50,7 @@ public static partial class BoxOddsTable
     {
         var file = new FileInfo(data2Path);
         var stamp = $"{file.Length}-{file.LastWriteTimeUtc.Ticks}";
-        var path = Path.Combine(folder, $"boxes-{stamp}.txt");
+        var path = Path.Combine(folder, $"boxes-{Version}-{stamp}.txt");
         if (File.Exists(path))
             return path;
         Directory.CreateDirectory(folder);
@@ -60,7 +64,11 @@ public static partial class BoxOddsTable
 
     public sealed record BoxItem(string Name, double Chance, double Expected, bool Server);
 
-    public sealed record Box(int Id, string Name, IReadOnlyList<BoxItem> Items);
+    /// <summary>A box and what it gives; no items when the server rolls it (only its contents are in the files).</summary>
+    public sealed record Box(int Id, string Name, IReadOnlyList<BoxItem> Items)
+    {
+        public bool ServerRolled => Items.Count == 0;
+    }
 
     private sealed record Entity(string[] Names, double Count);
 
@@ -71,6 +79,11 @@ public static partial class BoxOddsTable
         var text = new StringBuilder(Header).Append('\n');
         foreach (var box in boxes)
         {
+            if (box.ServerRolled)
+            {
+                text.Append("N ").Append(box.Name).Append('\n');
+                continue;
+            }
             text.Append("B ").Append(box.Name).Append('\n');
             foreach (var item in box.Items)
                 if (item.Server)
@@ -81,7 +94,7 @@ public static partial class BoxOddsTable
         return text.ToString();
     }
 
-    /// <summary>Every box with something left to chance, by item id.</summary>
+    /// <summary>Every box with something left to chance, by item id, then the boxes the server rolls.</summary>
     public static IReadOnlyList<Box> Read(string data2Path, string workDirectory) =>
         CombatPowerTable.WithDatabases(data2Path, workDirectory,
             ["EFTable_RandomBoxBase.db", "EFTable_DropBase.db", "EFTable_DropEntity.db", "EFTable_SmartDrop.db", "EFTable_Item.db", "EFTable_GameMsg.db"],
@@ -163,6 +176,15 @@ public static partial class BoxOddsTable
                         if (Odds(rows, entities, drops, smartDrops) is { } items)
                             boxes.Add(new Box((int)id, name, items));
                     }
+                }
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = "SELECT PrimaryKey FROM RandomBoxBase WHERE Type IN (2, 3) AND RandomBoxEntityId != 0 " +
+                                          "AND ComponentDesc NOT LIKE '%selective%' ORDER BY PrimaryKey";
+                    using var reader = command.ExecuteReader();
+                    while (reader.Read())
+                        if (names.TryGetValue(reader.GetInt64(0), out var name))
+                            boxes.Add(new Box((int)reader.GetInt64(0), name, []));
                 }
                 return (IReadOnlyList<Box>)boxes;
             });

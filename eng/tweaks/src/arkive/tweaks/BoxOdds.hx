@@ -14,7 +14,9 @@ import flash.utils.Dictionary;
 	installs the tweak: per box name, every item with the chance to get at least one and how many on average. Several
 	boxes can share a name, so the one whose items the tooltip lists is picked. Items whose drop the server decides
 	(daily limits) say "server". Boxes that only list their contents in the game files (shop gem chests, card packs) roll
-	on the server and get nothing. Prices are Market Price on Tooltips' (only items you looked up); gold counts as is.
+	on the server: their tooltip says so in one grey line ("serverNote"). When the game's list has no rows Arkive can put
+	the odds on, they go in a line under the title instead. Prices are Market Price on Tooltips' (only items you looked
+	up); gold counts as is.
 **/
 @:keep
 class BoxOdds {
@@ -26,11 +28,16 @@ class BoxOdds {
 
 	/** The table: box name -> [[{name, chance, expected, server}]], one list per box with that name. */
 	static var boxes:Dynamic;
+	/** Names of the boxes the server rolls (the files only list their contents) -> true. */
+	static var rolled:Dynamic;
 	static var tableFile = "";
 	static var loadingFile = "";
 
 	/** Content rows given their odds: {before, after}, the text before and with them (the game can hand a list twice). */
 	static var original:Dictionary = new Dictionary(true);
+
+	/** How many of a box's items the summary line names when the game's list has no rows to put the odds on. */
+	static inline var SUMMARY_ITEMS = 6;
 
 	/** TooltipDocument.setMainTooltipData, before the game draws it: odds beside the box's contents, value under the title. */
 	public static function onMainTooltip(self:Dynamic, args:Array<Dynamic>):Dynamic {
@@ -38,10 +45,9 @@ class BoxOdds {
 		if (list == null || !(untyped __is__(list, Array)))
 			return null;
 		load();
-		if (boxes == null)
-			return null;
 		var shown:Array<Dynamic> = list;
 		var name:String = null;
+		var title = false;
 		var types:Array<String> = [];
 		var rows:Array<Dynamic> = [];
 		var bunches:Array<Dynamic> = [];
@@ -51,8 +57,10 @@ class BoxOdds {
 			var type:String = box.type;
 			types.push(type);
 			if (type == "NameTagBox" && name == null)
-				name = Prices.key(Tooltips.htmlOf(box.value));
-			else if ((box.type == "ItemBunch" || box.type == "ItemSmallBunch") && box.value != null) {
+				name = plain(Tooltips.htmlOf(box.value));
+			else if (type == "ItemTitle")
+				title = true;
+			else if ((type == "ItemBunch" || type == "ItemSmallBunch") && box.value != null) {
 				var data:Array<Dynamic> = box.value.itemData;
 				if (data != null && untyped __is__(data, Array)) {
 					bunches.push(box.value);
@@ -62,14 +70,31 @@ class BoxOdds {
 				}
 			}
 		}
-		if (name == null || !Text.has(boxes, name))
+		if (!title || name == null || name == "")
 			return null;
+		var data = Options.get(TWEAK, "showData", false) == true;
+		if (boxes == null) {
+			if (data)
+				dump(shown, name, loadingFile == "" ? "no odds table in the settings" : "the odds table isn't read yet (" + loadingFile + ")",
+					types, rows);
+			return null;
+		}
+		if (!Text.has(boxes, name)) {
+			var server = Text.has(rolled, name);
+			if (server && GameUi.on(TWEAK, "serverNote"))
+				TooltipLines.add(list, TWEAK, font(DIM, "Box Odds: the server rolls this box. The game files have no odds for it."),
+					TooltipLines.BOX_VALUE);
+			if (data)
+				dump(shown, name, server ? "rolled by the server" : "not a box with odds", types, rows);
+			return null;
+		}
 		var choices:Array<Dynamic> = untyped boxes[name];
 		var items = pick(choices, rows);
 		var server = false;
+		var placed = 0;
 		for (row in rows) {
 			var text = textOf(row);
-			var item = itemIn(items, Text.stripTags(text));
+			var item = itemIn(items, plain(text));
 			if (item == null)
 				continue;
 			if (item.server == true)
@@ -77,15 +102,71 @@ class BoxOdds {
 			var after = withOdds(text, item);
 			row.text = after;
 			untyped original[row] = {before: text, after: after};
+			placed++;
 		}
 		if (server && bunches.length > 0)
 			note(bunches[bunches.length - 1]);
+		// No list rows to put the odds on (a layout Arkive doesn't know): the odds go in a line under the title instead.
+		if (placed == 0)
+			TooltipLines.add(list, TWEAK + ".odds", summary(items), TooltipLines.BOX_VALUE - 1);
 		if (GameUi.on(TWEAK, "value"))
 			valueLine(list, name, items);
-		if (Options.get(TWEAK, "showData", false) == true)
-			shown.push({type: "SingleTextBox", dirty: true, value: font(DIM, escape("Arkive box data: \"" + name + "\", " + choices.length
-				+ " table entries, boxes " + types.join(",") + ", rows: " + describeRows(rows)))});
+		if (data)
+			dump(shown, name, choices.length + " table entries, " + placed + " rows given odds", types, rows);
 		return null;
+	}
+
+	/** showData: a grey line at the end of the tooltip with what Arkive read. */
+	static function dump(shown:Array<Dynamic>, name:String, status:String, types:Array<String>, rows:Array<Dynamic>):Void {
+		shown.push({type: "SingleTextBox", dirty: true, value: font(DIM, escape("Arkive box data: \"" + name + "\": " + status + "; boxes "
+			+ types.join(",") + "; rows " + describeRows(rows)))});
+	}
+
+	/** "Odds: Lucky Shard Mini Chest 100% · Lucky Shard Jackpot Chest 5% · …", likeliest first; "43 items, 2.3% each" when even. */
+	static function summary(items:Array<Dynamic>):String {
+		var left:Array<Dynamic> = [];
+		for (item in items)
+			if (item.server != true)
+				left.push(item);
+		if (left.length == 0)
+			return font(DIM, "Odds: decided by the server");
+		var first:Float = left[0].chance;
+		var even = true;
+		for (item in left) {
+			var chance:Float = item.chance;
+			if (Math.abs(chance - first) > 0.000001)
+				even = false;
+		}
+		if (even && left.length > SUMMARY_ITEMS)
+			return font(DIM, "Odds: " + whole(left.length) + " items, ") + font(ODDS, percent(first)) + font(DIM, " each");
+		// Likeliest first: pick the highest left a few times (lists are short).
+		var parts:Array<String> = [];
+		while (left.length > 0 && parts.length < SUMMARY_ITEMS) {
+			var best = 0;
+			for (i in 1...left.length) {
+				var a:Float = left[i].chance;
+				var b:Float = left[best].chance;
+				if (a > b)
+					best = i;
+			}
+			var item:Dynamic = left[best];
+			untyped left.splice(best, 1);
+			var name:String = item.name;
+			parts.push(font(DIM, name + " ") + font(ODDS, percent(item.chance)));
+		}
+		var more = left.length > 0 ? font(DIM, " · " + whole(left.length) + " more") : "";
+		return font(DIM, "Odds: ") + parts.join(font(DIM, " · ")) + more;
+	}
+
+	/** Text without tags, the entities the game writes decoded, and no spaces at the ends: how names are compared. */
+	static function plain(html:String):String {
+		if (html == null)
+			return "";
+		var text = Text.stripTags(html);
+		if (text.indexOf("&") >= 0)
+			text = text.split("&apos;").join("'").split("&#39;").join("'").split("&quot;").join("\"").split("&lt;").join("<")
+				.split("&gt;").join(">").split("&nbsp;").join(" ").split("&amp;").join("&");
+		return Text.trim(text);
 	}
 
 	/** The row's text as the game sent it ("left|right"), before any odds were added. */
@@ -128,7 +209,7 @@ class BoxOdds {
 			var items:Array<Dynamic> = choice;
 			var score = 0;
 			for (row in rows)
-				if (itemIn(items, Text.stripTags(textOf(row))) != null)
+				if (itemIn(items, plain(textOf(row))) != null)
 					score++;
 			if (score > bestScore) {
 				best = items;
@@ -210,11 +291,8 @@ class BoxOdds {
 		loader.addEventListener(Event.COMPLETE, function(e:Dynamic) {
 			try {
 				var text:String = loader.data;
-				var parsed = parse(text);
-				if (parsed != null && loadingFile == path) {
-					boxes = parsed;
+				if (loadingFile == path && parse(text))
 					tableFile = path;
-				}
 			} catch (error:Dynamic) {}
 		});
 		loader.addEventListener("ioError", function(e:Dynamic) {});
@@ -222,11 +300,15 @@ class BoxOdds {
 		loader.load(new URLRequest(path));
 	}
 
-	/** BoxOddsTable.Encode: "B name" per box, then "I name|chance|expected" or "S name" per item. */
-	static function parse(text:String):Dynamic {
+	/**
+		BoxOddsTable.Encode: "B name" per box, then "I name|chance|expected" or "S name" per item; "N name" per box the
+		server rolls. Sets boxes and rolled.
+	**/
+	static function parse(text:String):Bool {
 		if (text == null || text.indexOf("arkive-boxodds 1") != 0)
-			return null;
+			return false;
 		var result:Dynamic = {};
+		var server:Dynamic = {};
 		var items:Array<Dynamic> = null;
 		var lines = text.split("\n");
 		for (line in lines) {
@@ -240,6 +322,8 @@ class BoxOdds {
 					untyped result[rest] = [];
 				var same:Array<Dynamic> = untyped result[rest];
 				same.push(items);
+			} else if (kind == "N") {
+				untyped server[rest] = true;
 			} else if (items != null && kind == "I") {
 				var parts = rest.split("|");
 				if (parts.length >= 3)
@@ -248,7 +332,9 @@ class BoxOdds {
 				items.push({name: rest, chance: 0, expected: 0, server: true});
 			}
 		}
-		return result;
+		boxes = result;
+		rolled = server;
+		return true;
 	}
 
 	static function decimal(text:String):Float {

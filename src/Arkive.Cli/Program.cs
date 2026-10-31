@@ -3382,11 +3382,11 @@ static int BoxOdds(string data2, string? outDirectory, string? filter)
             Directory.CreateDirectory(outDirectory);
             var path = Path.Combine(Path.GetFullPath(outDirectory), "boxes.txt");
             File.WriteAllText(path, Arkive.Core.Tweaks.BoxOddsTable.Encode(boxes));
-            Console.WriteLine($"{boxes.Count} boxes -> {path}");
+            Console.WriteLine($"{boxes.Count(box => !box.ServerRolled)} boxes with odds, {boxes.Count(box => box.ServerRolled)} rolled by the server -> {path}");
         }
         foreach (var box in boxes.Where(box => filter is null || box.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)))
         {
-            Console.WriteLine($"{box.Id} {box.Name}");
+            Console.WriteLine(box.ServerRolled ? $"{box.Id} {box.Name}: rolled by the server (no odds in the files)" : $"{box.Id} {box.Name}");
             foreach (var item in box.Items)
                 Console.WriteLine(item.Server ? $"  {item.Name}: decided by the server" : $"  {item.Name}: {item.Chance:P3}, {item.Expected:0.###} on average");
         }
