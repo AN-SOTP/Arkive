@@ -146,10 +146,17 @@ public partial class MainWindow
                         {
                             coverHash = hash;
                             var pictures = Dispatcher.Invoke(() => SpotifyArt.Build(cover, now.Title, now.Artist));
-                            art = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(pictures)))[..12].ToLowerInvariant();
+                            var lines = string.Concat(pictures.Select(picture =>
+                                SpotifyPlayer.ImageLine(picture.Name, picture.Width, picture.Height, picture.Pixels)));
+                            var previous = art;
+                            art = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(lines)))[..12].ToLowerInvariant();
                             Directory.CreateDirectory(folder);
-                            File.WriteAllText(artPath + ".tmp", pictures);
+                            // The PNG files first: the game may load them as soon as art.txt names them.
+                            foreach (var picture in pictures)
+                                File.WriteAllBytes(Path.Combine(folder, SpotifyPlayer.PictureFile(picture.Name, art)), picture.Png);
+                            File.WriteAllText(artPath + ".tmp", SpotifyPlayer.PicturesLine(art, pictures.Select(picture => picture.Name)) + lines);
                             File.Move(artPath + ".tmp", artPath, overwrite: true);
+                            RemoveOldPictures(folder, art, previous);
                         }
                     }
                 }
@@ -184,5 +191,23 @@ public partial class MainWindow
         foreach (var process in game)
             process.Dispose();
         return game.Length > 0;
+    }
+
+    /// <summary>Deletes the pictures of earlier tracks, keeping the new ones and the ones the game may still be loading.</summary>
+    private static void RemoveOldPictures(string folder, string art, string shown)
+    {
+        foreach (var file in Directory.EnumerateFiles(folder, "*-*.png"))
+        {
+            var name = Path.GetFileNameWithoutExtension(file);
+            if (name.EndsWith("-" + art, StringComparison.Ordinal) || (shown.Length > 0 && name.EndsWith("-" + shown, StringComparison.Ordinal)))
+                continue;
+            try
+            {
+                File.Delete(file);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
     }
 }

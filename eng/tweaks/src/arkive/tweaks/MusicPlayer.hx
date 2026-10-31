@@ -21,10 +21,10 @@ import scaleform.clik.events.ButtonEvent;
 
 	The game can't reach Spotify, so Arkive does it (through Windows' media controls): it writes Spotify's state to
 	<home>/spotify/now.txt every second (plain ASCII: the game got nothing after a Japanese title, so Arkive spells other
-	letters as \u and four hex digits) and the pictures to art.txt (the cover, plus the song and artist drawn when the
-	game's fonts lack their letters, as with Japanese or Korean), which the player reads; the player sends its buttons,
-	volume, jumps and position on the Data Bus (channel "spotify"). Pictures arrive as pixel values and are drawn into a
-	BitmapData here, the way the game builds bitmaps itself; nothing is loaded as an image file.
+	letters as \u and four hex digits) and the pictures (the cover, plus the song and artist drawn when the game's fonts
+	lack their letters, as with Japanese or Korean) as PNG files and again as pixel values in art.txt, which the player
+	reads; the player sends its buttons, volume, jumps and position on the Data Bus (channel "spotify"). Pictures are
+	loaded the way the game loads its own images, or drawn from the pixel values where the game won't (see showArt).
 **/
 @:keep
 class MusicPlayer {
@@ -39,6 +39,8 @@ class MusicPlayer {
 	/** After a volume drag, the file's volume is ignored this long, so the slider doesn't jump back. */
 	static inline var VOLUME_HOLD_MS = 2500;
 	static inline var VOLUME_SEND_MS = 200;
+	/** How long the PNG files may take to load before the pictures are drawn from their pixels instead. */
+	static inline var LOAD_WAIT_MS = 4000;
 
 	/** The player is as wide as the minimap's backing, within these bounds. */
 	static inline var MIN_WIDTH = 270;
@@ -52,9 +54,13 @@ class MusicPlayer {
 	static inline var PLAY = 34;
 	static inline var PLAY_HEIGHT = 30;
 	static inline var CONTROLS_Y = 74;
-	static inline var GAUGE_Y = 114;
-	static inline var VOLUME_Y = 132;
-	static inline var FULL_HEIGHT = 162;
+	/** The middle of the gauge row; the game's gauge is used at its own height (SimpleProgressBar_01 is 292 x 18). */
+	static inline var GAUGE_Y = 117;
+	static inline var GAUGE_HEIGHT = 18;
+	/** Room for the time at each end of the gauge. */
+	static inline var TIME_WIDTH = 38;
+	static inline var VOLUME_Y = 134;
+	static inline var FULL_HEIGHT = 166;
 	static inline var STRIP = 30;
 	static inline var MINI = 22;
 	/** The game's row of shortcut buttons under the minimap's backing (another HUD frame); the player goes below it. */
@@ -62,8 +68,8 @@ class MusicPlayer {
 	/** The line under the player that says what went wrong, for in-game tests. */
 	static inline var ERROR_HEIGHT = 16;
 	static inline var RED = 0xFF6A5A;
-	/** The game's window colour (the Tweak Settings window's own), solid under the panel art. */
-	static inline var PANEL_COLOR = 0x15181D;
+	/** The body colour of the game's window art (V2subWndBG, 0B0E0F at 92%), solid under it. */
+	static inline var PANEL_COLOR = 0x0B0E0F;
 
 	static inline var WHITE = 0xFFFFFF;
 	static inline var TEXT = 0xD8D8D8;
@@ -167,6 +173,16 @@ class MusicPlayer {
 	static var artReading = false;
 	static var artReported = false;
 	static var hasCover = false;
+	/** The ways to show pictures, tried in order (see showArt), and the first one not yet found failing in this game. */
+	static var ways:Array<String> = ["file", "pixels", "shapes"];
+	static var way = 0;
+	/** The way the pictures were last shown, the step a drawing way had reached, and the PNG files being loaded. */
+	static var shownBy = "";
+	static var artStep = "";
+	static var artGeneration = 0;
+	static var artLoading = false;
+	static var artLoadStarted = 0;
+	static var artLoadParsed:Dynamic;
 
 	static var folded = false;
 	static var offsetX:Float = 0;
@@ -293,12 +309,13 @@ class MusicPlayer {
 		player.name = "arkiveSpotifyPlayer";
 		player.addEventListener(MouseEvent.MOUSE_DOWN, grab);
 
-		// The game's window backing, as its own windows and the Tweak Settings window have it (nine-slice, so it keeps
-		// its edges at this size; the "renew" one is the HUD's see-through bar); a drawn one without either.
-		var kind = "WindowBG_V2";
+		// The game's sub-window backing (WindowBG_renew_V2 = V2subWndBG, nine-slice, so it keeps its edges at this size);
+		// not WindowBG_V2, whose art has a title bar with a brown line 38 px down that its nine-slice never moves. A drawn
+		// one without either.
+		var kind = "WindowBG_renew_V2";
 		panel = make(kind);
 		if (panel == null) {
-			kind = "WindowBG_renew_V2";
+			kind = "WindowBG_V2";
 			panel = make(kind);
 		}
 		if (panel == null) {
@@ -307,8 +324,8 @@ class MusicPlayer {
 			drawnPanel = true;
 		} else {
 			panel.mouseChildren = false;
-			// The game's window art lets the world show through (its windows sit over a dimmed screen); a solid fill
-			// in the window's colour under it keeps the quest list and buttons beneath from showing.
+			// The game's window art lets the world show through (92% in the middle, less at the edges); a solid fill in
+			// its colour under it keeps the quest list and buttons beneath from showing.
 			underlay = new Shape();
 			player.addChild(underlay);
 		}
@@ -357,7 +374,7 @@ class MusicPlayer {
 		artistImage = picture(TEXT_X, 35);
 
 		shuffleButton = button(BUTTON, BUTTON_HEIGHT, WORDS.shuffleOff, "shuffle");
-		shuffleMark = mark(shuffleButton, "shuffle", 12, BUTTON, BUTTON_HEIGHT);
+		shuffleMark = mark(shuffleButton, "shuffle", 14, BUTTON, BUTTON_HEIGHT);
 		shuffleDot = dot(shuffleButton, BUTTON, BUTTON_HEIGHT);
 		previousButton = button(BUTTON, BUTTON_HEIGHT, WORDS.previous, "previous");
 		mark(previousButton, "previous", 12, BUTTON, BUTTON_HEIGHT);
@@ -366,7 +383,7 @@ class MusicPlayer {
 		nextButton = button(BUTTON, BUTTON_HEIGHT, WORDS.next, "next");
 		mark(nextButton, "next", 12, BUTTON, BUTTON_HEIGHT);
 		repeatButton = button(BUTTON, BUTTON_HEIGHT, WORDS.repeatOff, "repeat");
-		repeatMark = mark(repeatButton, "repeat", 12, BUTTON, BUTTON_HEIGHT);
+		repeatMark = mark(repeatButton, "repeat", 14, BUTTON, BUTTON_HEIGHT);
 		repeatDot = dot(repeatButton, BUTTON, BUTTON_HEIGHT);
 		repeatOne = text(BUTTON - 10, 0, 10, 9, GOLD, false);
 		repeatOne.text = "1";
@@ -375,8 +392,8 @@ class MusicPlayer {
 		overlay(repeatButton).addChild(repeatOne);
 
 		// The time and the game's gauge (a drawn bar without it); a click on it jumps there.
-		elapsed = text(PAD, GAUGE_Y - 7, 40, 11, DIM, false);
-		total = text(panelWidth - PAD - 40, GAUGE_Y - 7, 40, 11, DIM, true);
+		elapsed = text(PAD, GAUGE_Y - 9, TIME_WIDTH - 2, 11, DIM, false);
+		total = text(panelWidth - PAD - TIME_WIDTH + 2, GAUGE_Y - 9, TIME_WIDTH - 2, 11, DIM, true);
 		gauge = make("SimpleProgressBar_01");
 		if (gauge != null) {
 			try {
@@ -384,26 +401,33 @@ class MusicPlayer {
 				gauge.maximum = 100;
 				gauge.completeTime = 0;
 				gauge.targetFixed = -1;
-				gauge.width = panelWidth - 2 * PAD - 84;
-				gauge.height = 8;
-				gauge.x = PAD + 42;
-				gauge.y = GAUGE_Y - 4;
+				gauge.x = PAD + TIME_WIDTH;
+				gauge.y = GAUGE_Y - GAUGE_HEIGHT / 2;
 				gauge.mouseEnabled = false;
 				gauge.mouseChildren = false;
 				player.addChild(gauge);
+				// Its configUI measures each part's margins against the gauge's size at that moment (CLIK Constraints,
+				// reflow): sized before it, the parts kept their own 290 x 16 and the fill stood out of the frame. So it
+				// sets up at its own 292 x 18 first, as the game's movies place it, then takes the new width and reflows.
+				gauge.validateNow();
+				gauge.width = gaugeWidth();
+				gauge.height = GAUGE_HEIGHT;
+				gauge.validateNow();
 			} catch (error:Dynamic) {
+				if (gauge.parent != null)
+					player.removeChild(gauge);
 				gauge = null;
 			}
 		}
 		gaugeDrawn = new Shape();
-		gaugeDrawn.x = PAD + 42;
+		gaugeDrawn.x = PAD + TIME_WIDTH;
 		gaugeDrawn.y = GAUGE_Y - 2;
 		player.addChild(gaugeDrawn);
 		gaugeHit = new Sprite();
-		gaugeHit.x = PAD + 42;
-		gaugeHit.y = GAUGE_Y - 7;
+		gaugeHit.x = PAD + TIME_WIDTH;
+		gaugeHit.y = GAUGE_Y - GAUGE_HEIGHT / 2;
 		gaugeHit.graphics.beginFill(0x000000, 0.01);
-		gaugeHit.graphics.drawRect(0, 0, panelWidth - 2 * PAD - 84, 14);
+		gaugeHit.graphics.drawRect(0, 0, gaugeWidth(), GAUGE_HEIGHT);
 		gaugeHit.graphics.endFill();
 		gaugeHit.buttonMode = true;
 		gaugeHit.addEventListener(MouseEvent.MOUSE_DOWN, function(event:Dynamic) event.stopPropagation());
@@ -580,44 +604,28 @@ class MusicPlayer {
 		g.clear();
 		switch (kind) {
 			case "shuffle":
-				g.lineStyle(1.5 * s, color, 1);
-				g.moveTo(0, 3 * s);
-				g.lineTo(3 * s, 3 * s);
-				g.lineTo(8 * s, 9 * s);
-				g.lineTo(11 * s, 9 * s);
-				g.moveTo(0, 9 * s);
-				g.lineTo(3 * s, 9 * s);
-				g.lineTo(8 * s, 3 * s);
-				g.lineTo(11 * s, 3 * s);
-				g.lineStyle();
+				// Spotify's crossed arrows on a 14 grid, all fills (Scaleform drew the earlier 1.5 px strokes as a
+				// muddle): the line from the top left breaks where the other one crosses it.
+				var t:Float = size / 14;
 				g.beginFill(color, 1);
-				g.moveTo(9 * s, 0.5 * s);
-				g.lineTo(12 * s, 3 * s);
-				g.lineTo(9 * s, 5.5 * s);
-				g.lineTo(9 * s, 0.5 * s);
-				g.moveTo(9 * s, 6.5 * s);
-				g.lineTo(12 * s, 9 * s);
-				g.lineTo(9 * s, 11.5 * s);
-				g.lineTo(9 * s, 6.5 * s);
+				band(g, [0, 3, 3, 3, 4.6, 5.1], t);
 				g.endFill();
+				g.beginFill(color, 1);
+				band(g, [7.4, 8.9, 9, 11, 11, 11], t);
+				g.endFill();
+				g.beginFill(color, 1);
+				band(g, [0, 11, 3, 11, 9, 3, 11, 3], t);
+				g.endFill();
+				arrow(g, color, 11 * t, 3 * t, t);
+				arrow(g, color, 11 * t, 11 * t, t);
 				return;
 			case "repeat":
-				g.lineStyle(1.5 * s, color, 1);
-				g.moveTo(9 * s, 3 * s);
-				g.lineTo(2 * s, 3 * s);
-				g.lineTo(1 * s, 4 * s);
-				g.lineTo(1 * s, 8 * s);
-				g.lineTo(2 * s, 9 * s);
-				g.lineTo(10 * s, 9 * s);
-				g.lineTo(11 * s, 8 * s);
-				g.lineTo(11 * s, 5 * s);
-				g.lineStyle();
+				// A loop with cut corners and the arrow at its top right, all fills.
+				var t:Float = size / 14;
 				g.beginFill(color, 1);
-				g.moveTo(8 * s, 0.5 * s);
-				g.lineTo(11 * s, 3 * s);
-				g.lineTo(8 * s, 5.5 * s);
-				g.lineTo(8 * s, 0.5 * s);
+				band(g, [10, 3, 2.5, 3, 1, 4.5, 1, 9.5, 2.5, 11, 11.5, 11, 13, 9.5, 13, 6.5], t);
 				g.endFill();
+				arrow(g, color, 10 * t, 3 * t, t);
 				return;
 			case "speaker":
 				g.beginFill(color, 1);
@@ -628,9 +636,10 @@ class MusicPlayer {
 				g.lineTo(3 * s, 8 * s);
 				g.lineTo(3 * s, 4 * s);
 				g.endFill();
-				g.lineStyle(1, color, 0.8);
-				g.moveTo(9 * s, 4 * s);
-				g.curveTo(10.5 * s, 6 * s, 9 * s, 8 * s);
+				g.beginFill(color, 0.8);
+				g.drawRect(8.5 * s, 4.5 * s, 1.2 * s, 3 * s);
+				g.drawRect(10.3 * s, 3 * s, 1.2 * s, 6 * s);
+				g.endFill();
 				return;
 			default:
 		}
@@ -662,6 +671,66 @@ class MusicPlayer {
 				g.drawRect(1 * s, 5 * s, 10 * s, 2 * s);
 				g.drawRect(5 * s, 1 * s, 2 * s, 10 * s);
 		}
+		g.endFill();
+	}
+
+	/**
+		A line 2 grid units thick along the points (x, y pairs, in units of `t` pixels) as one filled outline with mitred
+		corners, for a fill begun by the caller. The points mustn't turn back on themselves.
+	**/
+	static function band(g:flash.display.Graphics, points:Array<Float>, t:Float):Void {
+		var count = Std.int(points.length / 2);
+		var left:Array<Float> = [];
+		var right:Array<Float> = [];
+		for (i in 0...count) {
+			var x = points[i * 2];
+			var y = points[i * 2 + 1];
+			// The normals of the segments before and after this point (the same one at the ends).
+			var before = i > 0 ? i - 1 : 0;
+			var after = i < count - 1 ? i : count - 2;
+			var ax = -(points[before * 2 + 3] - points[before * 2 + 1]);
+			var ay = points[before * 2 + 2] - points[before * 2];
+			var al = Math.sqrt(ax * ax + ay * ay);
+			var bx = -(points[after * 2 + 3] - points[after * 2 + 1]);
+			var by = points[after * 2 + 2] - points[after * 2];
+			var bl = Math.sqrt(bx * bx + by * by);
+			ax /= al;
+			ay /= al;
+			bx /= bl;
+			by /= bl;
+			var mx = ax + bx;
+			var my = ay + by;
+			var ml = Math.sqrt(mx * mx + my * my);
+			mx /= ml;
+			my /= ml;
+			// Half the thickness (one unit) along the mitre, longer the sharper the corner.
+			var reach = 1 / (mx * bx + my * by);
+			left.push((x + mx * reach) * t);
+			left.push((y + my * reach) * t);
+			right.push((x - mx * reach) * t);
+			right.push((y - my * reach) * t);
+		}
+		g.moveTo(left[0], left[1]);
+		var i = 2;
+		while (i < left.length) {
+			g.lineTo(left[i], left[i + 1]);
+			i += 2;
+		}
+		i = right.length - 2;
+		while (i >= 0) {
+			g.lineTo(right[i], right[i + 1]);
+			i -= 2;
+		}
+		g.lineTo(left[0], left[1]);
+	}
+
+	/** An arrowhead pointing right with its base at (x, y), 3 units long and 6 tall, in its own fill. */
+	static function arrow(g:flash.display.Graphics, color:Int, x:Float, y:Float, t:Float):Void {
+		g.beginFill(color, 1);
+		g.moveTo(x, y - 3 * t);
+		g.lineTo(x + 3 * t, y);
+		g.lineTo(x, y + 3 * t);
+		g.lineTo(x, y - 3 * t);
 		g.endFill();
 	}
 
@@ -902,6 +971,7 @@ class MusicPlayer {
 			}
 			if (state == "playing")
 				showTime();
+			checkLoading();
 		} catch (error:Dynamic) {
 			fail("tick", error);
 		}
@@ -1047,10 +1117,12 @@ class MusicPlayer {
 		return untyped __global__["isFinite"](value);
 	}
 
-	/** Reads art.txt for a new track and draws its pictures; "" clears them. */
+	/** Reads art.txt for a new track and shows its pictures; "" clears them. */
 	static function readArt(id:String):Void {
 		artWanted = id;
 		if (id == "") {
+			artGeneration++;
+			artLoading = false;
 			showPictures({});
 			art = "";
 			return;
@@ -1061,23 +1133,12 @@ class MusicPlayer {
 		var loader = new URLLoader();
 		loader.addEventListener("complete", function(e:Dynamic) {
 			artReading = false;
-			var data:String = loader.data;
-			var pictures:Dynamic = {};
+			art = id;
 			try {
-				pictures = decode(data);
-				art = id;
-				showPictures(pictures);
-				if (!artReported && hasCover) {
-					artReported = true;
-					Bus.send(ID, "art\tshown");
-				}
+				var data:String = loader.data;
+				showArt(parseArt(data));
 			} catch (error:Dynamic) {
-				art = id;
-				showPictures({});
-				if (!artReported) {
-					artReported = true;
-					Bus.send(ID, "art\tfailed");
-				}
+				artFailed(error);
 			}
 			// A newer track came while reading: read again.
 			if (artWanted != art)
@@ -1094,24 +1155,228 @@ class MusicPlayer {
 		loader.load(new URLRequest(Options.home() + "/spotify/art.txt"));
 	}
 
-	/** The pictures of art.txt, by name, as BitmapData filled from their pixel values (8 hex digits each, ARGB). */
-	static function decode(data:String):Dynamic {
-		var pictures:Dynamic = {};
+	/**
+		art.txt's pictures: {id, names, lines: {name: [width, height, pixels]}}. The pixels stay text until the game won't
+		load the PNG files and they are needed.
+	**/
+	static function parseArt(data:String):Dynamic {
+		var parsed:Dynamic = {id: "", names: [], lines: {}};
 		if (data == null)
-			return pictures;
-		var lines = data.split("\n");
-		for (line in lines) {
+			return parsed;
+		var found:Array<String> = [];
+		for (line in data.split("\n")) {
 			var parts = line.split("\t");
-			if (parts.length != 5 || parts[0] != "image")
-				continue;
-			var name:String = parts[1];
-			var width = number(parts[2], 0);
-			var height = number(parts[3], 0);
-			var pixels:String = parts[4];
-			if (width <= 0 || height <= 0 || width > 512 || height > 128 || pixels.length != width * height * 8)
-				continue;
+			if (parts[0] == "pictures" && parts.length >= 2) {
+				parsed.id = parts[1];
+			} else if (parts[0] == "image" && parts.length == 5) {
+				var width = number(parts[2], 0);
+				var height = number(parts[3], 0);
+				var pixels:String = parts[4];
+				if (width > 0 && height > 0 && width <= 512 && height <= 128 && pixels.length == width * height * 8) {
+					untyped parsed.lines[parts[1]] = [width, height, pixels];
+					found.push(parts[1]);
+				}
+			}
+		}
+		parsed.names = found;
+		return parsed;
+	}
+
+	/**
+		Shows the pictures the first way that works in this game, in the order of `ways`: "file" loads Arkive's PNG files
+		with a Loader as the game loads its own images (BaseImageLoader); "pixels" fills BitmapData with setPixel32 (the
+		round-5 way, which threw in the game); "shapes" draws them as rectangles of colour, which needs only the drawing
+		calls the player's marks already use. A way that fails is skipped for the rest of the session and Arkive's log
+		says why.
+	**/
+	static function showArt(parsed:Dynamic):Void {
+		artGeneration++;
+		artLoading = false;
+		var names:Array<String> = parsed.names;
+		if (names.length == 0) {
+			showPictures({});
+			return;
+		}
+		var kind:String = ways[way];
+		if (kind == "file" && parsed.id != "")
+			loadFiles(parsed);
+		else
+			paint(parsed, kind == "file" ? way + 1 : way);
+	}
+
+	/** Draws the pictures from their pixels, the `index`th way of `ways` or a later one when it throws. */
+	static function paint(parsed:Dynamic, index:Int):Void {
+		while (index < ways.length) {
+			var kind:String = ways[index];
+			if (kind == "pixels" || kind == "shapes") {
+				try {
+					artStep = "start";
+					showPictures(kind == "pixels" ? bitmaps(parsed) : rectangles(parsed));
+					artShown(kind);
+					return;
+				} catch (error:Dynamic) {
+					note("pictures by " + kind + " failed at " + artStep + ": " + str(error));
+					if (index >= way)
+						way = index + 1;
+				}
+			}
+			index++;
+		}
+		artFailed("no way to show pictures worked");
+	}
+
+	/** Loads the PNG files into the holders the way the game's BaseImageLoader does; any miss falls back to the pixels. */
+	static function loadFiles(parsed:Dynamic):Void {
+		var generation = artGeneration;
+		var names:Array<String> = parsed.names;
+		var jobs:Array<Dynamic> = [];
+		for (name in names) {
+			if (name == "cover") {
+				jobs.push({name: name, holder: cover, width: SLOT - 6, height: SLOT - 6});
+				jobs.push({name: name, holder: mini, width: MINI, height: MINI});
+			} else if (name == "title") {
+				jobs.push({name: name, holder: titleImage, width: -1, height: -1});
+				jobs.push({name: name, holder: stripImage, width: -1, height: -1});
+			} else if (name == "artist") {
+				jobs.push({name: name, holder: artistImage, width: -1, height: -1});
+			}
+		}
+		var waiting:Dynamic = {left: jobs.length};
+		artLoading = true;
+		artLoadStarted = flash.Lib.getTimer();
+		artLoadParsed = parsed;
+		for (job in jobs)
+			if (!loadFile(job, jobs, waiting, generation, parsed.id))
+				return;
+	}
+
+	/** Starts loading one PNG file (a closure per call, so each listener keeps its own job); false when it threw. */
+	static function loadFile(job:Dynamic, jobs:Array<Dynamic>, waiting:Dynamic, generation:Int, id:String):Bool {
+		var name:String = job.name;
+		var loader = new flash.display.Loader();
+		job.loader = loader;
+		var info:Dynamic = loader.contentLoaderInfo;
+		info.addEventListener("complete", function(e:Dynamic) {
+			if (generation != artGeneration)
+				return;
+			var content:Dynamic = null;
+			try {
+				content = loader.content;
+			} catch (error:Dynamic) {}
+			var wide:Float = content == null ? 0 : content.width;
+			if (!(wide > 0)) {
+				fileMissed(generation, "no picture in " + name);
+				return;
+			}
+			waiting.left = waiting.left - 1;
+			if (waiting.left == 0)
+				showLoaded(generation, jobs);
+		});
+		info.addEventListener("ioError", function(e:Dynamic) fileMissed(generation, "couldn't open " + name));
+		info.addEventListener("securityError", function(e:Dynamic) fileMissed(generation, "not allowed to open " + name));
+		try {
+			var context = new flash.system.LoaderContext(false, null);
+			context.applicationDomain = new flash.system.ApplicationDomain(flash.system.ApplicationDomain.currentDomain);
+			var file:String = name + "-" + id + ".png";
+			loader.load(new URLRequest(Options.home() + "/spotify/" + file), context);
+			return true;
+		} catch (error:Dynamic) {
+			fileMissed(generation, "load threw " + str(error));
+			return false;
+		}
+	}
+
+	/** Every PNG file loaded: put the Loaders in their holders. */
+	static function showLoaded(generation:Int, jobs:Array<Dynamic>):Void {
+		artLoading = false;
+		try {
+			hasCover = false;
+			for (holder in [titleImage, stripImage, artistImage])
+				empty(holder);
+			for (job in jobs) {
+				placeLoaded(job.holder, job.loader, job.width, job.height);
+				if (job.name == "cover")
+					hasCover = true;
+			}
+			if (!hasCover) {
+				drawNote(cover, SLOT - 6);
+				drawNote(mini, MINI);
+			}
+			render();
+			artShown("file");
+		} catch (error:Dynamic) {
+			fileMissed(generation, "showing them: " + str(error));
+		}
+	}
+
+	/** A PNG file didn't load (or show): draw this track's pictures from their pixels, and keep to that from now on. */
+	static function fileMissed(generation:Int, why:String):Void {
+		if (generation != artGeneration)
+			return;
+		artGeneration++;
+		artLoading = false;
+		note("pictures by file failed: " + why);
+		if (way < 1)
+			way = 1;
+		paint(artLoadParsed, way);
+	}
+
+	/** Called every tick: Scaleform may never answer for a file it can't read. */
+	static function checkLoading():Void {
+		if (artLoading && flash.Lib.getTimer() - artLoadStarted > LOAD_WAIT_MS)
+			fileMissed(artGeneration, "no answer in " + Std.int(LOAD_WAIT_MS / 1000) + " s");
+	}
+
+	/** A loaded picture in its holder: the Loader itself is the child, its Bitmap smoothed and sized, as the game does. */
+	static function placeLoaded(holder:Sprite, loader:Dynamic, width:Float, height:Float):Void {
+		empty(holder);
+		var content:Dynamic = loader.content;
+		try {
+			content.smoothing = true;
+		} catch (error:Dynamic) {}
+		content.x = 0;
+		content.y = 0;
+		if (width > 0) {
+			content.width = width;
+			content.height = height;
+		}
+		holder.addChild(loader);
+	}
+
+	static function artShown(kind:String):Void {
+		if (kind != shownBy) {
+			shownBy = kind;
+			note("pictures shown by " + kind + (hasCover ? ", with the cover" : ", no cover sent"));
+		}
+		if (!artReported && hasCover) {
+			artReported = true;
+			Bus.send(ID, "art\tshown");
+		}
+	}
+
+	static function artFailed(error:Dynamic):Void {
+		try {
+			showPictures({});
+		} catch (ignored:Dynamic) {}
+		fail("art", error);
+		if (!artReported) {
+			artReported = true;
+			Bus.send(ID, "art\tfailed");
+		}
+	}
+
+	/** The pictures as BitmapData filled pixel by pixel (8 hex digits each, ARGB), by name. */
+	static function bitmaps(parsed:Dynamic):Dynamic {
+		var pictures:Dynamic = {};
+		var names:Array<String> = parsed.names;
+		for (name in names) {
+			var line:Array<Dynamic> = untyped parsed.lines[name];
+			var width:Int = line[0];
+			var height:Int = line[1];
+			var pixels:String = line[2];
+			artStep = "new BitmapData";
 			var bitmap:Dynamic = new flash.display.BitmapData(width, height, true, 0);
-			bitmap.lock();
+			artStep = "setPixel32";
 			var at = 0;
 			for (y in 0...height) {
 				for (x in 0...width) {
@@ -1120,10 +1385,83 @@ class MusicPlayer {
 					bitmap.setPixel32(x, y, color);
 				}
 			}
-			bitmap.unlock();
 			untyped pictures[name] = bitmap;
 		}
+		artStep = "Bitmap";
 		return pictures;
+	}
+
+	/**
+		The pictures as rectangles of colour: each row's runs of one colour (16 steps a channel), grouped by colour so
+		there is one fill per colour, by name. No two rectangles of a fill overlap, so none cuts a hole in another.
+	**/
+	static function rectangles(parsed:Dynamic):Dynamic {
+		var pictures:Dynamic = {};
+		var names:Array<String> = parsed.names;
+		artStep = "reading pixels";
+		for (name in names) {
+			var line:Array<Dynamic> = untyped parsed.lines[name];
+			var width:Int = line[0];
+			var height:Int = line[1];
+			var pixels:String = line[2];
+			var groups:Dynamic = {};
+			var order:Array<String> = [];
+			for (y in 0...height) {
+				var runKey = "";
+				var runStart = 0;
+				for (x in 0...width + 1) {
+					var key = "";
+					if (x < width) {
+						var at = (y * width + x) * 8;
+						// The high hex digit of each channel; a see-through pixel (alpha under 16) is left out.
+						key = pixels.charAt(at) + pixels.charAt(at + 2) + pixels.charAt(at + 4) + pixels.charAt(at + 6);
+						if (key.charAt(0) == "0")
+							key = "";
+					}
+					if (key != runKey) {
+						if (runKey != "") {
+							var rects:Array<Int> = untyped groups[runKey];
+							if (rects == null) {
+								rects = [];
+								untyped groups[runKey] = rects;
+								order.push(runKey);
+							}
+							rects.push(runStart);
+							rects.push(y);
+							rects.push(x - runStart);
+						}
+						runKey = key;
+						runStart = x;
+					}
+				}
+			}
+			untyped pictures[name] = {width: width, height: height, groups: groups, order: order};
+		}
+		artStep = "drawing";
+		return pictures;
+	}
+
+	/** One of rectangles()' pictures drawn into a Shape. */
+	static function drawRectangles(picture:Dynamic):Shape {
+		var shape = new Shape();
+		var g = shape.graphics;
+		var order:Array<String> = picture.order;
+		for (key in order) {
+			var rects:Array<Int> = untyped picture.groups[key];
+			var parsed:Float = untyped __global__["parseInt"](key, 16);
+			var value = Std.int(parsed);
+			// Each digit d stands for dd (0xA for 0xAA).
+			var alpha = ((value >> 12) & 15) * 17;
+			var color = ((((value >> 8) & 15) * 17) << 16) | ((((value >> 4) & 15) * 17) << 8) | ((value & 15) * 17);
+			g.beginFill(color, alpha / 255);
+			var i = 0;
+			while (i < rects.length) {
+				g.drawRect(rects[i], rects[i + 1], rects[i + 2], 1);
+				i += 3;
+			}
+			g.endFill();
+		}
+		return shape;
 	}
 
 	/** Puts the cover in the slot and the strip, and the drawn song and artist in place of the text (when sent). */
@@ -1145,13 +1483,27 @@ class MusicPlayer {
 		render();
 	}
 
-	/** Shows the picture in the holder, scaled smoothly to width x height (-1: its own size); null empties it. */
-	static function fill(holder:Sprite, picture:Dynamic, width:Float, height:Float):Void {
+	/** Takes the pictures out of a holder (a drawn name's holder keeps its mask). */
+	static function empty(holder:Sprite):Void {
 		while (holder.numChildren > kept(holder))
 			holder.removeChildAt(holder.numChildren - 1);
+	}
+
+	/**
+		Shows the picture (a BitmapData, or one of rectangles()' pictures) in the holder, scaled to width x height (-1:
+		its own size); null empties it.
+	**/
+	static function fill(holder:Sprite, picture:Dynamic, width:Float, height:Float):Void {
+		empty(holder);
 		if (picture == null)
 			return;
-		var shown:Dynamic = untyped __new__(flash.display.Bitmap, picture, "auto", true);
+		var shown:Dynamic;
+		if (picture.groups != null) {
+			shown = drawRectangles(picture);
+		} else {
+			shown = untyped __new__(flash.display.Bitmap, picture);
+			shown.smoothing = true;
+		}
 		if (width > 0) {
 			shown.width = width;
 			shown.height = height;
@@ -1244,10 +1596,10 @@ class MusicPlayer {
 			x += w + GAP;
 		}
 		var shuffleOn = shuffle == "on";
-		drawMark(shuffleMark.graphics, "shuffle", 12, shuffleOn ? GOLD : TEXT);
+		drawMark(shuffleMark.graphics, "shuffle", 14, shuffleOn ? GOLD : TEXT);
 		shuffleDot.visible = shuffleOn;
 		var repeatOn = repeat == "list" || repeat == "track";
-		drawMark(repeatMark.graphics, "repeat", 12, repeatOn ? GOLD : TEXT);
+		drawMark(repeatMark.graphics, "repeat", 14, repeatOn ? GOLD : TEXT);
 		repeatDot.visible = repeatOn;
 		repeatOne.visible = repeat == "track";
 		try {
@@ -1326,7 +1678,7 @@ class MusicPlayer {
 				gauge.value = percent;
 		} else {
 			var g = gaugeDrawn.graphics;
-			var span:Float = panelWidth - 2 * PAD - 84;
+			var span:Float = gaugeWidth();
 			g.clear();
 			g.beginFill(WHITE, 0.15);
 			g.drawRect(0, 0, span, 3);
@@ -1368,6 +1720,11 @@ class MusicPlayer {
 			fill.drawRect(2, 2, panelWidth - 4, shown - 4);
 			fill.endFill();
 		}
+	}
+
+	/** The gauge's width: the player's, less the time at both ends. */
+	static function gaugeWidth():Float {
+		return panelWidth - 2 * PAD - 2 * TIME_WIDTH;
 	}
 
 	static function has(letter:String):Bool {
@@ -1436,8 +1793,7 @@ class MusicPlayer {
 		event.stopPropagation();
 		if (!Options.on(ID) || length <= 0)
 			return;
-		var span:Float = panelWidth - 2 * PAD - 84;
-		var share:Float = gaugeHit.mouseX / span;
+		var share:Float = gaugeHit.mouseX / gaugeWidth();
 		if (!isFinite(share))
 			return;
 		if (share < 0)

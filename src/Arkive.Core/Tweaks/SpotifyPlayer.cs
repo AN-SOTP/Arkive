@@ -26,10 +26,12 @@ public sealed record SpotifyRequest(SpotifyCommand? Command = null, int? Volume 
 /// spell any other character (and the backslash) as "\u" and four hex digits, which the tweak turns back.
 /// </para>
 /// <para>
-/// The pictures are in art.txt beside it, one line each: "image, name, width, height, pixels" with the pixels as eight
-/// hex digits per pixel (alpha, red, green, blue), row by row. "cover" is the track's cover; "title" and "artist" are
-/// the song's name and artist drawn by Arkive when they have letters the game's fonts lack (Japanese, Korean...). The
-/// art id changes with them, so the tweak reads art.txt again only for a new track.
+/// The pictures are PNG files beside it ("name-id.png", <see cref="PictureFile"/>), which the tweak loads the way the
+/// game loads its own images, and again in art.txt for when the game won't load them: a first line "pictures, id,
+/// names..." and then one line each: "image, name, width, height, pixels" with the pixels as eight hex digits per
+/// pixel (alpha, red, green, blue), row by row. "cover" is the track's cover; "title" and "artist" are the song's name
+/// and artist drawn by Arkive when they have letters the game's fonts lack (Japanese, Korean...). The art id changes
+/// with them, so the tweak reads art.txt again only for a new track.
 /// </para>
 /// </summary>
 public static class SpotifyPlayer
@@ -158,6 +160,13 @@ public static class SpotifyPlayer
     /// </summary>
     public static bool NeedsDrawing(string text) =>
         text.Any(character => character is > '\u017f' and not (>= '\u2010' and <= '\u203a') and not '\u20ac');
+
+    /// <summary>The first line of art.txt: the art id and the names of the pictures that follow (and have PNG files).</summary>
+    public static string PicturesLine(string id, IEnumerable<string> names) =>
+        "pictures\t" + id + string.Concat(names.Select(name => "\t" + name)) + "\n";
+
+    /// <summary>A picture's PNG file name in the Spotify folder; the art id in it means the game never shows a cached old one.</summary>
+    public static string PictureFile(string name, string id) => name + "-" + id + ".png";
 
     /// <summary>One "image" line of art.txt: pixels as ARGB values, row by row.</summary>
     public static string ImageLine(string name, int width, int height, ReadOnlySpan<uint> pixels)

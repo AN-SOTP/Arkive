@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.IO;
-using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -21,17 +20,33 @@ internal static class SpotifyArt
     /// <summary>Windows fonts that have Japanese, Korean and Chinese letters, tried in turn for each letter.</summary>
     private static readonly FontFamily DrawingFont = new("Malgun Gothic, Yu Gothic UI, Microsoft YaHei UI, Segoe UI");
 
-    /// <summary>The text of art.txt for a cover image file (null: none) and the track's name and artist.</summary>
-    public static string Build(byte[]? cover, string title, string artist)
+    /// <summary>A picture for the player: its name in art.txt, size and straight ARGB pixels, and the same as a PNG file.</summary>
+    public sealed record Picture(string Name, int Width, int Height, uint[] Pixels, byte[] Png);
+
+    /// <summary>The pictures for a cover image file (null: none) and the track's name and artist.</summary>
+    public static List<Picture> Build(byte[]? cover, string title, string artist)
     {
-        var text = new StringBuilder();
+        var pictures = new List<Picture>();
         if (cover is not null && Cover(cover) is { } pixels)
-            text.Append(SpotifyPlayer.ImageLine("cover", SpotifyPlayer.CoverSize, SpotifyPlayer.CoverSize, pixels));
+            pictures.Add(Made("cover", SpotifyPlayer.CoverSize, SpotifyPlayer.CoverSize, pixels));
         if (SpotifyPlayer.NeedsDrawing(title))
-            text.Append(Words("title", title, TitleSize, TitleColor, SpotifyPlayer.TitleWidth));
+            pictures.Add(Words("title", title, TitleSize, TitleColor, SpotifyPlayer.TitleWidth));
         if (SpotifyPlayer.NeedsDrawing(artist))
-            text.Append(Words("artist", artist, ArtistSize, ArtistColor, SpotifyPlayer.ArtistWidth));
-        return text.ToString();
+            pictures.Add(Words("artist", artist, ArtistSize, ArtistColor, SpotifyPlayer.ArtistWidth));
+        return pictures;
+    }
+
+    private static Picture Made(string name, int width, int height, uint[] pixels)
+    {
+        var bytes = new byte[pixels.Length * 4];
+        Buffer.BlockCopy(pixels, 0, bytes, 0, bytes.Length);
+        // Little-endian ARGB values are the bytes B, G, R, A: straight (not premultiplied) BGRA.
+        var source = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, bytes, width * 4);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        using var png = new MemoryStream();
+        encoder.Save(png);
+        return new Picture(name, width, height, pixels, png.ToArray());
     }
 
     /// <summary>The middle square of the cover, scaled smoothly to the player's size; null when it isn't a picture WPF reads.</summary>
@@ -63,7 +78,7 @@ internal static class SpotifyArt
     }
 
     /// <summary>A line of text in the player's colour and size, cut short with an ellipsis at `width`.</summary>
-    private static string Words(string name, string value, double size, Color color, int width)
+    private static Picture Words(string name, string value, double size, Color color, int width)
     {
         var brush = new SolidColorBrush(color);
         brush.Freeze();
@@ -80,7 +95,7 @@ internal static class SpotifyArt
         TextOptions.SetTextFormattingMode(visual, TextFormattingMode.Display);
         using (var context = visual.RenderOpen())
             context.DrawText(formatted, new Point(0, (pixelHeight - formatted.Height) / 2));
-        return SpotifyPlayer.ImageLine(name, pixelWidth, pixelHeight, Render(visual, pixelWidth, pixelHeight));
+        return Made(name, pixelWidth, pixelHeight, Render(visual, pixelWidth, pixelHeight));
     }
 
     /// <summary>The visual's pixels as straight (not premultiplied) ARGB values, row by row.</summary>
