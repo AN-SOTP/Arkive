@@ -441,6 +441,7 @@ public partial class MainWindow : Window
             AppearanceManager.ApplyWindowChrome(this, _effectiveAppearanceTheme);
         SourceInitialized += (_, _) => StartPlayerLogsListener();
         SourceInitialized += (_, _) => StartTweakBus();
+        SourceInitialized += (_, _) => StartSpotifyPlayer();
         ApplyRestoredSettings(_restoredSettings);
         Log($"Arkive session started. Log file: {_sessionLog.FilePath}");
         Log($"Arkive {typeof(MainWindow).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown"} " +

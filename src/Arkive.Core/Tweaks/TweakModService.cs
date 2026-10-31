@@ -349,6 +349,9 @@ public sealed class TweakModService(
 
     /// <summary>Where Market Price on Tooltips' prices are kept (the tweak reads prices/prices.txt under "home").</summary>
     public string PricesFolder => Path.Combine(root, "prices");
+
+    /// <summary>Where Arkive writes Spotify's state for the Spotify Player tweak (it reads spotify/now.txt under "home").</summary>
+    public string SpotifyFolder => Path.Combine(root, "spotify");
     /// <summary>The tweak that advises astrogem processing, from odds tables Arkive writes for every target.</summary>
     public const string AstrogemTweak = "astrogem";
 

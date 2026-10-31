@@ -277,6 +277,11 @@ public static class TweakCatalog
                 new TweakChoice("0", "No limit"),
             ], Single: true),
         ], Note: "This presses a game button for you with no click, which the game's terms may count as automation. The tick box starts unticked each time the game starts."),
+        new(SpotifyPlayer.Tweak, "Spotify Player", "A small player under the minimap for the Spotify app on your PC: the song, artist and time, previous, play and pause, stop and next, Spotify's volume, and shuffle and repeat. Drag it anywhere by its background, or fold it to a thin now-playing strip. Keep Arkive running while you play: it passes the buttons to Spotify through Windows' media controls, with no Spotify sign-in.", TweakRisk.Display,
+        [
+            H("efui_map", "minimap", "ark.ui.miniMap_new.MiniMapFrame", "configUI", "arkive.tweaks.MusicPlayer.onMiniMapConfigUI"),
+            H("efui_map", "minimapex", "ark.ui.miniMap_new.MiniMapExFrame", "configUI", "arkive.tweaks.MusicPlayer.onMiniMapConfigUI"),
+        ], Note: "Needs the Spotify desktop app open on this PC. The slider sets Spotify's volume in the Windows mixer. Switching playlists isn't part of it yet."),
         new("markettweaks", "Market Tweaks", "Buttons on the market's listing page that set the quantity to everything you have and the price to the lowest listed price.", TweakRisk.Batch,
         [
             H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.childPage.ExchangeShopItemRegistrationPage", "configUI", "arkive.tweaks.MarketTweaks.onConfigUI"),
