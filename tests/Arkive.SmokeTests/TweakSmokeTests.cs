@@ -22,7 +22,33 @@ internal static class TweakSmokeTests
         new("works out astrogem processing odds from the game's weights and writes the table the advisor reads", TestAstrogemOdds),
         new("reads a game crash dump: the exception, where, the names on the stack and the tweak code it points into", TestGameCrash),
         new("turns Auto Pull Up's Data Bus reports into log lines and ignores unreadable ones", TestAutoPullUpReports),
+        new("keeps the HUD layout Edit UI sends, piece by piece, and clears it on Restore defaults", TestEditUiLayout),
     ];
+
+    private static void TestEditUiLayout()
+    {
+        var folder = Path.Combine(fixtureDirectory, "tweak-editui");
+        if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        static string Path1(string folder) => Path.Combine(folder, Arkive.Core.Tweaks.EditUiLayout.FileName);
+        string? Save(string text) => Arkive.Core.Tweaks.EditUiLayout.Save(folder, text);
+        Assert(Save("set\tquickSlotFrame\t-120.5\t40\t1.1") == "quickSlotFrame moved" &&
+               Save("set\tquickSlotFrame/hp\t0\t-60\t1") is not null &&
+               Save("set\tpartyFrame\t300\t0\t0.75") is not null,
+            "Edit UI did not take well-formed layout changes");
+        Assert(Save("set\tbad name\t1\t1\t1") is null && Save("set\ta/b/c\t1\t1\t1") is null &&
+               Save("set\tpartyFrame\t1\t1\t9") is null && Save("set\tpartyFrame\tNaN\t1\t1") is null && Save("move\tx") is null,
+            "Edit UI took a malformed layout change");
+        Assert(Save("clear\tpartyFrame") is not null, "Reset piece was not taken");
+        var kept = Arkive.Core.Tweaks.EditUiLayout.Load(Path1(folder));
+        Assert(kept.Count == 2 && kept["quickSlotFrame"].X == -120.5 && kept["quickSlotFrame"].Scale == 1.1 && kept["quickSlotFrame/hp"].Y == -60,
+            "edit-ui.txt does not hold the moved pieces");
+        var text = File.ReadAllText(Path1(folder));
+        Assert(text == "quickSlotFrame\t-120.5\t40\t1.1\nquickSlotFrame/hp\t0\t-60\t1\n", "edit-ui.txt is not in the line format the tweak reads: " + text);
+        Assert(Save("reset") is not null && Arkive.Core.Tweaks.EditUiLayout.Load(Path1(folder)).Count == 0, "Restore defaults left pieces in edit-ui.txt");
+        Assert(Arkive.Core.Tweaks.TweakCatalog.Find(Arkive.Core.Tweaks.EditUiLayout.Tweak) is { Available: true } tweak &&
+               tweak.Hooks.Count(hook => hook.ClassName == "ark.layout.LayoutSetter" && hook.Method == "reposition") == 2,
+            "Edit UI is not in the catalog with its before and after layout hooks");
+    }
 
     private static void TestAutoPullUpReports()
     {

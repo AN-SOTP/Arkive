@@ -51,9 +51,9 @@ class SettingsPanel {
 	static var scrollBar:Dynamic;
 	static var scroll:Float = 0;
 	static var status:TextField;
-	static var font:String = "$YG760";
-	static var titleFont:String = "$YoonGasiIIM";
-	static var embed = false;
+	public static var font:String = "$YG760";
+	public static var titleFont:String = "$YoonGasiIIM";
+	public static var embed = false;
 	static var listening = false;
 	static var pending = false;
 
@@ -189,14 +189,14 @@ class SettingsPanel {
 		item.y = y;
 		item.width = itemWidth;
 		item.height = itemHeight;
-		dress(item, anchor);
+		dress(item, anchor, "Arkive Tweaks", "A");
 		item.visible = true;
 		placedX = spot.x;
 		placedY = spot.y;
 	}
 
 	/** True when the object and every parent up to `top` are visible and not faded out. */
-	static function shown(at:Dynamic, top:Dynamic):Bool {
+	public static function shown(at:Dynamic, top:Dynamic):Bool {
 		if (at == null)
 			return false;
 		while (at != null && at != top) {
@@ -207,14 +207,14 @@ class SettingsPanel {
 		return at == top;
 	}
 
-	/** The bar's buttons that show, searched a few levels down (the tile list keeps them in its own holder). */
-	static function collect(at:Dynamic, found:Array<Dynamic>, depth:Int):Void {
+	/** The bar's buttons that show, searched a few levels down (the tile list keeps them in its own holder); not ours. */
+	public static function collect(at:Dynamic, found:Array<Dynamic>, depth:Int):Void {
 		if (depth > 4 || at == null || !GameUi.isA(at, "flash.display.DisplayObjectContainer"))
 			return;
 		var count:Int = at.numChildren;
 		for (i in 0...count) {
 			var child:Dynamic = at.getChildAt(i);
-			if (child == null || child.visible != true || child.name == "arkiveTweaksButton")
+			if (child == null || child.visible != true || StringTools.startsWith(child.name, "arkive"))
 				continue;
 			if (GameUi.isA(child, BAR_ITEM)) {
 				var label:String = child.nameStr;
@@ -227,17 +227,17 @@ class SettingsPanel {
 	}
 
 	/**
-		Our label in the game's label font and colour, and an "A" in a ring where the game's buttons have their icon,
-		set as the button's iconMc so it takes the game's hover and press tints.
+		Our label in the game's label font and colour, and a letter where the game's buttons have their icon, set as the
+		button's iconMc so it takes the game's hover and press tints.
 	**/
-	static function dress(item:Dynamic, like:Dynamic):Void {
+	public static function dress(item:Dynamic, like:Dynamic, name:String, initial:String):Void {
 		var label:Dynamic = item.nameTextField;
 		var model:Dynamic = like.nameTextField;
 		if (label != null && model != null) {
 			var format:Dynamic = model.getTextFormat();
 			label.embedFonts = model.embedFonts;
 			label.defaultTextFormat = format;
-			label.htmlText = "Arkive Tweaks";
+			label.htmlText = name;
 			label.setTextFormat(format);
 			label.textColor = model.textColor;
 		}
@@ -261,7 +261,7 @@ class SettingsPanel {
 		letter.mouseEnabled = false;
 		letter.width = size;
 		letter.height = size;
-		letter.text = "A";
+		letter.text = initial;
 		letter.y = (size - letter.textHeight) / 2 - 2;
 		mark.addChild(letter);
 		if (icon != null) {
@@ -273,7 +273,7 @@ class SettingsPanel {
 	}
 
 	/** A new instance of a symbol from the shared component movies, or null when none is loaded. */
-	static function make(symbol:String):Dynamic {
+	public static function make(symbol:String):Dynamic {
 		var type:Dynamic = GameUi.definition(symbol);
 		return type == null ? null : untyped __new__(type);
 	}
@@ -758,7 +758,7 @@ class SettingsPanel {
 	}
 
 	/** The font of the content group's name label, the menu's own body font. */
-	static function gameFont(group:Dynamic):Void {
+	public static function gameFont(group:Dynamic):Void {
 		var label:Dynamic = group == null ? null : group.contentsCharacterNameLabel;
 		var field:Dynamic = label == null ? null : label.textField;
 		if (field == null)
@@ -770,7 +770,7 @@ class SettingsPanel {
 		}
 	}
 
-	static function text(x:Float, y:Float, width:Float, size:Int, color:Int, value:String, face:String):TextField {
+	public static function text(x:Float, y:Float, width:Float, size:Int, color:Int, value:String, face:String):TextField {
 		var format = new TextFormat();
 		format.font = face;
 		format.size = size;

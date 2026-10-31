@@ -349,6 +349,9 @@ public sealed class TweakModService(
 
     /// <summary>Where Market Price on Tooltips' prices are kept (the tweak reads prices/prices.txt under "home").</summary>
     public string PricesFolder => Path.Combine(root, "prices");
+
+    /// <summary>Where Edit UI's layout is kept: edit-ui.txt directly under "home" (see <see cref="EditUiLayout"/>).</summary>
+    public string EditUiFolder => root;
     /// <summary>The tweak that advises astrogem processing, from odds tables Arkive writes for every target.</summary>
     public const string AstrogemTweak = "astrogem";
 

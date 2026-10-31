@@ -115,6 +115,14 @@ public static class TweakCatalog
         [
             new("everything", "Install every tweak, so any of them can be switched on in game (the ones not ticked here start off)", true),
         ], Note: "Faster Launch changes game files, so it is installed and removed on its own in the Tweaks tab, not in game."),
+        new(EditUiLayout.Tweak, "Edit UI", "An \"Edit UI\" button in the escape menu lays a grid over the screen: drag the HUD's pieces where you want them and use the mouse wheel over one to resize it. The skill bar comes apart into skills, HP, MP, battle items, buffs, debuffs, awakening and the cast bar. Snap to grid, Reset piece and Restore defaults are on the grid's bar. Keep Arkive running to save the layout; without it changes last until you close the game.", TweakRisk.Display,
+        [
+            // Every HUD frame is placed by its LayoutSetter (efui_base, shared by every movie): before the game places a
+            // frame it gets the game's own position back, after it the saved offset and size.
+            H(Base, "main", "ark.layout.LayoutSetter", "reposition", "arkive.tweaks.EditUi.beforeReposition", AbcHookKind.Before),
+            H(Base, "main", "ark.layout.LayoutSetter", "reposition", "arkive.tweaks.EditUi.onReposition"),
+            H("efui_systemmenu", "exitmenu", "ark.ui.systemMenu_new.MenuWndContent", "configUI", "arkive.tweaks.EditUi.onMenuConfigUI"),
+        ], Note: "Pieces the game is hiding (party, raid, target) show as \"hidden now\" and can still be placed. Windows such as the inventory keep the game's own drag."),
         new("cpgems", "Combat Power on Tooltips", "A line on item tooltips (gems, gear, accessories, bracelets, ability stones, engraving books, paradise orbs and Ark Grid cores and astrogems; your own, inspected players', the market's) shows how much your Combat Power would go up or down if you equipped that item instead of yours, priced with the game's own table. The honing window shows what the next level adds. Support characters get gem and Ark Grid lines only for now.", TweakRisk.Display,
         [
             H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.CombatPower.onMainTooltip", AbcHookKind.Before),
