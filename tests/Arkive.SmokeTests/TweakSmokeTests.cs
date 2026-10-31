@@ -500,6 +500,10 @@ internal static class TweakSmokeTests
                 $"{block.AbcName} calls String.charCodeAtHX, which the game's player doesn't have (use Text.trim)");
             foreach (var body in abc.Bodies)
             {
+                // Std.parseInt itself uses Math.isNaN, but no tweak may call it (checked in every other block).
+                var bootCall = block.AbcName.EndsWith("/Std", StringComparison.Ordinal) ? null : BootOnlyCall(abc, body);
+                Assert(bootCall is null, $"{block.AbcName} calls {bootCall}, which only Haxe's Boot sets up; Arkive's empty Boot " +
+                    "leaves it undefined and the game's player throws Error #1006 (use __global__[\"isNaN\"] and the like)");
                 var previous = -1;
                 foreach (var start in AbcInstructions.Starts(body.Code))
                 {
@@ -511,6 +515,71 @@ internal static class TweakSmokeTests
             }
         }
         Assert(withSettings == 1, "the settings were not written into exactly one block");
+    }
+
+    /// <summary>
+    /// Haxe's Boot puts isNaN, isFinite, NaN and the infinities on Math (and Std.parseInt uses them); the Spotify Player
+    /// called Math.isNaN and threw Error #1006 in game. Finds a getlex of Math or Std followed, within the call that uses
+    /// it, by one of those names, and returns it as "Math.isNaN" and the like; null when there is none.
+    /// </summary>
+    private static string? BootOnlyCall(AbcFile abc, AbcMethodBody body)
+    {
+        var banned = new Dictionary<string, string[]>
+        {
+            ["Math"] = ["isNaN", "isFinite", "NaN", "POSITIVE_INFINITY", "NEGATIVE_INFINITY"],
+            ["Std"] = ["parseInt"],
+        };
+        string? owner = null;
+        var since = 0;
+        byte previous = 0;
+        foreach (var start in AbcInstructions.Starts(body.Code))
+        {
+            var opcode = body.Code[start];
+            // findpropstrict, findproperty, getglobalscope: the global NaN or isNaN, not Math's (Haxe reads a
+            // Number local's starting NaN this way).
+            var global = previous is 0x5D or 0x5E or 0x64;
+            previous = opcode;
+            if (global) continue;
+            // getlex, getproperty, callproperty, callpropvoid, callproplex: all take a multiname first.
+            if (opcode is 0x60 or 0x66 or 0x46 or 0x4F or 0x4C)
+            {
+                var position = start + 1;
+                var name = NameOf(abc, ReadU30(body.Code, ref position));
+                if (opcode == 0x60 && banned.ContainsKey(name))
+                {
+                    owner = name;
+                    since = 0;
+                }
+                // Another class (Number.NaN, which Haxe's own setup of Math reads) is what the next names belong to.
+                else if (opcode == 0x60 && char.IsUpper(name.FirstOrDefault())) owner = null;
+                else if (owner is not null && opcode != 0x60)
+                {
+                    if (banned[owner].Contains(name)) return owner + "." + name;
+                    // A call of the class's own (Math.round and the like) used it up.
+                    if (opcode != 0x66 && char.IsLower(name.FirstOrDefault())) owner = null;
+                }
+            }
+            if (owner is not null && ++since > 64) owner = null;
+        }
+        return null;
+    }
+
+    private static string NameOf(AbcFile abc, int multiname)
+    {
+        var entry = abc.Pool.Multinames[multiname];
+        return entry.Name > 0 && entry.Name < abc.Pool.Strings.Count ? abc.Pool.Strings[entry.Name] : "";
+    }
+
+    private static int ReadU30(byte[] code, ref int position)
+    {
+        var result = 0;
+        for (var shift = 0; shift < 35; shift += 7)
+        {
+            var b = code[position++];
+            result |= (b & 0x7F) << shift;
+            if ((b & 0x80) == 0) break;
+        }
+        return result;
     }
 
     private static void TestIntroMovies()
