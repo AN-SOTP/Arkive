@@ -6,10 +6,11 @@ namespace Arkive.Core.Tweaks;
 /// <summary>
 /// A message from the Spotify Player tweak: a button (<see cref="Command"/>), Spotify's volume in percent, where the
 /// player was dragged to and whether it is folded ("x&lt;tab&gt;y&lt;tab&gt;0|1"), a point of the track to go to (seconds),
-/// or whether the game could draw the pictures Arkive sent ("shown" or "failed", for the log).
+/// whether the game could draw the pictures Arkive sent ("shown" or "failed", for the log), or a line for the log about
+/// what the player found in the game (<see cref="Note"/>) or what went wrong there (<see cref="Error"/>).
 /// </summary>
 public sealed record SpotifyRequest(SpotifyCommand? Command = null, int? Volume = null, string? Layout = null, int? Seek = null,
-    string? Art = null);
+    string? Art = null, string? Note = null, string? Error = null);
 
 /// <summary>
 /// The Arkive half of the Spotify Player tweak's files. While the game runs, Arkive writes Spotify's state to
@@ -18,7 +19,12 @@ public sealed record SpotifyRequest(SpotifyCommand? Command = null, int? Volume 
 /// "spotify, sequence" (the sequence goes up with every write, so the tweak sees when Arkive stops), "state, none |
 /// playing | paused | stopped", "title", "artist", "album", "time, seconds in, seconds long", "can, letters" (p play and
 /// pause, b back, n next, s stop, h shuffle, r repeat, k jump to a point), "shuffle, on | off", "repeat, off | track | list" (empty when
-/// Spotify doesn't say), "volume, percent" (empty when Spotify plays no sound yet), "layout, x, y, 0 | 1" and "art, id".
+/// Spotify doesn't say), "volume, percent" (empty when Spotify plays no sound yet), "art, id", "layout, x, y, 0 | 1" and
+/// "end, sequence" (so the tweak can tell a file it got only part of).
+/// <para>
+/// The file is plain ASCII: the game lost every line after a Japanese title and artist, so the title, artist and album
+/// spell any other character (and the backslash) as "\u" and four hex digits, which the tweak turns back.
+/// </para>
 /// <para>
 /// The pictures are in art.txt beside it, one line each: "image, name, width, height, pixels" with the pixels as eight
 /// hex digits per pixel (alpha, red, green, blue), row by row. "cover" is the track's cover; "title" and "artist" are
@@ -75,9 +81,9 @@ public static class SpotifyPlayer
                 SpotifyPlayback.Paused => "paused",
                 _ => "stopped",
             });
-            Line("title", now.Title);
-            Line("artist", now.Artist);
-            Line("album", now.Album);
+            Line("title", Escape(Clean(now.Title)));
+            Line("artist", Escape(Clean(now.Artist)));
+            Line("album", Escape(Clean(now.Album)));
             Line("time", Seconds(now.Position), Seconds(now.Length));
             var can = new StringBuilder();
             if (now.Controls.HasFlag(SpotifyControls.PlayPause)) can.Append('p');
@@ -103,6 +109,7 @@ public static class SpotifyPlayer
         if (now is not null)
             Line("art", art);
         text.Append("layout\t").Append(ReadLayout(layout) ?? "\t\t0").Append('\n');
+        Line("end", sequence.ToString(CultureInfo.InvariantCulture));
         return text.ToString();
     }
 
@@ -123,6 +130,8 @@ public static class SpotifyPlayer
             ["seek", var value] when int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) && seconds < 24 * 3600
                 => new(Seek: seconds),
             ["art", "shown" or "failed"] => new(Art: parts[1]),
+            ["note", _, ..] => new(Note: Clean(string.Join(' ', parts[1..]))),
+            ["error", _, ..] => new(Error: Clean(string.Join(' ', parts[1..]))),
             ["layout", _, _, _] when ReadLayout(string.Join('\t', parts[1..])) is { } layout => new(Layout: layout),
             _ => null,
         };
@@ -165,6 +174,20 @@ public static class SpotifyPlayer
 
     private static string Seconds(TimeSpan time) =>
         ((long)Math.Max(0, time.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>The text with every character past printable ASCII, and the backslash, as "\u" and four hex digits.</summary>
+    public static string Escape(string value)
+    {
+        var text = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            if (character is >= ' ' and <= '~' and not '\\')
+                text.Append(character);
+            else
+                text.Append("\\u").Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
+        }
+        return text.ToString();
+    }
 
     /// <summary>A field without the tabs and line breaks that separate fields and lines.</summary>
     private static string Clean(string value) =>

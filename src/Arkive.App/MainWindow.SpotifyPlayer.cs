@@ -38,7 +38,12 @@ public partial class MainWindow
     /// <summary>A button or a move from the tweak (Data Bus channel "spotify").</summary>
     private void QueueSpotifyRequest(string text)
     {
-        if (SpotifyPlayer.ReadRequest(text) is { } request)
+        var request = SpotifyPlayer.ReadRequest(text);
+        if (request?.Note is { } note)
+            Dispatcher.InvokeAsync(() => Log($"Spotify Player in game: {note}"));
+        else if (request?.Error is { } error)
+            Dispatcher.InvokeAsync(() => Log($"Spotify Player error in game: {error}"));
+        else if (request is not null)
             _spotifyRequests.Add(request);
         else
             Dispatcher.InvokeAsync(() => Log($"Spotify Player: ignored a message Arkive doesn't understand ({text.Replace('\t', '|')})."));
