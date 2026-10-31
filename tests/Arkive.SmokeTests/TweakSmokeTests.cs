@@ -68,6 +68,10 @@ internal static class TweakSmokeTests
             "the check for names the game's font can't show is wrong");
         Assert(SpotifyPlayer.ImageLine("cover", 2, 1, [0xFF102030, 0x80FFFFFF]) == "image\tcover\t2\t1\tff10203080ffffff\n",
             "a picture line of art.txt reads wrong");
+        // The game didn't draw pixel lines (round 6): the pictures go as PNG files named in art.txt's first line.
+        Assert(SpotifyPlayer.PicturesLine("ab12", ["cover", "title"]) == "pictures\tab12\tcover\ttitle\n" &&
+               SpotifyPlayer.PictureFile("cover", "ab12") == "cover-ab12.png",
+            "art.txt's picture list or a picture's file name reads wrong");
         Assert(SpotifyPlayer.ReadRequest("volume\t101") is null && SpotifyPlayer.ReadRequest("volume\t-1") is null &&
                SpotifyPlayer.ReadRequest("layout\t1\t2\t3") is null && SpotifyPlayer.ReadRequest("layout\t99999\t0\t0") is null &&
                SpotifyPlayer.ReadRequest("play") is null && SpotifyPlayer.ReadRequest("") is null,
