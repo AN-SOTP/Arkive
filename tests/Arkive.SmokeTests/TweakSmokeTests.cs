@@ -34,10 +34,15 @@ internal static class TweakSmokeTests
             SpotifyControls.Previous | SpotifyControls.Seek | SpotifyControls.Shuffle, Shuffle: true, Repeat: null);
         var text = SpotifyPlayer.Describe(now, 55, "-12\t30\t1", 9, "ab12");
         Assert(text == "spotify\t9\nstate\tplaying\ntitle\tSong with tab\nartist\tArtist\nalbum\tAlbum line\ntime\t83\t225\n" +
-                       "can\tpbnshk\nshuffle\ton\nrepeat\t\nvolume\t55\nart\tab12\nlayout\t-12\t30\t1\n",
+                       "can\tpbnshk\nshuffle\ton\nrepeat\t\nvolume\t55\nart\tab12\nlayout\t-12\t30\t1\nend\t9\n",
             $"the Spotify Player file reads wrong: {text.Replace('\n', '|')}");
         var none = SpotifyPlayer.Describe(null, null, "junk", 10);
-        Assert(none == "spotify\t10\nstate\tnone\nvolume\t\nlayout\t\t\t0\n", $"the file without Spotify reads wrong: {none.Replace('\n', '|')}");
+        Assert(none == "spotify\t10\nstate\tnone\nvolume\t\nlayout\t\t\t0\nend\t10\n", $"the file without Spotify reads wrong: {none.Replace('\n', '|')}");
+        // The game lost every line after a Japanese title: the file stays ASCII, other letters spelled as \u and hex.
+        var japanese = SpotifyPlayer.Describe(now with { Title = "追想の", Artist = "Beyoncé \\ Jay" }, 55, "", 3);
+        Assert(japanese.Contains("\ntitle\t\\u8ffd\\u60f3\\u306e\n") && japanese.Contains("\nartist\tBeyonc\\u00e9 \\u005c Jay\n") &&
+               japanese.All(character => character is '\t' or '\n' or (>= ' ' and <= '~')),
+            $"the Spotify Player file isn't plain ASCII: {japanese.Replace('\n', '|')}");
         // Without a stop of its own and without seeking, Arkive can't stop, so the button isn't offered.
         var bare = now with { Controls = SpotifyControls.PlayPause };
         Assert(SpotifyPlayer.Describe(bare, null, "", 1).Contains("\ncan\tp\n"), "stop was offered without a way to stop");
@@ -47,7 +52,9 @@ internal static class TweakSmokeTests
                SpotifyPlayer.ReadRequest("volume\t100") == new SpotifyRequest(Volume: 100) &&
                SpotifyPlayer.ReadRequest("layout\t-40\t12\t0") == new SpotifyRequest(Layout: "-40\t12\t0") &&
                SpotifyPlayer.ReadRequest("seek\t95") == new SpotifyRequest(Seek: 95) &&
-               SpotifyPlayer.ReadRequest("art\tshown") == new SpotifyRequest(Art: "shown"),
+               SpotifyPlayer.ReadRequest("art\tshown") == new SpotifyRequest(Art: "shown") &&
+               SpotifyPlayer.ReadRequest("note\tpanel WindowBG_V2\tslider none") == new SpotifyRequest(Note: "panel WindowBG_V2 slider none") &&
+               SpotifyPlayer.ReadRequest("error\tdraw: TypeError") == new SpotifyRequest(Error: "draw: TypeError"),
             "a Spotify Player message was read wrong");
         // Arkive once started its "is the tweak on and the game running" clock at long.MinValue: the subtraction
         // overflowed, the check never ran and the player said "Start Arkive" with Arkive open.

@@ -20,7 +20,8 @@ import scaleform.clik.events.ButtonEvent;
 	game's slider. Drag it by its background; the fold button turns it into a thin strip with a small cover.
 
 	The game can't reach Spotify, so Arkive does it (through Windows' media controls): it writes Spotify's state to
-	<home>/spotify/now.txt every second and the pictures to art.txt (the cover, plus the song and artist drawn when the
+	<home>/spotify/now.txt every second (plain ASCII: the game got nothing after a Japanese title, so Arkive spells other
+	letters as \u and four hex digits) and the pictures to art.txt (the cover, plus the song and artist drawn when the
 	game's fonts lack their letters, as with Japanese or Korean), which the player reads; the player sends its buttons,
 	volume, jumps and position on the Data Bus (channel "spotify"). Pictures arrive as pixel values and are drawn into a
 	BitmapData here, the way the game builds bitmaps itself; nothing is loaded as an image file.
@@ -54,6 +55,11 @@ class MusicPlayer {
 	static inline var FULL_HEIGHT = 162;
 	static inline var STRIP = 30;
 	static inline var MINI = 22;
+	/** The game's row of shortcut buttons under the minimap's backing (another HUD frame); the player goes below it. */
+	static inline var SHORTCUTS = 34;
+	/** The line under the player that says what went wrong, for in-game tests. */
+	static inline var ERROR_HEIGHT = 16;
+	static inline var RED = 0xFF6A5A;
 
 	static inline var WHITE = 0xFFFFFF;
 	static inline var TEXT = 0xD8D8D8;
@@ -163,8 +169,20 @@ class MusicPlayer {
 	static var layoutRead = false;
 
 	static var dragging = false;
-	static var grabX:Float = 0;
-	static var grabY:Float = 0;
+	static var dragStage:Dynamic;
+	/** Presses noted to Arkive so far (the first two of a session), and whether the drop of this one is noted too. */
+	static var drags = 0;
+	static var noteDrop = false;
+
+	/** The panel's current height, which the screen check uses rather than the bounds of every hidden piece. */
+	static var panelHeight:Float = 54;
+	/** What went wrong last (shown on the player's last line), and the places already reported to Arkive. */
+	static var problem = "";
+	static var errorLine:TextField;
+	static var reported:Dynamic = {};
+	static var noted = false;
+	/** The game's names of the pieces the player was built from, for the note to Arkive. */
+	static var pieces = "";
 
 	static var settingSlider = false;
 	static var volumeAt = -VOLUME_HOLD_MS;
@@ -173,24 +191,58 @@ class MusicPlayer {
 
 	/** MiniMapFrame.configUI (and MiniMapExFrame's): note the frame, then build the player once and show it under it. */
 	public static function onMiniMapConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
-		// The map's own backing (MiniMapExFrame has its mask instead); the player goes under it, right edges lined up.
-		var area:Dynamic = self.background != null ? self.background : self.minimapMaskMc != null ? self.minimapMaskMc : self;
-		var bounds:Dynamic = area.getBounds(self);
-		if (player == null) {
-			var wide:Float = Math.round(bounds.width);
-			panelWidth = wide < MIN_WIDTH ? MIN_WIDTH : wide > MAX_WIDTH ? MAX_WIDTH : wide;
+		try {
+			// The map's own backing (MiniMapExFrame has its mask instead); the player goes under it and the shortcut
+			// buttons below it, right edges lined up.
+			var area:Dynamic = self.background != null ? self.background : self.minimapMaskMc != null ? self.minimapMaskMc : self;
+			var bounds:Dynamic = area.getBounds(self);
+			if (player == null) {
+				var wide:Float = Math.round(bounds.width);
+				panelWidth = wide < MIN_WIDTH ? MIN_WIDTH : wide > MAX_WIDTH ? MAX_WIDTH : wide;
+			}
+			untyped hosts[self] = {x: bounds.x + bounds.width - panelWidth, y: bounds.y + bounds.height + SHORTCUTS + GAP};
+			gameFont(self);
+			if (player == null && !build())
+				return;
+			if (timer == null) {
+				timer = new Timer(TICK_MS);
+				timer.addEventListener(TimerEvent.TIMER, onTick);
+				timer.start();
+			}
+			attach();
+			poll();
+		} catch (error:Dynamic) {
+			fail("setup", error);
 		}
-		untyped hosts[self] = {x: bounds.x + bounds.width - panelWidth, y: bounds.y + bounds.height + GAP};
-		gameFont(self);
-		if (player == null && !build())
-			return;
-		if (timer == null) {
-			timer = new Timer(TICK_MS);
-			timer.addEventListener(TimerEvent.TIMER, onTick);
-			timer.start();
-		}
-		attach();
-		poll();
+	}
+
+	/**
+		Something threw: shows it on the player's last line and tells Arkive once per place (Arkive's log reads "Spotify
+		Player error in game: ..."), so an in-game test says what failed.
+	**/
+	static function fail(where:String, error:Dynamic):Void {
+		try {
+			var message:String = untyped __global__["String"](error);
+			problem = where + ": " + message;
+			if (untyped reported[where] != true) {
+				untyped reported[where] = true;
+				Bus.send(ID, "error\t" + problem.substr(0, 160));
+			}
+			if (errorLine != null) {
+				errorLine.text = problem;
+				drawPanel(panelHeight);
+			}
+		} catch (ignored:Dynamic) {}
+	}
+
+	/** Tells Arkive one line about the player (its log reads "Spotify Player in game: ..."). */
+	static function note(text:String):Void {
+		Bus.send(ID, "note\t" + text.substr(0, 200));
+	}
+
+	static function str(value:Dynamic):String {
+		var text:String = untyped __global__["String"](value);
+		return text;
 	}
 
 	/** The minimap's area name label's font, the HUD's own. */
@@ -210,21 +262,38 @@ class MusicPlayer {
 	static function build():Bool {
 		if (GameUi.definition(SMALL_BUTTON) == null)
 			return false;
+		try {
+			return buildPlayer();
+		} catch (error:Dynamic) {
+			// Half built: start again at the next configUI.
+			player = null;
+			fail("build", error);
+			return false;
+		}
+	}
+
+	static function buildPlayer():Bool {
 		player = new Sprite();
 		player.name = "arkiveSpotifyPlayer";
 		player.addEventListener(MouseEvent.MOUSE_DOWN, grab);
 
-		// The game's window backing (nine-slice, so it keeps its edges at this size); a drawn one without it.
-		panel = make("WindowBG_renew_V2");
-		if (panel == null)
-			panel = make("WindowBG_V2");
+		// The game's window backing, as its own windows and the Tweak Settings window have it (nine-slice, so it keeps
+		// its edges at this size; the "renew" one is the HUD's see-through bar); a drawn one without either.
+		var kind = "WindowBG_V2";
+		panel = make(kind);
 		if (panel == null) {
+			kind = "WindowBG_renew_V2";
+			panel = make(kind);
+		}
+		if (panel == null) {
+			kind = "drawn";
 			panel = new Shape();
 			drawnPanel = true;
 		} else {
 			panel.mouseChildren = false;
 		}
 		player.addChild(panel);
+		pieces = "panel " + kind;
 
 		// The cover in the game's item slot: its backing, the picture, its frame on top.
 		slot = new Sprite();
@@ -260,6 +329,7 @@ class MusicPlayer {
 		}
 		player.addChild(slot);
 		drawNote(cover, SLOT - 6);
+		pieces += ", slot " + (backing != null ? "ARKSlotBackgroundV2" : "drawn") + (slotFrame != null ? "+V2Slot_border" : "");
 
 		title = text(TEXT_X, 14, panelWidth - TEXT_X - PAD - 22, 14, WHITE, false);
 		artist = text(TEXT_X, 35, panelWidth - TEXT_X - PAD, 12, DIM, false);
@@ -343,6 +413,7 @@ class MusicPlayer {
 			player.addChild(slider);
 		}
 		volumeText = text(middle + 74, VOLUME_Y + 3, 34, 11, DIM, false);
+		pieces += ", gauge " + (gauge != null ? "SimpleProgressBar_01" : "drawn") + ", slider " + (slider != null ? "ARKDefaultSlider_V2" : "none");
 
 		// The strip: a small cover, play or pause, the song, and the unfold button.
 		mini = new Sprite();
@@ -358,6 +429,7 @@ class MusicPlayer {
 
 		foldButton = foldControl("AnimatedButton_Minus_V2", WORDS.fold, true);
 		unfoldButton = foldControl("AnimatedButton_Plus_V2", WORDS.unfold, false);
+		errorLine = text(PAD, 0, panelWidth - 2 * PAD, 10, RED, false);
 		Options.own(ID, player);
 		render();
 		return true;
@@ -632,38 +704,54 @@ class MusicPlayer {
 		keepOnScreen();
 	}
 
-	/** Pulls the player back inside the game's visible screen, the area the game keeps its own windows in. */
+	/**
+		Pulls the player back inside the game's visible screen, the area the game keeps its own windows in. It measures the
+		panel itself on the stage (not the bounds of every hidden piece) and moves it by the difference; when the numbers
+		make no sense (missing, or a screen smaller than the panel) it leaves the player where it is and tells Arkive.
+	**/
 	static function keepOnScreen():Void {
 		var parent:Dynamic = player.parent;
 		if (parent == null || parent.stage == null)
 			return;
 		var screen:Dynamic = screenArea(parent.stage);
-		var topLeft:Dynamic = parent.globalToLocal(new Point(screen.x, screen.y));
-		var bottomRight:Dynamic = parent.globalToLocal(new Point(screen.x + screen.width, screen.y + screen.height));
-		var box:Dynamic = player.getBounds(parent);
-		var left:Float = topLeft.x;
-		var top:Float = topLeft.y;
-		var right:Float = bottomRight.x;
-		var bottom:Float = bottomRight.y;
-		var boxX:Float = box.x;
-		var boxY:Float = box.y;
-		var boxWidth:Float = box.width;
-		var boxHeight:Float = box.height;
-		if (!Math.isFinite(left + top + right + bottom + boxX + boxY + boxWidth + boxHeight))
+		var corner:Dynamic = player.localToGlobal(new Point(0, 0));
+		var far:Dynamic = player.localToGlobal(new Point(panelWidth, panelHeight));
+		var left:Float = screen.x;
+		var top:Float = screen.y;
+		var right:Float = left + screen.width;
+		var bottom:Float = top + screen.height;
+		var x0:Float = corner.x;
+		var y0:Float = corner.y;
+		var x1:Float = far.x;
+		var y1:Float = far.y;
+		if (!Math.isFinite(left + top + right + bottom + x0 + y0 + x1 + y1) || x1 - x0 > right - left || y1 - y0 > bottom - top) {
+			if (untyped reported["screen"] != true) {
+				untyped reported["screen"] = true;
+				note("screen check skipped: screen " + str(left) + "," + str(top) + "," + str(right) + "," + str(bottom) + " panel "
+					+ str(x0) + "," + str(y0) + "," + str(x1) + "," + str(y1));
+			}
 			return;
+		}
 		var dx:Float = 0;
 		var dy:Float = 0;
-		if (boxX + boxWidth > right)
-			dx = right - boxX - boxWidth;
-		if (boxX + dx < left)
-			dx = left - boxX;
-		if (boxY + boxHeight > bottom)
-			dy = bottom - boxY - boxHeight;
-		if (boxY + dy < top)
-			dy = top - boxY;
-		if (dx != 0 || dy != 0) {
-			player.x = Math.round(player.x + dx);
-			player.y = Math.round(player.y + dy);
+		if (x1 > right)
+			dx = right - x1;
+		if (x0 + dx < left)
+			dx = left - x0;
+		if (y1 > bottom)
+			dy = bottom - y1;
+		if (y0 + dy < top)
+			dy = top - y0;
+		if (dx == 0 && dy == 0)
+			return;
+		// The same move in the parent's own units.
+		var from:Dynamic = parent.globalToLocal(new Point(x0, y0));
+		var to:Dynamic = parent.globalToLocal(new Point(x0 + dx, y0 + dy));
+		var moveX:Float = to.x - from.x;
+		var moveY:Float = to.y - from.y;
+		if (Math.isFinite(moveX + moveY)) {
+			player.x = Math.round(player.x + moveX);
+			player.y = Math.round(player.y + moveY);
 		}
 	}
 
@@ -691,7 +779,9 @@ class MusicPlayer {
 			}
 			if (state == "playing")
 				showTime();
-		} catch (error:Dynamic) {}
+		} catch (error:Dynamic) {
+			fail("tick", error);
+		}
 	}
 
 	/** Reads Arkive's file (one read at a time); a missing file or one Arkive stopped writing means it isn't running. */
@@ -705,7 +795,9 @@ class MusicPlayer {
 			try {
 				var data:String = loader.data;
 				read(data);
-			} catch (error:Dynamic) {}
+			} catch (error:Dynamic) {
+				fail("read", error);
+			}
 		});
 		loader.addEventListener("ioError", function(e:Dynamic) {
 			reading = false;
@@ -753,9 +845,16 @@ class MusicPlayer {
 		if (first)
 			return;
 		staleReads = 0;
+		// Arkive ends the file with its sequence again: without it the game got only part of the file.
+		if (value(fields, "end", 1, "") != head[1] && untyped reported["partial"] != true) {
+			untyped reported["partial"] = true;
+			var got:Int = data.length;
+			note("now.txt read only in part (" + got + " characters, last line " + lines[lines.length > 1 ? lines.length - 2 : 0].substr(0, 40)
+				+ ")");
+		}
 		state = value(fields, "state", 1, "none");
-		song = value(fields, "title", 1, "");
-		singer = value(fields, "artist", 1, "");
+		song = unescape(value(fields, "title", 1, ""));
+		singer = unescape(value(fields, "artist", 1, ""));
 		position = number(value(fields, "time", 1, ""), 0);
 		readAt = flash.Lib.getTimer();
 		length = number(value(fields, "time", 2, ""), 0);
@@ -787,6 +886,25 @@ class MusicPlayer {
 			return fallback;
 		var found:String = parts[index];
 		return found;
+	}
+
+	/** Arkive's text with the letters it spelled as "\u" and four hex digits turned back (the file itself is ASCII). */
+	static function unescape(text:String):String {
+		var at = text.indexOf("\\u");
+		if (at < 0)
+			return text;
+		var out = "";
+		var from = 0;
+		while (at >= 0 && at + 6 <= text.length) {
+			var code:Float = untyped __global__["parseInt"](text.substr(at + 2, 4), 16);
+			if (Math.isNaN(code))
+				break;
+			var letter:String = untyped __global__["String"].fromCharCode(code);
+			out = out + text.substring(from, at) + letter;
+			from = at + 6;
+			at = text.indexOf("\\u", from);
+		}
+		return out + text.substring(from);
 	}
 
 	static function number(text:String, fallback:Int):Int {
@@ -910,6 +1028,22 @@ class MusicPlayer {
 	static function render():Void {
 		if (player == null)
 			return;
+		try {
+			draw();
+		} catch (error:Dynamic) {
+			fail("draw", error);
+		}
+		if (!noted && (state == "playing" || state == "paused" || state == "stopped")) {
+			// Once a session: what the player was built from and where it sits, for the next in-game test.
+			noted = true;
+			var parent:Dynamic = player.parent;
+			var name:String = parent == null ? "none" : parent.name;
+			note(pieces + "; on " + name + " at " + str(player.x) + "," + str(player.y) + " width " + str(panelWidth) + "; state " + state
+				+ ", can " + can + ", length " + length + ", volume " + volume + ", art " + (art != "" ? "yes" : "no"));
+		}
+	}
+
+	static function draw():Void {
 		var live = state == "playing" || state == "paused" || state == "stopped";
 		var playing = state == "playing";
 		var heading:String = WORDS.title;
@@ -1068,21 +1202,30 @@ class MusicPlayer {
 		}
 	}
 
-	/** The game's window backing at this height; drawn in the HUD's dark shade without the symbol. */
+	/**
+		The game's window backing at this height (plus the error line while something has gone wrong); drawn in the
+		colours of the game's windows without the symbol.
+	**/
 	static function drawPanel(height:Float):Void {
+		panelHeight = height;
+		var shown:Float = height;
+		if (errorLine != null) {
+			errorLine.visible = problem != "";
+			errorLine.y = height - 4;
+			if (problem != "")
+				shown += ERROR_HEIGHT - 4;
+		}
 		if (drawnPanel) {
 			var g = panel.graphics;
 			g.clear();
-			g.lineStyle(1, WHITE, 0.12);
-			var matrix = new flash.geom.Matrix();
-			matrix.createGradientBox(panelWidth, height, Math.PI / 2, 0, 0);
-			g.beginGradientFill(flash.display.GradientType.LINEAR, [0x000000, 0x000000], [0.72, 0.55], [0, 255], matrix);
-			g.drawRect(0, 0, panelWidth, height);
+			g.lineStyle(1, 0x4A4F57, 1);
+			g.beginFill(0x15181D, 0.98);
+			g.drawRect(0, 0, panelWidth, shown);
 			g.endFill();
 			return;
 		}
 		panel.width = panelWidth;
-		panel.height = height;
+		panel.height = shown;
 	}
 
 	static function has(letter:String):Bool {
@@ -1191,50 +1334,78 @@ class MusicPlayer {
 
 	/** Mouse down on the backing, the cover or the text (not a control): drag the player until the button is let go. */
 	static function grab(event:Dynamic):Void {
-		// The minimap frame's own mouse handling (focus, its sliders closing) stays out of it.
-		event.stopPropagation();
-		var target:Dynamic = event.target;
-		if ((target != player && target != panel && target != slot && target != mini) || player.parent == null || player.stage == null)
-			return;
-		// The parent's own mouse position, as the game's windows read it: no stage coordinates to mix up.
-		var parent:Dynamic = player.parent;
-		grabX = parent.mouseX - player.x;
-		grabY = parent.mouseY - player.y;
-		if (!Math.isFinite(grabX) || !Math.isFinite(grabY))
-			return;
-		dragging = true;
-		player.stage.addEventListener(MouseEvent.MOUSE_MOVE, drag);
-		player.stage.addEventListener(MouseEvent.MOUSE_UP, drop);
+		try {
+			// The minimap frame's own mouse handling (focus, its sliders closing) stays out of it.
+			event.stopPropagation();
+			var target:Dynamic = event.target;
+			var mine = target == player || target == panel || target == slot || target == mini;
+			// The first presses of a session go to Arkive's log, so a test shows whether the mouse reaches the player.
+			noteDrop = drags < 2;
+			if (noteDrop) {
+				drags++;
+				var parent:Dynamic = player.parent;
+				var targetName:String = target == null ? "none" : target.name;
+				note("press on " + targetName + (mine ? " (drags)" : " (a control)") + ", button " + mouseButton(event) + ", mouse "
+					+ (parent == null ? "?" : str(parent.mouseX) + "," + str(parent.mouseY)) + ", player " + str(player.x) + "," + str(player.y));
+			}
+			// Only the left button drags, as the game's DragModel has it.
+			if (!mine || player.parent == null || player.stage == null || mouseButton(event) != 0)
+				return;
+			// Scaleform moves it with the mouse, as it does the game's own draggable pieces: no mouse numbers to read.
+			dragging = true;
+			dragStage = player.stage;
+			player.startDrag(false);
+			dragStage.addEventListener(MouseEvent.MOUSE_UP, drop);
+			player.addEventListener(MouseEvent.MOUSE_UP, drop);
+		} catch (error:Dynamic) {
+			fail("drag", error);
+		}
 	}
 
-	static function drag(event:Dynamic):Void {
-		if (!dragging || player.parent == null)
-			return;
-		var parent:Dynamic = player.parent;
-		var x:Float = parent.mouseX - grabX;
-		var y:Float = parent.mouseY - grabY;
-		// Math.round makes a missing number 0, which would throw the player to the minimap's corner.
-		if (Math.isFinite(x) && Math.isFinite(y)) {
-			player.x = Math.round(x);
-			player.y = Math.round(y);
+	/** Which mouse button (0 left) a press came from: Scaleform's MouseEventEx says, a plain MouseEvent is the left one. */
+	static function mouseButton(event:Dynamic):Int {
+		try {
+			var index:Dynamic = event.buttonIdx;
+			return index == null ? 0 : index;
+		} catch (error:Dynamic) {
+			return 0;
 		}
 	}
 
 	/** Let go: keep the player on screen and remember where it is, as an offset from its spot under the minimap. */
 	static function drop(event:Dynamic):Void {
+		if (!dragging)
+			return;
 		dragging = false;
-		var stage:Dynamic = event.currentTarget;
-		stage.removeEventListener(MouseEvent.MOUSE_MOVE, drag);
-		stage.removeEventListener(MouseEvent.MOUSE_UP, drop);
-		if (player.parent == null || host == null)
-			return;
-		keepOnScreen();
-		var spot:Dynamic = untyped hosts[host];
-		if (spot == null)
-			return;
-		offsetX = player.x - spot.x;
-		offsetY = player.y - spot.y;
-		sendLayout();
+		try {
+			player.stopDrag();
+			player.removeEventListener(MouseEvent.MOUSE_UP, drop);
+			if (dragStage != null)
+				dragStage.removeEventListener(MouseEvent.MOUSE_UP, drop);
+			dragStage = null;
+			if (player.parent == null || host == null)
+				return;
+			keepOnScreen();
+			var spot:Dynamic = untyped hosts[host];
+			if (spot == null)
+				return;
+			var x:Float = player.x;
+			var y:Float = player.y;
+			if (!Math.isFinite(x + y)) {
+				// Never keep a missing number: back to the spot under the minimap.
+				offsetX = 0;
+				offsetY = 0;
+				place();
+			} else {
+				offsetX = x - spot.x;
+				offsetY = y - spot.y;
+			}
+			if (noteDrop)
+				note("dropped at " + str(player.x) + "," + str(player.y));
+			sendLayout();
+		} catch (error:Dynamic) {
+			fail("drop", error);
+		}
 	}
 
 	/** Tells Arkive where the player is and whether it is folded, for next time. */
