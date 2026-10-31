@@ -42,7 +42,7 @@ class LogsTab {
 	/** Columns: boss, difficulty, class, DPS, parse, date, time, died. */
 	static var LEFTS:Array<Int> = [34, 430, 560, 690, 845, 940, 1015, 1090];
 	static var WIDTHS:Array<Int> = [390, 125, 125, 150, 90, 70, 70, 60];
-	static var TITLES:Array<String> = ["Boss", "Difficulty", "Class", "DPS / Uptime", "Parse %", "Date", "Time", ""];
+	static var TITLES:Array<String> = ["Boss", "Difficulty", "Class", "nDPS / Uptime", "Parse %", "Date", "Time", ""];
 	/** lostark.bible's colours for a support's uptimes: AP, Brand, Identity, T. */
 	static var BUFF_COLORS:Array<String> = ["#FCA5A5", "#86EFAC", "#FDE047", "#93C5FD"];
 

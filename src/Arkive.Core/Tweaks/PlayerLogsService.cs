@@ -20,7 +20,8 @@ public enum PlayerLogsStatus
 
 /// <summary>One log of a character, as lostark.bible lists it.</summary>
 public sealed record PlayerLog(string Boss, string Difficulty, string ClassName, string Spec, double Dps, double? Percentile,
-    long DurationMs, DateTimeOffset When, bool Died, IReadOnlyList<double>? Buffs = null)
+    long DurationMs, DateTimeOffset When, bool Died, IReadOnlyList<double>? Buffs = null, double? NDps = null,
+    double? NormalizedPercentile = null)
 {
     /// <summary>A support's log (lostark.bible tells them by spec), which shows buff uptimes instead of DPS.</summary>
     public bool IsSupport => Spec is "Desperate Salvation" or "Full Bloom" or "Blessed Aura" or "Liberator";
@@ -220,7 +221,7 @@ public sealed class PlayerLogsService(HttpClient client)
             : null;
         return new PlayerLog(Text("boss"), Text("difficulty"), Text("class"), Text("spec"), Number("dps") ?? 0, Number("percentile"),
             (long)(Number("duration") ?? 0), DateTimeOffset.FromUnixTimeMilliseconds((long)(Number("timestamp") ?? 0)),
-            field("isDead").ValueKind == JsonValueKind.True, buffs);
+            field("isDead").ValueKind == JsonValueKind.True, buffs, Number("ndps"), Number("normalizedPercentile"));
     }
 
     /// <summary>The region of an exact-name suggestion on a page that didn't find the character, or null.</summary>
@@ -274,7 +275,8 @@ public sealed class PlayerLogsService(HttpClient client)
     /// The answer the Logs tab draws, one line per row with tab-separated fields, already formatted so the tab's code
     /// only splits and draws. First line: status, region, name, count, the tab's request id (so it never shows an
     /// answer to an earlier click) and the raid shown ("" for recent logs). Second line: "#raids" and the raid names
-    /// in filter order, for the tab's raid tabs. Then per log: raid, gate, boss, difficulty, class, DPS, parse (whole
+    /// in filter order, for the tab's raid tabs. Then per log: raid, gate, boss, difficulty, class, nDPS (DPS when the
+    /// site has no nDPS), parse (whole
     /// percent, empty when the site has none), date, duration, "died", and for a support its buff uptimes in whole
     /// percent as lostark.bible lists them (AP, Brand, Identity, T; "95/96/74/40"), empty for anyone else.
     /// </summary>
@@ -301,8 +303,8 @@ public sealed class PlayerLogsService(HttpClient client)
                 .Append(Clean(log.Boss)).Append('\t')
                 .Append(Clean(log.Difficulty)).Append('\t')
                 .Append(Clean(log.ClassName)).Append('\t')
-                .Append(Dps(log.Dps)).Append('\t')
-                .Append(log.Percentile is { } percentile ? Math.Floor(percentile * 100).ToString(CultureInfo.InvariantCulture) : "").Append('\t')
+                .Append(Dps(log.NDps ?? log.Dps)).Append('\t')
+                .Append(Parse(log) is { } percentile ? Math.Floor(percentile * 100).ToString(CultureInfo.InvariantCulture) : "").Append('\t')
                 .Append(log.When.ToLocalTime().ToString("MMM d", CultureInfo.InvariantCulture)).Append('\t')
                 .Append(TimeSpan.FromMilliseconds(log.DurationMs).ToString(@"m\:ss", CultureInfo.InvariantCulture)).Append('\t')
                 .Append(log.Died ? "died" : "").Append('\t')
@@ -312,6 +314,13 @@ public sealed class PlayerLogsService(HttpClient client)
         }
         return builder.ToString();
     }
+
+    /// <summary>
+    /// The parse shown beside the DPS figure. The tab shows nDPS (lostark.bible's neutral DPS: damage with the party's
+    /// buffs taken out), so a damage dealer's parse is the site's normalized parse, which ranks that same nDPS; a
+    /// support keeps the regular parse, as on the site. Logs without the normalized figure fall back to the regular one.
+    /// </summary>
+    private static double? Parse(PlayerLog log) => log.IsSupport ? log.Percentile : log.NormalizedPercentile ?? log.Percentile;
 
     public static string RegionLabel(string? region) => region switch
     {

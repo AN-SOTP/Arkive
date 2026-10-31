@@ -412,6 +412,13 @@ internal static class TweakSmokeTests
         };
         var supportRow = Arkive.Core.Tweaks.PlayerLogsService.Summary(support).Split('\n')[2];
         Assert(supportRow.EndsWith("\tdied\t96/96/74/40", StringComparison.Ordinal), $"support row: {supportRow}");
+        // A damage dealer shows nDPS and the normalized parse that ranks it; a support keeps its regular parse.
+        var normalized = lookup! with { Logs = [lookup!.Logs[0] with { NDps = 604401404, NormalizedPercentile = 0.8824 }] };
+        var normalizedRow = Arkive.Core.Tweaks.PlayerLogsService.Summary(normalized).Split('\n')[2];
+        Assert(normalizedRow.Contains("\tSlayer\t604.4m\t88\t", StringComparison.Ordinal), $"nDPS row: {normalizedRow}");
+        var supportNormalized = support with { Logs = [support.Logs[0] with { NDps = 9_000_000, NormalizedPercentile = 0.10 }] };
+        var supportNormalizedRow = Arkive.Core.Tweaks.PlayerLogsService.Summary(supportNormalized).Split('\n')[2];
+        Assert(supportNormalizedRow.Contains("\tBard\t9.0m\t88\t", StringComparison.Ordinal), $"support parse row: {supportNormalizedRow}");
 
         // A character whose owner keeps logs private (Zurmos on EU Central): the page has the character but no logs.
         const string hidden = """
