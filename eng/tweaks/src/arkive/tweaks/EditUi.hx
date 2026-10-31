@@ -122,15 +122,27 @@ class EditUi {
 
 	// ---- Applying the layout ----------------------------------------------------------------------------------------
 
-	/** LayoutSetter.reposition, before: puts the frame back where the game left it, so the game places it from there. */
+	/**
+		LayoutSetter.reposition, before: puts the frame and its moved parts back where the game left them. The game
+		places a frame by its outline (LayoutUtil measures its bounds and moves it by the difference), so a part moved
+		out of the skill bar would drag the whole bar with it.
+	**/
 	public static function beforeReposition(self:Dynamic, args:Array<Dynamic>):Dynamic {
 		var widget:Dynamic = self.widget;
-		if (widget != null)
-			restore(widget);
+		if (widget == null)
+			return null;
+		var name:String = widget.name;
+		for (part in PARTS) {
+			var id:String = part.id;
+			if (StringTools.startsWith(id, name + "/"))
+				for (object in objectsOf(id))
+					restore(object);
+		}
+		restore(widget);
 		return null;
 	}
 
-	/** LayoutSetter.reposition, after: remembers the frame, then adds its saved offset and scale. */
+	/** LayoutSetter.reposition, after: remembers the frame, then gives it and its parts their saved offset and size. */
 	public static function onReposition(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
 		var widget:Dynamic = self.widget;
 		if (widget == null)
@@ -138,9 +150,14 @@ class EditUi {
 		var name:String = widget.name;
 		untyped setters[name] = self;
 		start();
+		for (part in PARTS) {
+			var id:String = part.id;
+			if (StringTools.startsWith(id, name + "/"))
+				placePiece(id, entryOf(id));
+		}
 		var entry:Dynamic = entryOf(name);
 		if (entry != null || untyped bases[widget] != null)
-			place(widget, entry);
+			place(widget, entry, null);
 	}
 
 	/** First call: reads the saved layout, starts the check timer and follows the tweak being switched on or off. */
@@ -156,7 +173,7 @@ class EditUi {
 				if (tweak != ID && key != "*")
 					return;
 				if (Options.on(ID))
-					applyAll();
+					applyAll(true);
 				else {
 					restoreAll();
 					close();
@@ -194,7 +211,7 @@ class EditUi {
 					continue;
 				untyped layout[parts[0]] = {x: x, y: y, s: clampScale(s)};
 			}
-			applyAll();
+			applyAll(true);
 		});
 		loader.addEventListener("ioError", function(event:Dynamic) {});
 		loader.addEventListener("securityError", function(event:Dynamic) {});
@@ -207,31 +224,101 @@ class EditUi {
 		return untyped layout[id];
 	}
 
-	/** Four times a second: applies offsets to frames and parts the game moved outside reposition. */
+	/**
+		Four times a second: applies offsets to skill bar parts the game moved itself (it sets their places outright, so
+		where it put them is the new base). Frames are left to reposition: the game moves those relative to where they
+		are, so taking such a place as the base would add the offset twice.
+	**/
 	static function watch(event:Dynamic):Void {
 		try {
 			if (!Options.on(ID))
 				return;
-			applyAll();
+			applyAll(false);
 		} catch (error:Dynamic) {}
 	}
 
-	/** Every saved piece, where it is now (cheap when nothing moved: the transform is only compared). */
-	static function applyAll():Void {
+	/** Every saved piece where it is now, frames too when `frames` (cheap when nothing moved: only compares). */
+	static function applyAll(frames:Bool):Void {
 		var ids:Array<Dynamic> = untyped __keys__(layout);
 		for (id in ids) {
 			var key:String = id;
-			var entry:Dynamic = untyped layout[key];
-			for (object in objectsOf(key))
-				place(object, entry);
+			if (frames || key.indexOf("/") > 0)
+				placePiece(key, untyped layout[key]);
 		}
 	}
 
-	/** Puts every moved object back where the game had it (the tweak switched off). */
+	/**
+		Every moved object back where the game had it (Restore defaults, or the tweak switched off), then the game lays
+		every HUD frame out again from its own settings, so nothing keeps a place worked out while parts were moved.
+	**/
 	static function restoreAll():Void {
 		var objects:Array<Dynamic> = untyped __keys__(bases);
+		// Parts before frames: the frames are measured with their parts at home.
 		for (object in objects)
-			place(object, null);
+			if (!isFrame(object))
+				place(object, null, null);
+		for (object in objects)
+			if (isFrame(object))
+				place(object, null, null);
+		bases = new Dictionary(true);
+		reflowGame(null);
+	}
+
+	static function isFrame(object:Dynamic):Bool {
+		var name:String = object.name;
+		return name != null && widgetOf(name) == object;
+	}
+
+	/** The game's own layout pass: one frame's (setter.reflow), or every HUD frame's, twice for frames placed beside others. */
+	static function reflowGame(name:String):Void {
+		try {
+			if (name != null) {
+				if (Text.has(setters, name)) {
+					var setter:Dynamic = untyped setters[name];
+					setter.reflow();
+				}
+				return;
+			}
+			var manager:Dynamic = GameUi.definition("ark.managers.LayoutManager");
+			if (manager != null) {
+				manager.reflowAllManagingWidgets();
+				manager.reflowAllManagingWidgets();
+			}
+		} catch (error:Dynamic) {}
+	}
+
+	/**
+		A piece's objects given its entry (null: back to the game's). A piece of several objects (the skill rows)
+		resizes around their shared corner, so they stay together.
+	**/
+	static function placePiece(id:String, entry:Dynamic):Void {
+		var objects = objectsOf(id);
+		if (entry == null || objects.length < 2) {
+			for (object in objects)
+				place(object, entry, null);
+			return;
+		}
+		var parent:Dynamic = null;
+		var origin:Point = null;
+		for (object in objects) {
+			var base:Dynamic = sync(object, true);
+			if (parent == null)
+				parent = object.parent;
+			if (object.parent != parent)
+				continue;
+			var bx:Float = base.bx;
+			var by:Float = base.by;
+			if (origin == null)
+				origin = new Point(bx, by);
+			else {
+				if (bx < origin.x)
+					origin.x = bx;
+				if (by < origin.y)
+					origin.y = by;
+			}
+		}
+		for (object in objects)
+			place(object, entry, object.parent == parent ? origin : null);
 	}
 
 	/** The display objects of a piece: a HUD frame by name, or "frame/part" for a part of the skill bar. */
@@ -285,26 +372,37 @@ class EditUi {
 	}
 
 	/**
-		Gives the object its offset and scale on top of the game's own transform, or (entry null) puts the game's back.
-		A transform that isn't the one we set last is the game's newest, so it becomes the base.
+		The object's record of the game's own transform (b*) and ours (a*), made when `create`. A transform that isn't
+		the one we set last is the game's newest, so it becomes the base.
 	**/
-	static function place(object:Dynamic, entry:Dynamic):Void {
+	static function sync(object:Dynamic, create:Bool):Dynamic {
 		var base:Dynamic = untyped bases[object];
 		if (base == null) {
-			if (entry == null)
-				return;
+			if (!create)
+				return null;
 			base = {bx: object.x, by: object.y, bsx: object.scaleX, bsy: object.scaleY, ax: Math.NaN, ay: Math.NaN, asx: Math.NaN, asy: Math.NaN};
 			untyped bases[object] = base;
-		} else {
-			if (object.x != base.ax || object.y != base.ay) {
-				base.bx = object.x;
-				base.by = object.y;
-			}
-			if (object.scaleX != base.asx || object.scaleY != base.asy) {
-				base.bsx = object.scaleX;
-				base.bsy = object.scaleY;
-			}
+			return base;
 		}
+		if (object.x != base.ax || object.y != base.ay) {
+			base.bx = object.x;
+			base.by = object.y;
+		}
+		if (object.scaleX != base.asx || object.scaleY != base.asy) {
+			base.bsx = object.scaleX;
+			base.bsy = object.scaleY;
+		}
+		return base;
+	}
+
+	/**
+		Gives the object its offset and size on top of the game's own transform, or (entry null) puts the game's back.
+		With an `origin` (parent coordinates) the size is taken around it rather than the object's own corner.
+	**/
+	static function place(object:Dynamic, entry:Dynamic, origin:Point):Void {
+		var base:Dynamic = sync(object, entry != null);
+		if (base == null)
+			return;
 		if (entry == null) {
 			object.x = base.bx;
 			object.y = base.by;
@@ -322,6 +420,10 @@ class EditUi {
 		var bsy:Float = base.bsy;
 		var bx:Float = base.bx;
 		var by:Float = base.by;
+		if (origin != null) {
+			bx = origin.x + (bx - origin.x) * scale;
+			by = origin.y + (by - origin.y) * scale;
+		}
 		var ex:Float = entry.x;
 		var ey:Float = entry.y;
 		var from:Point = parent.localToGlobal(new Point(bx, by));
@@ -481,8 +583,48 @@ class EditUi {
 			item.y = spot.y;
 		item.width = width;
 		item.height = store.height * scale;
-		SettingsPanel.dress(item, store, "Edit UI", "E");
+		SettingsPanel.dress(item, store, "Edit UI", "", cornersMark);
 		item.visible = true;
+	}
+
+	/**
+		The button's icon: the four corners of a square, each an L pointing outwards (the usual "move / expand" mark),
+		in the colour of the bar's other icons.
+	**/
+	static function cornersMark(size:Float):flash.display.MovieClip {
+		var mark = new flash.display.MovieClip();
+		var g = mark.graphics;
+		var inset:Float = size * 0.2;
+		var far:Float = size - inset;
+		var arm:Float = size * 0.22;
+		var gap:Float = size * 0.1;
+		var thick:Float = Math.max(2, Math.round(size / 14));
+		// Plain strings for the cap and joint: no lookup of the player's style classes.
+		var pen:Dynamic = g;
+		pen.lineStyle(thick, 0xD1D2D0, 1, false, "normal", "square", "miter");
+		// Each corner: the L, then a short stroke from it towards the middle, so the corners read as pushed outwards.
+		g.moveTo(inset, inset + arm);
+		g.lineTo(inset, inset);
+		g.lineTo(inset + arm, inset);
+		g.moveTo(far - arm, inset);
+		g.lineTo(far, inset);
+		g.lineTo(far, inset + arm);
+		g.moveTo(far, far - arm);
+		g.lineTo(far, far);
+		g.lineTo(far - arm, far);
+		g.moveTo(inset + arm, far);
+		g.lineTo(inset, far);
+		g.lineTo(inset, far - arm);
+		g.lineStyle(Math.max(1, Math.round(size / 20)), 0xD1D2D0, 1);
+		g.moveTo(inset + gap, inset + gap);
+		g.lineTo(inset + gap + arm * 0.6, inset + gap + arm * 0.6);
+		g.moveTo(far - gap, inset + gap);
+		g.lineTo(far - gap - arm * 0.6, inset + gap + arm * 0.6);
+		g.moveTo(far - gap, far - gap);
+		g.lineTo(far - gap - arm * 0.6, far - gap - arm * 0.6);
+		g.moveTo(inset + gap, far - gap);
+		g.lineTo(inset + gap + arm * 0.6, far - gap - arm * 0.6);
+		return mark;
 	}
 
 	/** Closes the escape menu (its own close button, which the game listens to), then opens the edit screen. */
@@ -1021,8 +1163,7 @@ class EditUi {
 	static function setEntry(id:String, x:Float, y:Float, s:Float):Void {
 		var entry:Dynamic = {x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, s: s};
 		untyped layout[id] = entry;
-		for (object in objectsOf(id))
-			place(object, entry);
+		placePiece(id, entry);
 	}
 
 	static function resetPiece():Void {
@@ -1040,8 +1181,10 @@ class EditUi {
 	static function clearEntry(id:String):Void {
 		untyped layout[id] = null;
 		untyped __delete__(layout, id);
-		for (object in objectsOf(id))
-			place(object, null);
+		placePiece(id, null);
+		// The frame (or the part's frame) laid out again by the game, from its own settings.
+		var slash = id.indexOf("/");
+		reflowGame(slash < 0 ? id : id.substring(0, slash));
 	}
 
 	/** Two clicks within about four seconds: every piece back where the game puts it. */

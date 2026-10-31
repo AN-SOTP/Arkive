@@ -227,10 +227,10 @@ class SettingsPanel {
 	}
 
 	/**
-		Our label in the game's label font and colour, and a letter where the game's buttons have their icon, set as the
-		button's iconMc so it takes the game's hover and press tints.
+		Our label in the game's label font and colour, and a letter (or the drawing `draw(size)` makes) where the game's
+		buttons have their icon, set as the button's iconMc so it takes the game's hover and press tints.
 	**/
-	public static function dress(item:Dynamic, like:Dynamic, name:String, initial:String):Void {
+	public static function dress(item:Dynamic, like:Dynamic, name:String, initial:String, ?draw:Float->flash.display.MovieClip):Void {
 		var label:Dynamic = item.nameTextField;
 		var model:Dynamic = like.nameTextField;
 		if (label != null && model != null) {
@@ -248,6 +248,16 @@ class SettingsPanel {
 		if (size < 16)
 			size = 30;
 		// iconMc is typed MovieClip in the game class, so the mark must be one.
+		var mark = draw != null ? draw(size) : letterMark(size, initial, model);
+		if (icon != null) {
+			mark.x = icon.x;
+			mark.y = icon.y;
+		}
+		item.container.addChild(mark);
+		item.iconMc = mark;
+	}
+
+	static function letterMark(size:Float, initial:String, model:Dynamic):flash.display.MovieClip {
 		var mark = new flash.display.MovieClip();
 		var letter = new TextField();
 		var format = new TextFormat();
@@ -264,12 +274,7 @@ class SettingsPanel {
 		letter.text = initial;
 		letter.y = (size - letter.textHeight) / 2 - 2;
 		mark.addChild(letter);
-		if (icon != null) {
-			mark.x = icon.x;
-			mark.y = icon.y;
-		}
-		item.container.addChild(mark);
-		item.iconMc = mark;
+		return mark;
 	}
 
 	/** A new instance of a symbol from the shared component movies, or null when none is loaded. */
