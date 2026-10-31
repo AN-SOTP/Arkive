@@ -394,7 +394,7 @@ class EditUi {
 		if (base == null) {
 			if (!create)
 				return null;
-			base = {bx: object.x, by: object.y, bsx: object.scaleX, bsy: object.scaleY, ax: nothing(), ay: nothing(), asx: nothing(), asy: nothing()};
+			base = {bx: object.x, by: object.y, bsx: scaleXOf(object), bsy: scaleYOf(object), ax: nothing(), ay: nothing(), asx: nothing(), asy: nothing()};
 			untyped bases[object] = base;
 			return base;
 		}
@@ -402,9 +402,9 @@ class EditUi {
 			base.bx = object.x;
 			base.by = object.y;
 		}
-		if (object.scaleX != base.asx || object.scaleY != base.asy) {
-			base.bsx = object.scaleX;
-			base.bsy = object.scaleY;
+		if (scaleXOf(object) != base.asx || scaleYOf(object) != base.asy) {
+			base.bsx = scaleXOf(object);
+			base.bsy = scaleYOf(object);
 		}
 		return base;
 	}
@@ -420,8 +420,9 @@ class EditUi {
 		if (entry == null) {
 			object.x = base.bx;
 			object.y = base.by;
-			object.scaleX = base.bsx;
-			object.scaleY = base.bsy;
+			var sx:Float = base.bsx;
+			var sy:Float = base.bsy;
+			setScale(object, sx, sy);
 			untyped __delete__(bases, object);
 			return;
 		}
@@ -442,10 +443,7 @@ class EditUi {
 		var ey:Float = entry.y;
 		var from:Point = parent.localToGlobal(new Point(bx, by));
 		var to:Point = parent.globalToLocal(new Point(from.x + ex * unit, from.y + ey * unit));
-		if (object.scaleX != bsx * scale)
-			object.scaleX = bsx * scale;
-		if (object.scaleY != bsy * scale)
-			object.scaleY = bsy * scale;
+		setScale(object, bsx * scale, bsy * scale);
 		if (object.x != to.x)
 			object.x = to.x;
 		if (object.y != to.y)
@@ -453,8 +451,40 @@ class EditUi {
 		// Read back: the player keeps positions in twentieths of a pixel, so compare with what it kept.
 		base.ax = object.x;
 		base.ay = object.y;
-		base.asx = object.scaleX;
-		base.asy = object.scaleY;
+		base.asx = scaleXOf(object);
+		base.asy = scaleYOf(object);
+	}
+
+	/**
+		The size the object is drawn at, from its transform. The game's components (CLIK UIComponent: the HUD frames,
+		the buff bars) answer scaleX with their layout width over their first width, which for a buff bar grows with
+		the number of buffs showing; taking that as a scale and putting it back stretched the icons.
+	**/
+	static function scaleXOf(object:Dynamic):Float {
+		var matrix:Dynamic = object.transform.matrix;
+		var a:Float = matrix.a;
+		return a;
+	}
+
+	static function scaleYOf(object:Dynamic):Float {
+		var matrix:Dynamic = object.transform.matrix;
+		var d:Float = matrix.d;
+		return d;
+	}
+
+	/**
+		Sets the size it is drawn at through its transform, as the game's own LayoutUtil does, so a component's layout
+		size (its scaleX setter re-sizes it from its current contents) is left alone.
+	**/
+	static function setScale(object:Dynamic, sx:Float, sy:Float):Void {
+		var matrix:Dynamic = object.transform.matrix;
+		var a:Float = matrix.a;
+		var d:Float = matrix.d;
+		if (a == sx && d == sy)
+			return;
+		matrix.a = sx;
+		matrix.d = sy;
+		object.transform.matrix = matrix;
 	}
 
 	/** Before the game places the frame again: the game's own transform back, if it's still the one we set. */
@@ -466,9 +496,10 @@ class EditUi {
 			object.x = base.bx;
 			object.y = base.by;
 		}
-		if (object.scaleX == base.asx && object.scaleY == base.asy) {
-			object.scaleX = base.bsx;
-			object.scaleY = base.bsy;
+		if (scaleXOf(object) == base.asx && scaleYOf(object) == base.asy) {
+			var sx:Float = base.bsx;
+			var sy:Float = base.bsy;
+			setScale(object, sx, sy);
 		}
 		base.ax = nothing();
 		base.ay = nothing();
