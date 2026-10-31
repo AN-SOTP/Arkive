@@ -34,6 +34,8 @@ class MusicPlayer {
 	static inline var READ_EVERY = 4;
 	/** Reads without a new write from Arkive after which it counts as not running. */
 	static inline var STALE_READS = 4;
+	/** Ticks between looks at what the game has under the minimap. */
+	static inline var MEASURE_EVERY = 16;
 	/** After a volume drag, the file's volume is ignored this long, so the slider doesn't jump back. */
 	static inline var VOLUME_HOLD_MS = 2500;
 	static inline var VOLUME_SEND_MS = 200;
@@ -60,6 +62,8 @@ class MusicPlayer {
 	/** The line under the player that says what went wrong, for in-game tests. */
 	static inline var ERROR_HEIGHT = 16;
 	static inline var RED = 0xFF6A5A;
+	/** The game's window colour (the Tweak Settings window's own), solid under the panel art. */
+	static inline var PANEL_COLOR = 0x15181D;
 
 	static inline var WHITE = 0xFFFFFF;
 	static inline var TEXT = 0xD8D8D8;
@@ -104,6 +108,7 @@ class MusicPlayer {
 	static var panel:Dynamic;
 	/** True when the game's window backing wasn't there and the panel is drawn. */
 	static var drawnPanel = false;
+	static var underlay:Shape;
 	static var slot:Sprite;
 	static var slotFrame:Dynamic;
 	static var cover:Sprite;
@@ -183,6 +188,9 @@ class MusicPlayer {
 	static var noted = false;
 	/** The game's names of the pieces the player was built from, for the note to Arkive. */
 	static var pieces = "";
+	/** The last word to Arkive about what is under the minimap, and how many were sent. */
+	static var measured = "";
+	static var measuredNotes = 0;
 
 	static var settingSlider = false;
 	static var volumeAt = -VOLUME_HOLD_MS;
@@ -200,7 +208,15 @@ class MusicPlayer {
 				var wide:Float = Math.round(bounds.width);
 				panelWidth = wide < MIN_WIDTH ? MIN_WIDTH : wide > MAX_WIDTH ? MAX_WIDTH : wide;
 			}
-			untyped hosts[self] = {x: bounds.x + bounds.width - panelWidth, y: bounds.y + bounds.height + SHORTCUTS + GAP};
+			var base:Float = bounds.y + bounds.height;
+			untyped hosts[self] = {
+				x: bounds.x + bounds.width - panelWidth,
+				y: base + SHORTCUTS + GAP,
+				left: bounds.x,
+				right: bounds.x + bounds.width,
+				base: base
+			};
+			measure(self);
 			gameFont(self);
 			if (player == null && !build())
 				return;
@@ -291,6 +307,10 @@ class MusicPlayer {
 			drawnPanel = true;
 		} else {
 			panel.mouseChildren = false;
+			// The game's window art lets the world show through (its windows sit over a dimmed screen); a solid fill
+			// in the window's colour under it keeps the quest list and buttons beneath from showing.
+			underlay = new Shape();
+			player.addChild(underlay);
 		}
 		player.addChild(panel);
 		pieces = "panel " + kind;
@@ -693,6 +713,101 @@ class MusicPlayer {
 		return true;
 	}
 
+	/**
+		Where under the minimap the player goes: below the game's row of shortcut buttons, which is another HUD frame the
+		game places along the backing's bottom edge. Looks through the frames the game's LayoutManager has on screen for
+		ones whose visible part starts at that edge and lies across the backing (a row, not a tall panel) and goes below
+		the lowest; SHORTCUTS below the backing when there is none. The quest list's top is noted for in-game tests.
+	**/
+	static function measure(frame:Dynamic):Void {
+		var spot:Dynamic = untyped hosts[frame];
+		if (spot == null || frame.stage == null)
+			return;
+		var base:Float = spot.base;
+		var left:Float = spot.left;
+		var right:Float = spot.right;
+		var below:Float = SHORTCUTS;
+		var found = "";
+		var quests:Float = -1;
+		try {
+			var manager:Dynamic = GameUi.definition("ark.managers.LayoutManager");
+			var list:Dynamic = manager == null ? null : manager.managingLayoutSetters;
+			var count:Int = list == null ? 0 : list.length;
+			var reach:Float = base;
+			for (i in 0...count) {
+				var setter:Dynamic = list[i];
+				var widget:Dynamic = setter == null ? null : setter.widget;
+				if (widget == null || widget.stage == null || (untyped hosts[widget]) != null || !showing(widget))
+					continue;
+				var box:Dynamic = shownBounds(widget, frame, 0);
+				if (box == null)
+					continue;
+				var top:Float = box.y;
+				var bottom:Float = top + box.height;
+				var x0:Float = box.x;
+				var x1:Float = x0 + box.width;
+				if (!isFinite(top + bottom + x0 + x1) || x1 <= left || x0 >= right)
+					continue;
+				var name:String = widget.name;
+				if (name != null && name.toLowerCase().indexOf("quest") >= 0) {
+					if (top >= base - 4 && (quests < 0 || top < quests))
+						quests = top;
+					continue;
+				}
+				if (top < base - 12 || top > base + 30 || bottom - top > 80)
+					continue;
+				if (bottom > reach)
+					reach = bottom;
+				found += (found == "" ? "" : "+") + name;
+			}
+			if (found != "")
+				below = reach - base;
+		} catch (error:Dynamic) {
+			fail("measure", error);
+		}
+		spot.y = Math.round(base + below + GAP);
+		var said = (found == "" ? "no row under the minimap" : "row " + found) + ", player top " + str(spot.y - base)
+			+ " below the minimap" + (quests < 0 ? ", no quest list under it" : ", quest list at " + str(Math.round(quests - base)));
+		if (said != measured && measuredNotes < 3) {
+			measured = said;
+			measuredNotes++;
+			note(said);
+		}
+	}
+
+	/**
+		The part of `node` that shows, in `root`'s units: hidden pieces left out (frames keep tooltips, effects and closed
+		lists hidden around them, and getBounds counts those), masked ones cut to their mask. Null when nothing shows.
+	**/
+	static function shownBounds(node:Dynamic, root:Dynamic, depth:Int):Dynamic {
+		if (depth > 0 && (node.visible != true || node.alpha < 0.02))
+			return null;
+		if (depth > 0 && node.mask != null)
+			return node.mask.getBounds(root);
+		if (depth < 5 && (untyped __is__(node, flash.display.DisplayObjectContainer))) {
+			var count:Int = node.numChildren;
+			if (count > 0) {
+				var result:Dynamic = null;
+				for (i in 0...count) {
+					var child:Dynamic = node.getChildAt(i);
+					var part:Dynamic = child == null ? null : shownBounds(child, root, depth + 1);
+					if (part != null)
+						result = result == null ? part : result.union(part);
+				}
+				return result;
+			}
+		}
+		if (untyped __is__(node, TextField)) {
+			var words:String = node.text;
+			if (words == null || words.length == 0)
+				return null;
+		}
+		var bounds:Dynamic = node.getBounds(root);
+		var wide:Float = bounds.width;
+		var high:Float = bounds.height;
+		return wide > 0 && high > 0 ? bounds : null;
+	}
+
 	static function place():Void {
 		if (host == null)
 			return;
@@ -724,7 +839,7 @@ class MusicPlayer {
 		var y0:Float = corner.y;
 		var x1:Float = far.x;
 		var y1:Float = far.y;
-		if (!Math.isFinite(left + top + right + bottom + x0 + y0 + x1 + y1) || x1 - x0 > right - left || y1 - y0 > bottom - top) {
+		if (!isFinite(left + top + right + bottom + x0 + y0 + x1 + y1) || x1 - x0 > right - left || y1 - y0 > bottom - top) {
 			if (untyped reported["screen"] != true) {
 				untyped reported["screen"] = true;
 				note("screen check skipped: screen " + str(left) + "," + str(top) + "," + str(right) + "," + str(bottom) + " panel "
@@ -749,7 +864,7 @@ class MusicPlayer {
 		var to:Dynamic = parent.globalToLocal(new Point(x0 + dx, y0 + dy));
 		var moveX:Float = to.x - from.x;
 		var moveY:Float = to.y - from.y;
-		if (Math.isFinite(moveX + moveY)) {
+		if (isFinite(moveX + moveY)) {
 			player.x = Math.round(player.x + moveX);
 			player.y = Math.round(player.y + moveY);
 		}
@@ -774,6 +889,14 @@ class MusicPlayer {
 				if (host == null || host.stage == null || !showing(host)) {
 					host = null;
 					attach();
+				}
+				// The game lays out its HUD frames after the minimap's configUI and again when the screen changes.
+				if (host != null && !dragging && ticks % MEASURE_EVERY == 0) {
+					var spot:Dynamic = untyped hosts[host];
+					var was:Float = spot == null ? 0 : spot.y;
+					measure(host);
+					if (spot != null && spot.y != was)
+						place();
 				}
 				poll();
 			}
@@ -897,7 +1020,7 @@ class MusicPlayer {
 		var from = 0;
 		while (at >= 0 && at + 6 <= text.length) {
 			var code:Float = untyped __global__["parseInt"](text.substr(at + 2, 4), 16);
-			if (Math.isNaN(code))
+			if (isNaN(code))
 				break;
 			var letter:String = untyped __global__["String"].fromCharCode(code);
 			out = out + text.substring(from, at) + letter;
@@ -909,7 +1032,19 @@ class MusicPlayer {
 
 	static function number(text:String, fallback:Int):Int {
 		var parsed:Float = untyped __global__["parseInt"](text, 10);
-		return Math.isNaN(parsed) ? fallback : Std.int(parsed);
+		return isNaN(parsed) ? fallback : Std.int(parsed);
+	}
+
+	/**
+		The player's own isNaN and isFinite, as the game's code calls them: Haxe's Math.isNaN and Math.isFinite are put
+		on Math by Haxe's Boot, which Arkive leaves empty, so calling them threw "Error #1006" (not a function).
+	**/
+	static function isNaN(value:Float):Bool {
+		return untyped __global__["isNaN"](value);
+	}
+
+	static function isFinite(value:Float):Bool {
+		return untyped __global__["isFinite"](value);
 	}
 
 	/** Reads art.txt for a new track and draws its pictures; "" clears them. */
@@ -1219,13 +1354,20 @@ class MusicPlayer {
 			var g = panel.graphics;
 			g.clear();
 			g.lineStyle(1, 0x4A4F57, 1);
-			g.beginFill(0x15181D, 0.98);
+			g.beginFill(PANEL_COLOR, 1);
 			g.drawRect(0, 0, panelWidth, shown);
 			g.endFill();
 			return;
 		}
 		panel.width = panelWidth;
 		panel.height = shown;
+		if (underlay != null) {
+			var fill = underlay.graphics;
+			fill.clear();
+			fill.beginFill(PANEL_COLOR, 1);
+			fill.drawRect(2, 2, panelWidth - 4, shown - 4);
+			fill.endFill();
+		}
 	}
 
 	static function has(letter:String):Bool {
@@ -1296,7 +1438,7 @@ class MusicPlayer {
 			return;
 		var span:Float = panelWidth - 2 * PAD - 84;
 		var share:Float = gaugeHit.mouseX / span;
-		if (!Math.isFinite(share))
+		if (!isFinite(share))
 			return;
 		if (share < 0)
 			share = 0;
@@ -1391,7 +1533,7 @@ class MusicPlayer {
 				return;
 			var x:Float = player.x;
 			var y:Float = player.y;
-			if (!Math.isFinite(x + y)) {
+			if (!isFinite(x + y)) {
 				// Never keep a missing number: back to the spot under the minimap.
 				offsetX = 0;
 				offsetY = 0;
