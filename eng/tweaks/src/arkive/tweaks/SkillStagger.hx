@@ -10,11 +10,13 @@ import flash.utils.Dictionary;
 
 	Arkive copies the numbers from data2.lpk into the options (SkillStaggerTable): "grades" (the five labels, Low first),
 	"skills" ("id|grade|name|effect:stagger,…") and "tripods" ("skill|name|effect:percent,…", effect 0 for every hit).
-	The skill is found by the id in its tooltip data when there is one, else by the name in its title, narrowed by the
-	grade the tooltip shows. Picked tripods are the tripod names the tooltip lists.
+	A skill tooltip is a NameTagBox with the skill's name, a CommonSkillTitle (its kind, "Charge" or "Normal", and icon;
+	no id), a SingleTextBox whose description ends in lines like "Weak Point: Lv. 2", "Stagger: High", and a
+	TripodSkillCustom list of the picked tripods ({name, desc, lock}). The skill window's tooltip repeats the description
+	for the next level. The skill is found by its name, narrowed by the grade the tooltip shows, then by picked tripods.
 
-	The skill tooltip's layout isn't known yet: the "showData" option (for testing) lists every box of skill tooltips at
-	the end of the tooltip and sends it to Arkive's log once per skill.
+	The "showData" option (for testing) lists every box of skill tooltips at the end of the tooltip and sends it to
+	Arkive's log once per skill.
 **/
 @:keep
 class SkillStagger {
@@ -60,6 +62,7 @@ class SkillStagger {
 	static function show(list:Array<Dynamic>):Void {
 		var title:Dynamic = null;
 		var titleAt = -1;
+		var nameTag:String = null;
 		var skillish = false;
 		for (i in 0...list.length) {
 			var box:Dynamic = list[i];
@@ -68,6 +71,8 @@ class SkillStagger {
 			var type:String = box.type;
 			if (type.indexOf("Skill") >= 0)
 				skillish = true;
+			if (type == "NameTagBox" && nameTag == null)
+				nameTag = Tooltips.htmlOf(box.value);
 			if (type == "CommonSkillTitle" && title == null) {
 				title = box.value;
 				titleAt = i;
@@ -75,33 +80,37 @@ class SkillStagger {
 		}
 		if (!skillish || !load()) {
 			if (skillish && showData())
-				addData(list, null, "the stagger table isn't in the settings (no data2.lpk when the tweak was installed?)");
+				addData(list, null, null, "the stagger table isn't in the settings (no data2.lpk when the tweak was installed?)");
 			return;
 		}
-		var label = findLabel(list);
+		var labels = findLabels(list);
+		var label:Dynamic = labels.length > 0 ? labels[0] : null;
 		var grade = label == null ? 0 : (label.grade : Int);
-		var name = title == null ? "" : Text.trim(Text.stripTags(Tooltips.htmlOf(title.name)));
+		// The title box's name is the kind of skill ("Charge", "Normal"); the skill's own name is the name tag above it.
+		var name = Text.trim(Text.stripTags(nameTag != null ? nameTag : title == null ? null : Tooltips.htmlOf(title.name)));
 		var picked = pickedTripods(list);
 		var skill:Dynamic = skillFor(title, name, grade, picked);
 		var text = skill == null ? null : staggerText(skill, picked);
 		if (showData())
-			addData(list, skill, "name '" + name + "', grade shown " + gradeText(grade) + ", label "
-				+ (label == null ? "not found" : "in box " + indexText(label.box) + " field " + (label.field : String))
+			addData(list, name, skill, "name '" + name + "', grade shown " + gradeText(grade) + ", labels "
+				+ (label == null ? "not found" : "in " + indexText(labels.length) + " box(es), first " + indexText(label.box) + " field " + (label.field : String))
 				+ ", tripods in the tooltip: " + picked.join(" / ") + ", line: " + (text == null ? "none" : text));
 		if (text == null)
 			return;
-		if (label != null) {
-			var holder:Dynamic = label.holder;
-			var field:String = label.field;
+		// Every grade line gets it: the skill window's tooltip repeats the description for the next level.
+		for (found in labels) {
+			var holder:Dynamic = found.holder;
+			var field:String = found.field;
 			var value:String = untyped holder[field];
-			var end:Int = label.end;
+			var end:Int = found.end;
 			// The game can hand the same boxes again; they already have the number then.
 			if (value.substr(end, DOT.length) != DOT)
 				untyped holder[field] = value.substring(0, end) + DOT + text + value.substring(end);
-			var box:Dynamic = list[label.box];
+			var box:Dynamic = list[found.box];
 			box.dirty = true;
-			return;
 		}
+		if (label != null)
+			return;
 		// No grade in the text the tweak can see: a line of its own under the skill's title.
 		var skillGrade:Int = skill.grade;
 		var line = (skillGrade >= 1 && skillGrade <= grades.length ? grades[skillGrade - 1] + DOT : "") + text;
@@ -188,10 +197,11 @@ class SkillStagger {
 	}
 
 	/**
-		The grade label in the tooltip's text: {holder, field, end (just after the label), box (its index), grade}.
-		Longer labels are tried first, since one label can start another ("Stagger: Mid" and "Stagger: Mid-high").
+		The grade label in each box of the tooltip that has one: {holder, field, end (just after the label), box (its
+		index), grade}. Longer labels are tried first, since one label can start another ("Stagger: Mid", "Stagger: Mid-high").
 	**/
-	static function findLabel(list:Array<Dynamic>):Dynamic {
+	static function findLabels(list:Array<Dynamic>):Array<Dynamic> {
+		var all:Array<Dynamic> = [];
 		var order:Array<Int> = [];
 		for (i in 0...grades.length)
 			if (grades[i] != "")
@@ -214,10 +224,10 @@ class SkillStagger {
 			var found = labelIn(box, "value", order, 0);
 			if (found != null) {
 				found.box = i;
-				return found;
+				all.push(found);
 			}
 		}
-		return null;
+		return all;
 	}
 
 	static function labelIn(holder:Dynamic, field:String, order:Array<Int>, depth:Int):Dynamic {
@@ -276,8 +286,8 @@ class SkillStagger {
 	}
 
 	/**
-		The skill this tooltip is for: one whose id is in the title's data, else the ones with the title's name (and the
-		grade shown, when it is). Several left with different numbers: the one with a picked tripod, else none.
+		The skill this tooltip is for: one whose id is in the title's data (none seen so far), else the ones with the
+		tooltip's name (and the grade shown, when it is). Several left with different numbers: the one with a picked tripod, else none.
 	**/
 	static function skillFor(title:Dynamic, name:String, grade:Int, picked:Array<String>):Dynamic {
 		if (title != null) {
@@ -414,7 +424,7 @@ class SkillStagger {
 		For showData: one grey box at the end of a skill tooltip with each box's data and what the tweak matched, also sent
 		to Arkive's log the first time each skill is shown.
 	**/
-	static function addData(list:Array<Dynamic>, skill:Dynamic, read:String):Void {
+	static function addData(list:Array<Dynamic>, name:String, skill:Dynamic, read:String):Void {
 		var lines:Array<String> = [];
 		for (i in 0...list.length) {
 			var box:Dynamic = list[i];
@@ -435,7 +445,7 @@ class SkillStagger {
 		}
 		lines.push("Read: " + read + ", matched " + matched);
 		var text = "Arkive stagger data" + NEWLINE + lines.join(NEWLINE);
-		var key = lines.length > 1 ? lines[0] : text;
+		var key = name == null || name == "" ? text : name;
 		if (untyped logged[key] != true) {
 			untyped logged[key] = true;
 			Bus.send(CHANNEL, text.length > LOG_LIMIT ? text.substr(0, LOG_LIMIT) + " …" : text);
