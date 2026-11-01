@@ -75,7 +75,7 @@ public sealed class TweakModService(
     /// <summary>
     /// The settings the tweak code gets (Options.hx): every built tweak's options ("tweaks"), the ones that act ("on"),
     /// Arkive's tweak folder ("home"), plus the folder the Logs tab reads its answers from and the game's Combat Power
-    /// tables (left out when there is no data2.lpk, so that tweak shows nothing). With In-game Tweak Settings built,
+    /// tables and skills' stagger numbers (left out when there is no data2.lpk, so those tweaks show nothing). With In-game Tweak Settings built,
     /// "live" tells the code to follow live.json and "panel" lists what the escape menu panel shows.
     /// </summary>
     private string ForGame(TweakState state, IReadOnlyList<TweakDefinition> built, string packagesDirectory)
@@ -110,6 +110,9 @@ public sealed class TweakModService(
                 BoxOddsTable.Write(data2, Path.Combine(root, "boxodds"), Path.Combine(root, "cache")).Replace('\\', '/'));
         if (tweaks.ContainsKey(MarketPriceTweak) && File.Exists(data2))
             MarketItemTable.Write(data2, PricesFolder, Path.Combine(root, "cache"));
+        if (tweaks.TryGetValue(StaggerTweak, out var stagger) && File.Exists(data2))
+            foreach (var (key, value) in SkillStaggerTable.Options(data2, Path.Combine(root, "cache")))
+                stagger[key] = value;
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
@@ -374,6 +377,12 @@ public sealed class TweakModService(
 
     /// <summary>The tweak that prices gems in Combat Power, from the game's own table.</summary>
     public const string CombatPowerTweak = "cpgems";
+
+    /// <summary>The tweak that shows skills' stagger numbers, from the game's skill tables.</summary>
+    public const string StaggerTweak = "stagger";
+
+    /// <summary>The channel Stagger Numbers' showData option sends a skill tooltip's boxes on, for Arkive's log.</summary>
+    public const string StaggerChannel = "stagger";
 
     /// <summary>The tweak that prices auction and market rows per gold with Combat Power's tables.</summary>
     public const string CombatPowerPerGoldTweak = "cpgold";

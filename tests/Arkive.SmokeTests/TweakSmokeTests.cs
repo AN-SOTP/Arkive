@@ -25,6 +25,7 @@ internal static class TweakSmokeTests
         new("turns Auto Pull Up's Data Bus reports into log lines and ignores unreadable ones", TestAutoPullUpReports),
         new("writes Spotify's state for the Spotify Player and reads its buttons, volume and moves", TestSpotifyPlayer),
         new("keeps the HUD layout Edit UI sends, piece by piece, and clears it on Restore defaults", TestEditUiLayout),
+        new("reads skills' stagger per hit, stagger tripods and the grade labels from the game's data2.lpk", TestSkillStagger, GameData2),
     ];
 
     private static void TestSpotifyPlayer()
@@ -114,6 +115,40 @@ internal static class TweakSmokeTests
         Assert(Arkive.Core.Tweaks.TweakCatalog.Find(Arkive.Core.Tweaks.EditUiLayout.Tweak) is { Available: true } tweak &&
                tweak.Hooks.Count(hook => hook.ClassName == "ark.layout.LayoutSetter" && hook.Method == "reposition") == 2,
             "Edit UI is not in the catalog with its before and after layout hooks");
+    }
+
+    /// <summary>The installed game's data2.lpk, which a few tests read (never write).</summary>
+    private const string GameData2Path = @"D:\SteamLibrary\steamapps\common\Lost Ark\EFGame\data2.lpk";
+
+    private static SmokeTestPrerequisiteResult GameData2() => File.Exists(GameData2Path)
+        ? SmokeTestPrerequisiteResult.Available
+        : new(false, $"the game's data2.lpk is not at {GameData2Path}");
+
+    private static void TestSkillStagger()
+    {
+        var work = Path.Combine(fixtureDirectory, "skill-stagger");
+        var options = Arkive.Core.Tweaks.SkillStaggerTable.Options(GameData2Path, work);
+        var skills = options["skills"].EnumerateArray().Select(row => row.GetString()!).ToArray();
+        string Skill(int id) => skills.SingleOrDefault(row => row.StartsWith($"{id}|", StringComparison.Ordinal)) ?? $"{id} missing";
+        // id|grade|name|effect:stagger: Wing Lash, Shield Shock, Rime Arrow (whose first effect deals none) and Flying Strike.
+        Assert(Skill(49250) == "49250|1|Wing Lash|492500:105", $"Wing Lash reads wrong: {Skill(49250)}");
+        Assert(Skill(17100) == "17100|3|Shield Shock|171000:206", $"Shield Shock reads wrong: {Skill(17100)}");
+        Assert(Skill(37250) == "37250|3|Rime Arrow|372501:21", $"Rime Arrow reads wrong: {Skill(37250)}");
+        Assert(Skill(45210) == "45210|2|Flying Strike|452100:147", $"Flying Strike reads wrong: {Skill(45210)}");
+        // Slugshot staggers 19 per hit but shows no grade, so the tooltip has nothing to put the number beside.
+        Assert(skills.All(row => !row.StartsWith("35760|", StringComparison.Ordinal)), "a skill without a stagger grade was listed");
+        var tripods = options["tripods"].EnumerateArray().Select(row => row.GetString()!).ToArray();
+        var tripod = tripods.Where(row => row.StartsWith("45210|", StringComparison.Ordinal)).ToArray();
+        Assert(tripod.Length == 1 && tripod[0].EndsWith("|0:40", StringComparison.Ordinal),
+            $"Flying Strike's stagger tripod (452108, +40% on the whole skill) reads wrong: {string.Join(" / ", tripod)}");
+        Assert(tripods.Length > 100, $"only {tripods.Length} stagger tripods were read");
+        var grades = options["grades"].EnumerateArray().Select(label => label.GetString()).ToArray();
+        Assert(grades.SequenceEqual(["Stagger: Low", "Stagger: Mid", "Stagger: Mid-high", "Stagger: High", "Stagger: Max"]),
+            $"the grade labels read wrong: {string.Join(" / ", grades)}");
+        Assert(Directory.EnumerateFiles(work, "skill-stagger-*.json").Count() == 1 &&
+               Directory.EnumerateFiles(work, "*.db").Count() == 0, "the table cache wasn't kept, or extracted tables were left behind");
+        var again = Arkive.Core.Tweaks.SkillStaggerTable.Options(GameData2Path, work);
+        Assert(again["skills"].GetArrayLength() == skills.Length, "the kept table reads differently");
     }
 
     private static void TestAutoPullUpReports()

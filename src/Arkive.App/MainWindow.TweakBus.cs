@@ -21,6 +21,7 @@ public partial class MainWindow
         [TweakModService.AutoPullUpChannel] = text =>
             Dispatcher.InvokeAsync(() => Log(TweakModService.DescribeAutoPullUp(text) ?? "Auto Pull Up: an unreadable report was ignored.")),
         [SpotifyPlayer.Channel] = QueueSpotifyRequest,
+        [TweakModService.StaggerChannel] = text => Dispatcher.InvokeAsync(() => Log($"Stagger Numbers, skill tooltip data: {text}")),
     };
 
     /// <summary>Prices the player saw on the market, kept so tooltips have them next session too.</summary>
