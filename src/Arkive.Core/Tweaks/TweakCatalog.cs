@@ -132,6 +132,13 @@ public static class TweakCatalog
         [
             new("showData", "Show the tooltip data Arkive reads (for testing)", false),
         ], Note: "Open your Character Profile once after logging in: the tweak reads your Combat Power, DPS or support, and your gems from it."),
+        new(TweakModService.StaggerTweak, "Stagger Numbers on Skill Tooltips", "Skill tooltips show the stagger each hit deals beside the game's grade (\"Stagger: Mid · 147 per hit\", or the lowest to highest hit for skills with several), from the game's own skill table, raised by the stagger tripods you picked. It is the skill's base number: buffs, Expertise and other stagger bonuses aren't counted.", TweakRisk.Display,
+        [
+            H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.SkillStagger.onMainTooltip", AbcHookKind.Before),
+        ],
+        [
+            new("showData", "Show the skill tooltip data Arkive reads, and send it to Arkive's log (for testing)", false),
+        ], Note: "Skills are found by their name in the tooltip, in the game's current language. Hits smaller than a tenth of the skill's biggest are left out of the range."),
         new("cpgold", "Combat Power per Gold", "Auction house results (accessories, bracelets, ability stones, gems) and market engraving books show the Combat Power the item would give you and the gold it costs per 1% at the listed price. The best value on screen turns gold. Priced with the same model as Combat Power on Tooltips; rows are never reordered and nothing is searched for you.", TweakRisk.Display,
         [
             H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.AuctionSearchListRenderer", "setData", "arkive.tweaks.CpGold.onAuctionRow"),
