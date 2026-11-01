@@ -40,8 +40,12 @@ class LogsTab {
 	static inline var RAID_BUTTON_WIDTH = 168;
 
 	/** Columns: boss, difficulty, class, DPS, parse, date, time, died. */
-	static var LEFTS:Array<Int> = [34, 430, 560, 690, 845, 940, 1015, 1090];
-	static var WIDTHS:Array<Int> = [390, 125, 125, 150, 90, 70, 70, 60];
+	static var LEFTS:Array<Int> = [];
+	/** Column widths; the boss column's is set by layout() to whatever room the window leaves. */
+	static var WIDTHS:Array<Int> = [0, 110, 115, 148, 72, 62, 56, 44];
+	static inline var FIRST_COLUMN = 34;
+	static inline var MIN_BOSS = 200;
+	static inline var MAX_BOSS = 330;
 	static var TITLES:Array<String> = ["Boss", "Difficulty", "Class", "nDPS / Uptime", "Parse %", "Date", "Time", ""];
 	/** lostark.bible's colours for a support's uptimes: AP, Brand, Identity, T. */
 	static var BUFF_COLORS:Array<Int> = [0xFCA5A5, 0x86EFAC, 0xFDE047, 0x93C5FD];
@@ -212,6 +216,7 @@ class LogsTab {
 		raidBar = new Sprite();
 		raidBar.y = 60;
 		panel.addChild(raidBar);
+		layout(width);
 		headings = new Sprite();
 		headings.y = 108;
 		for (i in 0...LEFTS.length)
@@ -235,6 +240,25 @@ class LogsTab {
 		panel.addEventListener(MouseEvent.MOUSE_WHEEL, wheel);
 		panel.addEventListener(Event.ENTER_FRAME, watch);
 		self.addChild(panel);
+	}
+
+	/**
+		Fits the columns into the window: every column but the boss keeps its width, the boss column takes the room
+		left (within limits), and the columns sit side by side from the left edge. The table used to be laid out for a
+		wider window and ran off the right edge.
+	**/
+	static function layout(width:Float):Void {
+		var fixed = 0;
+		for (i in 1...WIDTHS.length)
+			fixed += WIDTHS[i];
+		var room:Int = untyped Math.floor(width - 16 - FIRST_COLUMN - fixed);
+		WIDTHS[0] = room > MAX_BOSS ? MAX_BOSS : (room < MIN_BOSS ? MIN_BOSS : room);
+		LEFTS = [];
+		var x = FIRST_COLUMN;
+		for (i in 0...WIDTHS.length) {
+			LEFTS.push(x);
+			x += WIDTHS[i];
+		}
 	}
 
 	/** The font of the window's own name label, so the tab's text looks like the rest of the window. */
