@@ -234,7 +234,8 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
             for (var v = 0; v < ids.Length; v++)
                 weldedHands[ids[v]] = Math.Max(weldedHands[ids[v]], handShare[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand] +
                                                                     handShare[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand]);
-            var small = weldedCloth.Select((value, v) => value && !onOwnSkin[v] && weldedFeet[v] < 0.1f && weldedHands[v] < 0.1f).ToArray();
+            // An anklet hangs partly from the foot, but from the stocking under it all the same.
+            var small = weldedCloth.Select((value, v) => value && !onOwnSkin[v] && weldedFeet[v] < 0.5f && weldedHands[v] < 0.1f).ToArray();
             moved = Expand(HangFromHosts(Average(mesh.Positions, ids, weldedCount), Average(moved, ids, weldedCount), small, weldedCloth, triangles), ids);
             // Bare skin lying on the new body shades like it.
             var handShares = OutfitSwapFitting.Features(mesh, Enumerable.Range(0, mesh.VertexCount).ToArray());
@@ -395,10 +396,13 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
 
     /// <summary>
     /// Moves each small connected part of <paramref name="candidates"/> (under <paramref name="largest"/> points) the way
-    /// the nearest point of the larger cloth around it moved, when that cloth lay within <paramref name="reach"/>.
+    /// the nearest point of the larger cloth around it moved, when that cloth lay within <paramref name="reach"/>. A part
+    /// lying along the cloth all over (within <paramref name="along"/>: an anklet round a stocking, a band round a thigh)
+    /// follows it point by point, so it stays round it where the fit narrowed or widened the cloth: moved whole, an anklet
+    /// sank half into a stocking that had kept the outfit's width.
     /// </summary>
     private static Vector3[] HangFromHosts(Vector3[] donor, Vector3[] fitted, bool[] candidates, bool[] cloth, IReadOnlyList<int> triangles,
-        int largest = 300, float reach = 0.02f)
+        int largest = 300, float reach = 0.02f, float along = 0.04f)
     {
         var parent = Enumerable.Range(0, donor.Length).ToArray();
         int Find(int x)
@@ -423,10 +427,21 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
         {
             // The part's nearest point to the host cloth decides where it hangs from.
             var best = (Distance: float.MaxValue, Host: -1);
+            var under = new Dictionary<int, int>();
+            var lying = true;
             foreach (var v in part)
-                if (tree.Nearest([donor[v].X, donor[v].Y, donor[v].Z], 1, index, distance) > 0 && distance[0] < best.Distance)
-                    best = (distance[0], hosts[index[0]]);
+            {
+                if (tree.Nearest([donor[v].X, donor[v].Y, donor[v].Z], 1, index, distance) == 0) { lying = false; continue; }
+                under[v] = hosts[index[0]];
+                lying &= distance[0] < along;
+                if (distance[0] < best.Distance) best = (distance[0], hosts[index[0]]);
+            }
             if (best.Distance >= reach) continue;
+            if (lying)
+            {
+                foreach (var v in part) result[v] = donor[v] + fitted[under[v]] - donor[under[v]];
+                continue;
+            }
             var anchor = part.MinBy(v => Vector3.Distance(donor[v], donor[best.Host]));
             var shift = fitted[best.Host] - donor[best.Host] - (fitted[anchor] - donor[anchor]);
             foreach (var v in part) result[v] = fitted[v] + shift;
