@@ -34,7 +34,7 @@ public sealed class PackageImportGrowthRefusalException(string code, string mess
 /// <summary>
 /// Plans adding imports (and the names they need) to a cooked Lost Ark package, so one of its objects can reference an
 /// object in another package. Only exports that hold no file offsets of their own (material instances, redirectors,
-/// group packages) are ever moved; anything else in the way refuses.
+/// group packages, and any export <c>holdsNoOffsets</c> proves so) are ever moved; anything else in the way refuses.
 /// </summary>
 public static class PackageImportGrowth
 {
@@ -46,8 +46,12 @@ public static class PackageImportGrowth
         "materialinstanceconstant", "objectredirector", "package", "locassetredirector", "animset",
     };
 
-    /// <summary>The plan, or null when the package already imports every reference.</summary>
-    public static PackageImportGrowthPlan? Plan(AssetCatalog catalog, byte[] logical, IReadOnlyList<PackageObjectReference> references)
+    /// <summary>
+    /// The plan, or null when the package already imports every reference. <paramref name="holdsNoOffsets"/> (class name,
+    /// serial offset, export bytes) may vouch for an export of another class in the way, such as an outfit's facewear mesh.
+    /// </summary>
+    public static PackageImportGrowthPlan? Plan(AssetCatalog catalog, byte[] logical, IReadOnlyList<PackageObjectReference> references,
+        Func<string, long, byte[], bool>? holdsNoOffsets = null)
     {
         var summary = catalog.Summary;
         if (references.Any(reference => reference.Chain.Count < 2))
@@ -156,7 +160,8 @@ public static class PackageImportGrowth
                 Refuse("PIG007", "Something other than whole exports sits right after the package's header.");
             covered = export.SerialOffset + (long)export.SerialSize;
             var className = catalog.Assets[export.TableIndex - 1].ClassName;
-            if (!MovableClasses.Contains(className))
+            if (!MovableClasses.Contains(className) &&
+                holdsNoOffsets?.Invoke(className, export.SerialOffset, logical.AsSpan(export.SerialOffset, export.SerialSize).ToArray()) != true)
                 Refuse("PIG008", $"Making room in the header would move {className} {export.ObjectName.Resolve(catalog.Names)}, which Arkive does not move.");
         }
         if (covered < outputHeaderEnd) Refuse("PIG007", "Something other than whole exports sits right after the package's header.");

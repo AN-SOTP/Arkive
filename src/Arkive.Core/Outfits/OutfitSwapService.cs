@@ -505,12 +505,19 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 hit = (t, u, w);
             }
             if (hit is not { } found) continue;
+            // Full shoe weights within half the reach and on points the outfit hangs mostly from the foot, fading to the
+            // point's own beyond: a point the ray only just reaches, or an ankle cuff hanging mostly from the calf, would
+            // otherwise differ sharply from its neighbour (fine ankle straps tore apart when the foot turned).
+            var take = Math.Clamp((reach - best) / (reach / 2), 0f, 1f) * Math.Clamp((feet[v] - 0.25f) / 0.5f, 0f, 1f);
             var sum = new Dictionary<int, float>();
+            for (var k = 0; k < 4; k++)
+                if (mesh.Weights[v * 4 + k] > 0)
+                    sum[mesh.Joints[v * 4 + k]] = sum.GetValueOrDefault(mesh.Joints[v * 4 + k]) + mesh.Weights[v * 4 + k] * (1 - take);
             var corners = new[] { (shoe[found.Triangle * 3], 1 - found.U - found.W), (shoe[found.Triangle * 3 + 1], found.U), (shoe[found.Triangle * 3 + 2], found.W) };
             foreach (var (corner, share) in corners)
                 for (var k = 0; k < 4; k++)
                     if (mesh.Weights[corner * 4 + k] > 0)
-                        sum[mesh.Joints[corner * 4 + k]] = sum.GetValueOrDefault(mesh.Joints[corner * 4 + k]) + mesh.Weights[corner * 4 + k] * share;
+                        sum[mesh.Joints[corner * 4 + k]] = sum.GetValueOrDefault(mesh.Joints[corner * 4 + k]) + mesh.Weights[corner * 4 + k] * share * take;
             var top = sum.OrderByDescending(pair => pair.Value).Take(4).ToArray();
             var total = top.Sum(pair => pair.Value);
             if (total <= 0) continue;

@@ -455,6 +455,30 @@ public sealed class SkeletalMeshReconnaissanceService
                int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
 
+    /// <summary>
+    /// True when a SkeletalMesh export parses natively and every LOD's legacy bulk is empty, so its bytes name no place in
+    /// the file and it can move unchanged: Arkive's compiled meshes move to the package's end the same way, keeping the
+    /// legacy bulk and the trailing native data (bone name map, per-material lists) as they were.
+    /// </summary>
+    public static bool HoldsNoFileOffsets(ReadOnlySpan<byte> bytes, long serialOffset, IReadOnlyList<UnrealNameEntry> names)
+    {
+        if (FindPropertyStream(bytes, serialOffset, names) is not { } properties) return false;
+        var hasVertexColors = properties.Properties.Any(property =>
+            property.Name.Equals("bHasVertexColors", StringComparison.OrdinalIgnoreCase) &&
+            property.ValuePreview.Equals("True", StringComparison.OrdinalIgnoreCase));
+        if (!new SkeletalMeshNativeLayoutParser().TryParse(bytes, serialOffset, properties.EndOffset, names, hasVertexColors,
+                out var layout, out _) || layout is not { AllRangesInBounds: true }) return false;
+        foreach (var lod in layout.Lods)
+        {
+            var legacy = lod.Ranges.Where(range => range.Name.StartsWith($"LOD {lod.LodIndex} legacy bulk", StringComparison.Ordinal)).ToArray();
+            if (legacy.Length != 1 || legacy[0].Size != 16) return false;
+            var at = checked((int)legacy[0].RelativeOffset);
+            if (BinaryPrimitives.ReadInt32LittleEndian(bytes[(at + 4)..]) != 0 || BinaryPrimitives.ReadInt32LittleEndian(bytes[(at + 8)..]) != 0)
+                return false;
+        }
+        return true;
+    }
+
     private static PropertyParseResult? FindPropertyStream(
         ReadOnlySpan<byte> bytes, long serialOffset, IReadOnlyList<UnrealNameEntry> names)
     {

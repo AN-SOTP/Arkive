@@ -76,7 +76,13 @@ public sealed partial class SkeletalMeshStagedUpkService
         var sourceCatalog = _catalogReader.Read(sourceSummary);
         var sourceLogical = await ReadLogicalAsync(sourceSummary, cancellationToken).ConfigureAwait(false);
         PackageImportGrowthPlan? plan;
-        try { plan = PackageImportGrowth.Plan(sourceCatalog, sourceLogical, request.References); }
+        // A mesh in the way (an outfit's facewear right after the header) moves too when it names no place in the file.
+        try
+        {
+            plan = PackageImportGrowth.Plan(sourceCatalog, sourceLogical, request.References, (className, serialOffset, bytes) =>
+                className.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase) &&
+                Inspection.SkeletalMeshReconnaissanceService.HoldsNoFileOffsets(bytes, serialOffset, sourceCatalog.Names));
+        }
         catch (PackageImportGrowthRefusalException exception) { throw new SkeletalMeshStagedUpkRefusalException(exception.Code, exception.Message); }
         if (plan is null) return null;
 
