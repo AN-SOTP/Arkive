@@ -22,8 +22,12 @@ public static class SkillStaggerTable
     /// <summary>The GameMsg keys of the grade labels, StiffnessTooltipType 1 to 5.</summary>
     private static readonly string[] GradeKeys = ["low", "normal", "high", "higher", "highest"];
 
+    /// <summary>DirectionalAttackTooltipType values whose label says the skill hits from the front (head attacks).</summary>
+    private static readonly int[] FrontalTypes = [2, 3, 6, 7];
+
     /// <summary>
-    /// Everything the stagger tweak reads, as its options: "grades" (the five labels, "Stagger: Low" first), "skills"
+    /// Everything the stagger tweak reads, as its options: "grades" (the five labels, "Stagger: Low" first), "frontal"
+    /// (the attack type labels of skills that land head attacks, "Attack type: Frontal Attack" and the like), "skills"
     /// (one text per skill with a grade and stagger, "id|grade|name|effect:stagger,…", a tripod's hit as
     /// "effect:stagger:slot", or "slot/slot" when several tripods bring it) and "tripods" (one text per tripod that brings
     /// hits or raises stagger, "skill|slot|name|effect:percent,…", effect 0 for the whole skill). Names and labels are the
@@ -46,6 +50,8 @@ public static class SkillStaggerTable
                 return new Dictionary<string, object>
                 {
                     ["grades"] = GradeKeys.Select(key => Text(connection, "tip.name.enum_stiffnesstooltiptype_" + key) ?? "").ToArray(),
+                    ["frontal"] = FrontalTypes.Select(type => Text(connection, $"tip.name.enum_directionalattacktooltiptype_{type}") ?? "")
+                        .Where(label => label != "").ToArray(),
                     ["skills"] = skills,
                     ["tripods"] = tripods,
                 };
@@ -58,7 +64,7 @@ public static class SkillStaggerTable
     }
 
     /// <summary>Bumped when <see cref="Options"/> changes shape, so caches from older builds are read again.</summary>
-    private const int CacheVersion = 2;
+    private const int CacheVersion = 3;
 
     /// <summary>
     /// Skills that show a stagger grade and have hits that stagger, with their names, and their tripods that change
@@ -73,17 +79,13 @@ public static class SkillStaggerTable
             using var reader = command.ExecuteReader();
             while (reader.Read()) stagger[reader.GetInt32(0)] = reader.GetInt32(1);
         }
-        var all = new HashSet<int>();
         var graded = new SortedDictionary<int, (int Grade, string NameKey)>();
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT PrimaryKey, MAX(StiffnessTooltipType), MIN(Name) FROM Skill GROUP BY PrimaryKey";
+            command.CommandText = "SELECT PrimaryKey, MAX(StiffnessTooltipType), MIN(Name) FROM Skill GROUP BY PrimaryKey " +
+                                  "HAVING MAX(StiffnessTooltipType) BETWEEN 1 AND 5";
             using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                all.Add(reader.GetInt32(0));
-                if (reader.GetInt32(1) is >= 1 and <= 5) graded[reader.GetInt32(0)] = (reader.GetInt32(1), reader.GetString(2));
-            }
+            while (reader.Read()) graded[reader.GetInt32(0)] = (reader.GetInt32(1), reader.GetString(2));
         }
         var tripods = new Dictionary<(int Skill, int Slot), Tripod>();
         using (var command = connection.CreateCommand())
@@ -107,10 +109,11 @@ public static class SkillStaggerTable
         {
             var hits = new List<string>();
             var owning = new HashSet<int>();
-            for (var effect = skill * 10; effect < skill * 10 + 100; effect++)
+            // Hits share the skill's id but its last digit (452200-452299 for 45220), and a neighbouring skill with a grade of
+            // its own owns its ten (24031's hits follow 24030's); one without (Summon Silverhawk) is part of the skill.
+            for (var effect = skill * 10; effect < Math.Min(skill * 10 + 100, (skill / 10 + 1) * 100); effect++)
             {
-                // Past the first ten, an id can be a neighbouring skill's own (24031's hits follow 24030's).
-                if (!stagger.TryGetValue(effect, out var value) || (effect / 10 != skill && all.Contains(effect / 10))) continue;
+                if (!stagger.TryGetValue(effect, out var value) || (effect / 10 != skill && graded.ContainsKey(effect / 10))) continue;
                 if (effect < skill * 10 + 10)
                 {
                     hits.Add($"{effect}:{value}");

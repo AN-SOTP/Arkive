@@ -132,7 +132,7 @@ public static class TweakCatalog
         [
             new("showData", "Show the tooltip data Arkive reads (for testing)", false),
         ], Note: "Open your Character Profile once after logging in: the tweak reads your Combat Power, DPS or support, and your gems from it."),
-        new(TweakModService.StaggerTweak, "Stagger Numbers on Skill Tooltips", "Skill tooltips show the stagger each hit deals beside the game's grade (\"Stagger: Mid · 147 per hit\", or the lowest to highest hit for skills with several), from the game's own skill table, raised by the stagger tripods you picked. It is the skill's base number: buffs, Expertise and other stagger bonuses aren't counted.", TweakRisk.Display,
+        new(TweakModService.StaggerTweak, "Stagger Numbers on Skill Tooltips", "Skill tooltips show the stagger each hit deals beside the game's grade (\"Stagger: Mid · 149 per hit\", or the lowest to highest hit for skills with several, and the head attack for frontal skills), from the game's own skill table: raised by the stagger tripods you picked and the 2% every player adds, as players hit in most raids. Buffs, Expertise and the extra 3% of Kazeros-era raids aren't counted.", TweakRisk.Display,
         [
             H("efui_tooltip", "tooltip", "ark.ui.tooltipDocument.TooltipDocument", "setMainTooltipData", "arkive.tweaks.SkillStagger.onMainTooltip", AbcHookKind.Before),
         ],
