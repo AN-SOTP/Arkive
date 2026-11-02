@@ -154,6 +154,11 @@ internal static class TweakSmokeTests
         var frontal = options["frontal"].EnumerateArray().Select(label => label.GetString()).ToArray();
         Assert(frontal.Contains("Attack type: Frontal Attack") && !frontal.Contains("Attack type: Back Attack"),
             $"the frontal attack labels read wrong: {string.Join(" / ", frontal)}");
+        // Overwhelm raises its skill's stagger by 5, 10, 20, 30 or 40% by grade; the tooltip's rune box shows which.
+        var runes = options["runes"].EnumerateArray().Select(row => row.GetString()!).ToArray();
+        Assert(runes.Contains("Overwhelm|On skill hit, Stagger Damage +20%.|20") && runes.Contains("Overwhelm|On skill hit, Stagger Damage +30%.|30") &&
+               runes.Any(row => row.StartsWith("Vision|", StringComparison.Ordinal)) && runes.All(row => !row.StartsWith("Galewind|", StringComparison.Ordinal)),
+            $"the stagger runes read wrong: {string.Join(" / ", runes)}");
         Assert(Directory.EnumerateFiles(work, "skill-stagger-*.json").Count() == 1 &&
                Directory.EnumerateFiles(work, "*.db").Count() == 0, "the table cache wasn't kept, or extracted tables were left behind");
         var again = Arkive.Core.Tweaks.SkillStaggerTable.Options(GameData2Path, work);

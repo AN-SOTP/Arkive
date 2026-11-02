@@ -12,7 +12,8 @@ import flash.utils.Dictionary;
 
 	Arkive copies the numbers from data2.lpk into the options (SkillStaggerTable): "grades" (the five labels, Low first),
 	"skills" ("id|grade|name|effect:stagger,…", a hit a tripod brings as "effect:stagger:slot/slot") and "tripods"
-	("skill|slot|name|effect:percent,…", effect 0 for every hit) and "frontal" (attack type labels of frontal skills).
+	("skill|slot|name|effect:percent,…", effect 0 for every hit), "frontal" (attack type labels of frontal skills) and
+	"runes" ("name|effect text|percent": Overwhelm and Vision, whose percent adds to the tripods').
 	A tripod's hits count only when it is picked.
 
 	A skill tooltip is a NameTagBox with the skill's name, a CommonSkillTitle (its kind, "Charge" or "Normal", and icon;
@@ -51,6 +52,8 @@ class SkillStagger {
 	static var grades:Array<String>;
 	/** The attack type labels of frontal skills ("Attack type: Frontal Attack"), whose hits can be head attacks. */
 	static var frontal:Array<String>;
+	/** Skill runes that raise stagger: {tag "[Overwhelm]", effect (its text), percent}, both without spaces (see squeeze). */
+	static var runes:Array<Dynamic>;
 	/** Skill names already sent to Arkive's log by showData. */
 	static var logged = new Dictionary();
 
@@ -105,11 +108,12 @@ class SkillStagger {
 		var name = Text.trim(Text.stripTags(nameTag != null ? nameTag : title == null ? null : Tooltips.htmlOf(title.name)));
 		var picked = pickedTripods(list);
 		var skill:Dynamic = skillFor(title, name, grade, picked);
-		var text = skill == null ? null : staggerText(skill, picked, says(list, frontal));
+		var rune = runePercent(list);
+		var text = skill == null ? null : staggerText(skill, picked, says(list, frontal), rune);
 		if (showData())
 			addData(list, name, skill, "name '" + name + "', grade shown " + gradeText(grade) + ", labels "
 				+ (label == null ? "not found" : "in " + indexText(labels.length) + " box(es), first " + indexText(label.box) + " field " + (label.field : String))
-				+ ", tripods in the tooltip: " + picked.join(" / ") + ", line: " + (text == null ? "none" : text));
+				+ ", tripods in the tooltip: " + picked.join(" / ") + ", stagger rune +" + indexText(rune) + "%, line: " + (text == null ? "none" : text));
 		if (text == null)
 			return;
 		// Every grade line gets it: the skill window's tooltip repeats the description for the next level.
@@ -222,6 +226,17 @@ class SkillStagger {
 					front.push(label);
 		}
 		frontal = front;
+		var known:Array<Dynamic> = [];
+		var listedRunes:Dynamic = Options.get(TWEAK, "runes", null);
+		if (listedRunes != null && (untyped __is__(listedRunes, Array))) {
+			var given:Array<Dynamic> = listedRunes;
+			for (row in given) {
+				var fields = (row : String).split("|");
+				if (fields.length == 3)
+					known.push({tag: squeeze("[" + fields[0] + "]"), effect: squeeze(fields[1]), percent: whole(fields[2])});
+			}
+		}
+		runes = known;
 		tripods = bySkill;
 		byId = ids;
 		byName = names;
@@ -340,10 +355,10 @@ class SkillStagger {
 				left.push(skill);
 		if (left.length == 0)
 			return null;
-		var first = staggerText(left[0], picked, false);
+		var first = staggerText(left[0], picked, false, 0);
 		var same = true;
 		for (skill in left)
-			if (staggerText(skill, picked, false) != first)
+			if (staggerText(skill, picked, false, 0) != first)
 				same = false;
 		if (same)
 			return left[0];
@@ -396,7 +411,7 @@ class SkillStagger {
 		skill's own hits and those of the picked tripods, each raised by the picked tripods' stagger bonuses and then by
 		the player's stat, rounded down at each step as the game does; null when none staggers.
 	**/
-	static function staggerText(skill:Dynamic, picked:Array<String>, front:Bool):String {
+	static function staggerText(skill:Dynamic, picked:Array<String>, front:Bool, rune:Int):String {
 		var effects:Array<Int> = skill.effects;
 		var values:Array<Int> = skill.values;
 		var owners:Array<Array<Int>> = skill.owners;
@@ -406,7 +421,8 @@ class SkillStagger {
 		for (i in 0...effects.length) {
 			if (owners[i].length > 0 && !brought(owners[i], bonuses))
 				continue;
-			var percent:Float = 0;
+			// A stagger rune adds to the tripods' percent (both are the game's stagger feature on the skill).
+			var percent:Float = rune;
 			for (tripod in bonuses) {
 				var changes:Array<Int> = tripod.effects;
 				var by:Array<Int> = tripod.percents;
@@ -435,6 +451,68 @@ class SkillStagger {
 	/** Rounded down; a product that should be whole (110 × 1.1) can come out a hair under it in floating point. */
 	static function down(value:Float):Int {
 		return Math.floor(value + 0.000001);
+	}
+
+	/**
+		The stagger percent of the skill rune in the tooltip's rune box ("[Overwhelm] On skill hit, Stagger Damage +20%."),
+		told apart by grade from the effect text; 0 without one.
+	**/
+	static function runePercent(list:Array<Dynamic>):Int {
+		if (runes == null || runes.length == 0)
+			return 0;
+		var texts:Array<String> = [];
+		for (box in list)
+			if (box != null && box.type != "TripodSkillCustom")
+				collect(box.value, texts, 0);
+		var best = 0;
+		var bestLength = 0;
+		for (raw in texts) {
+			var text = squeeze(Text.stripTags(raw));
+			for (rune in runes) {
+				var tag:String = rune.tag;
+				var effect:String = rune.effect;
+				var at = text.indexOf(tag);
+				if (at >= 0 && text.indexOf(effect, at) >= 0 && effect.length > bestLength) {
+					best = rune.percent;
+					bestLength = effect.length;
+				}
+			}
+		}
+		return best;
+	}
+
+	/** Every string in a tooltip value, a few levels down. */
+	static function collect(value:Dynamic, into:Array<String>, depth:Int):Void {
+		if (value == null || depth > 4)
+			return;
+		if (Tooltips.isString(value)) {
+			into.push(value);
+			return;
+		}
+		var type:String = untyped __typeof__(value);
+		if (type != "object")
+			return;
+		if (untyped __is__(value, Array)) {
+			var items:Array<Dynamic> = value;
+			for (item in items)
+				collect(item, into, depth + 1);
+			return;
+		}
+		var keys:Array<String> = untyped __keys__(value);
+		for (key in keys)
+			if (key != "slotData")
+				collect(untyped value[key], into, depth + 1);
+	}
+
+	/** Text without spaces (plain or no-break) and line breaks, so the game's wrapping and spacing don't matter. */
+	static function squeeze(text:String):String {
+		var kept = text;
+		for (code in [32, 160, 10, 13, 9]) {
+			// The player's own String.fromCharCode: Haxe's wraps it with a Boot call for characters past 0xFFFF.
+			var character:String = untyped __global__["String"].fromCharCode(code);
+			kept = kept.split(character).join("");
+		}
+		return kept;
 	}
 
 	/** True when any text of the tooltip (tripods aside) holds one of these labels. */
