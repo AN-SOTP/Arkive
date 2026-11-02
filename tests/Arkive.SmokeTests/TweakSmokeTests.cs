@@ -168,11 +168,15 @@ internal static class TweakSmokeTests
     private static void TestAutoPullUpReports()
     {
         static string? Line(string text) => Arkive.Core.Tweaks.TweakModService.DescribeAutoPullUp(text);
-        Assert(Line("pulled\tclosed") == "Auto Pull Up: pulled up (Find Party window closed)." &&
+        Assert(Line("pulled\tclosed") == "Auto Pull Up: pulled up (Find Party window minimised or closed)." &&
                Line("stop\tfull\topen") == "Auto Pull Up: stopped, the party is full (Find Party window open)." &&
-               Line("on") == "Auto Pull Up: ticked." && Line("stop\tno effect\tclosed")!.Contains("didn't grey"),
+               Line("on") == "Auto Pull Up: ticked." && Line("stop\tno effect\tclosed")!.Contains("didn't grey") &&
+               Line("hidden\tgone\twaiting")!.Contains("not loaded, Pull up greyed out") &&
+               Line("pressed\tclosed")!.StartsWith("Auto Pull Up: pressed Pull up (Find Party window minimised") &&
+               Line("blind\tno")!.Contains("don't reach the game") && Line("blind\tyes")!.Contains("seem to work"),
             "an Auto Pull Up report reads wrong");
-        Assert(Line("pulled") is null && Line("") is null && Line("stop\tfull") is null, "an unreadable Auto Pull Up report was read");
+        Assert(Line("pulled") is null && Line("") is null && Line("stop\tfull") is null && Line("blind\tmaybe") is null && Line("hidden\topen") is null,
+            "an unreadable Auto Pull Up report was read");
     }
 
     /// <summary>

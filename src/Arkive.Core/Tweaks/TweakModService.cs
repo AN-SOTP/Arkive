@@ -224,7 +224,7 @@ public sealed class TweakModService(
         static string Window(string where) => where switch
         {
             "open" => "Find Party window open",
-            "closed" => "Find Party window closed",
+            "closed" => "Find Party window minimised or closed",
             _ => "party finder not loaded",
         };
         return parts switch
@@ -232,6 +232,11 @@ public sealed class TweakModService(
             ["on"] => "Auto Pull Up: ticked.",
             ["off"] => "Auto Pull Up: unticked.",
             ["pulled", var where] => $"Auto Pull Up: pulled up ({Window(where)}).",
+            ["hidden", var where, var button] =>
+                $"Auto Pull Up: the Find Party window went away ({Window(where)}, Pull up {(button == "ready" ? "ready" : "greyed out")}); pressing it once a minute until the window shows again.",
+            ["pressed", var where] => $"Auto Pull Up: pressed Pull up ({Window(where)}); whether it took shows when the window opens again.",
+            ["blind", "yes"] => "Auto Pull Up: Pull up was still waiting when the window opened again, so the presses made while it was away seem to work.",
+            ["blind", "no"] => "Auto Pull Up: Pull up was ready when the window opened again, so presses made while it is away don't reach the game; it now waits for the window instead.",
             ["stop", var reason, var where] => $"Auto Pull Up: stopped, {reason switch
             {
                 "full" => "the party is full",

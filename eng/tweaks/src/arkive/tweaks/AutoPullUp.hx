@@ -11,9 +11,12 @@ import scaleform.clik.events.ButtonEvent;
 	doesn't take. It starts unticked each time the game starts.
 
 	The game itself sends the pull up and runs the wait (the button has no handler in the movie and is greyed out by the
-	engine), so this only presses the button the way a click does. Closing the window hides it, so the button is still
-	there to press; the checks run on a timer of their own rather than on the window's frames. Each pull up and each
-	stop is reported to Arkive (channel "autopullup"), which logs it.
+	engine), so this only presses the button the way a click does. The checks run on a timer of their own rather than on
+	the window's frames. While the window shows, the button says when the wait is over. Minimised to the small Find
+	Party bar, the button is no longer kept up to date (it stays greyed out, or leaves the stage), so the presses go by
+	the clock instead: one a minute plus the delay after the last one. The first look at the button once the window
+	shows again tells whether those presses took; when they didn't, it stops pressing while minimised. Each pull up,
+	each press while minimised and each stop is reported to Arkive (channel "autopullup"), which logs it.
 **/
 @:keep
 class AutoPullUp {
@@ -24,6 +27,10 @@ class AutoPullUp {
 	/** A press the game took greys the button out well within this; still enabled after it, the press didn't take. */
 	static inline var PRESS_CHECK_MS = 5000;
 	static inline var TICK_MS = 250;
+	/** The game's wait between pull ups. */
+	static inline var COOLDOWN_MS = 60000;
+	/** Once the window shows again, the engine gets this long to bring the button up to date before it's read. */
+	static inline var SETTLE_MS = 2000;
 	static inline var GROUPS = 4;
 	static inline var GROUP_SIZE = 4;
 	static inline var GAP = 8;
@@ -33,6 +40,16 @@ class AutoPullUp {
 	static var armedAt = 0;
 	static var dueAt = 0;
 	static var pressedAt = 0;
+
+	/**
+		When the last pull up was (0: none yet); whether the window showed at the last tick and since when; the last press
+		made while minimised and not yet checked (0: none); whether those presses proved not to take.
+	**/
+	static var pulledAt = 0;
+	static var shown = false;
+	static var shownAt = 0;
+	static var blindAt = 0;
+	static var blindFails = false;
 
 	/** The party finder last built: its content, its Pull up button and the tick box beside it. */
 	static var content:Dynamic;
@@ -61,6 +78,7 @@ class AutoPullUp {
 		content = self;
 		pull = button;
 		box = made;
+		shown = false;
 	}
 
 	/** A tick box like the page's own ones (the game's settings tick box when the page has none). */
@@ -77,8 +95,7 @@ class AutoPullUp {
 	static function ticked(clicked:Dynamic):Void {
 		armed = clicked.selected == true;
 		armedAt = flash.Lib.getTimer();
-		dueAt = 0;
-		pressedAt = 0;
+		reset();
 		if (!armed) {
 			Bus.send(ID, "off");
 			return;
@@ -94,13 +111,20 @@ class AutoPullUp {
 	/** Stops, unticks the box and tells Arkive why. */
 	static function stop(reason:String):Void {
 		armed = false;
-		dueAt = 0;
-		pressedAt = 0;
+		reset();
 		if (timer != null)
 			timer.stop();
 		if (box != null && box.selected == true)
 			box.selected = false;
 		Bus.send(ID, "stop\t" + reason + "\t" + where());
+	}
+
+	static function reset():Void {
+		dueAt = 0;
+		pressedAt = 0;
+		pulledAt = 0;
+		blindAt = 0;
+		shown = false;
 	}
 
 	static function onTick(event:Dynamic):Void {
@@ -121,12 +145,8 @@ class AutoPullUp {
 			stop("off");
 			return;
 		}
-		// Gone from the stage: the party finder was taken down. Wait for the next one (its configUI hands it over).
-		if (pull == null || pull.stage == null) {
-			dueAt = 0;
-			pressedAt = 0;
+		if (pull == null)
 			return;
-		}
 		if (full(content)) {
 			stop("full");
 			return;
@@ -136,15 +156,36 @@ class AutoPullUp {
 			return;
 		}
 		var now = flash.Lib.getTimer();
+		var at = where();
+		if (at != "open") {
+			hidden(now, at);
+			return;
+		}
+		if (!shown) {
+			shown = true;
+			shownAt = now;
+			dueAt = 0;
+		}
+		if (now - shownAt < SETTLE_MS)
+			return;
 		var ready = pull.enabled == true && pull.visible == true;
+		if (blindAt != 0) {
+			// Ready again sooner than the game's wait after a press made while minimised: that press didn't take.
+			var took = !ready || now - blindAt >= COOLDOWN_MS - SETTLE_MS;
+			if (!took)
+				blindFails = true;
+			blindAt = 0;
+			Bus.send(ID, "blind\t" + (took ? "yes" : "no"));
+		}
 		if (pressedAt != 0) {
 			if (ready && now - pressedAt >= PRESS_CHECK_MS) {
 				stop("no effect");
 				return;
 			}
 			if (!ready) {
+				pulledAt = pressedAt;
 				pressedAt = 0;
-				Bus.send(ID, "pulled\t" + where());
+				Bus.send(ID, "pulled\t" + at);
 			}
 			return;
 		}
@@ -161,6 +202,34 @@ class AutoPullUp {
 		dueAt = 0;
 		pressedAt = now;
 		GameUi.press(pull);
+	}
+
+	/**
+		The window is minimised or closed: the button isn't kept up to date, so press it by the clock, a minute plus the
+		delay after the last pull up (or just the delay when there was none yet). Its greying can't be seen, so the press
+		is reported as made rather than as a pull up, and checked when the window shows again.
+	**/
+	static function hidden(now:Int, at:String):Void {
+		if (shown) {
+			shown = false;
+			Bus.send(ID, "hidden\t" + at + "\t" + (pull.enabled == true ? "ready" : "waiting"));
+			if (pressedAt != 0)
+				pulledAt = pressedAt;
+			pressedAt = 0;
+			dueAt = 0;
+		}
+		if (blindFails)
+			return;
+		if (dueAt == 0) {
+			dueAt = (pulledAt == 0 ? now : pulledAt + COOLDOWN_MS) + MIN_DELAY_MS + Std.int(Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS));
+			return;
+		}
+		if (now < dueAt)
+			return;
+		dueAt = 0;
+		pulledAt = blindAt = now;
+		GameUi.press(pull);
+		Bus.send(ID, "pressed\t" + at);
 	}
 
 	/** "open" while the Find Party window shows, "closed" while it is hidden (or anything above it is). */
