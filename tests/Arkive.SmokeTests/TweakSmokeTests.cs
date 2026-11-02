@@ -139,6 +139,8 @@ internal static class TweakSmokeTests
         Assert(Skill(45300) == "45300|4|Fatal Sword|453000:288,453010:72:7,453011:72:7,453020:230:8", $"Fatal Sword reads wrong: {Skill(45300)}");
         // Supreme Palm (24031) is a skill of its own, so its hit 240310 isn't Supreme Technique's (24030) tripod hit.
         Assert(Skill(24030) == "24030|3|Supreme Technique|240300:206", $"Supreme Technique reads wrong: {Skill(24030)}");
+        // Laser Blade's 357710 has the id of 35771, a part of the skill with no grade of its own, so it stays Laser Blade's.
+        Assert(Skill(35770).Contains(",357710:206:1,", StringComparison.Ordinal), $"Laser Blade reads wrong: {Skill(35770)}");
         // Slugshot staggers 19 per hit but shows no grade, so the tooltip has nothing to put the number beside.
         Assert(skills.All(row => !row.StartsWith("35760|", StringComparison.Ordinal)), "a skill without a stagger grade was listed");
         var tripods = options["tripods"].EnumerateArray().Select(row => row.GetString()!).ToArray();
@@ -149,6 +151,9 @@ internal static class TweakSmokeTests
         var grades = options["grades"].EnumerateArray().Select(label => label.GetString()).ToArray();
         Assert(grades.SequenceEqual(["Stagger: Low", "Stagger: Mid", "Stagger: Mid-high", "Stagger: High", "Stagger: Max"]),
             $"the grade labels read wrong: {string.Join(" / ", grades)}");
+        var frontal = options["frontal"].EnumerateArray().Select(label => label.GetString()).ToArray();
+        Assert(frontal.Contains("Attack type: Frontal Attack") && !frontal.Contains("Attack type: Back Attack"),
+            $"the frontal attack labels read wrong: {string.Join(" / ", frontal)}");
         Assert(Directory.EnumerateFiles(work, "skill-stagger-*.json").Count() == 1 &&
                Directory.EnumerateFiles(work, "*.db").Count() == 0, "the table cache wasn't kept, or extracted tables were left behind");
         var again = Arkive.Core.Tweaks.SkillStaggerTable.Options(GameData2Path, work);

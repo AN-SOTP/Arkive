@@ -4,13 +4,17 @@ import flash.utils.Dictionary;
 
 /**
 	Stagger numbers on skill tooltips. The game only shows a grade ("Stagger: Mid"); this adds the stagger each hit
-	deals right after it, in the same text, so it keeps the game's font and colour: "Stagger: Mid · 147 per hit", or
-	"21 to 105 per hit" for a skill with several hits (hits under a tenth of the biggest are left out). Stagger tripods
-	you picked raise the hits they change.
+	deals right after it, in the same text, so it keeps the game's font and colour: "Stagger: Mid · 149 per hit", or
+	"21 to 107 per hit" for a skill with several hits (hits under a tenth of the biggest are left out), and for frontal
+	skills the head attack, "(163 head)". The numbers are what players hit: the skill's base, raised by the stagger
+	tripods you picked, then by the +2% every player has (PLAYER_STAT; Kazeros-era raids add 3% more), then × 1.1 for a
+	head attack, rounded down at each step. Buffs and other stagger bonuses aren't counted.
 
 	Arkive copies the numbers from data2.lpk into the options (SkillStaggerTable): "grades" (the five labels, Low first),
 	"skills" ("id|grade|name|effect:stagger,…", a hit a tripod brings as "effect:stagger:slot/slot") and "tripods"
-	("skill|slot|name|effect:percent,…", effect 0 for every hit). A tripod's hits count only when it is picked.
+	("skill|slot|name|effect:percent,…", effect 0 for every hit) and "frontal" (attack type labels of frontal skills).
+	A tripod's hits count only when it is picked.
+
 	A skill tooltip is a NameTagBox with the skill's name, a CommonSkillTitle (its kind, "Charge" or "Normal", and icon;
 	no id), a SingleTextBox whose description ends in lines like "Weak Point: Lv. 2", "Stagger: High", and a
 	TripodSkillCustom list of the picked tripods ({name, desc, lock}). The skill window's tooltip repeats the description
@@ -27,6 +31,14 @@ class SkillStagger {
 	static inline var NEWLINE = "\n";
 	/** Hits under this share of the skill's biggest hit are left out of the range. */
 	static inline var SMALL = 0.1;
+	/**
+		The stagger every player adds to every hit, which no client table gives (LOA Logs: +2.0-2.1% everywhere, +5% in
+		Kazeros-era raids from an endgame buff), so the line shows what players hit outside those raids. 0 shows the
+		skill's base numbers instead.
+	**/
+	static inline var PLAYER_STAT = 0.02;
+	/** A head attack (a frontal skill hitting the front) staggers this much more, after the player's stat. */
+	static inline var HEAD = 1.1;
 	/** How much of a skill tooltip's data the log gets. */
 	static inline var LOG_LIMIT = 3000;
 
@@ -37,6 +49,8 @@ class SkillStagger {
 	static var tripods:Dictionary;
 	/** The grade labels, grade 1 first; empty ones are left out of the search. */
 	static var grades:Array<String>;
+	/** The attack type labels of frontal skills ("Attack type: Frontal Attack"), whose hits can be head attacks. */
+	static var frontal:Array<String>;
 	/** Skill names already sent to Arkive's log by showData. */
 	static var logged = new Dictionary();
 
@@ -91,7 +105,7 @@ class SkillStagger {
 		var name = Text.trim(Text.stripTags(nameTag != null ? nameTag : title == null ? null : Tooltips.htmlOf(title.name)));
 		var picked = pickedTripods(list);
 		var skill:Dynamic = skillFor(title, name, grade, picked);
-		var text = skill == null ? null : staggerText(skill, picked);
+		var text = skill == null ? null : staggerText(skill, picked, says(list, frontal));
 		if (showData())
 			addData(list, name, skill, "name '" + name + "', grade shown " + gradeText(grade) + ", labels "
 				+ (label == null ? "not found" : "in " + indexText(labels.length) + " box(es), first " + indexText(label.box) + " field " + (label.field : String))
@@ -199,6 +213,15 @@ class SkillStagger {
 			shown.push(text);
 		}
 		grades = shown;
+		var front:Array<String> = [];
+		var listedFront:Dynamic = Options.get(TWEAK, "frontal", null);
+		if (listedFront != null && (untyped __is__(listedFront, Array))) {
+			var given:Array<Dynamic> = listedFront;
+			for (label in given)
+				if (Tooltips.isString(label) && (label : String) != "")
+					front.push(label);
+		}
+		frontal = front;
 		tripods = bySkill;
 		byId = ids;
 		byName = names;
@@ -317,10 +340,10 @@ class SkillStagger {
 				left.push(skill);
 		if (left.length == 0)
 			return null;
-		var first = staggerText(left[0], picked);
+		var first = staggerText(left[0], picked, false);
 		var same = true;
 		for (skill in left)
-			if (staggerText(skill, picked) != first)
+			if (staggerText(skill, picked, false) != first)
 				same = false;
 		if (same)
 			return left[0];
@@ -369,16 +392,17 @@ class SkillStagger {
 	}
 
 	/**
-		"147 per hit" or "21 to 105 per hit": the skill's own hits and those of the picked tripods, each raised by the
-		picked tripods' stagger bonuses; null when none staggers.
+		"149 per hit" or "21 to 107 per hit", and for a frontal skill its head attack ("149 per hit (163 head)"): the
+		skill's own hits and those of the picked tripods, each raised by the picked tripods' stagger bonuses and then by
+		the player's stat, rounded down at each step as the game does; null when none staggers.
 	**/
-	static function staggerText(skill:Dynamic, picked:Array<String>):String {
+	static function staggerText(skill:Dynamic, picked:Array<String>, front:Bool):String {
 		var effects:Array<Int> = skill.effects;
 		var values:Array<Int> = skill.values;
 		var owners:Array<Array<Int>> = skill.owners;
 		var bonuses = pickedOf(skill, picked);
-		var hits:Array<Float> = [];
-		var most:Float = 0;
+		var hits:Array<Int> = [];
+		var most = 0;
 		for (i in 0...effects.length) {
 			if (owners[i].length > 0 && !brought(owners[i], bonuses))
 				continue;
@@ -390,7 +414,7 @@ class SkillStagger {
 					if (changes[j] == 0 || changes[j] == effects[i])
 						percent += by[j];
 			}
-			var hit:Float = values[i] * (1 + percent / 100);
+			var hit = down(down(values[i] * (1 + percent / 100)) * (1 + PLAYER_STAT));
 			hits.push(hit);
 			if (hit > most)
 				most = hit;
@@ -401,9 +425,53 @@ class SkillStagger {
 		for (hit in hits)
 			if (hit >= most * SMALL && hit < low)
 				low = hit;
-		var high:String = Tooltips.grouped(Math.round(most));
-		var lowest:String = Tooltips.grouped(Math.round(low));
-		return (lowest == high ? high : lowest + " to " + high) + " per hit";
+		var text = (low == most ? Tooltips.grouped(most) : Tooltips.grouped(low) + " to " + Tooltips.grouped(most)) + " per hit";
+		if (!front)
+			return text;
+		var head:String = Tooltips.grouped(down(most * HEAD));
+		return text + (low == most ? " (" + head + " head)" : " (up to " + head + " head)");
+	}
+
+	/** Rounded down; a product that should be whole (110 × 1.1) can come out a hair under it in floating point. */
+	static function down(value:Float):Int {
+		return Math.floor(value + 0.000001);
+	}
+
+	/** True when any text of the tooltip (tripods aside) holds one of these labels. */
+	static function says(list:Array<Dynamic>, labels:Array<String>):Bool {
+		if (labels == null || labels.length == 0)
+			return false;
+		for (box in list)
+			if (box != null && box.type != "TripodSkillCustom" && textHas(box.value, labels, 0))
+				return true;
+		return false;
+	}
+
+	static function textHas(value:Dynamic, labels:Array<String>, depth:Int):Bool {
+		if (value == null || depth > 4)
+			return false;
+		if (Tooltips.isString(value)) {
+			var text:String = value;
+			for (label in labels)
+				if (text.indexOf(label) >= 0)
+					return true;
+			return false;
+		}
+		var type:String = untyped __typeof__(value);
+		if (type != "object")
+			return false;
+		if (untyped __is__(value, Array)) {
+			var items:Array<Dynamic> = value;
+			for (item in items)
+				if (textHas(item, labels, depth + 1))
+					return true;
+			return false;
+		}
+		var keys:Array<String> = untyped __keys__(value);
+		for (key in keys)
+			if (key != "slotData" && textHas(untyped value[key], labels, depth + 1))
+				return true;
+		return false;
 	}
 
 	/** True when one of the picked tripods is in one of these slots. */
