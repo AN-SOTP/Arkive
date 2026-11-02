@@ -27,7 +27,8 @@ public static class SkillStaggerTable
 
     /// <summary>
     /// Everything the stagger tweak reads, as its options: "grades" (the five labels, "Stagger: Low" first), "frontal"
-    /// (the attack type labels of skills that land head attacks, "Attack type: Frontal Attack" and the like), "skills"
+    /// (the attack type labels of skills that land head attacks, "Attack type: Frontal Attack" and the like), "runes"
+    /// (skill runes that raise stagger, <see cref="Runes"/>), "skills"
     /// (one text per skill with a grade and stagger, "id|grade|name|effect:stagger,…", a tripod's hit as
     /// "effect:stagger:slot", or "slot/slot" when several tripods bring it) and "tripods" (one text per tripod that brings
     /// hits or raises stagger, "skill|slot|name|effect:percent,…", effect 0 for the whole skill). Names and labels are the
@@ -44,7 +45,8 @@ public static class SkillStaggerTable
             if (kept is not null) return kept;
         }
         var options = CombatPowerTable.WithDatabases(data2Path, workDirectory,
-            ["EFTable_Skill.db", "EFTable_SkillEffect.db", "EFTable_SkillFeature.db", "EFTable_GameMsg.db"], connection =>
+            ["EFTable_Skill.db", "EFTable_SkillEffect.db", "EFTable_SkillFeature.db", "EFTable_GameMsg.db", "EFTable_SkillRune.db",
+             "EFTable_AddonSkillFeature.db", "EFTable_Item.db"], connection =>
             {
                 var (skills, tripods) = Read(connection);
                 return new Dictionary<string, object>
@@ -54,6 +56,7 @@ public static class SkillStaggerTable
                         .Where(label => label != "").ToArray(),
                     ["skills"] = skills,
                     ["tripods"] = tripods,
+                    ["runes"] = Runes(connection),
                 };
             });
         Directory.CreateDirectory(workDirectory);
@@ -64,7 +67,7 @@ public static class SkillStaggerTable
     }
 
     /// <summary>Bumped when <see cref="Options"/> changes shape, so caches from older builds are read again.</summary>
-    private const int CacheVersion = 3;
+    private const int CacheVersion = 4;
 
     /// <summary>
     /// Skills that show a stagger grade and have hits that stagger, with their names, and their tripods that change
@@ -137,6 +140,34 @@ public static class SkillStaggerTable
             }
         }
         return (skills.ToArray(), kept.ToArray());
+    }
+
+    /// <summary>
+    /// Skill runes that raise the skill's stagger (Overwhelm +5-40% by grade, Vision +4-20%), as "name|effect text|percent":
+    /// a SkillRune row whose option is an AddonSkillFeature row of type 48, named after the rune items of its group. The
+    /// tooltip's rune box shows "[name] effect text", which tells the grade apart.
+    /// </summary>
+    private static string[] Runes(SqliteConnection connection)
+    {
+        var found = new SortedSet<string>(StringComparer.Ordinal);
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT r.EffectDesc, f.Param1,
+                   (SELECT i.Name FROM db6.Item i WHERE i.UseSkillRuneId IN (SELECT g.PrimaryKey FROM db4.SkillRune g WHERE g.SkillRuneItemGroup = r.SkillRuneItemGroup) LIMIT 1)
+            FROM db4.SkillRune r JOIN db5.AddonSkillFeature f ON f.PrimaryKey = r.Option00KeyIndex
+            WHERE f.SkillFeature = $type AND f.Param0 = 0
+            """;
+        command.Parameters.AddWithValue("$type", StaggerFeature);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (reader.IsDBNull(2)) continue;
+            var name = Text(connection, reader.GetString(2));
+            var effect = Text(connection, reader.GetString(0));
+            if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(effect))
+                found.Add($"{Plain(name)}|{Plain(effect)}|{reader.GetInt32(1)}");
+        }
+        return found.ToArray();
     }
 
     /// <summary>A tripod's name, its stagger bonuses ("effect:percent") and the numbers its rows name (hits among them).</summary>
