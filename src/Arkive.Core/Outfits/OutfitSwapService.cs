@@ -112,9 +112,17 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 var features = OutfitSwapFitting.Features(mesh, all);
                 var correction = field.Correct(moved, features);
                 // Hands follow the skeleton alone too: costumes rarely cover them, so what the field says there is guesswork.
+                // So does a cuff within a few centimetres of the wrist, fading in up the forearm: corrected there, a cuff
+                // and its straps slid 1.5 cm up the arm and tilted (Advancing Eternity on Slayer), baring a thin wrist.
+                var wrists = mesh.BoneNames.Select((name, bone) => (name, bone)).Where(item => item.name.EndsWith("-hand", StringComparison.Ordinal))
+                    .Select(item => mesh.BonePositions[item.bone]).ToArray();
                 for (var v = 0; v < correction.Length; v++)
+                {
                     correction[v] *= Math.Clamp(1 - feet[v] - features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.LeftHand]
                                                   - features[v * OutfitSwapFitting.FeatureCount + OutfitSwapFitting.RightHand], 0, 1);
+                    if (wrists.Length > 0)
+                        correction[v] *= Math.Clamp((wrists.Min(wrist => Vector3.Distance(wrist, mesh.Positions[v])) - 0.04f) / 0.06f, 0, 1);
+                }
                 // Smoothed widely: neighbouring small details (lace, hems) given different corrections would fold over.
                 moved = Add(moved, Expand(OutfitSwapFitting.SmoothOnMesh(Average(correction, ids, weldedCount), triangles, 64), ids));
             }
@@ -505,10 +513,10 @@ public sealed class OutfitSwapService(IOutfitSwapLibrary library, string cacheDi
                 hit = (t, u, w);
             }
             if (hit is not { } found) continue;
-            // Full shoe weights within half the reach and on points the outfit hangs mostly from the foot, fading to the
+            // Full shoe weights within half the reach and on points the outfit hangs almost wholly from the foot, fading to the
             // point's own beyond: a point the ray only just reaches, or an ankle cuff hanging mostly from the calf, would
             // otherwise differ sharply from its neighbour (fine ankle straps tore apart when the foot turned).
-            var take = Math.Clamp((reach - best) / (reach / 2), 0f, 1f) * Math.Clamp((feet[v] - 0.25f) / 0.5f, 0f, 1f);
+            var take = Math.Clamp((reach - best) / (reach / 2), 0f, 1f) * Math.Clamp((feet[v] - 0.6f) / 0.3f, 0f, 1f);
             var sum = new Dictionary<int, float>();
             for (var k = 0; k < 4; k++)
                 if (mesh.Weights[v * 4 + k] > 0)
