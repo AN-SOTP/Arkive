@@ -9,7 +9,8 @@ import flash.utils.Dictionary;
 	you picked raise the hits they change.
 
 	Arkive copies the numbers from data2.lpk into the options (SkillStaggerTable): "grades" (the five labels, Low first),
-	"skills" ("id|grade|name|effect:stagger,…") and "tripods" ("skill|name|effect:percent,…", effect 0 for every hit).
+	"skills" ("id|grade|name|effect:stagger,…", a hit a tripod brings as "effect:stagger:slot/slot") and "tripods"
+	("skill|slot|name|effect:percent,…", effect 0 for every hit). A tripod's hits count only when it is picked.
 	A skill tooltip is a NameTagBox with the skill's name, a CommonSkillTitle (its kind, "Charge" or "Normal", and icon;
 	no id), a SingleTextBox whose description ends in lines like "Weak Point: Lv. 2", "Stagger: High", and a
 	TripodSkillCustom list of the picked tripods ({name, desc, lock}). The skill window's tooltip repeats the description
@@ -143,14 +144,22 @@ class SkillStagger {
 				continue;
 			var effects:Array<Int> = [];
 			var values:Array<Int> = [];
+			// The tripod slots that bring each hit; empty for the skill's own hits.
+			var owners:Array<Array<Int>> = [];
 			for (hit in fields[3].split(",")) {
-				var pair = hit.split(":");
-				if (pair.length == 2) {
-					effects.push(whole(pair[0]));
-					values.push(whole(pair[1]));
-				}
+				var parts = hit.split(":");
+				if (parts.length < 2)
+					continue;
+				effects.push(whole(parts[0]));
+				values.push(whole(parts[1]));
+				var slots:Array<Int> = [];
+				if (parts.length > 2)
+					for (slot in parts[2].split("/"))
+						slots.push(whole(slot));
+				owners.push(slots);
 			}
-			var skill:Dynamic = {id: whole(fields[0]), grade: whole(fields[1]), name: fields[2], effects: effects, values: values};
+			var skill:Dynamic = {id: whole(fields[0]), grade: whole(fields[1]), name: fields[2], effects: effects, values: values,
+				owners: owners};
 			untyped ids[fields[0]] = skill;
 			var same:Array<Dynamic> = untyped names[fields[2]];
 			if (same == null) {
@@ -164,11 +173,11 @@ class SkillStagger {
 			var listed:Array<Dynamic> = tripodRows;
 			for (row in listed) {
 				var fields = (row : String).split("|");
-				if (fields.length < 3)
+				if (fields.length < 4)
 					continue;
 				var effects:Array<Int> = [];
 				var percents:Array<Int> = [];
-				for (bonus in fields[2].split(",")) {
+				for (bonus in fields[3].split(",")) {
 					var pair = bonus.split(":");
 					if (pair.length == 2) {
 						effects.push(whole(pair[0]));
@@ -180,7 +189,7 @@ class SkillStagger {
 					own = [];
 					untyped bySkill[fields[0]] = own;
 				}
-				own.push({name: fields[1], effects: effects, percents: percents});
+				own.push({slot: whole(fields[1]), name: fields[2], effects: effects, percents: percents});
 			}
 		}
 		var shown:Array<String> = [];
@@ -343,7 +352,7 @@ class SkillStagger {
 		return null;
 	}
 
-	/** The skill's tripods (with a stagger bonus) whose names the tooltip lists. */
+	/** The skill's tripods (that bring hits or raise stagger) whose names the tooltip lists. */
 	static function pickedOf(skill:Dynamic, picked:Array<String>):Array<Dynamic> {
 		var id:String = untyped __global__["String"](skill.id);
 		var own:Array<Dynamic> = untyped tripods[id];
@@ -359,14 +368,20 @@ class SkillStagger {
 		return found;
 	}
 
-	/** "147 per hit" or "21 to 105 per hit": each hit's stagger raised by the picked tripods; null when none staggers. */
+	/**
+		"147 per hit" or "21 to 105 per hit": the skill's own hits and those of the picked tripods, each raised by the
+		picked tripods' stagger bonuses; null when none staggers.
+	**/
 	static function staggerText(skill:Dynamic, picked:Array<String>):String {
 		var effects:Array<Int> = skill.effects;
 		var values:Array<Int> = skill.values;
+		var owners:Array<Array<Int>> = skill.owners;
 		var bonuses = pickedOf(skill, picked);
 		var hits:Array<Float> = [];
 		var most:Float = 0;
 		for (i in 0...effects.length) {
+			if (owners[i].length > 0 && !brought(owners[i], bonuses))
+				continue;
 			var percent:Float = 0;
 			for (tripod in bonuses) {
 				var changes:Array<Int> = tripod.effects;
@@ -389,6 +404,15 @@ class SkillStagger {
 		var high:String = Tooltips.grouped(Math.round(most));
 		var lowest:String = Tooltips.grouped(Math.round(low));
 		return (lowest == high ? high : lowest + " to " + high) + " per hit";
+	}
+
+	/** True when one of the picked tripods is in one of these slots. */
+	static function brought(slots:Array<Int>, tripods:Array<Dynamic>):Bool {
+		for (tripod in tripods)
+			for (slot in slots)
+				if (tripod.slot == slot)
+					return true;
+		return false;
 	}
 
 	static function whole(text:String):Int {

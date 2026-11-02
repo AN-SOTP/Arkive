@@ -130,18 +130,22 @@ internal static class TweakSmokeTests
         var options = Arkive.Core.Tweaks.SkillStaggerTable.Options(GameData2Path, work);
         var skills = options["skills"].EnumerateArray().Select(row => row.GetString()!).ToArray();
         string Skill(int id) => skills.SingleOrDefault(row => row.StartsWith($"{id}|", StringComparison.Ordinal)) ?? $"{id} missing";
-        // id|grade|name|effect:stagger: Wing Lash, Shield Shock, Rime Arrow (whose first effect deals none) and Flying Strike.
-        Assert(Skill(49250) == "49250|1|Wing Lash|492500:105", $"Wing Lash reads wrong: {Skill(49250)}");
-        Assert(Skill(17100) == "17100|3|Shield Shock|171000:206", $"Shield Shock reads wrong: {Skill(17100)}");
-        Assert(Skill(37250) == "37250|3|Rime Arrow|372501:21", $"Rime Arrow reads wrong: {Skill(37250)}");
-        Assert(Skill(45210) == "45210|2|Flying Strike|452100:147", $"Flying Strike reads wrong: {Skill(45210)}");
+        // id|grade|name|effect:stagger (a tripod's hit: effect:stagger:slot): Shield Shock, Rime Arrow (whose first
+        // effect deals none), Flying Strike, and Fatal Sword, whose Shockwave (7) and Lights Out (8) tripods bring hits.
+        Assert(Skill(49250).StartsWith("49250|1|Wing Lash|492500:105,", StringComparison.Ordinal), $"Wing Lash reads wrong: {Skill(49250)}");
+        Assert(Skill(17100) == "17100|3|Shield Shock|171000:206,171010:69:5/6", $"Shield Shock reads wrong: {Skill(17100)}");
+        Assert(Skill(37250).StartsWith("37250|3|Rime Arrow|372501:21,", StringComparison.Ordinal), $"Rime Arrow reads wrong: {Skill(37250)}");
+        Assert(Skill(45210) == "45210|2|Flying Strike|452100:147,452110:147:1", $"Flying Strike reads wrong: {Skill(45210)}");
+        Assert(Skill(45300) == "45300|4|Fatal Sword|453000:288,453010:72:7,453011:72:7,453020:230:8", $"Fatal Sword reads wrong: {Skill(45300)}");
+        // Supreme Palm (24031) is a skill of its own, so its hit 240310 isn't Supreme Technique's (24030) tripod hit.
+        Assert(Skill(24030) == "24030|3|Supreme Technique|240300:206", $"Supreme Technique reads wrong: {Skill(24030)}");
         // Slugshot staggers 19 per hit but shows no grade, so the tooltip has nothing to put the number beside.
         Assert(skills.All(row => !row.StartsWith("35760|", StringComparison.Ordinal)), "a skill without a stagger grade was listed");
         var tripods = options["tripods"].EnumerateArray().Select(row => row.GetString()!).ToArray();
-        var tripod = tripods.Where(row => row.StartsWith("45210|", StringComparison.Ordinal)).ToArray();
-        Assert(tripod.Length == 1 && tripod[0].EndsWith("|0:40", StringComparison.Ordinal),
-            $"Flying Strike's stagger tripod (452108, +40% on the whole skill) reads wrong: {string.Join(" / ", tripod)}");
-        Assert(tripods.Length > 100, $"only {tripods.Length} stagger tripods were read");
+        Assert(tripods.Contains("45210|8|Concussion|0:40"),
+            $"Flying Strike's stagger tripod (452108, +40% on the whole skill) reads wrong: {string.Join(" / ", tripods.Where(row => row.StartsWith("45210|", StringComparison.Ordinal)))}");
+        Assert(tripods.Contains("45300|8|Lights Out|"), "Fatal Sword's Lights Out, which brings a hit, is missing");
+        Assert(tripods.Count(row => !row.EndsWith('|')) > 80, "fewer than 80 stagger tripods were read");
         var grades = options["grades"].EnumerateArray().Select(label => label.GetString()).ToArray();
         Assert(grades.SequenceEqual(["Stagger: Low", "Stagger: Mid", "Stagger: Mid-high", "Stagger: High", "Stagger: Max"]),
             $"the grade labels read wrong: {string.Join(" / ", grades)}");
