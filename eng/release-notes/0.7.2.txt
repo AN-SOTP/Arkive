@@ -10,6 +10,6 @@ New tweaks (Edit UI, Stagger Numbers, Loot Auction Fair Bid, Hidden Achievements
 - Bracelet Dismantle by Stat (WIP, not working properly yet): now adds any bracelet that has one of the ticked stats.
 - Logs Tab: damage dealers show nDPS, supports' uptimes use the window's font, and the table fits the window.
 - In-game Tweak Settings: Esc closes the Arkive window first.
-- Outfit Swap: fine ankle straps, anklets and thigh bands stay together and follow the cloth under them, wrist cuffs keep their place, and packages whose header must grow past an unchanged mesh can be built (Awakened Vagabond facewear).
+- Outfit Swap: fine ankle straps, anklets and thigh bands stay together and follow the cloth under them, wrist cuffs keep their place, and packages whose header must grow past an unchanged mesh can be built.
 
 Known issues: Mods made with Match physics use a newer .arkive format that Arkive 0.7.0 and older can't read.
