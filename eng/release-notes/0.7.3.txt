@@ -1,5 +1,7 @@
 Fixes the long freeze when going to or leaving character select with tweaks installed, and removes Hidden Achievements.
 
+After updating, open the Tweaks tab and click Install All once (with Lost Ark closed) so the fix reaches the game.
+
 - Tweaks: the game no longer freezes for up to a minute on every trip to or from character select. Every tweaked window carried the Combat Power and Stagger Numbers tables and read them as it opened; they are now read only when a tweak needs them.
 - Hidden Achievements Revealed is removed. Installing the tweaks again puts the Achievements window back as the game has it.
 - Tweaks: a tweak taken out of the build now has its window put back as the game has it.
