@@ -1,0 +1,15 @@
+New tweaks (Edit UI, Stagger Numbers, Loot Auction Fair Bid, Hidden Achievements, Spotify Player, Box Odds), tweak fixes, and Outfit Swap fixes for ankles and wrists.
+
+- Edit UI: an "Edit UI" button in the escape menu lays a grid over the screen to move and resize the HUD's pieces, with the skill bar split into parts. Restore defaults puts the game's own layout back. Keep Arkive running to save the layout.
+- Stagger Numbers on Skill Tooltips: skill tooltips show the stagger each hit deals beside the game's grade, counting picked tripods, stagger runes and head attacks. The values are estimated from log data.
+- Loot Auction Fair Bid: rows under Market Lowest Price show the most you can bid and still come out ahead, with a Fill button.
+- Hidden Achievements Revealed: hidden achievements show what they ask for and their rewards.
+- Spotify Player: a small player under the minimap for the Spotify app on your PC. Keep Arkive running while you play.
+- Box Odds on Tooltips (WIP, not fully functional): a box's tooltip shows each item's chance and what opening it is worth at the market prices you've seen.
+- Auto Pull Up (WIP, not fully functional): keeps pressing Pull up while the Find Party window is minimised.
+- Bracelet Dismantle by Stat (WIP, not working properly yet): now adds any bracelet that has one of the ticked stats.
+- Logs Tab: damage dealers show nDPS, supports' uptimes use the window's font, and the table fits the window.
+- In-game Tweak Settings: Esc closes the Arkive window first.
+- Outfit Swap: fine ankle straps, anklets and thigh bands stay together and follow the cloth under them, wrist cuffs keep their place, and packages whose header must grow past an unchanged mesh can be built (Awakened Vagabond facewear).
+
+Known issues: Mods made with Match physics use a newer .arkive format that Arkive 0.7.0 and older can't read.
