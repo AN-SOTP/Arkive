@@ -236,13 +236,6 @@ public static class TweakCatalog
                 [.. AstrogemOdds.Targets.Select((target, i) => new TweakChoice(target.Id, target.Label, Default: i == 0))], Single: true),
             new("showData", "Show what the tweak reads from the panel (for testing)", false),
         ], Note: "Arkive works the odds out for every target when it installs the tweak, which takes several seconds the first time after a game update."),
-        new("hiddenachievements", "Hidden Achievements Revealed", "In the Achievements window, hidden achievements show what they ask for instead of \"Complete the hidden achievement to see this info.\", and expanding one shows its real objectives with the game's own ticks and counts. Rewards show too when the game hides them. Spoilers: leave it off if you'd rather find them yourself.", TweakRisk.Display,
-        [
-            H("efui_achievementnewwnd", "achievementnewwnd", "ark.ui.achievementNew.AchievementNewTaskListItem", "setData", "arkive.tweaks.HiddenAchievements.onSetData", AbcHookKind.Before),
-        ],
-        [
-            new("showData", "Show what the tweak reads from each hidden row (for testing)", false),
-        ], Note: "The text comes from the English game client's own achievement tables, read when the tweak is installed."),
         new("boxtweaks", "Chest Opening Tweaks", "Various tweaks for the chest opening window.", TweakRisk.Display,
         [
             H("efui_boxsystem", "boxsystem", "ark.ui.boxSystem.BoxSystemRollingItem", "setData", "arkive.tweaks.BoxTweaks.onSetData"),

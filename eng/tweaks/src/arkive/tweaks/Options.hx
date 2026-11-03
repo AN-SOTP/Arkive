@@ -24,9 +24,22 @@ class Options {
 	/** Replaced by Arkive with the settings (JSON) when it builds the movie. */
 	public static var RAW:String = "__ARKIVE_TWEAKS_CONFIG__";
 
+	/**
+		Replaced by Arkive with the game tables some tweaks read (Combat Power's, the skills' stagger), kept out of RAW:
+		every movie parses RAW as it loads, and the game rebuilds its movies on every trip to character select, so big
+		tables there froze the game. A table is read when a tweak first asks for it. Sections are split by \x01, a section
+		is "tweak\x02key\x02kind\x02values": kind "s" texts split by \x03, "n" numbers split by commas, "e" an empty list,
+		"j" any other value as JSON.
+	**/
+	public static var TABLES:String = "__ARKIVE_TWEAKS_TABLES__";
+
 	static inline var POLL_MS = 3000;
 
 	static var parsed:Dynamic;
+
+	/** TABLES' sections by "tweak\x02key", split on first use, and the tables read so far by the same key. */
+	static var sections:Dynamic;
+	static var tables:Dynamic = {};
 
 	/** The choices since the build: Arkive's live.json, then the panel's changes. Null until either exists. */
 	static var live:Dynamic;
@@ -122,7 +135,51 @@ class Options {
 				return changed;
 		}
 		var built:Dynamic = find(raw().tweaks, tweak, key);
+		if (built == null)
+			built = table(tweak, key);
 		return built == null ? fallback : built;
+	}
+
+	/** A table from TABLES, read the first time it is asked for; null when the build has none by that name. */
+	static function table(tweak:String, key:String):Dynamic {
+		var id = tweak + "\x02" + key;
+		if (Text.has(tables, id))
+			return untyped tables[id];
+		if (sections == null) {
+			sections = {};
+			if (TABLES.indexOf("\x02") >= 0) {
+				for (section in TABLES.split("\x01")) {
+					var first = section.indexOf("\x02");
+					var second = first < 0 ? -1 : section.indexOf("\x02", first + 1);
+					if (second >= 0)
+						untyped sections[section.substr(0, second)] = section.substr(second + 1);
+				}
+			}
+		}
+		if (!Text.has(sections, id))
+			return null;
+		var text:String = untyped sections[id];
+		var value:Dynamic = null;
+		try {
+			var kind = text.substr(0, 1);
+			var values = text.substr(2);
+			if (kind == "s")
+				value = values.split("\x03");
+			else if (kind == "e")
+				value = [];
+			else if (kind == "n") {
+				var numbers:Array<Dynamic> = [];
+				for (number in values.split(","))
+					numbers.push(untyped __global__["Number"](number));
+				value = numbers;
+			} else
+				value = haxe.format.JsonParser.parse(values);
+		} catch (error:Dynamic) {
+			value = null;
+		}
+		untyped tables[id] = value;
+		untyped __delete__(sections, id);
+		return value;
 	}
 
 	static function find(tweaks:Dynamic, tweak:String, key:String):Dynamic {

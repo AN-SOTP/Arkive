@@ -244,7 +244,9 @@ public partial class MainWindow
             Log($"Tweaks built: tweaks={string.Join(",", settings.Enabled.Keys)}, mod={built.Mod?.ModId ?? "-"}, " +
                 $"movies={string.Join(",", built.Movies)}, packages={string.Join(",", built.Packages)}, " +
                 $"missing={string.Join(" | ", built.MissingHooks)}");
-            plan = await _arkiveModApply.PlanAsync();
+            // The old tweak mod is gone from the library, so its packages are named for the plan, which restores the ones
+            // the new build no longer changes.
+            plan = await _arkiveModApply.PlanAsync(built.Packages);
         }
         if (!plan.CanApply) return "The tweaks are ready but couldn't be installed: " + plan.Summary;
 
@@ -273,7 +275,7 @@ public partial class MainWindow
                 UpdateBusy(title, $"Step {update.Step:N0} of {update.TotalSteps:N0}: {update.Message}");
                 Log($"Tweaks apply progress: step={update.Step}/{update.TotalSteps}, package={update.Package}, message={update.Message}");
             });
-            result = await _arkiveModApply.ApplyAsync(plan.Fingerprint, progress);
+            result = await _arkiveModApply.ApplyAsync(plan.Fingerprint, progress, alsoPackages: built.Packages);
         }
         foreach (var package in result.Packages)
             Log($"Tweaks apply package result: package={package.PhysicalPackageName}, action={package.Action}, " +

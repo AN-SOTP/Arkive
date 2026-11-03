@@ -376,7 +376,7 @@ static int Run(string[] arguments)
             "astrogem-odds" => AstrogemOdds(target, ReadTextOption(arguments, "--target"), ReadTextOption(arguments, "--out"), json),
             "box-odds" => BoxOdds(target, ReadTextOption(arguments, "--out"), ReadTextOption(arguments, "--filter")),
             "tweaks-install" => TweaksInstall(target, arguments.Contains("--saved", StringComparer.OrdinalIgnoreCase),
-                arguments.Contains("--include-other-mods", StringComparer.OrdinalIgnoreCase)),
+                arguments.Contains("--include-other-mods", StringComparer.OrdinalIgnoreCase), ReadTextOption(arguments, "--also")),
             "tweaks-mod" => TweaksMod(target, ReadTextOption(arguments, "--root"), ReadTextOption(arguments, "--tweaks"),
                 ReadTextOption(arguments, "--options"), ReadTextOption(arguments, "--movies"), ReadTextOption(arguments, "--code"),
                 arguments.Contains("--diagnostic", StringComparer.OrdinalIgnoreCase), ReadTextOption(arguments, "--data2"), json),
@@ -3403,7 +3403,7 @@ static int BoxOdds(string data2, string? outDirectory, string? filter)
 /// tweaks\state.json), cleaning up earlier tweak mods and their working edits, and applies only the game packages the
 /// tweaks touch. Other mods' waiting changes stop it unless --include-other-mods.
 /// </summary>
-static int TweaksInstall(string projectRoot, bool saved, bool includeOtherMods)
+static int TweaksInstall(string projectRoot, bool saved, bool includeOtherMods, string? also)
 {
     if (!saved) throw new ArgumentException("tweaks-install needs --saved (it installs the choices saved by the Tweaks tab).");
     if (new LostArkProcessGuard().FindBlockingProcesses() is { Count: > 0 } running)
@@ -3427,14 +3427,17 @@ static int TweaksInstall(string projectRoot, bool saved, bool includeOtherMods)
     Console.WriteLine($"Movies:   {string.Join(", ", built.Movies)}");
     Console.WriteLine($"Packages: {string.Join(", ", built.Packages)}");
     Console.WriteLine($"Missing:  {(built.MissingHooks.Count == 0 ? "none" : string.Join(", ", built.MissingHooks))}");
-    var plan = environment.Apply.PlanAsync().GetAwaiter().GetResult();
+    // --also names packages an older tweak build changed whose mod is already gone, so they are restored too.
+    var looked = built.Packages.Concat(also?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [])
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var plan = environment.Apply.PlanAsync(looked).GetAwaiter().GetResult();
     if (!plan.CanApply)
     {
         Console.WriteLine("BLOCKED: " + plan.Summary);
         return 1;
     }
     var others = plan.Packages.Where(package => package.Action != ArkiveModPackageAction.None &&
-                                                !built.Packages.Contains(package.PhysicalPackageName)).ToArray();
+                                                !looked.Contains(package.PhysicalPackageName)).ToArray();
     if (others.Length > 0 && !includeOtherMods)
     {
         Console.WriteLine("Other mods have changes waiting; nothing was applied (pass --include-other-mods to apply them too):");
@@ -3448,7 +3451,7 @@ static int TweaksInstall(string projectRoot, bool saved, bool includeOtherMods)
     }
     var result = environment.Apply.ApplyAsync(plan.Fingerprint,
             new InlineProgress<ArkiveModApplyProgress>(update => Console.Error.WriteLine(
-                $"[{update.Step:N0}/{update.TotalSteps:N0}] {update.Package}: {update.Message}")))
+                $"[{update.Step:N0}/{update.TotalSteps:N0}] {update.Package}: {update.Message}")), alsoPackages: looked)
         .GetAwaiter().GetResult();
     foreach (var package in result.Packages)
         Console.WriteLine($"  {(package.Succeeded ? "ok  " : "FAIL")} {package.PhysicalPackageName}: {package.Message}");
@@ -4259,7 +4262,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive game-crashes <Lost-Ark-folder | EFGame\\Logs | file.dmp> [--last N] [--json]");
     Console.WriteLine("  arkive astrogem-odds <data2.lpk> [--target ID] [--out DIR] [--json]");
     Console.WriteLine("  arkive box-odds <data2.lpk> [--out DIR] [--filter TEXT]");
-    Console.WriteLine("  arkive tweaks-install <Arkive-data-root> --saved [--include-other-mods]");
+    Console.WriteLine("  arkive tweaks-install <Arkive-data-root> --saved [--include-other-mods] [--also PACKAGE.upk[,...]]");
     Console.WriteLine("  arkive tweaks-mod <Packages-directory> --root Arkive-project-root --tweaks ID[,ID] [--options JSON] [--movies DIR] [--code library.swf] [--diagnostic] [--data2 data2.lpk] [--json]");
     Console.WriteLine("  arkive game-data-mod <Arkive-project-root> [--sql PATCH.sql [--name NAME | --mod ID|NAME]] [--mod ID|NAME] [--json]");
     Console.WriteLine("  arkive language <EFGAME_DIR> --data DIR [--use LANGUAGE | --restore] [--json]");

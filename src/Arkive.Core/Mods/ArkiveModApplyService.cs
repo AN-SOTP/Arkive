@@ -377,11 +377,20 @@ public sealed class ArkiveModApplyService
     public Task<ArkiveModApplyPlan> PlanAsync(ArkiveModEditSnapshot snapshot, CancellationToken cancellationToken = default) =>
         PlanAsync(null, snapshot, cancellationToken);
 
+    /// <summary>
+    /// The plan, also looking at <paramref name="alsoPackages"/>: packages a mod just taken out of the library changed
+    /// (the Tweaks tab replaces its mod on every install). The plan otherwise only sees packages some mod names, so one
+    /// only the removed mod changed would never be restored.
+    /// </summary>
+    public Task<ArkiveModApplyPlan> PlanAsync(IReadOnlyCollection<string> alsoPackages, CancellationToken cancellationToken = default) =>
+        PlanAsync(null, null, cancellationToken, alsoPackages);
+
     public Task<ArkiveModApplyPlan> PreviewModAsync(string modId, CancellationToken cancellationToken = default) =>
         PlanAsync(modId, null, cancellationToken);
 
     private async Task<ArkiveModApplyPlan> PlanAsync(
-        string? previewModId, ArkiveModEditSnapshot? knownSnapshot, CancellationToken cancellationToken)
+        string? previewModId, ArkiveModEditSnapshot? knownSnapshot, CancellationToken cancellationToken,
+        IReadOnlyCollection<string>? alsoPackages = null)
     {
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
         if (previewModId is not null)
@@ -408,6 +417,7 @@ public sealed class ArkiveModApplyService
         var gameDirectory = library.GamePackagesDirectory;
         var physicalNames = library.Mods
             .SelectMany(mod => mod.Manifest.Assets.Select(asset => asset.Target.PhysicalPackageName))
+            .Concat(alsoPackages ?? [])
             .Select(name => ArkiveModFileService.NormalizePhysicalPackageName(name))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
@@ -424,9 +434,11 @@ public sealed class ArkiveModApplyService
             var project = FindPackageProject(physical, gameDirectory, packages);
             var alias = project?.Manifest.PackageAlias ??
                         library.Mods.SelectMany(mod => mod.Manifest.Assets)
-                            .First(asset => ArkiveModFileService.NormalizePhysicalPackageName(
+                            .FirstOrDefault(asset => ArkiveModFileService.NormalizePhysicalPackageName(
                                 asset.Target.PhysicalPackageName).Equals(physical, StringComparison.OrdinalIgnoreCase))
-                            .Target.PackageAlias;
+                            ?.Target.PackageAlias;
+            // A package only the caller named, which Arkive never set up: there is nothing of Arkive's to take out.
+            if (alias is null) continue;
             var packagePath = project?.Manifest.SourcePackagePath ??
                               (gameDirectory is null
                                   ? winners.Select(item => item.Mod.BindingFor(item.Asset.AssetId)?.SourcePackagePath)
@@ -745,10 +757,11 @@ public sealed class ArkiveModApplyService
     public async Task<ArkiveModApplyResult> ApplyAsync(
         string? expectedPlanFingerprint = null,
         IProgress<ArkiveModApplyProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<string>? alsoPackages = null)
     {
         var watch = Stopwatch.StartNew();
-        var plan = await PlanAsync(cancellationToken).ConfigureAwait(false);
+        var plan = await PlanAsync(null, null, cancellationToken, alsoPackages).ConfigureAwait(false);
         if (expectedPlanFingerprint is not null &&
             !expectedPlanFingerprint.Equals(plan.Fingerprint, StringComparison.Ordinal))
             Refuse("APL001", "The mod library or game files changed since the plan was reviewed. Review it again.");

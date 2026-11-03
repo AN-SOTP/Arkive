@@ -74,11 +74,12 @@ public sealed class TweakModService(
 
     /// <summary>
     /// The settings the tweak code gets (Options.hx): every built tweak's options ("tweaks"), the ones that act ("on"),
-    /// Arkive's tweak folder ("home"), plus the folder the Logs tab reads its answers from and the game's Combat Power
-    /// tables and skills' stagger numbers (left out when there is no data2.lpk, so those tweaks show nothing). With In-game Tweak Settings built,
-    /// "live" tells the code to follow live.json and "panel" lists what the escape menu panel shows.
+    /// Arkive's tweak folder ("home") and the folder the Logs tab reads its answers from. With In-game Tweak Settings built,
+    /// "live" tells the code to follow live.json and "panel" lists what the escape menu panel shows. The game's Combat Power
+    /// tables and skills' stagger numbers come back apart, as the tables text (left out when there is no data2.lpk, so
+    /// those tweaks show nothing).
     /// </summary>
-    private string ForGame(TweakState state, IReadOnlyList<TweakDefinition> built, string packagesDirectory)
+    private (string Json, string Tables) ForGame(TweakState state, IReadOnlyList<TweakDefinition> built, string packagesDirectory)
     {
         var settings = state.Settings;
         var tweaks = built.ToDictionary(tweak => tweak.Id, tweak => OptionsOf(state, tweak));
@@ -91,30 +92,27 @@ public sealed class TweakModService(
         var pricedBy = tweaks.ContainsKey(CombatPowerTweak) || tweaks.ContainsKey(BraceletJudgeTweak) || tweaks.ContainsKey(CompareTweak)
             ? CombatPowerTweak
             : tweaks.ContainsKey(CombatPowerPerGoldTweak) ? CombatPowerPerGoldTweak : null;
+        // Big tables go in the tables text, which the code reads only when a tweak asks: the settings are parsed by every
+        // movie as the game builds it, on every trip to character select (0.7.2's 228 KB froze the game there).
+        var tables = new Dictionary<string, Dictionary<string, JsonElement>>();
         if (pricedBy is not null && File.Exists(data2))
         {
-            if (!tweaks.TryGetValue(pricedBy, out var power))
-                tweaks[pricedBy] = power = [];
-            foreach (var (key, value) in CombatPowerTable.Options(data2, Path.Combine(root, "cache")))
-                power[key] = value;
+            tweaks.TryAdd(pricedBy, []);
+            tables[pricedBy] = CombatPowerTable.Options(data2, Path.Combine(root, "cache"));
         }
         if (tweaks.TryGetValue(AstrogemTweak, out var astrogem) && File.Exists(data2))
             astrogem["tables"] = JsonSerializer.SerializeToElement(
                 AstrogemOdds.WriteTables(data2, Path.Combine(root, "cache"), Path.Combine(root, "astrogem"))
                     .ToDictionary(table => table.Key, table => table.Value.Replace('\\', '/')));
-        if (tweaks.TryGetValue(HiddenAchievementsTweak, out var achievements) && File.Exists(data2))
-            foreach (var (key, value) in AchievementTable.Options(data2, Path.Combine(root, "cache")))
-                achievements[key] = value;
         if (tweaks.TryGetValue(BoxOddsTweak, out var boxOdds) && File.Exists(data2))
             boxOdds["table"] = JsonSerializer.SerializeToElement(
                 BoxOddsTable.Write(data2, Path.Combine(root, "boxodds"), Path.Combine(root, "cache")).Replace('\\', '/'));
         if (tweaks.ContainsKey(MarketPriceTweak) && File.Exists(data2))
             MarketItemTable.Write(data2, PricesFolder, Path.Combine(root, "cache"));
-        if (tweaks.TryGetValue(StaggerTweak, out var stagger) && File.Exists(data2))
-            foreach (var (key, value) in SkillStaggerTable.Options(data2, Path.Combine(root, "cache")))
-                stagger[key] = value;
+        if (tweaks.ContainsKey(StaggerTweak) && File.Exists(data2))
+            tables[StaggerTweak] = SkillStaggerTable.Options(data2, Path.Combine(root, "cache"));
         var live = settings.Enabled.ContainsKey(SettingsTweak) && tweaks.ContainsKey(SettingsTweak);
-        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        var json = JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["tweaks"] = tweaks,
             ["on"] = settings.Enabled.Keys.Where(tweaks.ContainsKey).ToDictionary(id => id, _ => true),
@@ -122,6 +120,7 @@ public sealed class TweakModService(
             ["live"] = live,
             ["panel"] = live ? Panel(built) : null,
         }, GameJsonOptions);
+        return (json, TweakCode.Tables(tables));
     }
 
     /// <summary>Plain text for the game's JSON reader: only quotes, backslashes and control characters are escaped.</summary>
@@ -371,9 +370,6 @@ public sealed class TweakModService(
     /// <summary>The tweak that advises astrogem processing, from odds tables Arkive writes for every target.</summary>
     public const string AstrogemTweak = "astrogem";
 
-    /// <summary>The tweak that reveals hidden achievements, from the game's achievement tables baked into its options.</summary>
-    public const string HiddenAchievementsTweak = "hiddenachievements";
-
     /// <summary>The tweak that shows box odds, from a table of the game's drops Arkive writes when it builds.</summary>
     public const string BoxOddsTweak = "boxodds";
 
@@ -475,7 +471,8 @@ public sealed class TweakModService(
             return new TweakBuildResult(null, [], [], packages);
         }
 
-        var tweakCode = TweakCode.ForSettings(tweakSwf, ForGame(state, built, packagesDirectory));
+        var (gameJson, gameTables) = ForGame(state, built, packagesDirectory);
+        var tweakCode = TweakCode.ForSettings(tweakSwf, gameJson, gameTables);
         var gamePackages = FindPackages(packagesDirectory);
         var staging = Path.Combine(root, "staging");
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);

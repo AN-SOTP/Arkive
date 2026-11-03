@@ -579,6 +579,26 @@ internal static class TweakSmokeTests
             }
         }
         Assert(withSettings == 1, "the settings were not written into exactly one block");
+        Assert(blocks.All(block => !AbcFile.Read(block.AbcData).Pool.Strings.Contains(Arkive.Core.Tweaks.TweakCode.TablesPlaceholder)),
+            "the game tables' placeholder was left in the tweak code");
+
+        // Big tables stay out of the settings every movie parses; the code splits them when a tweak asks (Options.table).
+        var tables = Arkive.Core.Tweaks.TweakCode.Tables(new Dictionary<string, Dictionary<string, System.Text.Json.JsonElement>>
+        {
+            ["stagger"] = new()
+            {
+                ["skills"] = System.Text.Json.JsonSerializer.SerializeToElement(new[] { "45300|4|Fatal Sword|1:288", "45210|2|Flying Strike|" }),
+                ["runes"] = System.Text.Json.JsonSerializer.SerializeToElement(Array.Empty<string>()),
+            },
+            ["cpgems"] = new()
+            {
+                ["rows"] = System.Text.Json.JsonSerializer.SerializeToElement(new[] { 2, 2, 12, 1000 }),
+                ["mixed"] = System.Text.Json.JsonSerializer.SerializeToElement(new object[] { "a", 1 }),
+            },
+        });
+        Assert(tables == "stagger\u0002skills\u0002s\u000245300|4|Fatal Sword|1:288\u000345210|2|Flying Strike|\u0001" +
+            "stagger\u0002runes\u0002e\u0002\u0001cpgems\u0002rows\u0002n\u00022,2,12,1000\u0001cpgems\u0002mixed\u0002j\u0002[\"a\",1]",
+            $"the game tables are written wrong: {tables.Replace('\u0001', '#').Replace('\u0002', '^').Replace('\u0003', '~')}");
     }
 
     /// <summary>

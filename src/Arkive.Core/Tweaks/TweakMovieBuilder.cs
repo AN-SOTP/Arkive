@@ -9,6 +9,7 @@ namespace Arkive.Core.Tweaks;
 public static class TweakCode
 {
     public const string ConfigPlaceholder = "__ARKIVE_TWEAKS_CONFIG__";
+    public const string TablesPlaceholder = "__ARKIVE_TWEAKS_TABLES__";
     public const string AbcName = "arkive/tweaks";
     private const string ResourceName = "Arkive.Core.Tweaks.arkive-tweaks.swf";
 
@@ -28,8 +29,11 @@ public static class TweakCode
     /// </summary>
     public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, TweakSettings settings) => ForSettings(swf, settings.ToGameJson());
 
-    /// <summary>The code blocks with this settings JSON (the shape Options.hx reads) written in.</summary>
-    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, string gameJson)
+    /// <summary>
+    /// The code blocks with this settings JSON (the shape Options.hx reads) and these game tables (<see cref="Tables"/>)
+    /// written in.
+    /// </summary>
+    public static IReadOnlyList<GfxTag> ForSettings(byte[] swf, string gameJson, string tables = "")
     {
         var blocks = ReadSwfBlocks(swf);
         var configured = 0;
@@ -42,12 +46,37 @@ public static class TweakCode
             {
                 abc.Pool.Strings[index] = gameJson;
                 configured++;
+                var tablesIndex = abc.Pool.Strings.IndexOf(TablesPlaceholder);
+                if (tablesIndex < 0) throw new InvalidDataException("Arkive's tweak code has no place for its game tables.");
+                abc.Pool.Strings[tablesIndex] = tables;
             }
             foreach (var body in abc.Bodies) AbcInstructions.UntypeNulls(body);
             tags.Add(GfxTag.NewDoAbc(AbcName + "/" + name, abc.Write()));
         }
         if (configured != 1) throw new InvalidDataException("Arkive's tweak code has no single place for its settings.");
         return tags;
+    }
+
+    /// <summary>
+    /// Game tables for Options.hx's TABLES, by tweak and key. A list of texts goes in as "s" (split by \x03), a list of
+    /// numbers as "n", an empty list as "e" and anything else as JSON ("j"), so the game splits a table instead of
+    /// parsing it.
+    /// </summary>
+    public static string Tables(IReadOnlyDictionary<string, Dictionary<string, JsonElement>> tables) =>
+        string.Join('\u0001', tables.SelectMany(tweak => tweak.Value.Select(key => $"{tweak.Key}\u0002{key.Key}\u0002{Encode(key.Value)}")));
+
+    private static string Encode(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            var items = value.EnumerateArray().ToArray();
+            if (items.Length == 0) return "e\u0002";
+            if (items.All(item => item.ValueKind == JsonValueKind.String && !item.GetString()!.Any(c => c is '\u0001' or '\u0002' or '\u0003')))
+                return "s\u0002" + string.Join('\u0003', items.Select(item => item.GetString()));
+            if (items.All(item => item.ValueKind == JsonValueKind.Number))
+                return "n\u0002" + string.Join(',', items.Select(item => item.GetRawText()));
+        }
+        return "j\u0002" + value.GetRawText();
     }
 
     /// <summary>The code blocks of a SWF the Haxe compiler wrote ("FWS", or "CWS" when zlib-compressed), by name.</summary>
