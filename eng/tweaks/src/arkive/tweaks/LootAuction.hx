@@ -39,8 +39,11 @@ class LootAuction {
 	static inline var FONT = "$YG760";
 	static inline var SIZE = 14;
 	static inline var LINE_HEIGHT = 20;
-	static inline var BUTTON_WIDTH = 56;
+	static inline var BUTTON_WIDTH = 44;
+	/** Fill's height when the window has no Currency Security Fee button to match. */
+	static inline var BUTTON_HEIGHT = 20;
 	static inline var GAP = 6;
+	static inline var SETTLE_FRAMES = 5;
 
 	/** Fee brackets: a bid part of at least FEE_FROM[i] gold pays FEE_GOLD[i] (TrophyAuctionFeesFixedAmount). */
 	static var FEE_FROM:Array<Float> = [1, 2, 20, 40, 60, 80, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 3000,
@@ -74,7 +77,7 @@ class LootAuction {
 		button.visible = false;
 		GameUi.addAbove(button, window.marketPrice_lb);
 		Options.own(TWEAK, button);
-		var state:Dynamic = {rows: rows, button: button, key: "", toUse: 0, resell: 0};
+		var state:Dynamic = {rows: rows, button: button, key: "", settle: 0, toUse: 0, resell: 0};
 		button.addEventListener(ButtonEvent.CLICK, function(event:Dynamic) {
 			try {
 				fill(window, state);
@@ -159,9 +162,17 @@ class LootAuction {
 		var key = (on ? "on|" : "off|") + whole(Math.round(market)) + "|" + whole(Math.round(least)) + "|"
 			+ whole(Math.round(balance)) + "|" + whole(count) + "|" + fee.text + "|" + fill + "|" + (data ? "data|" : "|")
 			+ whole(Math.round(y));
-		if (key == state.key)
+		if (key == state.key) {
+			// The money labels draw a frame or two after their text is set: lay out again until their size is final.
+			var settle:Int = state.settle;
+			if (settle > 0 && market > 0) {
+				state.settle = settle - 1;
+				layout(window, state);
+			}
 			return;
+		}
 		state.key = key;
+		state.settle = SETTLE_FRAMES;
 		if (market <= 0) {
 			hide(state);
 			return;
@@ -284,7 +295,7 @@ class LootAuction {
 
 	/**
 		Puts the rows under Market Lowest Price, one row apart, in the window's own columns: words under its words, money
-		right-aligned with the market price, Fill just right of the first row's money. A second row shows only when it
+		right-aligned with the market price, a small Fill after the first row's words. A second row shows only when it
 		fits above Highest Bidder (items without an item level leave room for it). Returns how many rows show.
 	**/
 	static function layout(window:Dynamic, state:Dynamic):Int {
@@ -306,16 +317,28 @@ class LootAuction {
 			line.money.x = price.x;
 			line.money.y = price.y + (i + 1) * step;
 		}
+		// Fill sits right after the first row's words, as small as the game's own fee button and never under its price:
+		// the price column runs to the window's edge, so there's no room beside it.
 		var button:Dynamic = state.button;
-		var bid:Dynamic = window.tender_btn;
+		var counter:Dynamic = window.counterFees_btn;
+		var height:Float = counter != null && counter.height > 0 ? counter.height : BUTTON_HEIGHT;
 		button.width = BUTTON_WIDTH;
+		button.height = height < step - 4 ? height : step - 4;
 		button.validateNow();
-		var right:Float = bid.x + bid.width;
-		var bounds:Dynamic = rows[0].money.getBounds(price.parent);
-		var x:Float = bounds.width > 0 ? bounds.x + bounds.width + GAP : right - button.width;
-		button.x = x + button.width > right ? right - button.width : x;
+		var words:TextField = rows[0].desc;
+		var priceLeft:Float = leftOf(price);
+		var moneyLeft:Float = leftOf(rows[0].money);
+		var stop:Float = (moneyLeft < priceLeft ? moneyLeft : priceLeft) - GAP;
+		var x:Float = words.x + words.textWidth + 2 * GAP;
+		button.x = x + BUTTON_WIDTH > stop ? stop - BUTTON_WIDTH : x;
 		button.y = desc.y + step + (step - button.height) / 2;
 		return shown;
+	}
+
+	/** Where a money label's drawing starts on the left (its gold icon), in the window; its x when it draws nothing. */
+	static function leftOf(label:Dynamic):Float {
+		var bounds:Dynamic = label.getBounds(label.parent);
+		return bounds.width > 0 ? bounds.x : label.x;
 	}
 
 	static function hide(state:Dynamic):Void {
