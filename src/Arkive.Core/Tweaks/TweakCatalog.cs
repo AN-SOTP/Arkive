@@ -147,6 +147,22 @@ public static class TweakCatalog
         [
             new("showData", "Show the skill tooltip data Arkive reads, and send it to Arkive's log (for testing)", false),
         ], Note: "Skills are found by their name in the tooltip, in the game's current language. Hits smaller than a tenth of the skill's biggest are left out of the range."),
+        new("titleicons", "Title Icons Only", "On the name tags above players, a title that comes with an icon (raid titles such as Demon's Roar) shows just its icon beside the name, without the title's text. Titles without an icon stay as they are unless you hide them too. Animated titles (Kazeros rankings) are left alone.", TweakRisk.Display,
+        [
+            // Players' tags are drawn by efui_indicator's copy of BaseHeadStatus or headstatus's, whichever movie
+            // loads first (they share one class space), so both copies get the hook.
+            H("efui_status", "headstatus", "ark.ui.headStatus.BaseHeadStatus", "changeHeadStatus", "arkive.tweaks.TitleIcons.beforeLayout", AbcHookKind.Before,
+                expose: ["_titleName", "_name"]),
+            H("efui_indicator", "indicator", "ark.ui.headStatus.BaseHeadStatus", "changeHeadStatus", "arkive.tweaks.TitleIcons.beforeLayout", AbcHookKind.Before,
+                expose: ["_titleName", "_name"]),
+            H("efui_status", "headstatus", "ark.ui.headStatus.HeadStatusFrame", "configUI", "arkive.tweaks.TitleIcons.onFrameConfigUI"),
+        ],
+        [
+            new("others", "Other players", true),
+            new("mine", "My character", true),
+            new("plain", "Also hide titles that have no icon", false),
+            new("showData", "Send the titles the game gives to Arkive's log (for testing)", false),
+        ], Note: "Your own tag is told apart by the HP bar type the game gives it. Name tags already on screen change as soon as you switch an option."),
         new("cpgold", "Combat Power per Gold", "Auction house results (accessories, bracelets, ability stones, gems) and market engraving books show the Combat Power the item would give you and the gold it costs per 1% at the listed price. The best value on screen turns gold. Priced with the same model as Combat Power on Tooltips; rows are never reordered and nothing is searched for you.", TweakRisk.Display,
         [
             H("efui_exchangeshop", "exchangeshop", "ark.ui.exchangeShop.AuctionSearchListRenderer", "setData", "arkive.tweaks.CpGold.onAuctionRow"),
