@@ -1,0 +1,6 @@
+A new Title Icons Only tweak, and a tidier Loot Auction Fair Bid.
+
+- Tweaks: Title Icons Only shows just a title's icon on the name tags above players, without the title's text, for raid titles such as Demon's Roar. It has switches for other players and for your own character. Titles without an icon stay as they are unless you hide them too, and animated titles (Kazeros rankings) are left alone.
+- Tweaks: Loot Auction Fair Bid's Fill button is smaller and sits beside the words, clear of the price.
+
+Known issues: Mods made with Match physics use a newer .arkive format that Arkive 0.7.0 and older can't read.
