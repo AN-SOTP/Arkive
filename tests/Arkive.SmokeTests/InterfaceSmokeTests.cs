@@ -9,6 +9,7 @@ internal static class InterfaceSmokeTests
     internal static IReadOnlyList<SmokeTestCase> Cases { get; } =
     [
         new("reads interface movies and names their pictures after the parts that draw them", TestMovieNames),
+        new("reads PlaceObject3 placements the way the game's Scaleform exporter writes them", TestRetailPlaceObject3),
         new("finds, replaces and inflates the movie inside an interface movie export", TestMovieExportLayout),
         new("edits an interface movie into an .arkive mod, installs it and restores the clean package", TestMovieModEndToEnd),
         new("recolours one named part of a picture and keeps the rest, its transparency and its shading", TestRecolourPart),
@@ -34,6 +35,19 @@ internal static class InterfaceSmokeTests
         Assert(InterfaceElementNames.Humanize("QuickSlot_QuickSlotHPProgress") == "Quick slot HP progress" &&
                InterfaceElementNames.Humanize("instance12") is null && InterfaceElementNames.Humanize("mc_01") is null,
             "identifier names were not made readable");
+    }
+
+    // In the game's UI movies, a PlaceObject3 with HasImage and HasCharacter but no HasClassName has its character id
+    // right after the depth; reading a class-name string first (as the SWF spec says) gave no valid id.
+    private static void TestRetailPlaceObject3()
+    {
+        var movie = GfxMovieReader.Read(BuildMovie("QuickSlot", compressed: false, retailPlaceObject3: true));
+        Assert(movie.Timelines.TryGetValue(8, out var placements) &&
+               placements.Any(item => item.CharacterId == 7 && item.InstanceName == "hpGauge"),
+            "a PlaceObject3 with HasImage but no class name lost its character or instance name");
+        var atlas = InterfaceElementNames.Find(movie).Single(item => item.TextureName == "quickslot_i1").Elements;
+        Assert(atlas.Any(element => element.Name == "HP gauge (health bar)"),
+            "a picture under a retail PlaceObject3 was not named after its sprite");
     }
 
     private static void TestMovieExportLayout()
@@ -190,7 +204,7 @@ internal static class InterfaceSmokeTests
     /// "castbarFill_HP", inside "hpGauge", inside the QuickSlot_PlayerHP sprite placed as "playerHP"; and one standalone
     /// ("nopack") picture that shares the atlas's number.
     /// </summary>
-    internal static byte[] BuildMovie(string name, bool compressed)
+    internal static byte[] BuildMovie(string name, bool compressed, bool retailPlaceObject3 = false)
     {
         using var tags = new MemoryStream();
         Tag(tags, 1000, body => { body.Write((ushort)0x0401); body.Write(0); body.Write((ushort)13); Pascal(body, ""); Pascal(body, name); });
@@ -207,7 +221,7 @@ internal static class InterfaceSmokeTests
             body.Write((byte)0);
         });
         Tag(tags, 39, body => { body.Write((ushort)7); body.Write((ushort)1); Place(body, 6, "castbarFill_HP"); EndSprite(body); });
-        Tag(tags, 39, body => { body.Write((ushort)8); body.Write((ushort)1); Place(body, 7, "hpGauge"); EndSprite(body); });
+        Tag(tags, 39, body => { body.Write((ushort)8); body.Write((ushort)1); Place(body, 7, "hpGauge", retailPlaceObject3); EndSprite(body); });
         Tag(tags, 26, body => PlaceBody(body, 8, "playerHP"));
         Tag(tags, 76, body => { body.Write((ushort)1); body.Write((ushort)8); body.Write(Encoding.ASCII.GetBytes("QuickSlot_PlayerHP\0")); });
         Tag(tags, 1, _ => { });
@@ -240,18 +254,20 @@ internal static class InterfaceSmokeTests
             writer.Write((byte)value.Length);
             writer.Write(Encoding.ASCII.GetBytes(value));
         }
-        static void PlaceBody(BinaryWriter writer, int character, string instance)
+        static void PlaceBody(BinaryWriter writer, int character, string instance, bool placeObject3 = false)
         {
             writer.Write((byte)0x22);
+            // The game's exporter sets HasImage (0x10) without writing a class name; only HasClassName (0x08) adds one.
+            if (placeObject3) writer.Write((byte)0x10);
             writer.Write((ushort)1);
             writer.Write((ushort)character);
             writer.Write(Encoding.ASCII.GetBytes(instance + "\0"));
         }
-        static void Place(BinaryWriter writer, int character, string instance)
+        static void Place(BinaryWriter writer, int character, string instance, bool placeObject3 = false)
         {
             using var body = new MemoryStream();
-            using (var placement = new BinaryWriter(body, Encoding.ASCII, leaveOpen: true)) PlaceBody(placement, character, instance);
-            writer.Write((ushort)((26 << 6) | 0x3F));
+            using (var placement = new BinaryWriter(body, Encoding.ASCII, leaveOpen: true)) PlaceBody(placement, character, instance, placeObject3);
+            writer.Write((ushort)(((placeObject3 ? 70 : 26) << 6) | 0x3F));
             writer.Write((int)body.Length);
             writer.Write(body.ToArray());
         }

@@ -14,6 +14,7 @@ internal static class TextureSmokeTests
         new("encodes deterministic LZ4 and UE3 bulk mips", TestLostArkBulkMipEncoder),
         new("exports a gated native DXT5 Crunch texture", TestNativeTextureExport),
         new("exports a gated native DXT1 Crunch texture", TestNativeDxt1TextureExport),
+        new("shows a streamed texture's mips from the game's texture file cache and refuses to export it", TestStreamedTextureView),
         new("exports a gated native BC5 Crunch texture", TestNativeBc5TextureExport),
         new("round-trips Arkive editable PNG pixels", TestEditablePngCodec),
         new("compares editable textures and writes an amplified diff", TestTextureEditComparison),
@@ -358,6 +359,76 @@ internal static class TextureSmokeTests
         Assert(Encoding.ASCII.GetString(dds, 84, 4) == "DXT1", "DDS FourCC was not DXT1");
         Assert(dds.AsSpan(DdsBc1Writer.HeaderBytes).SequenceEqual(SyntheticCrunchDecoder.Dxt1DecodedBlock),
             "generated DDS did not contain the decoded BC1 block");
+    }
+
+    // A streamed texture keeps its larger mips in the game's texture file cache (bulk flag 0x1, TextureFileCacheName),
+    // found beside the Packages folder. The viewer reads them from there; an export for editing still refuses them.
+    private static void TestStreamedTextureView()
+    {
+        var root = Path.Combine(fixtureDirectory, "streamed-texture");
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        var packages = Path.Combine(root, "Packages");
+        Directory.CreateDirectory(packages);
+        var path = Path.Combine(packages, "streamed.upk");
+        var range = WriteTextureReconPackage(path, lostArkTagExtensions: true, pixelFormatName: "PF_DXT1");
+        var inline = new TextureReconnaissanceService()
+            .InspectAsync(new TextureReconnaissanceRequest(path, "streamed", 0, AssetKind.Texture, "Texture2D", "TestTexture",
+                range.SerialOffset, range.SerialSize))
+            .GetAwaiter().GetResult();
+        var mip = inline.MipCandidates[0].Mips[0];
+        var stored = File.ReadAllBytes(path).AsSpan(checked((int)mip.PayloadLogicalOffset!.Value), mip.StoredSize).ToArray();
+
+        // The cache: the same stored bytes at an offset of their own, in "testcache.tfc" one folder up.
+        const int cacheOffset = 4096;
+        var cache = new byte[cacheOffset + stored.Length + 64];
+        stored.CopyTo(cache, cacheOffset);
+        File.WriteAllBytes(Path.Combine(root, "testcache.tfc"), cache);
+        var streamedMip = mip with
+        {
+            BulkDataFlags = mip.BulkDataFlags | TextureFileCache.SeparateFileFlag, BulkDataOffset = cacheOffset,
+            PayloadRelativeOffset = null, PayloadLogicalOffset = null, PayloadSha256 = null, BulkOffsetMatchesPayload = false,
+        };
+        var cacheName = new TexturePropertyEvidence(0, 0, "texturefilecachename", "NameProperty", 8, 0, null, 0, 0, "testcache", null, "");
+        var streamed = inline with
+        {
+            Properties = [.. inline.Properties, cacheName],
+            MipCandidates = [inline.MipCandidates[0] with { Mips = [streamedMip, .. inline.MipCandidates[0].Mips.Skip(1)] }],
+        };
+
+        Assert(TextureFileCache.IsExternal(streamedMip) && !TextureFileCache.IsExternal(mip) &&
+               TextureFileCache.CacheName(streamed) == "testcache" &&
+               TextureFileCache.Locate(path, "testcache") == Path.Combine(root, "testcache.tfc"),
+            "the streamed mip or its texture file cache was not recognised");
+        Assert(TextureFileCache.ReadMip(streamed, streamedMip).SequenceEqual(stored), "the streamed mip's bytes were not read from the cache");
+
+        var service = new NativeTextureExportService(crunchDecoder: new SyntheticCrunchDecoder(NativeTextureFormats.Dxt1));
+        var expected = service.DecodeChainAsync(inline, int.MaxValue).GetAwaiter().GetResult();
+        var viewed = service.DecodeChainAsync(streamed, int.MaxValue).GetAwaiter().GetResult();
+        Assert(viewed.Width == expected.Width && viewed.Dds.SequenceEqual(expected.Dds),
+            "a streamed texture did not decode for viewing like the same texture stored inline");
+        var preview = service.DecodePreviewAsync(streamed, int.MaxValue).GetAwaiter().GetResult();
+        Assert(preview.Width == 4 && preview.Height == 4, "a streamed texture's top mip did not preview");
+
+        var output = Path.Combine(root, "export");
+        var reconJson = Path.Combine(root, "recon.json");
+        File.WriteAllText(reconJson, "{}");
+        try
+        {
+            service.ExportAsync(new NativeTextureExportRequest(streamed, output, reconJson)).GetAwaiter().GetResult();
+            throw new InvalidOperationException("a streamed texture was exported for editing");
+        }
+        catch (NativeTextureExportRefusalException exception) when (exception.Message.Contains("texture file cache", StringComparison.Ordinal)) { }
+
+        File.Delete(Path.Combine(root, "testcache.tfc"));
+        var missing = Path.Combine(fixtureDirectory, "streamed-texture-missing", "Packages");
+        Directory.CreateDirectory(missing);
+        File.Copy(path, Path.Combine(missing, "streamed.upk"), overwrite: true);
+        try
+        {
+            service.DecodePreviewAsync(streamed with { PackagePath = Path.Combine(missing, "streamed.upk") }, int.MaxValue).GetAwaiter().GetResult();
+            throw new InvalidOperationException("a streamed texture without its cache file decoded");
+        }
+        catch (FileNotFoundException) { }
     }
 
     private static void TestNativeBc5TextureExport()
