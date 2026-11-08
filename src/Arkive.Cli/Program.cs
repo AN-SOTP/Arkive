@@ -371,7 +371,7 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--filter"), json),
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
-            "player-logs" => PlayerLogs(target, ReadTextOption(arguments, "--out"), json),
+            "player-logs" => PlayerLogs(target, ReadTextOption(arguments, "--out"), ReadTextOption(arguments, "--region"), json),
             "game-crashes" => GameCrashes(target, ReadPositiveIntOption(arguments, "--last") ?? 3, json),
             "astrogem-odds" => AstrogemOdds(target, ReadTextOption(arguments, "--target"), ReadTextOption(arguments, "--out"), json),
             "box-odds" => BoxOdds(target, ReadTextOption(arguments, "--out"), ReadTextOption(arguments, "--filter")),
@@ -3280,11 +3280,12 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
 /// Builds the "Arkive Tweaks" mod for the given tweaks from a Packages folder (read only) into a project root's library,
 /// as the Tweaks tab does; --movies DIR also writes each built movie there for decompiling.
 /// </summary>
-static int PlayerLogs(string name, string? outDirectory, bool json)
+static int PlayerLogs(string name, string? outDirectory, string? region, bool json)
 {
     using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Arkive/1 (+https://github.com/AN-SOTP/Arkive)");
-    var lookup = new Arkive.Core.Tweaks.PlayerLogsService(client).FetchAsync(name).GetAwaiter().GetResult();
+    var lookup = new Arkive.Core.Tweaks.PlayerLogsService(client)
+        .FetchAsync(name, Arkive.Core.Tweaks.GameRegion.LogsRegion(region)).GetAwaiter().GetResult();
     var summary = Arkive.Core.Tweaks.PlayerLogsService.Summary(lookup);
     string? path = null;
     if (!string.IsNullOrWhiteSpace(outDirectory))
@@ -4258,7 +4259,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive catalog <package.upk> [--filter TEXT] [--json]");
     Console.WriteLine("  arkive interface-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
     Console.WriteLine("  arkive zone-names <PACKAGES_DIR> --metadata arkive-asset-metadata.json [--filter TEXT] [--json]");
-    Console.WriteLine("  arkive player-logs <character-name> [--out DIR] [--json]");
+    Console.WriteLine("  arkive player-logs <character-name> [--region CE|NA] [--out DIR] [--json]");
     Console.WriteLine("  arkive game-crashes <Lost-Ark-folder | EFGame\\Logs | file.dmp> [--last N] [--json]");
     Console.WriteLine("  arkive astrogem-odds <data2.lpk> [--target ID] [--out DIR] [--json]");
     Console.WriteLine("  arkive box-odds <data2.lpk> [--out DIR] [--filter TEXT]");

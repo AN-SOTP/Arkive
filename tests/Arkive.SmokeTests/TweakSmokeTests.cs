@@ -17,6 +17,7 @@ internal static class TweakSmokeTests
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
         new("reads a player's logs from a lostark.bible page and writes the summary the Logs tab draws", TestPlayerLogs),
+        new("looks a name up in the game's own region first when EU Central and North America both have it", TestPlayerLogsRegion),
         new("deletes tweak working edits left by replaced tweak mods and keeps everyone else's", TestStaleTweakDrafts),
         new("reads Data Bus messages and saves tweak switches and options changed in game", TestInGameSettings),
         new("keeps the market prices Market Price sends, the newest per item, for the next session", TestMarketPrices),
@@ -508,6 +509,84 @@ internal static class TweakSmokeTests
         Assert(Arkive.Core.Tweaks.PlayerLogsService.Read("Chillidari", "NA", other.RootElement) is null &&
                Arkive.Core.Tweaks.PlayerLogsService.SuggestedRegion("Chillidari", other.RootElement) == "CE",
             "a page without the character should give no logs and suggest its region");
+    }
+
+    /// <summary>
+    /// Names are unique only within a region, so a name can be on EU Central and North America both (GitHub issue #3).
+    /// The game saves the region the player chose in EFGame\Config\UserOption.xml; the lookup asks that region first
+    /// and keeps the character it finds there even with no logs. Without a region it keeps the old order.
+    /// </summary>
+    private static void TestPlayerLogsRegion()
+    {
+        var efGame = Path.Combine(Path.GetTempPath(), "arkive-region-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(efGame, "Config"));
+        try
+        {
+            File.WriteAllText(Path.Combine(efGame, "Config", "UserOption.xml"), """
+                <?xml version="1.0" encoding="utf-8"?>
+                <UserOption>
+                	<SaveAccountOptionData>
+                		<AccountID/>
+                		<AccountPW/>
+                		<RegionID>CE</RegionID>
+                	</SaveAccountOptionData>
+                </UserOption>
+                """);
+            Assert(GameRegion.Read(efGame) == "CE", "the game's saved region was not read");
+            Assert(GameRegion.Read(Path.Combine(efGame, "missing")) is null && GameRegion.Read(null) is null,
+                "a missing game folder should give no region");
+        }
+        finally
+        {
+            Directory.Delete(efGame, recursive: true);
+        }
+        Assert(GameRegion.LogsRegion("CE") == "CE" && GameRegion.LogsRegion("EUC") == "CE" && GameRegion.LogsRegion("NA") == "NA" &&
+               GameRegion.LogsRegion("NAE") == "NA" && GameRegion.LogsRegion("naw") == "NA" && GameRegion.LogsRegion("SA") == "SA" &&
+               GameRegion.LogsRegion(" ") is null && GameRegion.LogsRegion(null) is null,
+            "game region ids did not map to lostark.bible's");
+
+        const string withLogs = """
+            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},null,
+            {"type":"data","data":[{"logsEnabled":1,"isOwner":2,"isPublic":1,"logs":3},true,false,[4],
+            {"boss":5,"difficulty":6,"class":7,"spec":8,"dps":9,"percentile":10,"duration":11,"timestamp":12,"isDead":1},
+            "Archbishop Arcenos","Level 3","Slayer","Punisher",1681234567.5,0.888,327000,1792875478152]}]}
+            """;
+        const string noLogs = """
+            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},null,
+            {"type":"data","data":[{"logsEnabled":1,"isOwner":2,"isPublic":1,"logs":3},true,false,[]]}]}
+            """;
+        PlayerLogsLookup Fetch(string? ce, string? na, string? region)
+        {
+            using var client = new HttpClient(new PagesHandler(new Dictionary<string, string?> { ["CE"] = ce, ["NA"] = na }));
+            return new PlayerLogsService(client).FetchAsync("Twin", region).GetAwaiter().GetResult();
+        }
+        // On EU Central and North America both, with logs on both: the game's region wins.
+        Assert(Fetch(withLogs, withLogs, "NA") is { Region: "NA", Logs.Count: 1 }, "an NA player got the EU character");
+        Assert(Fetch(withLogs, withLogs, "CE") is { Region: "CE", Logs.Count: 1 }, "an EU player got the NA character");
+        // The player's own character with no recent logs is still theirs, not the other region's namesake with logs.
+        Assert(Fetch(withLogs, noLogs, "NA") is { Region: "NA", Status: PlayerLogsStatus.Found, Logs.Count: 0 },
+            "an NA character without logs was swapped for the EU one");
+        Assert(Fetch(noLogs, withLogs, "CE") is { Region: "CE", Status: PlayerLogsStatus.Found, Logs.Count: 0 },
+            "an EU character without logs was swapped for the NA one");
+        // Not in the game's region (a stale setting): the other region still answers.
+        Assert(Fetch(withLogs, null, "NA") is { Region: "CE", Logs.Count: 1 }, "a name only on EU Central was not found for an NA region");
+        // No region known: the old order, EU Central first, a region with logs before one without.
+        Assert(Fetch(withLogs, withLogs, null) is { Region: "CE" } && Fetch(noLogs, withLogs, null) is { Region: "NA", Logs.Count: 1 },
+            "without a region the lookup changed its order");
+        Assert(Fetch(null, null, "NA") is { Status: PlayerLogsStatus.NotFound }, "a missing name was found");
+    }
+
+    /// <summary>Answers lostark.bible logs-page requests from fixed pages by region; a null page is a 404.</summary>
+    private sealed class PagesHandler(IReadOnlyDictionary<string, string?> pages) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var parts = request.RequestUri!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var page = parts.Length > 1 && parts[0] == "character" ? pages.GetValueOrDefault(parts[1]) : null;
+            return Task.FromResult(page is null
+                ? new HttpResponseMessage(System.Net.HttpStatusCode.NotFound)
+                : new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(page, Encoding.UTF8, "application/json") });
+        }
     }
 
     /// <summary>

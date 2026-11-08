@@ -35,7 +35,7 @@ public sealed record PlayerLogsLookup(string Name, string? Region, PlayerLogsSta
 public sealed record PlayerLogsRaid(string Name, IReadOnlyList<string> Bosses);
 
 /// <summary>
-/// Reads a character's logs from lostark.bible for the Logs tab: EU Central first, then North America. The site has
+/// Reads a character's logs from lostark.bible for the Logs tab: the player's own region first. The site has
 /// no public API; this reads the data file its own logs page loads (SvelteKit's __data.json, "devalue" encoded: each
 /// node's data is a flat array whose objects hold indexes into it), and for one raid the request its raid filter
 /// sends. One or two requests, only when a player opens the tab.
@@ -98,17 +98,34 @@ public sealed class PlayerLogsService(HttpClient client)
 
     public static string GateOf(string boss) => Gates.GetValueOrDefault(boss, "");
 
-    /// <summary>The character's most recent logs (the logs page), EU Central first, then North America.</summary>
-    public async Task<PlayerLogsLookup> FetchAsync(string name, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// The character's most recent logs (the logs page). With the player's own region (the game's, see
+    /// <see cref="GameRegion"/>) a character found there is the answer, logs or not: names are only unique within a
+    /// region, and the game only shows players of its own region. Without it, or when that region has no such name:
+    /// EU Central first, then North America, preferring a region where the name has logs.
+    /// </summary>
+    public async Task<PlayerLogsLookup> FetchAsync(string name, string? region = null, CancellationToken cancellationToken = default)
     {
         PlayerLogsLookup? empty = null;
         string? suggested = null;
-        foreach (var region in Regions)
+        if (region is { Length: > 0 })
         {
             var page = await GetAsync(region, name, cancellationToken);
+            if (page is not null)
+            {
+                if (Read(name, region, page.Value) is { } own)
+                    return own;
+                suggested = SuggestedRegion(name, page.Value);
+            }
+        }
+        foreach (var other in Regions)
+        {
+            if (string.Equals(other, region, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var page = await GetAsync(other, name, cancellationToken);
             if (page is null)
                 continue;
-            var lookup = Read(name, region, page.Value);
+            var lookup = Read(name, other, page.Value);
             suggested ??= SuggestedRegion(name, page.Value);
             if (lookup is null)
                 continue;
@@ -120,7 +137,8 @@ public sealed class PlayerLogsService(HttpClient client)
             return lookup;
         }
         // A page for a name that isn't in that region suggests where it is (the NA page says CE for an EU character).
-        if (empty is null && suggested is not null && !Regions.Contains(suggested))
+        if (empty is null && suggested is not null && !Regions.Contains(suggested) &&
+            !string.Equals(suggested, region, StringComparison.OrdinalIgnoreCase))
         {
             var page = await GetAsync(suggested, name, cancellationToken);
             if (page is not null && Read(name, suggested, page.Value) is { } lookup)

@@ -15,7 +15,7 @@ public partial class MainWindow
     private static readonly TimeSpan PlayerLogsCacheAge = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan PlayerLogsAnswerAge = TimeSpan.FromMinutes(30);
 
-    /// <summary>Lookups by name (recent logs) and by "name|raid" (one raid's logs), with when they were made.</summary>
+    /// <summary>Lookups by "region|name" (recent logs) and by "region|name|raid" (one raid's logs), with when they were made.</summary>
     private readonly Dictionary<string, (DateTime At, PlayerLogsLookup Lookup)> _playerLogsCache = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _playerLogsGate = new(1, 1);
     private HttpClient? _playerLogsClient;
@@ -44,7 +44,8 @@ public partial class MainWindow
         try
         {
             var chosen = raid >= 1 && raid <= PlayerLogsService.Raids.Count ? PlayerLogsService.Raids[raid - 1] : null;
-            var lookup = await LookUpPlayerLogsAsync(name, chosen);
+            var region = await PlayerLogsRegionAsync();
+            var lookup = await LookUpPlayerLogsAsync(name, region, chosen);
             var folder = Tweaks.PlayerLogsFolder;
             Directory.CreateDirectory(folder);
             foreach (var old in new DirectoryInfo(folder).EnumerateFiles("*.txt"))
@@ -54,7 +55,7 @@ public partial class MainWindow
             var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             await File.WriteAllTextAsync(temporary, PlayerLogsService.Summary(lookup, request, chosen?.Name ?? ""));
             File.Move(temporary, path, overwrite: true);
-            await Dispatcher.InvokeAsync(() => Log($"Logs Tab: {name} {chosen?.Name ?? "recent"} -> {lookup.Status} {lookup.Region ?? "-"} ({lookup.Logs.Count} logs)."));
+            await Dispatcher.InvokeAsync(() => Log($"Logs Tab: {name} {chosen?.Name ?? "recent"} -> {lookup.Status} {lookup.Region ?? "-"} ({lookup.Logs.Count} logs, game region {region ?? "unknown"})."));
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or
             UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
@@ -67,17 +68,35 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>The player's recent logs, or one raid's, from a lookup of the last few minutes when there is one.</summary>
-    private async Task<PlayerLogsLookup> LookUpPlayerLogsAsync(string name, PlayerLogsRaid? raid)
+    /// <summary>
+    /// The lostark.bible region of the game's own region (saved in EFGame\Config\UserOption.xml), or null when Arkive
+    /// doesn't know the game folder or the game saved none. Read on every click: the player can change region in game.
+    /// </summary>
+    private async Task<string?> PlayerLogsRegionAsync()
     {
-        var key = raid is null ? name : name + "|" + raid.Name;
+        try
+        {
+            var library = await _arkiveModLibrary.LoadAsync();
+            var efGame = Arkive.Core.LoginScreens.LoginScreenService.EfGameFromPackages(library.GamePackagesDirectory ?? _libraryRootPath);
+            return GameRegion.LogsRegion(GameRegion.Read(efGame));
+        }
+        catch (Exception exception) when (Arkive.Core.Mods.ArkiveModApplyService.IsOperational(exception))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The player's recent logs, or one raid's, from a lookup of the last few minutes when there is one.</summary>
+    private async Task<PlayerLogsLookup> LookUpPlayerLogsAsync(string name, string? region, PlayerLogsRaid? raid)
+    {
+        var key = (region ?? "") + "|" + name + (raid is null ? "" : "|" + raid.Name);
         if (_playerLogsCache.TryGetValue(key, out var cached) && DateTime.UtcNow - cached.At < PlayerLogsCacheAge)
             return cached.Lookup;
         _playerLogsClient ??= CreatePlayerLogsClient();
         var service = new PlayerLogsService(_playerLogsClient);
         var lookup = raid is null
-            ? await service.FetchAsync(name)
-            : await service.FetchRaidAsync(await LookUpPlayerLogsAsync(name, null), raid);
+            ? await service.FetchAsync(name, region)
+            : await service.FetchRaidAsync(await LookUpPlayerLogsAsync(name, region, null), raid);
         _playerLogsCache[key] = (DateTime.UtcNow, lookup);
         return lookup;
     }
