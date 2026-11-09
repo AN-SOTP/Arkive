@@ -496,5 +496,6 @@ their respective rights holders, including Smilegate and Amazon Games.
 Application artwork is included at the project owner's request; no
 ownership or unrestricted redistribution permission is claimed.
 Source-page credits are recorded in BannerArtworkManager.cs.
+The banner artwork used is not owned or created by Arkive.
 Extracted game packages, meshes, textures, databases and mods are not
 included in the repository or release.

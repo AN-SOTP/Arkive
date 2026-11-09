@@ -11,6 +11,5 @@ public partial class MainWindow : Window
         BannerBackdropArtworkBrush.ImageSource = image;
         BannerArtworkBrush.ImageSource = image;
         BannerArtworkBrush.Viewbox = artwork.Viewbox;
-        BannerArtworkSurface.ToolTip = $"{artwork.DisplayName} — official Lost Ark promotional artwork";
     }
 }

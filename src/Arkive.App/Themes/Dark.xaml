@@ -15,6 +15,7 @@
     <SolidColorBrush x:Key="TextDisabledBrush" Color="#FF686970" />
     <SolidColorBrush x:Key="BorderBrush" Color="#FF2B2B30" />
     <SolidColorBrush x:Key="BorderStrongBrush" Color="#FF3B3B42" />
+    <SolidColorBrush x:Key="HeaderButtonBorderBrush" Color="#FF3B3B42" />
     <SolidColorBrush x:Key="DividerBrush" Color="#FF242428" />
     <SolidColorBrush x:Key="ControlBackgroundBrush" Color="#FF18181B" />
     <SolidColorBrush x:Key="ControlHoverBrush" Color="#FF242429" />

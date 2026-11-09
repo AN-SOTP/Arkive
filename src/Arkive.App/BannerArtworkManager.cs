@@ -13,7 +13,8 @@ internal sealed record BannerArtworkDefinition(
     Color Accent,
     Color SecondaryAccent,
     Rect Viewbox,
-    string SourcePage);
+    string SourcePage,
+    bool LightHeader = false);
 
 internal static class BannerArtworkManager
 {
@@ -151,6 +152,18 @@ internal static class BannerArtworkManager
             Color.FromRgb(123, 105, 85),
             new Rect(0, 0.05, 1, 0.90),
             "https://www.playlostark.com/en-us/news/articles/aegir-release-notes"),
+        new(
+            "MarianLastAffection",
+            // Settings lists banners as "name — caption", so this reads "Marian — Last Affection".
+            "Marian",
+            "LAST AFFECTION",
+            "Assets/Banners/marian-last-affection.jpg",
+            // The blue ribbon, on a light header that carries the church's white-gold light.
+            Color.FromRgb(88, 132, 232),
+            Color.FromRgb(206, 165, 110),
+            new Rect(0, 0, 1, 1),
+            "",
+            LightHeader: true),
     ];
 
     public static string NormalizePreference(string? preference) =>
@@ -231,11 +244,58 @@ internal static class BannerArtworkManager
         resources["InfoTextBrush"] = FrozenBrush(light
             ? Mix(accent, Colors.Black, 0.50)
             : Mix(accent, Colors.White, 0.55));
-        resources["HeaderButtonHoverBrush"] = FrozenBrush(Mix(canvas, accent, 0.18));
-        resources["HeaderButtonPressedBrush"] = FrozenBrush(Mix(canvas, accent, 0.28));
-        resources["BannerBackdropBrush"] = CreateBannerBackdrop(artwork);
         resources["BannerAccentGlowBrush"] = CreateBannerGlow(artwork);
+        if (artwork.LightHeader)
+        {
+            resources["BannerBackdropBrush"] = CreateLightBannerBackdrop();
+            resources["HeaderTextBrush"] = FrozenBrush(Color.FromRgb(29, 43, 85));
+            resources["HeaderMutedTextBrush"] = FrozenBrush(Color.FromRgb(91, 101, 132));
+            resources["HeaderSurfaceBrush"] = FrozenBrush(Color.FromArgb(184, 255, 255, 255));
+            resources["HeaderButtonBorderBrush"] = FrozenBrush(Color.FromRgb(201, 211, 230));
+            resources["HeaderButtonHoverBrush"] = FrozenBrush(Mix(Colors.White, accent, 0.18));
+            resources["HeaderButtonPressedBrush"] = FrozenBrush(Mix(Colors.White, accent, 0.30));
+            resources["BannerTitleShadowColor"] = Color.FromArgb(192, 255, 255, 255);
+        }
+        else
+        {
+            // Drop any light-header overrides so the theme's own header colours show again.
+            foreach (var key in LightHeaderKeys)
+            {
+                resources.Remove(key);
+            }
+
+            resources["BannerBackdropBrush"] = CreateBannerBackdrop(artwork);
+            resources["HeaderButtonHoverBrush"] = FrozenBrush(Mix(canvas, accent, 0.18));
+            resources["HeaderButtonPressedBrush"] = FrozenBrush(Mix(canvas, accent, 0.28));
+        }
         AppearanceManager.RefreshSystemSelectionBrushes();
+    }
+
+    private static readonly string[] LightHeaderKeys =
+    [
+        "HeaderTextBrush",
+        "HeaderMutedTextBrush",
+        "HeaderSurfaceBrush",
+        "HeaderButtonBorderBrush",
+        "BannerTitleShadowColor",
+    ];
+
+    // Warm white into soft gold, ending in a pale sky blue.
+    private static LinearGradientBrush CreateLightBannerBackdrop()
+    {
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0.5),
+            EndPoint = new Point(1, 0.5),
+        };
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(255, 251, 242), 0));
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(251, 241, 220), 0.28));
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(246, 230, 194), 0.46));
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(241, 228, 200), 0.62));
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(230, 230, 230), 0.80));
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(214, 226, 247), 1));
+        brush.Freeze();
+        return brush;
     }
 
     private static LinearGradientBrush CreateBannerBackdrop(BannerArtworkDefinition artwork)

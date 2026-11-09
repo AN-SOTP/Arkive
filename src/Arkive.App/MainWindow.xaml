@@ -107,7 +107,7 @@
                                 HorizontalAlignment="Center" VerticalAlignment="Center"
                                 IsHitTestVisible="False">
                         <StackPanel.Effect>
-                            <DropShadowEffect Color="#D0000000" BlurRadius="8"
+                            <DropShadowEffect Color="{DynamicResource BannerTitleShadowColor}" BlurRadius="8"
                                               ShadowDepth="1" Opacity="0.85" />
                         </StackPanel.Effect>
                         <TextBlock Text="A R K I V E" TextAlignment="Center"
