@@ -76,8 +76,6 @@ Small changes to the game's own windows: extra information, extra buttons and qu
 
 ![Arkive Tweaks tab with Install All Tweaks, Faster Launch and the list of tweaks](docs/screenshots/tweaks.png)
 
-![The Arkive Tweaks menu in Lost Ark, opened from the escape menu, with tweaks ticked and their options](docs/screenshots/tweaks-in-game.png)
-
 ### Live in game example
 
 Mods made with Arkive, running in Lost Ark.

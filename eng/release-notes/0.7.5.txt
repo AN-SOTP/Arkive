@@ -1,0 +1,9 @@
+Much faster mod applying, a new header banner, and tweak fixes. The Logs Tab is removed.
+
+- Mods: applying mods is much faster. A large preset (nearly 500 assets) now takes less than a fifth of the time to apply from 0.7.4.
+- Tweaks: the Logs Tab has been removed due to a request to stop scraping the source website, and Arkive no longer contacts that site. Press Install All Tweaks once to take the tab out of the game as it no longer functions.
+- Tweaks: Bracelet Dismantle by Stat now adds every matching bracelet, not just the first one (WIP).
+- Appearance: New appearance options.
+- Minor fixes: about 28 interface picture names no longer land on the wrong picture, textures kept in the game's streaming cache can be previewed, and empty header-only packages no longer fail indexing.
+
+Known issues: Mods made with Match physics use a newer .arkive format that Arkive 0.7.0 and older can't read.
