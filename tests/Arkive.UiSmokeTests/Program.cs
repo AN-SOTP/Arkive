@@ -248,6 +248,7 @@ internal static class Program
             window.UpdateLayout();
             Capture(window, screenshotDirectory, "mods.png");
         }
+        BannerHeaderChecks.Verify();
         window.Close();
         await UntilAsync(() => !window.IsVisible);
     }
