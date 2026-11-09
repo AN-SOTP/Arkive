@@ -23,6 +23,18 @@ class BraceletDismantle {
 	static inline var SETTLE_FRAMES = 12;
 	static inline var SLOTS_PER_FRAME = 8;
 
+	/**
+		After each right-click, how long to wait for the bracelet to show up in the list before clicking it again, how
+		many clicks it gets in all, and the frames to leave between one bracelet going in and the next click. Clicks sent
+		one a frame, without waiting, put only the first bracelet in the list (GitHub issue #4).
+	**/
+	static inline var CONFIRM_MS = 1200;
+	static inline var TRIES = 3;
+	static inline var GAP_FRAMES = 3;
+
+	/** Passes over the bag in one opening: another pass after one that added something catches bracelets that moved. */
+	static inline var PASSES = 3;
+
 	/** In the settings' order: left column Crit, Specialization, Domination; right column the rest. */
 	static var STATS:Array<Dynamic> = [
 		{value: "crit", label: "Crit"},
@@ -43,12 +55,27 @@ class BraceletDismantle {
 	static var rows:Array<Dynamic> = [];
 	static var status:TextField;
 
-	/** The current opening of the window: shown, frames left to wait, next bag slot, bindIDs added, count added. */
+	/**
+		The current opening of the window: shown, frames left to wait, next bag slot, passes so far, bracelets added in
+		this pass, finished, bindIDs that went in, bindIDs given up on, and the counts of both.
+	**/
 	static var open = false;
 	static var wait = 0;
 	static var next = 0;
+	static var pass = 0;
+	static var addedThisPass = 0;
+	static var done = false;
 	static var added:Dynamic = {};
+	static var failed:Dynamic = {};
 	static var count = 0;
+	static var gaveUp = 0;
+
+	/** The click waiting to show up: the bag slot, its bindID, the list's item count before, when, clicks so far. */
+	static var pending:Dynamic = null;
+	static var pendingId = "";
+	static var listBefore = 0;
+	static var clickedAt = 0;
+	static var tries = 0;
 
 	/** What the last scan saw, shown when nothing matched: bracelets read, greyed out, locked, stats and a first line. */
 	static var bracelets = 0;
@@ -56,6 +83,11 @@ class BraceletDismantle {
 	static var locked = 0;
 	static var seen:Array<Dynamic> = [];
 	static var sample = "";
+
+	/** For Arkive's log: how each bracelet was seen to go in ("list", "bag", "same"), retries, and the first error. */
+	static var how:Array<String> = [];
+	static var retries = 0;
+	static var problem = "";
 
 	/** MainBag.configUI: keep the bag, whose slots are the ones a right-click puts in the dismantle list. */
 	public static function onBagConfigUI(self:Dynamic, args:Array<Dynamic>, result:Dynamic):Void {
@@ -156,13 +188,14 @@ class BraceletDismantle {
 			Options.own(ID, status);
 		}
 		self.addEventListener("enterFrame", function(event:Dynamic) {
-			// Runs outside the hook's guard: anything unexpected stops this opening, never the window.
+			// Runs outside the hook's guard: anything unexpected ends this opening, never the window.
 			try {
 				onFrame(self);
 			} catch (error:Dynamic) {
-				open = true;
-				wait = 0;
-				next = 1 << 30;
+				if (!done) {
+					note(error);
+					finish();
+				}
 			}
 		});
 	}
@@ -175,72 +208,226 @@ class BraceletDismantle {
 			return;
 		}
 		if (!open) {
-			open = true;
-			wait = SETTLE_FRAMES;
-			next = 0;
-			added = {};
-			count = 0;
-			bracelets = 0;
-			greyed = 0;
-			locked = 0;
-			seen = [];
-			sample = "";
-			say("");
+			start();
 			return;
 		}
 		if (wait > 0) {
 			wait--;
 			return;
 		}
+		if (done)
+			return;
 		var slots:Dynamic = bag.mainBag;
 		if (slots == null || slots.visible != true)
 			return;
-		var total:Int = slots.numItems;
-		if (next >= total)
+		if (pending != null) {
+			confirm(content);
 			return;
+		}
+		var total:Int = slots.numItems;
 		var end = next + SLOTS_PER_FRAME;
 		while (next < total && next < end) {
 			var slot:Dynamic = slots.getItemSlot(next);
 			next++;
-			if (wanted(slot)) {
+			var take = false;
+			try {
+				take = wanted(slot, content);
+			} catch (error:Dynamic) {
+				// One odd slot is skipped; the rest of the bag is still read.
+				note(error);
+			}
+			if (take) {
 				var id:String = slot.bindID;
-				untyped added[id] = true;
-				count++;
-				flash.external.ExternalInterface.call("ARKSlotMouseRightClick", slot);
-				break;
+				pending = slot;
+				pendingId = id;
+				tries = 0;
+				click(content);
+				return;
 			}
 		}
-		if (next >= total) {
-			// A typed String: "text" + an Int could go through Std.string, which needs Boot's patches.
-			var number:String = untyped __global__["String"](count);
-			say((count == 0 ? "Arkive: no bracelets matched. " : "Arkive added " + number + (count == 1 ? " bracelet. " : " bracelets. "))
-				+ scanned());
+		if (next < total)
+			return;
+		if (addedThisPass > 0 && pass + 1 < PASSES) {
+			pass++;
+			next = 0;
+			addedThisPass = 0;
+			return;
 		}
+		finish();
 	}
 
-	/** A bag bracelet that isn't greyed out, locked or already added, with at least one ticked stat. */
-	static function wanted(slot:Dynamic):Bool {
+	/** A new opening of the window: forget the last one and wait for the game to mark the bag. */
+	static function start():Void {
+		open = true;
+		wait = SETTLE_FRAMES;
+		next = 0;
+		pass = 0;
+		addedThisPass = 0;
+		done = false;
+		added = {};
+		failed = {};
+		count = 0;
+		gaveUp = 0;
+		pending = null;
+		pendingId = "";
+		bracelets = 0;
+		greyed = 0;
+		locked = 0;
+		seen = [];
+		sample = "";
+		how = [];
+		retries = 0;
+		problem = "";
+		say("");
+	}
+
+	/** Right-clicks the pending bracelet, the same engine call a player's right-click makes. */
+	static function click(content:Dynamic):Void {
+		listBefore = listCount(content);
+		clickedAt = flash.Lib.getTimer();
+		tries++;
+		flash.external.ExternalInterface.call("ARKSlotMouseRightClick", pending);
+	}
+
+	/** Waits for the pending bracelet to show up in the list (or greyed out in the bag); clicks again if it doesn't. */
+	static function confirm(content:Dynamic):Void {
+		var sign = wentIn(content);
+		if (sign != "") {
+			untyped added[pendingId] = true;
+			count++;
+			addedThisPass++;
+			how.push(sign);
+			pending = null;
+			pendingId = "";
+			wait = GAP_FRAMES;
+			return;
+		}
+		if (flash.Lib.getTimer() - clickedAt < CONFIRM_MS)
+			return;
+		var slot:Dynamic = pending;
+		var id:String = slot.bindID;
+		if (tries < TRIES && id == pendingId && slot.disabled != true) {
+			retries++;
+			click(content);
+			return;
+		}
+		untyped failed[pendingId] = true;
+		gaveUp++;
+		pending = null;
+		pendingId = "";
+	}
+
+	/** How the pending bracelet is seen in the list: by its bindID, by the list growing, or greyed in the bag; "" if not. */
+	static function wentIn(content:Dynamic):String {
+		if (inList(content, pendingId))
+			return "same";
+		if (listBefore >= 0 && listCount(content) > listBefore)
+			return "list";
+		var slot:Dynamic = pending;
+		var id:Dynamic = slot.bindID;
+		if (id == pendingId && slot.disabled == true)
+			return "bag";
+		return "";
+	}
+
+	/** The items in the dismantle list, or -1 when it can't be read. */
+	static function listCount(content:Dynamic):Int {
+		var list:Dynamic = content.disassembleSlotManager;
+		if (list == null)
+			return -1;
+		var total:Int = list.numItems;
+		var items = 0;
+		for (i in 0...total) {
+			var slot:Dynamic = list.getItemSlot(i);
+			if (slot != null && slot.data != null)
+				items++;
+		}
+		return items;
+	}
+
+	/** True when a dismantle list slot holds the item with this bindID. */
+	static function inList(content:Dynamic, id:String):Bool {
+		var list:Dynamic = content.disassembleSlotManager;
+		if (list == null)
+			return false;
+		var total:Int = list.numItems;
+		for (i in 0...total) {
+			var slot:Dynamic = list.getItemSlot(i);
+			if (slot != null && slot.data != null && slot.bindID == id)
+				return true;
+		}
+		return false;
+	}
+
+	/** The bag is read: show what happened and tell Arkive, which writes it to its log. */
+	static function finish():Void {
+		done = true;
+		pending = null;
+		pendingId = "";
+		var text = count == 0 ? "Arkive: no bracelets matched. " : "Arkive added " + num(count) + (count == 1 ? " bracelet. " : " bracelets. ");
+		if (gaveUp > 0)
+			text += num(gaveUp) + " didn't go in. ";
+		if (problem != "")
+			text += "Error: " + problem + ". ";
+		say(text + scanned());
+		if (count > 0 || gaveUp > 0 || problem != "")
+			Bus.send(ID, report());
+	}
+
+	/** "added 3 (list, list, same), gave up on 0, retries 1, bracelets read 5, greyed 0, locked 1" and any error. */
+	static function report():String {
+		return "added " + num(count) + " (" + how.join(", ") + "), gave up on " + num(gaveUp) + ", retries " + num(retries)
+			+ ", bracelets read " + num(bracelets) + ", greyed " + num(greyed) + ", locked " + num(locked)
+			+ (problem == "" ? "" : ", error: " + problem);
+	}
+
+	/** A typed String: "text" + an Int could go through Std.string, which needs Boot's patches. */
+	static function num(value:Int):String {
+		var text:String = untyped __global__["String"](value);
+		return text;
+	}
+
+	/** Keeps the first error caught, short enough for the status line and the bus. */
+	static function note(error:Dynamic):Void {
+		if (problem != "")
+			return;
+		var text:String = untyped __global__["String"](error);
+		problem = text.length > 120 ? text.substr(0, 120) : text;
+	}
+
+	/**
+		A bag bracelet that isn't greyed out, locked, already in the list or already tried, with at least one ticked
+		stat. A greyed-out slot is one the game marks disabled: a player's right-click on it does nothing.
+	**/
+	static function wanted(slot:Dynamic, content:Dynamic):Bool {
 		if (slot == null || slot.data == null)
 			return false;
 		var id:Dynamic = slot.bindID;
-		if (!Tooltips.isString(id) || id == "" || Text.has(added, id))
+		if (!Tooltips.isString(id) || id == "" || Text.has(added, id) || Text.has(failed, id))
 			return false;
 		var stats = statsOf(slot);
 		if (stats == null)
 			return false;
-		bracelets++;
+		// Counted once per opening: later passes read the same bracelets again.
+		var first = pass == 0;
+		if (first)
+			bracelets++;
 		for (stat in stats)
 			if (!contains(seen, stat))
 				seen.push(stat);
-		if (slot.enabled != true) {
-			greyed++;
+		if (slot.enabled != true || slot.disabled == true) {
+			if (first)
+				greyed++;
 			return false;
 		}
 		var lock:Dynamic = slot.lock;
 		if (lock != null && lock > 0) {
-			locked++;
+			if (first)
+				locked++;
 			return false;
 		}
+		if (inList(content, id))
+			return false;
 		var chosen = picked();
 		for (stat in stats)
 			if (contains(chosen, stat))
