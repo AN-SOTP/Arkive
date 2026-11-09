@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Arkive.Core.Inspection;
+using Arkive.Core.Mods;
 
 namespace Arkive.Core.Meshes;
 
@@ -35,6 +36,8 @@ public sealed class SkeletalMeshEditPreflightService
         if (Path.GetExtension(candidatePath).Equals(".gltf", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("Register an embedded .glb file; external .gltf dependencies are not accepted.");
 
+        using var laps = ArkiveModApplyTimings.Laps("preflight");
+        laps.Next("hash-glbs");
         var sourceHash = await ComputeSha256Async(source.GlbPath, cancellationToken).ConfigureAwait(false);
         var candidateHash = await ComputeSha256Async(candidatePath, cancellationToken).ConfigureAwait(false);
         var candidateFile = new FileInfo(candidatePath);
@@ -43,6 +46,7 @@ public sealed class SkeletalMeshEditPreflightService
         if (candidateHash.Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
             AddInfo("SMI002", "The candidate is byte-identical to the source editable GLB.");
 
+        laps.Next("inspect-glb");
         var inspection = await _inspector.InspectAsync(candidatePath, cancellationToken).ConfigureAwait(false);
         foreach (var issue in inspection.Issues)
         {
@@ -56,6 +60,7 @@ public sealed class SkeletalMeshEditPreflightService
         SkeletalMeshGlbSemanticDocument? stableCandidate = null;
         SkeletalMeshGlbSemanticDocument? topologyCandidate = null;
         SkeletalMeshGlbSemanticException? stableCandidateFailure = null;
+        laps.Next("read-source");
         try
         {
             sourceDocument = SkeletalMeshGlbSemanticReader.Read(source.GlbPath, source.Manifest);
@@ -76,6 +81,7 @@ public sealed class SkeletalMeshEditPreflightService
         }
         else if (sourceDocument is not null)
         {
+            laps.Next("read-candidate");
             try
             {
                 stableCandidate = SkeletalMeshGlbSemanticReader.Read(candidatePath, source.Manifest);
@@ -96,6 +102,7 @@ public sealed class SkeletalMeshEditPreflightService
             : SkeletalMeshImportProfile.ReplaceLod0AndDuplicate;
         if (sourceDocument is not null && importProfile == SkeletalMeshImportProfile.ReplaceLod0AndDuplicate)
         {
+            laps.Next("read-topology-candidate");
             try
             {
                 topologyCandidate = SkeletalMeshGlbSemanticReader.Read(
@@ -123,6 +130,7 @@ public sealed class SkeletalMeshEditPreflightService
         SkeletalMeshTopologyPreflight? topology = null;
         SkeletalMeshAnimationPreflight? animationValidation = null;
         SkeletalMeshSkeletonCompatibilityReport? skeletonCompatibility = null;
+        laps.Next("read-dependencies");
         var dependencies = ReadSourceDependencies(source);
 
         var skeletonCandidate = importProfile == SkeletalMeshImportProfile.TopologyPreserving
@@ -130,6 +138,7 @@ public sealed class SkeletalMeshEditPreflightService
             : topologyCandidate;
         if (skeletonCandidate?.Lods.Values.Sum(lod => lod.IgnoredMorphTargetCount) is int ignoredMorphTargets and > 0)
             AddWarning("SMI038", $"Ignored {ignoredMorphTargets:N0} shape key target(s); Arkive imports the base shape only.");
+        laps.Next("skeleton");
         if (sourceDocument is not null && skeletonCandidate is not null)
         {
             var sourceIdentity = SkeletalMeshSkeletonCompatibilityService.SourceIdentity(source);
@@ -142,6 +151,7 @@ public sealed class SkeletalMeshEditPreflightService
             issues.AddRange(skeletonCompatibility.Issues);
         }
 
+        laps.Next("compare-lods");
         if (sourceDocument is not null && importProfile == SkeletalMeshImportProfile.TopologyPreserving &&
             stableCandidate is not null)
         {
@@ -206,6 +216,7 @@ public sealed class SkeletalMeshEditPreflightService
         var animationCandidate = importProfile == SkeletalMeshImportProfile.TopologyPreserving
             ? stableCandidate
             : topologyCandidate;
+        laps.Next("animation");
         if (sourceDocument is not null && animationCandidate is not null && skeletonMatches)
         {
             try
@@ -222,6 +233,7 @@ public sealed class SkeletalMeshEditPreflightService
             }
         }
 
+        laps.Next("report");
         var changedPositions = lodReports.Sum(lod => lod.ChangedPositionVertexCount);
         var changedNormals = lodReports.Sum(lod => lod.ChangedNormalVertexCount);
         var changedTangents = lodReports.Sum(lod => lod.ChangedTangentVertexCount);

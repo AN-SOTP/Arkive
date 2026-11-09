@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using Arkive.Core.Archives;
 using Arkive.Core.Assets;
 using Arkive.Core.Inspection;
+using Arkive.Core.Mods;
 using Arkive.Core.Packages;
 
 namespace Arkive.Core.Meshes;
@@ -95,8 +96,10 @@ public sealed class SkeletalMeshNativeEncodingService
         if (!sourceEntry.GlbExists || !sourceEntry.GlbLengthMatches)
             Refuse("SMN004", "The source editable GLB is missing or its length changed.");
 
-        var preflight = await _preflight.InspectAsync(
-            sourceEntry, edit.EditedGlbPath, cancellationToken).ConfigureAwait(false);
+        SkeletalMeshEditPreflightReport preflight;
+        using (ArkiveModApplyTimings.Measure("encode.preflight"))
+            preflight = await _preflight.InspectAsync(
+                sourceEntry, edit.EditedGlbPath, cancellationToken).ConfigureAwait(false);
         if (preflight.Readiness == SkeletalMeshEditReadiness.Refused || preflight.ErrorCount != 0 ||
             preflight.SchemaVersion != SkeletalMeshEditPreflightService.CurrentSchemaVersion ||
             preflight.AnimationValidation is not { Passed: true })
@@ -122,7 +125,9 @@ public sealed class SkeletalMeshNativeEncodingService
         if (packageFile.Length != recon.PackageLength ||
             packageFile.LastWriteTimeUtc.Ticks != recon.PackageLastWriteUtcTicks)
             Refuse("SMN010", "The source package identity metadata changed; rerun Native mesh recon.");
-        var packageHash = await ComputeFileSha256Async(packagePath, cancellationToken).ConfigureAwait(false);
+        string packageHash;
+        using (ArkiveModApplyTimings.Measure("encode.package-hash"))
+            packageHash = await ComputeFileSha256Async(packagePath, cancellationToken).ConfigureAwait(false);
         if (!packageHash.Equals(recon.PackageSha256, StringComparison.OrdinalIgnoreCase))
             Refuse("SMN011", "The source package SHA-256 changed; rerun Native mesh recon.");
 
@@ -145,9 +150,12 @@ public sealed class SkeletalMeshNativeEncodingService
             !sourceHash.Equals(sourceManifest.SourceExportSha256, StringComparison.OrdinalIgnoreCase))
             Refuse("SMN013", "The source native export hash changed; rerun Native mesh recon and export.");
 
+        var readTiming = ArkiveModApplyTimings.Measure("encode.read-glbs");
         var sourceDocument = SkeletalMeshGlbSemanticReader.Read(sourceGlbPath, sourceManifest);
         var candidateDocument = SkeletalMeshGlbSemanticReader.Read(edit.EditedGlbPath, sourceManifest);
         var decodedSource = new SkeletalMeshSemanticDecoder().Decode(sourceBytes, layout);
+        readTiming.Dispose();
+        var writeVerticesTiming = ArkiveModApplyTimings.Measure("encode.write-vertices");
         var encoded = sourceBytes.ToArray();
         var allowlisted = new bool[encoded.Length];
         var lodEvidence = new List<SkeletalMeshNativeEncodingLodEvidence>();
@@ -249,10 +257,14 @@ public sealed class SkeletalMeshNativeEncodingService
             boundsUpdated = true;
         }
 
+        writeVerticesTiming.Dispose();
+        var lockCheckTiming = ArkiveModApplyTimings.Measure("encode.lock-check");
         var actualChanged = 0L;
         var changedLocked = 0L;
         using var lockedSource = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var lockedEncoded = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        // Hashes each run of locked bytes in one call. The hashes are the same as hashing those bytes one at a time.
+        var lockedRunStart = -1;
         for (var index = 0; index < sourceBytes.Length; index++)
         {
             if (sourceBytes[index] != encoded[index])
@@ -260,9 +272,22 @@ public sealed class SkeletalMeshNativeEncodingService
                 actualChanged++;
                 if (!allowlisted[index]) changedLocked++;
             }
-            if (allowlisted[index]) continue;
-            lockedSource.AppendData(sourceBytes, index, 1);
-            lockedEncoded.AppendData(encoded, index, 1);
+            if (allowlisted[index])
+            {
+                if (lockedRunStart < 0) continue;
+                lockedSource.AppendData(sourceBytes, lockedRunStart, index - lockedRunStart);
+                lockedEncoded.AppendData(encoded, lockedRunStart, index - lockedRunStart);
+                lockedRunStart = -1;
+            }
+            else if (lockedRunStart < 0)
+            {
+                lockedRunStart = index;
+            }
+        }
+        if (lockedRunStart >= 0)
+        {
+            lockedSource.AppendData(sourceBytes, lockedRunStart, sourceBytes.Length - lockedRunStart);
+            lockedEncoded.AppendData(encoded, lockedRunStart, sourceBytes.Length - lockedRunStart);
         }
         var lockedSourceHash = Convert.ToHexString(lockedSource.GetHashAndReset());
         var lockedEncodedHash = Convert.ToHexString(lockedEncoded.GetHashAndReset());
@@ -270,6 +295,8 @@ public sealed class SkeletalMeshNativeEncodingService
             Refuse("SMN031", $"Encoding changed {changedLocked:N0} byte(s) outside the explicit allowlist.");
         if (actualChanged == 0)
             Refuse("SMN032", "Native encoding produced no byte changes.");
+        lockCheckTiming.Dispose();
+        var decodeBackTiming = ArkiveModApplyTimings.Measure("encode.decode-back");
 
         var updatedLods = layout.Lods.Select(lod =>
         {
@@ -306,6 +333,8 @@ public sealed class SkeletalMeshNativeEncodingService
             };
         }
 
+        decodeBackTiming.Dispose();
+        using var writeTiming = ArkiveModApplyTimings.Measure("encode.write-outputs");
         var outputDirectory = Path.GetFullPath(request.OutputDirectory);
         Directory.CreateDirectory(outputDirectory);
         var outputName = Safe(recon.ObjectName) + ".skeletalmesh.edit.bin";
