@@ -14,7 +14,7 @@ public sealed record SpotifyRequest(SpotifyCommand? Command = null, int? Volume 
 
 /// <summary>
 /// The Arkive half of the Spotify Player tweak's files. While the game runs, Arkive writes Spotify's state to
-/// &lt;tweaks&gt;/spotify/now.txt every second (the tweak reads it the way the Logs tab reads its answers), and the tweak
+/// &lt;tweaks&gt;/spotify/now.txt every second (the tweak reads it as a plain file), and the tweak
 /// sends its buttons on the Data Bus channel "spotify". The file is lines of tab-separated fields:
 /// "spotify, sequence" (the sequence goes up with every write, so the tweak sees when Arkive stops), "state, none |
 /// playing | paused | stopped", "title", "artist", "album", "time, seconds in, seconds long", "can, letters" (p play and

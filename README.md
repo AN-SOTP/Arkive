@@ -232,7 +232,7 @@ Ctrl-click toggles rows, Shift-click selects a range and Ctrl+A selects every ro
 
 In game, press Esc and choose **Arkive Tweaks** at the bottom of the menu: tick a tweak to turn it on, untick it to turn it off, and change its options there. Keep Arkive running while you play so those choices are kept for next time.
 
-- **Information:** Logs Tab (a player's recent lostark.bible logs in the profile and inspect windows), Combat Power on Tooltips (what an item would add to your Combat Power), Combat Power per Gold in the auction house and market, Market Price on Tooltips, Compare With Me (your gear beside an inspected player's), Bracelet Reroll Judge, Astrogem Processing Advisor, Lobby CP in the party finder, Title Icons Only (name tags show a title's icon without its text), Stagger Numbers on Skill Tooltips (estimated from log data), Loot Auction Fair Bid, Box Odds on Tooltips (work in progress), Slot Tweaks (item properties at a glance, including bracelet effects), Buff Icon Stacking, Additional Top Currencies and the Extended Escape Menu.
+- **Information:** Combat Power on Tooltips (what an item would add to your Combat Power), Combat Power per Gold in the auction house and market, Market Price on Tooltips, Compare With Me (your gear beside an inspected player's), Bracelet Reroll Judge, Astrogem Processing Advisor, Lobby CP in the party finder, Title Icons Only (name tags show a title's icon without its text), Stagger Numbers on Skill Tooltips (estimated from log data), Loot Auction Fair Bid, Box Odds on Tooltips (work in progress), Slot Tweaks (item properties at a glance, including bracelet effects), Buff Icon Stacking, Additional Top Currencies and the Extended Escape Menu.
 - **Quicker steps:** Fast Advanced Honing, Fast Paradise, Auto-Dismiss Stone Faceting Results, Next Item Button, Chest Opening Tweaks, Market Tweaks, Exchange Max Button, Universal Storage Claim and Bracelet Dismantle by Stat (work in progress: puts bracelets with any of the stats you tick in the dismantle list; you press Dismantle).
 - **Interface:** Edit UI moves and resizes the HUD's pieces, with the skill bar split into parts, and Spotify Player adds a small player for the Spotify app under the minimap.
 - **Automation:** Auto Pull Up (work in progress) presses a hosted lobby's Pull up again while its box is ticked, also with the Find Party window closed, and Ready Check Tweaks can accept the ready check (off by default).
@@ -520,7 +520,7 @@ Run release jobs on reviewed repository-owned tags, not untrusted PR code with w
 
 ## Privacy, security and licensing
 
-No telemetry or credential upload is implemented. Asset operations run locally. Optional update checks contact GitHub with normal request metadata such as IP/user-agent. The Logs Tab tweak, when installed and switched on, asks lostark.bible for the logs of the characters you open in game. Local settings/logs contain local paths and asset identities; sanitize them before sharing.
+No telemetry or credential upload is implemented. Asset operations run locally. Optional update checks contact GitHub with normal request metadata such as IP/user-agent. Local settings/logs contain local paths and asset identities; sanitize them before sharing.
 
 Publication starts from a clean snapshot instead of prior commits. Mods, database/asset exports, caches, backups, builds, personal settings and AI configs are excluded. Application banners/icon and the interoperability key are intentionally retained. `THIRD-PARTY-NOTICES.txt` contains dependency licenses and artwork credits.
 
