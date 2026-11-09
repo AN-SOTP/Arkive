@@ -103,10 +103,15 @@ public sealed partial class PackageIndexStore
                     var file = new FileInfo(packagePath);
                     try
                     {
-                        var result = await bridge.ListAsync(
-                            packagePath,
-                            hardLinkScratchRoot,
-                            token).ConfigureAwait(false);
+                        // A package with no exports and no imports has nothing to list, and UModel rejects it
+                        // with its usage text, which counted as a failed package; the client ships a few such header-only
+                        // placeholders (129 bytes).
+                        var result = IsEmptyPackage(packagePath)
+                            ? new UmodelListResult(packagePath, [], [], TimeSpan.Zero)
+                            : await bridge.ListAsync(
+                                packagePath,
+                                hardLinkScratchRoot,
+                                token).ConfigureAwait(false);
                         document = new PackageIndexDocument(
                             packagePath,
                             Path.GetFileNameWithoutExtension(packagePath),
@@ -184,6 +189,20 @@ public sealed partial class PackageIndexStore
             failed,
             assetCount,
             stopwatch.Elapsed);
+    }
+
+    public static bool IsEmptyPackage(string packagePath)
+    {
+        try
+        {
+            var summary = new Packages.UpkPackageReader().Read(packagePath);
+            return summary.ExportCount == 0 && summary.ImportCount == 0;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Not readable as a package header (or truncated): let UModel report what is wrong with it.
+            return false;
+        }
     }
 
     public async Task<PackageIndexSearchResult> SearchAsync(

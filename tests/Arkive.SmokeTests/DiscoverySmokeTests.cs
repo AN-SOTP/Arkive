@@ -10,6 +10,7 @@ internal static class DiscoverySmokeTests
         new("audits playable-character texture families without NPC leakage", TestCharacterTextureCoverageAudit),
         new("limits indexed searches to selected fields", TestPackageIndexSearchScopes),
         new("searches a compressed package index", TestCompressedPackageIndexSearch),
+        new("indexes header-only packages as empty without asking UModel", TestEmptyPackageIndexing),
         new("skips packages that cannot match an object-name search", TestPackageNameFilter),
         new("reports package index health", TestPackageIndexHealth),
         new("resolves localized game names to assets", TestGameAssetMetadata),
@@ -398,6 +399,24 @@ internal static class DiscoverySmokeTests
             "routing sidecar was not invalidated after the metadata mapping changed");
         Assert(rebuiltRoute.TotalMatches == 1,
             "rebuilt routing sidecar did not return the new metadata association");
+    }
+
+    private static void TestEmptyPackageIndexing()
+    {
+        var root = Path.Combine(fixtureDirectory, "empty-package-root");
+        Directory.CreateDirectory(root);
+        var empty = Path.Combine(root, "header-only.upk");
+        WritePackage(empty, []);
+        Assert(new FileInfo(empty).Length == 129, "the header-only fixture is not the 129-byte shape the client ships");
+        Assert(PackageIndexStore.IsEmptyPackage(empty), "a package with no exports or imports was not seen as empty");
+
+        var listed = Path.Combine(root, "listed.upk");
+        WriteCataloguePackage(listed);
+        Assert(!PackageIndexStore.IsEmptyPackage(listed), "a package with exports was seen as empty");
+
+        var garbage = Path.Combine(root, "garbage.upk");
+        File.WriteAllBytes(garbage, [1, 2, 3]);
+        Assert(!PackageIndexStore.IsEmptyPackage(garbage), "an unreadable file was seen as an empty package instead of going to UModel");
     }
 
     private static void TestCompressedPackageIndexSearch()

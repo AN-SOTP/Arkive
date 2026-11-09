@@ -240,7 +240,9 @@ public static class GfxMovieReader
         var flags = bits.Byte();
         var more = type == PlaceObject3 ? bits.Byte() : 0;
         var depth = bits.UInt16();
-        if (type == PlaceObject3 && ((more & 0x08) != 0 || ((more & 0x10) != 0 && (flags & 0x02) != 0))) bits.String();
+        // The SWF spec also reads a class name for HasImage (0x10) with HasCharacter, but the game's Scaleform exporter
+        // writes one only for HasClassName (0x08): read the spec's way, those placements get a wrong character id.
+        if (type == PlaceObject3 && (more & 0x08) != 0) bits.String();
         int character;
         if ((flags & 0x02) != 0) depths[depth] = character = bits.UInt16();
         else if (!depths.TryGetValue(depth, out character)) return;

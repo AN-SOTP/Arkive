@@ -109,11 +109,11 @@ public sealed class NativeTextureExportService
         while (index < mips.Count - 1 && Math.Max(mips[index].Width, mips[index].Height) > maximumSize) index++;
         var mip = mips[index];
         cancellationToken.ThrowIfCancellationRequested();
-        var stored = exportBytes.AsSpan(checked((int)mip.PayloadRelativeOffset!.Value), mip.StoredSize).ToArray();
+        var stored = ViewStoredBytes(report, exportBytes, mip)
+                     ?? throw new InvalidDataException($"Mip {index} of {report.ObjectName} has no stored bytes to show.");
         var mipWidth = Math.Max(1, width >> index);
         var mipHeight = Math.Max(1, height >> index);
-        var (decoded, _, _, _) = DecodeStoredMip(stored, Convert.ToHexString(SHA256.HashData(stored)), mip, index,
-            formatProfile.CalculateMipBytes(mipWidth, mipHeight), formatProfile);
+        var decoded = DecodeForView(stored, mip, index, formatProfile.CalculateMipBytes(mipWidth, mipHeight), formatProfile);
         var dds = DdsBlockCompressedWriter.Build(mipWidth, mipHeight, formatProfile.DdsFormat, [decoded]);
         return DdsBlockTexture.Parse(report.ObjectName + ".dds", dds).DecodeMip(0, editableView: opaque);
     }, cancellationToken);
@@ -143,9 +143,8 @@ public sealed class NativeTextureExportService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var mip = mips[index];
-            if (mip.PayloadRelativeOffset is not { } offset || mip.StoredSize <= 0) break;
-            var stored = exportBytes.AsSpan(checked((int)offset), mip.StoredSize).ToArray();
-            var (bytes, _, _, _) = DecodeStoredMip(stored, Convert.ToHexString(SHA256.HashData(stored)), mip, index,
+            if (ViewStoredBytes(report, exportBytes, mip) is not { } stored) break;
+            var bytes = DecodeForView(stored, mip, index,
                 formatProfile.CalculateMipBytes(Math.Max(1, width >> index), Math.Max(1, height >> index)), formatProfile);
             decoded.Add(bytes);
         }
@@ -154,6 +153,25 @@ public sealed class NativeTextureExportService
         return (DdsBlockCompressedWriter.Build(topWidth, topHeight, formatProfile.DdsFormat, decoded), topWidth, topHeight,
             formatProfile.DdsFormat.FourCc);
     }, cancellationToken);
+
+    // A mip decoded for viewing. Besides Crunch and LZ4 it takes a mip stored as plain GPU bytes (no codec flag, exactly
+    // the level's size), as the small tail mips of streamed textures are; exports for mods do not, since a replacement
+    // could not be written back in that form.
+    private byte[] DecodeForView(byte[] stored, TextureMipEvidence mip, int index, int expectedDecodedSize,
+        NativeTextureFormatProfile formatProfile) =>
+        (mip.BulkDataFlags & ~TextureFileCache.SeparateFileFlag) == 0 && stored.Length == expectedDecodedSize &&
+        !(stored.Length >= 2 && stored[0] == (byte)'H' && stored[1] == (byte)'x')
+            ? stored
+            : DecodeStoredMip(stored, Convert.ToHexString(SHA256.HashData(stored)), mip, index, expectedDecodedSize, formatProfile).Decoded;
+
+    // A mip's stored bytes for viewing: from the export when inline, from the texture file cache when the texture
+    // streams it (its larger mips usually); null when it has none. Exports for mods still take inline mips only.
+    private static byte[]? ViewStoredBytes(TextureReconnaissanceReport report, byte[] exportBytes, TextureMipEvidence mip)
+    {
+        if (mip.PayloadRelativeOffset is { } offset && mip.StoredSize > 0 && offset >= 0 && offset <= exportBytes.Length - mip.StoredSize)
+            return exportBytes.AsSpan(checked((int)offset), mip.StoredSize).ToArray();
+        return TextureFileCache.IsExternal(mip) ? TextureFileCache.ReadMip(report, mip) : null;
+    }
 
     private async Task<NativeTextureExportResult> ExportCoreAsync(
         NativeTextureExportRequest request,
@@ -432,7 +450,8 @@ public sealed class NativeTextureExportService
             rawExtension = ".crn";
             storageHeaderBytes = crnInfo.HeaderSize;
         }
-        else if (mip.BulkDataFlags == Ue3BulkMipDecoder.LostArkCompressedBulkFlag)
+        // The separate-file bit only says where the bytes were read from (the texture file cache), not how they are encoded.
+        else if ((mip.BulkDataFlags & ~TextureFileCache.SeparateFileFlag) == Ue3BulkMipDecoder.LostArkCompressedBulkFlag)
         {
             if (mip.ElementCount != expectedDecodedSize)
             {
@@ -564,7 +583,10 @@ public sealed class NativeTextureExportService
             mip.PayloadRelativeOffset < 0 ||
             mip.PayloadRelativeOffset > exportSize - mip.StoredSize)
         {
-            Refuse("NTX018", $"Mip {index} is not a bounded, hash-verified inline payload.");
+            Refuse("NTX018", TextureFileCache.IsExternal(mip)
+                ? $"Mip {index} is streamed from the game's texture file cache, not stored in the package; " +
+                  "Arkive can show streamed textures but cannot yet export them for editing."
+                : $"Mip {index} is not a bounded, hash-verified inline payload.");
         }
     }
 
