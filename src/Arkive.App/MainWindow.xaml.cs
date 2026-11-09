@@ -439,7 +439,7 @@ public partial class MainWindow : Window
         ApplyBannerArtwork(_activeBannerArtwork);
         SourceInitialized += (_, _) =>
             AppearanceManager.ApplyWindowChrome(this, _effectiveAppearanceTheme);
-        SourceInitialized += (_, _) => StartPlayerLogsListener();
+        SourceInitialized += (_, _) => Task.Run(Tweaks.DeleteOldPlayerLogs);
         SourceInitialized += (_, _) => StartTweakBus();
         SourceInitialized += (_, _) => StartSpotifyPlayer();
         ApplyRestoredSettings(_restoredSettings);

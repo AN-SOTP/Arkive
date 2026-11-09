@@ -16,8 +16,6 @@ internal static class TweakSmokeTests
         new("exposes a private field to tweak code through a public getter and setter", TestExposeField),
         new("skips the intro movies by moving them to a backup and puts them back exactly", TestIntroMovies),
         new("ships tweak code with no astype and no typed nulls, and with its settings written in", TestShippedTweakCode),
-        new("reads a player's logs from a lostark.bible page and writes the summary the Logs tab draws", TestPlayerLogs),
-        new("looks a name up in the game's own region first when EU Central and North America both have it", TestPlayerLogsRegion),
         new("deletes tweak working edits left by replaced tweak mods and keeps everyone else's", TestStaleTweakDrafts),
         new("reads Data Bus messages and saves tweak switches and options changed in game", TestInGameSettings),
         new("keeps the market prices Market Price sends, the newest per item, for the next session", TestMarketPrices),
@@ -435,158 +433,18 @@ internal static class TweakSmokeTests
         service.SaveState(state);
         Assert(!service.LoadState().Settings.Enabled.ContainsKey("fastlaunch") && !service.EveryTweak().Enabled.ContainsKey("fastlaunch"),
             "Faster Launch was kept in the saved choices or put into Install All Tweaks");
-    }
 
-    /// <summary>
-    /// The Logs tab draws Arkive's summary file. The page data is "devalue" encoded (objects hold indexes into one flat
-    /// array); a page for a name that isn't in that region has no logs node but suggests the character's region.
-    /// </summary>
-    private static void TestPlayerLogs()
-    {
-        const string page = """
-            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},null,
-            {"type":"data","data":[{"logsEnabled":1,"isOwner":2,"isPublic":1,"logs":3},true,false,[4],
-            {"boss":5,"difficulty":6,"class":7,"spec":8,"dps":9,"percentile":10,"duration":11,"timestamp":12,"isDead":1},
-            "Archbishop Arcenos","Level 3","Slayer","Punisher",1681234567.5,0.888,327000,1792875478152]}]}
-            """;
-        using var document = System.Text.Json.JsonDocument.Parse(page);
-        var lookup = Arkive.Core.Tweaks.PlayerLogsService.Read("Chillidari", "CE", document.RootElement);
-        Assert(lookup is { Status: Arkive.Core.Tweaks.PlayerLogsStatus.Found, Logs.Count: 1 } &&
-               lookup.Logs[0] is { Boss: "Archbishop Arcenos", Difficulty: "Level 3", ClassName: "Slayer", Died: true },
-            "the logs page was not read");
-        var summary = Arkive.Core.Tweaks.PlayerLogsService.Summary(lookup!, "123x45").Split('\n');
-        Assert(summary[0] == "found\tEU Central\tChillidari\t1\t123x45\t", $"summary head: {summary[0]}");
-        Assert(summary[1].StartsWith("#raids\tBelgardin\tHorizon Cathedral\t", StringComparison.Ordinal), $"summary raids: {summary[1]}");
-        Assert(summary[2].StartsWith("Horizon Cathedral\tG1\tArchbishop Arcenos\tLevel 3\tSlayer\t1.68b\t88\t", StringComparison.Ordinal) &&
-               summary[2].EndsWith("\t5:27\tdied\t", StringComparison.Ordinal), $"summary row: {summary[2]}");
-        // A support's row carries its buff uptimes (AP, Brand, Identity, T), which the tab shows in place of DPS.
-        var support = lookup! with
-        {
-            Logs = [lookup!.Logs[0] with { ClassName = "Bard", Spec = "Desperate Salvation", Buffs = [0.955, 0.9625, 0.7449, 0.3951] }],
-        };
-        var supportRow = Arkive.Core.Tweaks.PlayerLogsService.Summary(support).Split('\n')[2];
-        Assert(supportRow.EndsWith("\tdied\t96/96/74/40", StringComparison.Ordinal), $"support row: {supportRow}");
-        // A damage dealer shows nDPS and the normalized parse that ranks it; a support keeps its regular parse.
-        var normalized = lookup! with { Logs = [lookup!.Logs[0] with { NDps = 604401404, NormalizedPercentile = 0.8824 }] };
-        var normalizedRow = Arkive.Core.Tweaks.PlayerLogsService.Summary(normalized).Split('\n')[2];
-        Assert(normalizedRow.Contains("\tSlayer\t604.4m\t88\t", StringComparison.Ordinal), $"nDPS row: {normalizedRow}");
-        var supportNormalized = support with { Logs = [support.Logs[0] with { NDps = 9_000_000, NormalizedPercentile = 0.10 }] };
-        var supportNormalizedRow = Arkive.Core.Tweaks.PlayerLogsService.Summary(supportNormalized).Split('\n')[2];
-        Assert(supportNormalizedRow.Contains("\tBard\t9.0m\t88\t", StringComparison.Ordinal), $"support parse row: {supportNormalizedRow}");
-
-        // A character whose owner keeps logs private (Zurmos on EU Central): the page has the character but no logs.
-        const string hidden = """
-            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},{"type":"data","data":[
-            {"header":1,"redirectedFrom":4,"suggestions":5},{"id":2,"rid":3},270889558,27179,null,[]]},
-            {"type":"data","data":[{"logsEnabled":1,"isOwner":1},false]}]}
-            """;
-        using var hiddenPage = System.Text.Json.JsonDocument.Parse(hidden);
-        Assert(Arkive.Core.Tweaks.PlayerLogsService.Read("Zurmos", "CE", hiddenPage.RootElement) is
-               { Status: Arkive.Core.Tweaks.PlayerLogsStatus.Hidden, CharacterId: 270889558, RosterId: 27179 },
-            "a character with private logs was not told apart from a missing one");
-
-        // The tab spells request id, raid, name (4 hex digits per character) and a checksum; Arkive reads it back and
-        // rejects a message with a missed or extra read.
-        var spelled = Arkive.Core.Tweaks.PlayerLogsSignal.Encode("0a1f", 3, "Améthyst");
-        Assert(Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled, out var request, out var raid, out var name) &&
-               request == "0a1f" && raid == 3 && name == "Améthyst",
-            $"the signal message did not decode: {spelled}");
-        Assert(!Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled.Remove(9, 1) + "0", out _, out _, out _) &&
-               !Arkive.Core.Tweaks.PlayerLogsSignal.TryDecode(spelled[..^4] + "0000", out _, out _, out _),
-            "a damaged signal message was accepted");
-        var signal = new Arkive.Core.Tweaks.PlayerLogsSignal(Path.GetTempPath());
-        string? heard = null;
-        signal.Requested += (who, _, _) => heard = who;
-        foreach (var symbol in (string[])["5", "go", .. spelled.Select(digit => digit.ToString()), "end"])
-            signal.Receive(symbol);
-        Assert(heard == "Améthyst", "the reads between go and end were not put together");
-
-        const string missing = """
-            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},{"type":"data","data":[
-            {"header":-1,"redirectedFrom":1,"suggestions":2},null,[3],{"name":4,"region":5},"Chillidari","CE"]}]}
-            """;
-        using var other = System.Text.Json.JsonDocument.Parse(missing);
-        Assert(Arkive.Core.Tweaks.PlayerLogsService.Read("Chillidari", "NA", other.RootElement) is null &&
-               Arkive.Core.Tweaks.PlayerLogsService.SuggestedRegion("Chillidari", other.RootElement) == "CE",
-            "a page without the character should give no logs and suggest its region");
-    }
-
-    /// <summary>
-    /// Names are unique only within a region, so a name can be on EU Central and North America both (GitHub issue #3).
-    /// The game saves the region the player chose in EFGame\Config\UserOption.xml; the lookup asks that region first
-    /// and keeps the character it finds there even with no logs. Without a region it keeps the old order.
-    /// </summary>
-    private static void TestPlayerLogsRegion()
-    {
-        var efGame = Path.Combine(Path.GetTempPath(), "arkive-region-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(efGame, "Config"));
-        try
-        {
-            File.WriteAllText(Path.Combine(efGame, "Config", "UserOption.xml"), """
-                <?xml version="1.0" encoding="utf-8"?>
-                <UserOption>
-                	<SaveAccountOptionData>
-                		<AccountID/>
-                		<AccountPW/>
-                		<RegionID>CE</RegionID>
-                	</SaveAccountOptionData>
-                </UserOption>
-                """);
-            Assert(GameRegion.Read(efGame) == "CE", "the game's saved region was not read");
-            Assert(GameRegion.Read(Path.Combine(efGame, "missing")) is null && GameRegion.Read(null) is null,
-                "a missing game folder should give no region");
-        }
-        finally
-        {
-            Directory.Delete(efGame, recursive: true);
-        }
-        Assert(GameRegion.LogsRegion("CE") == "CE" && GameRegion.LogsRegion("EUC") == "CE" && GameRegion.LogsRegion("NA") == "NA" &&
-               GameRegion.LogsRegion("NAE") == "NA" && GameRegion.LogsRegion("naw") == "NA" && GameRegion.LogsRegion("SA") == "SA" &&
-               GameRegion.LogsRegion(" ") is null && GameRegion.LogsRegion(null) is null,
-            "game region ids did not map to lostark.bible's");
-
-        const string withLogs = """
-            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},null,
-            {"type":"data","data":[{"logsEnabled":1,"isOwner":2,"isPublic":1,"logs":3},true,false,[4],
-            {"boss":5,"difficulty":6,"class":7,"spec":8,"dps":9,"percentile":10,"duration":11,"timestamp":12,"isDead":1},
-            "Archbishop Arcenos","Level 3","Slayer","Punisher",1681234567.5,0.888,327000,1792875478152]}]}
-            """;
-        const string noLogs = """
-            {"type":"data","nodes":[{"type":"data","data":[{"userData":-1}]},null,
-            {"type":"data","data":[{"logsEnabled":1,"isOwner":2,"isPublic":1,"logs":3},true,false,[]]}]}
-            """;
-        PlayerLogsLookup Fetch(string? ce, string? na, string? region)
-        {
-            using var client = new HttpClient(new PagesHandler(new Dictionary<string, string?> { ["CE"] = ce, ["NA"] = na }));
-            return new PlayerLogsService(client).FetchAsync("Twin", region).GetAwaiter().GetResult();
-        }
-        // On EU Central and North America both, with logs on both: the game's region wins.
-        Assert(Fetch(withLogs, withLogs, "NA") is { Region: "NA", Logs.Count: 1 }, "an NA player got the EU character");
-        Assert(Fetch(withLogs, withLogs, "CE") is { Region: "CE", Logs.Count: 1 }, "an EU player got the NA character");
-        // The player's own character with no recent logs is still theirs, not the other region's namesake with logs.
-        Assert(Fetch(withLogs, noLogs, "NA") is { Region: "NA", Status: PlayerLogsStatus.Found, Logs.Count: 0 },
-            "an NA character without logs was swapped for the EU one");
-        Assert(Fetch(noLogs, withLogs, "CE") is { Region: "CE", Status: PlayerLogsStatus.Found, Logs.Count: 0 },
-            "an EU character without logs was swapped for the NA one");
-        // Not in the game's region (a stale setting): the other region still answers.
-        Assert(Fetch(withLogs, null, "NA") is { Region: "CE", Logs.Count: 1 }, "a name only on EU Central was not found for an NA region");
-        // No region known: the old order, EU Central first, a region with logs before one without.
-        Assert(Fetch(withLogs, withLogs, null) is { Region: "CE" } && Fetch(noLogs, withLogs, null) is { Region: "NA", Logs.Count: 1 },
-            "without a region the lookup changed its order");
-        Assert(Fetch(null, null, "NA") is { Status: PlayerLogsStatus.NotFound }, "a missing name was found");
-    }
-
-    /// <summary>Answers lostark.bible logs-page requests from fixed pages by region; a null page is a 404.</summary>
-    private sealed class PagesHandler(IReadOnlyDictionary<string, string?> pages) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            var parts = request.RequestUri!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            var page = parts.Length > 1 && parts[0] == "character" ? pages.GetValueOrDefault(parts[1]) : null;
-            return Task.FromResult(page is null
-                ? new HttpResponseMessage(System.Net.HttpStatusCode.NotFound)
-                : new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(page, Encoding.UTF8, "application/json") });
-        }
+        // The Logs Tab tweak is gone: a saved one is dropped, and its old folder of fetched logs is deleted.
+        state = service.LoadState();
+        state.Settings.Enabled["logs"] = [];
+        service.SaveState(state);
+        var oldLogs = Path.Combine(root, "tweaks", "player-logs", "signal");
+        Directory.CreateDirectory(oldLogs);
+        File.WriteAllText(Path.Combine(oldLogs, "ago"), "");
+        service.DeleteOldPlayerLogs();
+        Assert(Arkive.Core.Tweaks.TweakCatalog.Find("logs") is null && !service.LoadState().Settings.Enabled.ContainsKey("logs") &&
+               !Directory.Exists(Path.Combine(root, "tweaks", "player-logs")),
+            "the removed Logs Tab tweak was kept in the catalog or the saved choices, or its old folder was left");
     }
 
     /// <summary>
