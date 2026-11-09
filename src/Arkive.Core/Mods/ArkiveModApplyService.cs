@@ -119,6 +119,12 @@ public sealed record ArkiveModApplyResult(
     TimeSpan Duration)
 {
     public bool Succeeded => Packages.All(package => package.Succeeded);
+
+    /// <summary>Where the time went, one line per step, for the log.</summary>
+    public IReadOnlyList<string> Timings { get; init; } = [];
+
+    /// <summary>Full details of errors met during this Apply, including ones a retry got past, for the log.</summary>
+    public IReadOnlyList<string> ErrorDetails { get; init; } = [];
 }
 
 public sealed record ArkiveModAssetUpdateOutcome(
@@ -285,9 +291,24 @@ public sealed record ArkiveModApplyContext(
 
 public sealed class ArkiveModApplyService
 {
-    // Package rebuilds that run at once in Apply. Crunch already uses every core, so a few at a time is enough; each
-    // build holds a few copies of its package in memory.
-    private static readonly int RebuildParallelism = Math.Clamp(Environment.ProcessorCount / 4, 1, 4);
+    // Package rebuilds with textures that run at once in Apply. Crunch already uses every core, so a few at a time is
+    // enough; each build holds a few copies of its package in memory.
+    private static readonly int TextureRebuildParallelism = Math.Clamp(Environment.ProcessorCount / 4, 1, 4);
+
+    // Package rebuilds of any kind that run at once. Mesh, material, effect and movie builds use about one core each
+    // (an 8-core PC sat at a third of its CPU with four at a time), so more of them run side by side.
+    private static readonly int RebuildParallelism = ApplyParallelism(Math.Clamp(Environment.ProcessorCount / 2, 1, 8));
+
+    // Packages whose assets are set up from .arkive files at once. Each package's own assets are still set up one
+    // after another; different packages only read their own game package and write their own new working folders.
+    // Setting up a mesh uses about one core, so one at a time left an 8-core PC at a seventh of its CPU.
+    private static readonly int SetUpParallelism = ApplyParallelism(Math.Clamp(Environment.ProcessorCount / 2, 1, 8));
+
+    // ARKIVE_APPLY_PARALLELISM=N caps both of the above, for timing Apply or for a PC short of memory.
+    private static int ApplyParallelism(int fallback) =>
+        int.TryParse(Environment.GetEnvironmentVariable("ARKIVE_APPLY_PARALLELISM"), out var cap) && cap > 0
+            ? Math.Min(cap, 16)
+            : fallback;
 
     public const string UtilitySetId = "apply-arkive-mods";
     private readonly ArkiveModApplyContext _context;
@@ -761,7 +782,14 @@ public sealed class ArkiveModApplyService
         IReadOnlyCollection<string>? alsoPackages = null)
     {
         var watch = Stopwatch.StartNew();
-        var plan = await PlanAsync(null, null, cancellationToken, alsoPackages).ConfigureAwait(false);
+        var timings = new ArkiveModApplyTimings();
+        var errorDetails = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var timingScope = timings.Begin();
+        // Each mesh's GLBs are read several times while its package rebuilds; reuse identical reads within this Apply.
+        using var glbReads = SkeletalMeshGlbReadCache.Begin(RebuildParallelism * 4);
+        ArkiveModApplyPlan plan;
+        using (timings.Start("plan"))
+            plan = await PlanAsync(null, null, cancellationToken, alsoPackages).ConfigureAwait(false);
         if (expectedPlanFingerprint is not null &&
             !expectedPlanFingerprint.Equals(plan.Fingerprint, StringComparison.Ordinal))
             Refuse("APL001", "The mod library or game files changed since the plan was reviewed. Review it again.");
@@ -783,6 +811,7 @@ public sealed class ArkiveModApplyService
 
         var restored = 0;
         var restoredForRebuild = new List<ArkiveModPackagePlan>();
+        var phase = timings.Start("restore-before-rebuild");
         foreach (var package in changing.Where(package =>
                      package.RestoreFirst || package.Action == ArkiveModPackageAction.Restore))
         {
@@ -807,44 +836,63 @@ public sealed class ArkiveModApplyService
             }
         }
 
+        phase.Dispose();
+
         var setUp = 0;
         var setUps = new SetUpBatch();
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
+        phase = timings.Start("set-up-from-arkive");
         try
         {
-            foreach (var package in changing.Where(package => package.Setups.Count > 0 &&
-                                                              !outcomes.ContainsKey(package.PhysicalPackageName)))
-            {
-                foreach (var pending in package.Setups)
+            // Packages are set up a few at a time, each package's assets in order. A failed asset stops only its own
+            // package, as before; every working copy made is bound to its mod in the finally block below. Some
+            // working folders are named after the package alias and object (material and static mesh
+            // reconnaissance), so packages that share an alias are set up one after another in the same worker.
+            var setUpPackages = changing.Where(package => package.Setups.Count > 0 &&
+                                                          !outcomes.ContainsKey(package.PhysicalPackageName)).ToArray();
+            var sameAlias = setUpPackages.GroupBy(package => package.PackageAlias, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.ToArray()).ToArray();
+            var failures = new System.Collections.Concurrent.ConcurrentBag<ArkiveModPackageOutcome>();
+            await Parallel.ForEachAsync(sameAlias,
+                new ParallelOptions { MaxDegreeOfParallelism = SetUpParallelism, CancellationToken = cancellationToken },
+                async (group, token) =>
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    Report(package.PhysicalPackageName, $"Setting up {pending.Asset.DisplayName} from {pending.ModName}...");
-                    try
+                    foreach (var package in group)
+                    foreach (var pending in package.Setups)
                     {
-                        var mod = library.Find(pending.ModId) ??
-                                  throw new ArkiveModRefusalException("APL021", $"Mod {pending.ModId} is not in the library.");
-                        await SetUpAssetAsync(mod, pending.Asset, package.SourcePackagePath!,
-                            allowChangedSource: false, setUps, cancellationToken).ConfigureAwait(false);
-                        setUp++;
+                        token.ThrowIfCancellationRequested();
+                        Report(package.PhysicalPackageName, $"Setting up {pending.Asset.DisplayName} from {pending.ModName}...");
+                        try
+                        {
+                            var mod = library.Find(pending.ModId) ??
+                                      throw new ArkiveModRefusalException("APL021", $"Mod {pending.ModId} is not in the library.");
+                            await SetUpAssetAsync(mod, pending.Asset, package.SourcePackagePath!,
+                                allowChangedSource: false, setUps, token).ConfigureAwait(false);
+                            Interlocked.Increment(ref setUp);
+                        }
+                        catch (Exception exception) when (IsOperational(exception))
+                        {
+                            errorDetails.Enqueue($"{package.PhysicalPackageName}: setting up {pending.Asset.DisplayName} failed: {exception}");
+                            failures.Add(new ArkiveModPackageOutcome(
+                                package.PhysicalPackageName, package.Action, false,
+                                $"{pending.ModName}: {pending.Asset.DisplayName} could not be set up: {exception.Message}"));
+                            break;
+                        }
                     }
-                    catch (Exception exception) when (IsOperational(exception))
-                    {
-                        outcomes[package.PhysicalPackageName] = new ArkiveModPackageOutcome(
-                            package.PhysicalPackageName, package.Action, false,
-                            $"{pending.ModName}: {pending.Asset.DisplayName} could not be set up: {exception.Message}");
-                        break;
-                    }
-                }
-            }
+                }).ConfigureAwait(false);
+            foreach (var failure in failures) outcomes[failure.PhysicalPackageName] = failure;
         }
         finally
         {
             await SaveSetUpsAsync(setUps).ConfigureAwait(false);
+            phase.Dispose();
         }
 
         Report("Mods", "Applying priorities to the package selections...");
-        await ArkiveModSelectionService.SynchronizeAsync(_context.Library, _context.Edits, cancellationToken)
-            .ConfigureAwait(false);
+        ArkiveModEditSnapshot selected;
+        using (timings.Start("apply-priorities"))
+            selected = (await ArkiveModSelectionService.SynchronizeWithSnapshotAsync(
+                _context.Library, _context.Edits, cancellationToken).ConfigureAwait(false)).Snapshot;
 
         var rebuilt = 0;
         var installable = new List<GuidedTexturePackageEntry>();
@@ -854,14 +902,42 @@ public sealed class ArkiveModApplyService
         // byte-identical to one-at-a-time builds; the gain is the stages that use a single core.
         var waiting = changing.Where(package => !outcomes.ContainsKey(package.PhysicalPackageName)).ToArray();
         var rebuilds = waiting.Where(package => package.Action == ArkiveModPackageAction.Rebuild).ToArray();
-        var builds = new (GuidedTexturePackageEntry? Package, string? Error)[rebuilds.Length];
-        await Parallel.ForEachAsync(Enumerable.Range(0, rebuilds.Length),
-            new ParallelOptions { MaxDegreeOfParallelism = RebuildParallelism, CancellationToken = cancellationToken },
-            async (index, token) =>
-            {
-                Report(rebuilds[index].PhysicalPackageName, "Rebuilding the package from the clean client...");
-                builds[index] = await RebuildAsync(rebuilds[index], token).ConfigureAwait(false);
-            }).ConfigureAwait(false);
+        var builds = new (GuidedTexturePackageEntry? Package, string? Error, Exception? Failure)[rebuilds.Length];
+        // Every build reads the working files as the priorities pass just left them, so they are read once for all.
+        // Builds with textures keep to their own, smaller limit: Crunch fills every core for each of them.
+        using var textureBuilds = new SemaphoreSlim(Math.Min(TextureRebuildParallelism, RebuildParallelism));
+        using (timings.Start("rebuild-packages"))
+            await Parallel.ForEachAsync(Enumerable.Range(0, rebuilds.Length),
+                new ParallelOptions { MaxDegreeOfParallelism = RebuildParallelism, CancellationToken = cancellationToken },
+                async (index, token) =>
+                {
+                    var textured = rebuilds[index].Contributors.Any(item => item.Kind is UnifiedPackageAssetKind.Texture2D or null);
+                    if (textured) await textureBuilds.WaitAsync(token).ConfigureAwait(false);
+                    try
+                    {
+                        Report(rebuilds[index].PhysicalPackageName, "Rebuilding the package from the clean client...");
+                        builds[index] = await RebuildAsync(rebuilds[index], selected, token).ConfigureAwait(false);
+                        if (builds[index].Failure is { } failure)
+                            errorDetails.Enqueue($"{rebuilds[index].PhysicalPackageName}: rebuild failed: {failure}");
+                        // A file another program holds for a moment (a virus scan of a file just written, say) fails a
+                        // rebuild with an access error. Nothing is installed until every rebuild is done, and a rebuild
+                        // starts again from the clean client in a new folder, so one more try is safe.
+                        if (builds[index].Failure is IOException or UnauthorizedAccessException)
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(1), token).ConfigureAwait(false);
+                            progress?.Report(new ArkiveModApplyProgress(Volatile.Read(ref step), totalSteps,
+                                rebuilds[index].PhysicalPackageName, "Rebuilding the package again after a file access error..."));
+                            builds[index] = await RebuildAsync(rebuilds[index], selected, token).ConfigureAwait(false);
+                            errorDetails.Enqueue(builds[index].Failure is { } again
+                                ? $"{rebuilds[index].PhysicalPackageName}: second rebuild also failed: {again}"
+                                : $"{rebuilds[index].PhysicalPackageName}: second rebuild succeeded.");
+                        }
+                    }
+                    finally
+                    {
+                        if (textured) textureBuilds.Release();
+                    }
+                }).ConfigureAwait(false);
         foreach (var package in waiting)
         {
             if (package.Action == ArkiveModPackageAction.Install)
@@ -896,6 +972,7 @@ public sealed class ArkiveModApplyService
         if (installable.Count > 0)
         {
             Report("Mods", $"Installing {installable.Count:N0} package(s) as one transaction...");
+            using var installTiming = timings.Start("install");
             try
             {
                 var set = await _context.ModSets.UpsertUtilitySetAsync(
@@ -941,6 +1018,7 @@ public sealed class ArkiveModApplyService
         }
         if (tables is not null)
         {
+            using var tablesTiming = timings.Start("game-tables");
             Report(GameDataPackageName, tables.Action == ArkiveModPackageAction.Restore
                 ? "Putting back the game's own tables..."
                 : "Writing the table changes into data2.lpk...");
@@ -964,6 +1042,7 @@ public sealed class ArkiveModApplyService
         }
         if (looks is not null)
         {
+            using var looksTiming = timings.Start("item-looks");
             Report(LooksPackageName, looks.Action == ArkiveModPackageAction.Restore
                 ? "Putting back the game's own item looks..."
                 : "Writing the item look changes into data4.lpk...");
@@ -1011,7 +1090,11 @@ public sealed class ArkiveModApplyService
             changing.Concat(tables is null ? [] : [tables]).Concat(looks is null ? [] : [looks]).Select(package => outcomes.GetValueOrDefault(package.PhysicalPackageName) ??
                                        new ArkiveModPackageOutcome(package.PhysicalPackageName, package.Action, true,
                                            "Completed.")).ToArray(),
-            setUp, rebuilt, installed, restored, watch.Elapsed);
+            setUp, rebuilt, installed, restored, watch.Elapsed)
+        {
+            Timings = timings.Describe(),
+            ErrorDetails = errorDetails.ToArray(),
+        };
     }
 
     public async Task<string> ResolveCleanPackageAsync(
@@ -1236,7 +1319,15 @@ public sealed class ArkiveModApplyService
 
         public List<ArkiveModReleasedEdit> Released { get; } = [];
 
+        // Packages are set up side by side, so their assets are added from several threads.
+        private readonly Lock _gate = new();
+
         public void Add(ArkiveModLibraryEntry mod, ArkiveModFileAsset asset, ArkiveModAssetBinding binding)
+        {
+            lock (_gate) AddUnderLock(mod, asset, binding);
+        }
+
+        private void AddUnderLock(ArkiveModLibraryEntry mod, ArkiveModFileAsset asset, ArkiveModAssetBinding binding)
         {
             if (!Bindings.TryGetValue(mod.ModId, out var bindings))
                 Bindings[mod.ModId] = bindings = new Dictionary<string, ArkiveModAssetBinding>(StringComparer.OrdinalIgnoreCase);
@@ -1259,19 +1350,21 @@ public sealed class ArkiveModApplyService
             .ConfigureAwait(false);
     }
 
-    private async Task<(GuidedTexturePackageEntry? Package, string? Error)> RebuildAsync(
+    private async Task<(GuidedTexturePackageEntry? Package, string? Error, Exception? Failure)> RebuildAsync(
         ArkiveModPackagePlan plan,
+        ArkiveModEditSnapshot snapshot,
         CancellationToken cancellationToken)
     {
-        if (_composer is null) return (null, _rebuildUnavailable);
-        var package = await _context.Packages.GetOrCreateAsync(
-            plan.PackageAlias, plan.PhysicalPackageName, plan.SourcePackagePath!, cancellationToken).ConfigureAwait(false);
-        var snapshot = await ArkiveModEditSnapshot.LoadAsync(_context.Edits, cancellationToken).ConfigureAwait(false);
+        if (_composer is null) return (null, _rebuildUnavailable, null);
+        GuidedTexturePackageEntry package;
+        using (ArkiveModApplyTimings.Measure("rebuild.package-project"))
+            package = await _context.Packages.GetOrCreateAsync(
+                plan.PackageAlias, plan.PhysicalPackageName, plan.SourcePackagePath!, cancellationToken).ConfigureAwait(false);
         var checkedEdits = snapshot.ForPackage(plan.SourcePackagePath!).Where(edit => edit.Included).ToArray();
-        if (checkedEdits.Length == 0) return (null, "No checked assets remain for this package.");
+        if (checkedEdits.Length == 0) return (null, "No checked assets remain for this package.", null);
         // A piece identical to the game's own needs no rebuild; the rest of the package is still built.
         var included = checkedEdits.Where(edit => !ChangesNothing(edit)).ToArray();
-        if (included.Length == 0) return (null, null);
+        if (included.Length == 0) return (null, null, null);
         var revisionDirectory = _context.Packages.CreateRevisionDirectory(package);
         try
         {
@@ -1281,6 +1374,7 @@ public sealed class ArkiveModApplyService
             var displayName = !string.IsNullOrWhiteSpace(package.Manifest.DisplayName)
                 ? package.Manifest.DisplayName!
                 : $"{package.Manifest.PackageAlias} (Arkive mods)";
+            using var steps = ArkiveModApplyTimings.Current?.BuildSteps("rebuild");
             var result = await _composer.BuildAsync(
                 new UnifiedPackageCompositionRequest(
                     package,
@@ -1294,17 +1388,20 @@ public sealed class ArkiveModApplyService
                     PhysicsEdits = included.Select(edit => edit.Entry).OfType<Physics.PhysicsAssetEditEntry>().ToArray(),
                     InterfaceMovieEdits = included.Select(edit => edit.Entry).OfType<InterfaceMovieEditEntry>().ToArray(),
                 },
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            var committed = await _context.Packages.CommitRevisionAsync(package.ManifestPath, result.Revision, cancellationToken)
-                .ConfigureAwait(false);
-            return (committed, null);
+                steps, cancellationToken).ConfigureAwait(false);
+            steps?.Dispose();
+            GuidedTexturePackageEntry committed;
+            using (ArkiveModApplyTimings.Measure("rebuild.commit-revision"))
+                committed = await _context.Packages.CommitRevisionAsync(package.ManifestPath, result.Revision, cancellationToken)
+                    .ConfigureAwait(false);
+            return (committed, null, null);
         }
         catch (Exception exception) when (IsOperational(exception) || exception is TimeoutException or
                                               System.ComponentModel.Win32Exception)
         {
             try { _context.Packages.DeleteFailedRevisionDirectory(revisionDirectory); }
-            catch (IOException) { }
-            return (null, exception.Message);
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+            return (null, exception.Message, exception);
         }
     }
 

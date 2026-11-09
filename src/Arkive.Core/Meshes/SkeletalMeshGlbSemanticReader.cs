@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Numerics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Arkive.Core.Mods;
 
 namespace Arkive.Core.Meshes;
 
@@ -133,6 +134,25 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         SkeletalMeshGlbReadProfile profile = SkeletalMeshGlbReadProfile.StableVertexIdentity)
     {
         var bytes = File.ReadAllBytes(path);
+        if (SkeletalMeshGlbReadCache.Current is not { } cache) return Parse(bytes, sourceManifest, profile);
+        var key = SkeletalMeshGlbReadCache.Key(bytes, sourceManifest, profile);
+        if (cache.TryGet(key, out var known))
+        {
+            ArkiveModApplyTimings.Current?.Add("glb.reused", TimeSpan.Zero);
+            return known;
+        }
+        SkeletalMeshGlbSemanticDocument document;
+        using (ArkiveModApplyTimings.Measure("glb.parsed"))
+            document = Parse(bytes, sourceManifest, profile);
+        cache.Add(key, document);
+        return document;
+    }
+
+    private static SkeletalMeshGlbSemanticDocument Parse(
+        byte[] bytes,
+        SkeletalMeshEditableExportManifest sourceManifest,
+        SkeletalMeshGlbReadProfile profile)
+    {
         if (bytes.Length < 20 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != GlbMagic ||
             BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(4)) != 2 ||
             BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(8)) != bytes.Length)
@@ -758,7 +778,19 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         return _materialNames[index];
     }
 
+    // The GLB's JSON never changes while it is read, so each accessor is checked once and its view reused for every
+    // vertex. Finding it again for every vertex walked the accessor list each time and made large meshes slow.
+    private readonly Dictionary<(int Index, string Type), AccessorView> _accessorViews = new();
+
     private AccessorView Accessor(int accessorIndex, string expectedType)
+    {
+        if (_accessorViews.TryGetValue((accessorIndex, expectedType), out var known)) return known;
+        var view = ResolveAccessor(accessorIndex, expectedType);
+        _accessorViews.Add((accessorIndex, expectedType), view);
+        return view;
+    }
+
+    private AccessorView ResolveAccessor(int accessorIndex, string expectedType)
     {
         if (accessorIndex < 0 || accessorIndex >= _accessors.GetArrayLength())
             throw Error("SMI160", $"Accessor {accessorIndex} is out of range.");
@@ -853,10 +885,15 @@ internal sealed partial class SkeletalMeshGlbSemanticReader
         return new Vector4((float)values[0], (float)values[1], (float)values[2], (float)values[3]);
     }
 
+    private readonly Dictionary<int, string?> _colourTypes = new();
+
     private Vector4 ReadColour(int accessorIndex, int element)
     {
-        var accessorElement = _accessors[accessorIndex];
-        var type = accessorElement.GetProperty("type").GetString();
+        if (!_colourTypes.TryGetValue(accessorIndex, out var type))
+        {
+            type = _accessors[accessorIndex].GetProperty("type").GetString();
+            _colourTypes.Add(accessorIndex, type);
+        }
         if (type == "VEC4") return ReadVector4(accessorIndex, element);
         if (type == "VEC3")
         {

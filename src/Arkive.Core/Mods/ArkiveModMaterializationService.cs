@@ -326,8 +326,10 @@ public sealed class ArkiveModMaterializationService
         var arkivePath = _library.GetModFilePath(mod);
         if (!File.Exists(arkivePath))
             Refuse("AMM001", $"{mod.Manifest.Name}'s .arkive file is missing.");
-        var check = await CheckTargetAsync(asset, packagePath, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        ArkiveModTargetCheck check;
+        using (ArkiveModApplyTimings.Measure("setup.check-target"))
+            check = await CheckTargetAsync(asset, packagePath, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
         if (check.State is not (ArkiveModTargetState.Exact or ArkiveModTargetState.Changed))
             Refuse("AMM002", $"{asset.DisplayName}: {check.Message}");
         if (check.State == ArkiveModTargetState.Changed && !allowChangedSource)
@@ -338,8 +340,11 @@ public sealed class ArkiveModMaterializationService
         string manifestPath;
         try
         {
-            var files = await ArkiveModFileService.ExtractAssetFilesAsync(
-                arkivePath, asset, Path.Combine(work, "source"), cancellationToken).ConfigureAwait(false);
+            IReadOnlyDictionary<string, string> files;
+            using (ArkiveModApplyTimings.Measure("setup.extract-from-arkive"))
+                files = await ArkiveModFileService.ExtractAssetFilesAsync(
+                    arkivePath, asset, Path.Combine(work, "source"), cancellationToken).ConfigureAwait(false);
+            using var kindTiming = ArkiveModApplyTimings.Measure($"setup.{asset.Kind}");
             (editId, manifestPath) = asset.Kind switch
             {
                 UnifiedPackageAssetKind.Texture2D => await MaterializeTextureAsync(
@@ -457,6 +462,7 @@ public sealed class ArkiveModMaterializationService
         CancellationToken cancellationToken)
     {
         var export = check.Export!;
+        var timing = ArkiveModApplyTimings.Measure("setup.mesh-recon");
         var report = await _services.SkeletalMeshReconnaissance.InspectAsync(
             new SkeletalMeshReconnaissanceRequest(
                 check.PackagePath, asset.Target.PackageAlias, export.ExportIndex - 1, AssetKind.SkeletalMesh,
@@ -465,20 +471,27 @@ public sealed class ArkiveModMaterializationService
                 PackageSearchRoot = await GameFolderForCopyAsync(check.PackagePath, cancellationToken).ConfigureAwait(false),
             },
             cancellationToken).ConfigureAwait(false);
+        timing.Dispose();
         if (report.Readiness != SkeletalMeshReadiness.NoOpReady)
             Refuse("AMM020", $"{asset.DisplayName}: {FirstError(report.Issues.Select(issue => (issue.Severity, issue.Message)))}");
+        timing = ArkiveModApplyTimings.Measure("setup.mesh-recon-save");
         var recon = await _services.SkeletalMeshReconnaissanceStore.SaveAsync(report, cancellationToken)
             .ConfigureAwait(false);
+        timing.Dispose();
+        timing = ArkiveModApplyTimings.Measure("setup.mesh-editable-export");
         var editable = await _services.SkeletalMeshEditableExport.ExportAsync(
             new SkeletalMeshEditableExportRequest(
                 report, recon.JsonPath,
                 Path.Combine(recon.DirectoryPath, "editable-glb", $"{DateTime.UtcNow:yyyyMMdd-HHmmssfff}-{Guid.NewGuid():N}")),
             cancellationToken).ConfigureAwait(false);
+        timing.Dispose();
         var source = new SkeletalMeshEditableWorkspaceEntry(
             editable.OutputDirectory, editable.ManifestPath, editable.GlbPath, editable.Manifest,
             GlbExists: true, GlbLengthMatches: true, IsCurrentSchema: true);
+        timing = ArkiveModApplyTimings.Measure("setup.mesh-register-preflight");
         var registration = await _edits.SkeletalMeshEdits.RegisterAsync(
             source, files[ArkiveModFileFormat.GlbRole], asset.DisplayName, cancellationToken).ConfigureAwait(false);
+        timing.Dispose();
         if (registration.Preflight.Readiness == SkeletalMeshEditReadiness.Refused ||
             registration.Preflight.ErrorCount != 0)
         {

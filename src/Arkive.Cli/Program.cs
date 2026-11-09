@@ -2917,7 +2917,7 @@ static int ArkiveApply(string projectRoot, bool confirmed, bool json)
             json ? null : new InlineProgress<ArkiveModApplyProgress>(update => Console.Error.WriteLine(
                 $"[{update.Step:N0}/{update.TotalSteps:N0}] {update.Package}: {update.Message}")))
         .GetAwaiter().GetResult();
-    if (json) WriteJson(new { result.Succeeded, result.SetUpAssetCount, result.RebuiltPackageCount, result.InstalledPackageCount, result.RestoredPackageCount, result.Packages });
+    if (json) WriteJson(new { result.Succeeded, result.SetUpAssetCount, result.RebuiltPackageCount, result.InstalledPackageCount, result.RestoredPackageCount, result.Packages, result.Timings, result.ErrorDetails });
     else
     {
         foreach (var package in result.Packages)
@@ -2925,6 +2925,13 @@ static int ArkiveApply(string projectRoot, bool confirmed, bool json)
         Console.WriteLine($"Set up {result.SetUpAssetCount:N0} asset(s); rebuilt {result.RebuiltPackageCount:N0}, " +
                           $"installed {result.InstalledPackageCount:N0}, restored {result.RestoredPackageCount:N0} package(s) " +
                           $"in {result.Duration.TotalSeconds:N1}s.");
+        Console.WriteLine("Time per step:");
+        foreach (var line in result.Timings) Console.WriteLine($"  {line}");
+        if (result.ErrorDetails.Count > 0)
+        {
+            Console.WriteLine("Error details:");
+            foreach (var line in result.ErrorDetails) Console.WriteLine($"  {line}");
+        }
     }
     return result.Succeeded ? 0 : 1;
 }
