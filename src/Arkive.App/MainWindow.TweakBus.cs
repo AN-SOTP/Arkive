@@ -23,6 +23,7 @@ public partial class MainWindow
         [SpotifyPlayer.Channel] = QueueSpotifyRequest,
         [TweakModService.StaggerChannel] = text => Dispatcher.InvokeAsync(() => Log($"Stagger Numbers, skill tooltip data: {text}")),
         ["titleicons"] = text => Dispatcher.InvokeAsync(() => Log($"Title Icons Only, title from the game: {text}")),
+        ["braceletdismantle"] = text => Dispatcher.InvokeAsync(() => Log($"Bracelet Dismantle by Stat, Dismantle window: {text}")),
     };
 
     /// <summary>Prices the player saw on the market, kept so tooltips have them next session too.</summary>
