@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Arkive.Core.Mods;
@@ -17,6 +18,8 @@ public static class ArkiveModParityDumps
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() },
+        // Readable names and <game> paths; the dumps are compared as files, never put in a web page.
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
     /// <summary>Every mod and every asset as the Mods list shows them.</summary>
