@@ -159,6 +159,10 @@ internal static class MoreStorageSmokeTests
         Assert(cleanup.PlanAsync(TimeSpan.Zero).GetAwaiter().GetResult().Builds.Items.All(item => !item.Unused),
             "a package a checked working file targets lost its builds");
         ArkiveModSelectionService.SetIncludedAsync(env.Edits, edit, false).GetAwaiter().GetResult();
+        // A draft needs no build (Apply makes one when its mod is turned on); its working file stays.
+        var drafts = new ArkiveModAuthoringWorkspace(Path.Combine(env.Library.StateDirectory, "authoring"));
+        drafts.SaveAsync(drafts.CreateAsync(new ArkiveModMetadata("Next idea", "1.0.0")).GetAwaiter().GetResult() with
+        { EditIds = [edit.EditId] }).GetAwaiter().GetResult();
 
         var listBefore = ArkiveModParityDumps.ListAsync(Context(env, gamePackages), service, env.Root).GetAwaiter().GetResult();
         var planBefore = ArkiveModParityDumps.PlanAsync(service, env.Library, env.Root).GetAwaiter().GetResult();
@@ -180,6 +184,7 @@ internal static class MoreStorageSmokeTests
                !Directory.Exists(Path.GetDirectoryName(first.CompositionManifestPath)) &&
                !Directory.Exists(Path.GetDirectoryName(second.CompositionManifestPath)),
             "the package project was not left without builds, as a new one is");
+        Assert(File.Exists(edit.ManifestPath), "a working file a draft names was removed with the builds");
         Assert(Directory.EnumerateFiles(env.State, "*", SearchOption.AllDirectories)
                    .All(path => receipts.TryGetValue(path, out var text) && text == File.ReadAllText(path)) &&
                Directory.EnumerateFiles(env.State, "*", SearchOption.AllDirectories).Count() == receipts.Count &&

@@ -26,7 +26,7 @@ public sealed record ArkiveBuildCleanupKept(
 
 /// <summary>
 /// The game packages something may still need a build of: those an enabled mod has an asset in, and those a working
-/// file selected for a package build or named by an authoring draft targets (by <see cref="ArkiveModFileService.PhysicalPackageKey"/>).
+/// file selected for a package build targets (by <see cref="ArkiveModFileService.PhysicalPackageKey"/>).
 /// <see cref="Unknown"/> when that could not be worked out, so every package counts as used.
 /// </summary>
 public sealed record ArkivePackageUse(IReadOnlySet<string> PhysicalPackageKeys, bool Unknown)
@@ -72,7 +72,7 @@ public sealed record ArkiveBuildCleanupResult(
 /// </para>
 /// <para>
 /// With <see cref="PackageUse"/>, the builds of a package nobody can be using go too, the latest with them: no enabled
-/// mod has an asset in the package, no working file selected for a build or named by a draft targets it, no mod set
+/// mod has an asset in the package, no working file selected for a build targets it, no mod set
 /// the user made names it, and every one of its builds passes the checks above (not in the game, no restore data, no
 /// receipt saying it changed game files, not pinned, readable) and is older than <see cref="MinimumAge"/>, unchanged
 /// since. Nothing of the package is left to describe the game by, so no lineage root is kept; the package project
@@ -82,7 +82,7 @@ public sealed record ArkiveBuildCleanupResult(
 public sealed class ArkiveSupersededBuildCleanup
 {
     private const string UnusedPackageReason =
-        "no enabled mod, checked working file, draft or mod set uses its package and no build of it is in the game; " +
+        "no enabled mod, checked working file or mod set uses its package and no build of it is in the game; " +
         "Apply builds it again if a mod needs it";
     private readonly GuidedTexturePackageWorkspace _packages;
     private readonly ArkiveModDeploymentService _deployment;

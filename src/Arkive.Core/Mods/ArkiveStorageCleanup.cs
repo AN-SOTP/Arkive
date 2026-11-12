@@ -80,7 +80,7 @@ public sealed class ArkiveStorageCleanup
     private readonly ArkiveModLibrary? _library;
 
     /// <param name="library">
-    /// The mod library. With it, builds of packages no enabled mod, checked working file, draft or mod set uses are
+    /// The mod library. With it, builds of packages no enabled mod, checked working file or mod set uses are
     /// removed too, the latest included; without it every package keeps its latest build.
     /// </param>
     public ArkiveStorageCleanup(
@@ -223,8 +223,8 @@ public sealed class ArkiveStorageCleanup
     }
 
     /// <summary>
-    /// The packages an enabled mod has an asset in, or a working file selected for a build or named by a draft targets.
-    /// When the library, a draft or an edited mesh cannot be read, every package counts as used.
+    /// The packages an enabled mod has an asset in, or a working file selected for a build targets. When the library or
+    /// an edited mesh cannot be read, every package counts as used.
     /// </summary>
     private async Task<ArkivePackageUse> PackageUseAsync(CancellationToken cancellationToken)
     {
@@ -238,15 +238,11 @@ public sealed class ArkiveStorageCleanup
                 keys.Add(ArkiveModFileService.PhysicalPackageKey(asset.Target.PhysicalPackageName));
             if ((await _edits.SkeletalMeshEdits.LoadAsync(cancellationToken).ConfigureAwait(false)).Issues.Count > 0)
                 return ArkivePackageUse.Everything;
+            // Apply also builds the checked working files that belong to no mod. A draft's working files are kept by the
+            // working-file rules; a draft needs no build until its mod is turned on, and then Apply makes one.
             var snapshot = await ArkiveModEditSnapshot.LoadAsync(_edits, cancellationToken).ConfigureAwait(false);
             foreach (var edit in snapshot.Edits.Where(edit => edit.Included))
                 keys.Add(ArkiveModFileService.PhysicalPackageKey(Path.GetFileName(edit.SourcePackagePath)));
-            var drafts = new ArkiveModAuthoringWorkspace(Path.Combine(_library.StateDirectory, "authoring"));
-            var all = await drafts.LoadAsync(cancellationToken).ConfigureAwait(false);
-            if (drafts.LoadIssues.Count > 0) return ArkivePackageUse.Everything;
-            foreach (var id in all.SelectMany(draft => draft.EditIds.Concat(draft.ReferenceEditIds).Concat(draft.SavedBindings.Values)))
-                if (snapshot.Find(id) is { } edit)
-                    keys.Add(ArkiveModFileService.PhysicalPackageKey(Path.GetFileName(edit.SourcePackagePath)));
             return new ArkivePackageUse(keys, Unknown: false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
