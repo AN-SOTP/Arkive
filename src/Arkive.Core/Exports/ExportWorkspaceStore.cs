@@ -672,6 +672,7 @@ public sealed class ExportWorkspaceStore
         CancellationToken cancellationToken = default)
     {
         // On the thread pool: the folder walk and reads held a caller on the window's thread.
+        Diagnostics.StoreWalks.Record(Diagnostics.StoreWalks.ExportSessions);
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory))
         {

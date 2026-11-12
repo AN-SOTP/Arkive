@@ -65,6 +65,7 @@ public sealed class StaticMeshEditWorkspaceStore
         CancellationToken cancellationToken = default)
     {
         // On the thread pool: the folder walk and reads held a caller on the window's thread.
+        Diagnostics.StoreWalks.Record(Diagnostics.StoreWalks.StaticMeshEdits);
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
         var entries = new List<StaticMeshEditEntry>();

@@ -26,6 +26,9 @@ public sealed record LaunchStepResult(
     string? Note,
     string? Error)
 {
+    /// <summary>How many times the step walked each store of working files or package projects (see StoreWalks).</summary>
+    public IReadOnlyDictionary<string, int>? StoreWalks { get; init; }
+
     /// <summary>The line normal launches write to the session log for this step.</summary>
     public string LogLine => Skipped
         ? $"Startup step: id={Id}, skipped ({Note})."
@@ -34,6 +37,7 @@ public sealed record LaunchStepResult(
           FormattableString.Invariant(
               $"writeMB={BytesWritten / 1048576d:0.0}, heapMB={HeapBytes / 1048576d:0}, uiBlocked={UiBlockedSeconds:0.00}, ") +
           FormattableString.Invariant($"uiLongest={UiLongestBlockSeconds:0.00}") +
+          (StoreWalks is null ? string.Empty : ", walks=" + string.Join(" ", StoreWalks.Select(pair => $"{pair.Key}:{pair.Value}"))) +
           (Note is null ? string.Empty : $", note={Note}") + (Error is null ? string.Empty : $", error={Error}") + ".";
 }
 
@@ -64,6 +68,9 @@ public sealed record LaunchMeasurementReport(
     long BytesHashed,
     string? Error)
 {
+    /// <summary>The store walks of every step added up: how often the whole run read each store.</summary>
+    public IReadOnlyDictionary<string, int>? StoreWalks { get; init; }
+
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -185,13 +192,21 @@ public sealed class LaunchStepRecorder
                 steps.Count == 0 ? GC.GetTotalMemory(false) : steps[^1].HeapBytes),
             process.PeakWorkingSet64,
             GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2),
-            Mods.ArkiveModEditSnapshot.FilesHashed, Mods.ArkiveModEditSnapshot.BytesHashed, error);
+            Mods.ArkiveModEditSnapshot.FilesHashed, Mods.ArkiveModEditSnapshot.BytesHashed, error)
+        {
+            StoreWalks = steps.Where(step => step.StoreWalks is not null).SelectMany(step => step.StoreWalks!)
+                .GroupBy(pair => pair.Key, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Sum(pair => pair.Value), StringComparer.Ordinal),
+        };
     }
 
-    private static ProcessSample Begin() => ProcessCounters.Sample();
+    private (ProcessSample Sample, IReadOnlyDictionary<string, int> Walks) Begin() =>
+        (ProcessCounters.Sample(), Diagnostics.StoreWalks.Current());
 
-    private void End(string id, ProcessSample start, string? note, Exception? exception)
+    private void End(string id, (ProcessSample Sample, IReadOnlyDictionary<string, int> Walks) begun, string? note, Exception? exception)
     {
+        var (start, walksBefore) = begun;
+        var walks = Diagnostics.StoreWalks.Since(walksBefore);
         var end = ProcessCounters.Sample();
         var blocked = _blocked?.Invoke(start.Timestamp, end.Timestamp) ?? (0, 0);
         if (ForcedGc)
@@ -212,7 +227,10 @@ public sealed class LaunchStepRecorder
             blocked.Longest,
             false,
             note,
-            exception is null ? null : $"{exception.GetType().Name}: {exception.Message}"));
+            exception is null ? null : $"{exception.GetType().Name}: {exception.Message}")
+        {
+            StoreWalks = walks,
+        });
     }
 
     private void Add(LaunchStepResult step)

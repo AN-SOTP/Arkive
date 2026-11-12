@@ -161,6 +161,7 @@ public sealed class SkeletalMeshEditWorkspaceStore
         CancellationToken cancellationToken = default)
     {
         // On the thread pool: the folder walk ran before the first await and held a caller on the window's thread.
+        Diagnostics.StoreWalks.Record(Diagnostics.StoreWalks.SkeletalMeshEdits);
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory))
             return new SkeletalMeshEditWorkspaceSnapshot([], []);

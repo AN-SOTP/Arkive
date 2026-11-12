@@ -179,6 +179,7 @@ public sealed class GuidedTexturePackageWorkspace
         CancellationToken cancellationToken = default)
     {
         // On the thread pool: the folder walk and reads held a caller on the window's thread for seconds.
+        Diagnostics.StoreWalks.Record(Diagnostics.StoreWalks.PackageProjects);
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
         // A damaged package project must not hide healthy package projects.

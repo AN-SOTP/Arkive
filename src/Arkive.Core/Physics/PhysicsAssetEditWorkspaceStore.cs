@@ -46,6 +46,7 @@ public sealed class PhysicsAssetEditWorkspaceStore(string rootDirectory)
     public async Task<IReadOnlyList<PhysicsAssetEditEntry>> LoadAsync(CancellationToken cancellationToken = default)
     {
         // On the thread pool: the folder walk and reads held a caller on the window's thread for seconds.
+        Diagnostics.StoreWalks.Record(Diagnostics.StoreWalks.PhysicsEdits);
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
         var paths = Directory.EnumerateFiles(RootDirectory, DocumentFileName, SearchOption.AllDirectories).ToArray();
