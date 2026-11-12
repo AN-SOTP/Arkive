@@ -983,25 +983,31 @@ public partial class MainWindow : Window
                 "Delete mod", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
-        var imported = rows.Count(row => row.Entry.Origin == ArkiveModOrigin.Imported);
+        var unsaved = rows.Where(row => row.Status.ModifiedLocally || row.AuthoringPending).ToArray();
+        var one = rows.Length == 1;
         if (MessageBox.Show(this,
-                (rows.Length == 1 ? $"Delete '{rows[0].DisplayName}'?" : $"Delete these {rows.Length:N0} mods?\n\n" + ModNameList(rows)) + "\n\n" +
-                (rows.Length == 1 ? $"This deletes {rows[0].FilePath}." : "This deletes their .arkive files from the mods folder.") +
+                (one ? $"Delete '{rows[0].DisplayName}'?" : $"Delete these {rows.Length:N0} mods?\n\n" + ModNameList(rows)) + "\n\n" +
+                (one ? $"This deletes {rows[0].FilePath}." : "This deletes their .arkive files from the mods folder.") +
                 " Use Share / export first if you want to keep a copy.\n\n" +
-                (imported == rows.Length
-                    ? (rows.Length == 1 ? "Its local working copies were created from the .arkive file" : "Their local working copies were created from the .arkive files") + " and are deleted too."
-                    : imported == 0
-                        ? (rows.Length == 1 ? "Its" : "Their") + " local working copies stay in their package projects as unchecked drafts."
-                        : "Working copies of imported mods are deleted too; those of mods made here stay as unchecked drafts."),
+                (one ? "Its" : "Their") + " working files are deleted too: the edited textures, meshes, materials and effects " +
+                (one ? "it was" : "they were") + " made from, and " + (one ? "its" : "their") + " draft. Working files another " +
+                "mod or draft also uses are kept. Changes to them that were not saved into the mod are lost." +
+                (unsaved.Length == 0 ? string.Empty
+                    : "\n\n" + (one ? "This mod has" : unsaved.Length == rows.Length ? "These mods have" : "Some of these mods have") +
+                      " unsaved changes, which will be lost" + (one || unsaved.Length == rows.Length ? "." : ":\n" + ModNameList(unsaved))),
                 "Delete mod", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) !=
             MessageBoxResult.Yes) return;
         await RunModLibraryOperationAsync("Delete mod", async () =>
         {
             foreach (var row in rows)
             {
-                await _arkiveModAuthoring.RemoveModAsync(row.Entry.ModId);
+                var removal = await _arkiveModAuthoring.RemoveModAsync(row.Entry.ModId);
+                if (_authoringDraft?.ModId == row.Entry.ModId) _authoringDraft = null;
                 TryChangePacks(() => ModPacks.RemoveMod(row.Entry.ModId));
-                Log($"Mod deleted: mod={row.Entry.ModId}, name={row.DisplayName}, origin={row.Entry.Origin}, file={row.FilePath}.");
+                Log($"Mod deleted: mod={row.Entry.ModId}, name={row.DisplayName}, origin={row.Entry.Origin}, file={row.FilePath}, " +
+                    $"deletedWorkingFiles={removal.DeletedEditIds.Count}, keptWorkingFiles={removal.KeptEditIds.Count}, " +
+                    $"deletedExports={removal.DeletedExports.Count}, deletedDrafts={removal.DeletedDraftIds.Count}, " +
+                    $"deletedUnpacked={removal.DeletedUnpackedFolders.Count}.");
             }
             await SynchronizeModSelectionsAsync("mod deleted");
             return rows.Length == 1 ? $"Deleted {rows[0].DisplayName}." : $"Deleted {rows.Length:N0} mods.";

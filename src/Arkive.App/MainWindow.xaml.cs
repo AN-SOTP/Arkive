@@ -400,12 +400,14 @@ public partial class MainWindow : Window
         {
             GameDataRoot = _projectRoot,
         };
+        _modAuthoringWorkspace = new ArkiveModAuthoringWorkspace(
+            Path.Combine(_arkiveModLibrary.StateDirectory, "authoring"));
         _arkiveModAuthoring = new ArkiveModAuthoringService(_arkiveModLibrary, _arkiveModEdits)
         {
             CleanPackageResolver = (path, token) => _arkiveModApply!.ResolveCleanPackageAsync(path, token),
+            MeshExports = _skeletalMeshEditableWorkspaceStore,
+            Drafts = _modAuthoringWorkspace,
         };
-        _modAuthoringWorkspace = new ArkiveModAuthoringWorkspace(
-            Path.Combine(_arkiveModLibrary.StateDirectory, "authoring"));
         _authoringMetadataTimer.Tick += AuthoringMetadataTimer_Tick;
         _modMaterializer = new ArkiveModMaterializationService(
                 _arkiveModLibrary, _arkiveModEdits,
