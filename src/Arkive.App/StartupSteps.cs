@@ -26,6 +26,8 @@ internal sealed class StartupSteps
 
     public Task RunAsync(string id, Func<Task> body) => Recorder.RunAsync(id, body);
 
+    public Task<T> RunAsync<T>(string id, Func<Task<T>> body, Func<T, string?> note) => Recorder.RunAsync(id, body, note);
+
     public void Skip(string id, string reason) => Recorder.Skip(id, reason);
 
     /// <summary>Stops watching the window's thread; called once loading is over.</summary>

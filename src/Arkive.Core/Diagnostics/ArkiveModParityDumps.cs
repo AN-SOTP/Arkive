@@ -13,7 +13,8 @@ namespace Arkive.Core.Diagnostics;
 /// </summary>
 public static class ArkiveModParityDumps
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    /// <summary>The dumps' JSON settings, also used by the window's own dump of the Mods list.</summary>
+    public static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -209,7 +210,7 @@ public static class ArkiveModParityDumps
     }
 
     /// <summary>Makes paths and messages independent of where the data folder and the game are.</summary>
-    private sealed class Relative
+    public sealed class Relative
     {
         private readonly string _root;
         private readonly string? _game;

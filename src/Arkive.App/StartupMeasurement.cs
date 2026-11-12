@@ -14,6 +14,12 @@ internal sealed record StartupMeasurementOptions(string OutputPath, bool ForcedG
 {
     public const string Switch = "--measure-startup";
 
+    /// <summary>After loading, write what the Mods tab holds to this file (see MainWindow.DumpModsList).</summary>
+    public string? DumpModsListPath { get; init; }
+
+    /// <summary>Views to open after loading, in this order, each timed as a step with its grids' row counts.</summary>
+    public IReadOnlyList<string> OpenViews { get; init; } = [];
+
     /// <summary>The options of a measuring run, or null for a normal launch.</summary>
     public static StartupMeasurementOptions? Parse(IReadOnlyList<string> arguments)
     {
@@ -23,8 +29,24 @@ internal sealed record StartupMeasurementOptions(string OutputPath, bool ForcedG
         var dataRoot = Find(arguments, "--data-root") is var rootIndex and >= 0
             ? Value(arguments, rootIndex) ?? throw new ArgumentException("--data-root needs a folder.")
             : null;
+        var dump = Find(arguments, "--dump-mods-list") is var dumpIndex and >= 0
+            ? Value(arguments, dumpIndex) ?? throw new ArgumentException("--dump-mods-list needs the file to write.")
+            : null;
+        var views = new List<string>();
+        for (var at = 0; at < arguments.Count; at++)
+        {
+            if (!arguments[at].Equals("--open-view", StringComparison.OrdinalIgnoreCase)) continue;
+            var view = Value(arguments, at) ?? throw new ArgumentException("--open-view needs a view name.");
+            if (!MainWindow.MeasurableViews.Contains(view, StringComparer.OrdinalIgnoreCase))
+                throw new ArgumentException($"--open-view does not know {view}.");
+            views.Add(view.ToLowerInvariant());
+        }
         return new StartupMeasurementOptions(Path.GetFullPath(output), Find(arguments, "--forced-gc") >= 0,
-            Find(arguments, "--wait-background") >= 0, dataRoot is null ? null : Path.GetFullPath(dataRoot));
+            Find(arguments, "--wait-background") >= 0, dataRoot is null ? null : Path.GetFullPath(dataRoot))
+        {
+            DumpModsListPath = dump is null ? null : Path.GetFullPath(dump),
+            OpenViews = views,
+        };
     }
 
     private static int Find(IReadOnlyList<string> arguments, string name)
@@ -86,6 +108,9 @@ internal static class StartupMeasurement
             steps.Run("window", () => window = new MainWindow());
             await window!.RunStartupAsync(steps);
             if (options.WaitBackground) await steps.RunAsync("library-search", window.RestoredBackgroundWork);
+            if (options.DumpModsListPath is { } dumpPath) window.WriteModsListDump(dumpPath, root);
+            foreach (var view in options.OpenViews)
+                await steps.RunAsync("open-view:" + view, () => window.OpenViewForMeasurementAsync(view), counts => counts);
         }
         catch (Exception exception)
         {

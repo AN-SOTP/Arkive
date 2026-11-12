@@ -18,6 +18,16 @@ usual data folder is measured. `--forced-gc` collects fully after each step, so 
 (and steps take a little longer). `--wait-background` also times the restored Library search that startup leaves
 running; without it that search is still let finish, untimed, before the process exits.
 
+Two more options look at the window after loading:
+
+- `--dump-mods-list FILE` writes what the Mods tab holds: every row with each text and flag it shows, its assets, the
+  overlap banner and the two summary lines. Sorted, with paths relative to the data folder and `<game>`, so a change
+  that leaves the Mods list alone gives a byte-identical file.
+- `--open-view NAME` (repeatable) opens a view the way its entry in the advanced menu does, waits until it has loaded
+  and records a step `open-view:NAME` whose note gives the number of rows in each of the view's grids. Names: `exports`,
+  `baselines`, `mesh`, `static-mesh`, `materials`, `packages`, `mod-sets`, `modified-meshes`, `update-audit`,
+  `mod-dependencies`.
+
 Normal launches write the same records to the session log as `Startup step: id=..., seconds=..., ...` lines.
 
 ## Engine benchmark
