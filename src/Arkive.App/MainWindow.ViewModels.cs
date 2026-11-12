@@ -590,10 +590,13 @@ public partial class MainWindow : Window
             $" — {Match.PackageAlias}.{Match.ObjectName} ({Match.Kind})";
     }
 
+    /// <param name="ForDeletionIdentityOnly">The inspection proved an earlier revision active without its install
+    /// checks, so it is not the check selecting the row runs.</param>
     private sealed record GuidedDeploymentRevisionState(
         GuidedTexturePackageRevision Revision,
         ModDeploymentInspection? Inspection,
-        string? Error);
+        string? Error,
+        bool ForDeletionIdentityOnly = false);
 
     private sealed class GuidedTexturePackageRow
     {
@@ -635,6 +638,12 @@ public partial class MainWindow : Window
         public ModDeploymentInspection? Inspection { get; }
 
         public string? InspectionError { get; }
+
+        /// <summary>
+        /// True when <see cref="Inspection"/> is the recovery check that selecting this row runs (with unchanged files'
+        /// hashes reused), so a selection made by a refresh shows it instead of hashing the package's files again.
+        /// </summary>
+        public bool InspectionIsSelectionCheck { get; init; }
 
         public GuidedTexturePackageRevision? LatestRevision =>
             Entry.Manifest.LatestRevisionId is null

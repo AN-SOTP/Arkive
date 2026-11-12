@@ -236,7 +236,9 @@ public partial class MainWindow : Window
                     : orderedPackageRows.FirstOrDefault();
             if (selectedPackage is not null)
             {
-                GuidedPackagesGrid.SelectedItem = selectedPackage;
+                _guidedPackageSelectedByRefresh = true;
+                try { GuidedPackagesGrid.SelectedItem = selectedPackage; }
+                finally { _guidedPackageSelectedByRefresh = false; }
                 GuidedPackagesGrid.ScrollIntoView(selectedPackage);
                 ApplyGuidedProjectFilter(selectedPackage);
                 var selectedAsset = !string.IsNullOrWhiteSpace(selectProjectId)
@@ -385,7 +387,10 @@ public partial class MainWindow : Window
                 .ToArray(),
             deployment?.Revision,
             inspection,
-            inspectionError);
+            inspectionError)
+        {
+            InspectionIsSelectionCheck = deployment is { Inspection: not null, ForDeletionIdentityOnly: false },
+        };
     }
 
     private async Task<GuidedDeploymentRevisionState?> ResolveGuidedDeploymentStateAsync(
@@ -440,7 +445,7 @@ public partial class MainWindow : Window
                     $"packageId={package.Manifest.PackageProjectId}, revision={revision.RevisionId}, " +
                     $"latestRevision={latest.RevisionId}, state={inspection.State}, " +
                     $"targetSha={inspection.CurrentTargetSha256}.");
-                return new GuidedDeploymentRevisionState(revision, inspection, null);
+                return new GuidedDeploymentRevisionState(revision, inspection, null, ForDeletionIdentityOnly: true);
             }
             catch (Exception exception) when (
                 exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
@@ -613,8 +618,12 @@ public partial class MainWindow : Window
         await ResolveGuidedModelPreviewCandidatesAsync();
     }
 
+    /// <summary>Set while a refresh selects a row, whose install state that refresh has just checked.</summary>
+    private bool _guidedPackageSelectedByRefresh;
+
     private async void GuidedPackagesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        var selectedByRefresh = _guidedPackageSelectedByRefresh;
         _selectedClientCompatibility = null;
         if (GuidedPackagesGrid.SelectedItem is not GuidedTexturePackageRow package)
         {
@@ -673,8 +682,15 @@ public partial class MainWindow : Window
                 : "Checking install state...");
         try
         {
-            var inspection = await _modDeploymentService.InspectForRecoveryAsync(
-                CreateModDeploymentRequest(deploymentRevision.ModBundleManifestPath));
+            // A refresh has just run this check, reusing the hashes of files whose size and write time are unchanged;
+            // hashing the build, backup and game file again cost about 650 MB of reading at every launch. A row the
+            // user picks is checked in full. Install, restore, delete and old-build clean-up each run their own full
+            // check before changing anything, so these buttons never act on this state alone.
+            var hashesReused = selectedByRefresh && package.InspectionIsSelectionCheck;
+            var inspection = hashesReused
+                ? package.Inspection!
+                : await _modDeploymentService.InspectForRecoveryAsync(
+                    CreateModDeploymentRequest(deploymentRevision.ModBundleManifestPath));
             if (GuidedPackagesGrid.SelectedItem is GuidedTexturePackageRow current &&
                 current.Entry.Manifest.PackageProjectId == package.Entry.Manifest.PackageProjectId)
             {
@@ -704,7 +720,7 @@ public partial class MainWindow : Window
                     $"packageId={package.Entry.Manifest.PackageProjectId}, revision={deploymentRevision.RevisionId}, " +
                     $"latestRevision={latest.RevisionId}, " +
                     $"state={inspection.State}, canInstall={inspection.CanInstall}, " +
-                    $"canRestore={inspection.CanRestore}, target={inspection.TargetPath}.");
+                    $"canRestore={inspection.CanRestore}, hashesReused={hashesReused}, target={inspection.TargetPath}.");
             }
         }
         catch (Exception exception) when (
