@@ -31,10 +31,10 @@ public partial class MainWindow
     private ArkiveWorkingFileCleanup WorkingFileCleanup() =>
         new(_projectRoot, _skeletalMeshEditWorkspaceStore, _skeletalMeshEditableWorkspaceStore);
 
-    /// <summary>Superseded package builds and every kind of unused working file, as one clean-up.</summary>
+    /// <summary>Package builds, build files, working files, leftovers and caches nothing uses, as one clean-up.</summary>
     private ArkiveStorageCleanup StorageCleanup() => new(
         _projectRoot, _arkiveModEdits, _skeletalMeshEditableWorkspaceStore, _guidedTexturePackageWorkspace,
-        _modDeploymentService);
+        _modDeploymentService, _arkiveModLibrary);
 
     private async void ModLibraryCleanUpWorkingFilesButton_Click(object sender, RoutedEventArgs e)
     {
@@ -62,12 +62,13 @@ public partial class MainWindow
                 $"  • {category.Name}: {category.Count:N0} ({FormatByteSize(category.Bytes)})"));
             if (MessageBox.Show(this,
                     $"Delete {plan.Count:N0} item(s) that nothing uses, freeing {FormatByteSize(plan.Bytes)}?\n\n{lines}\n\n" +
-                    "These are package builds a newer build has replaced, and working files that no mod, draft or kept build uses: " +
-                    "left behind by replaced Simple upscale pieces, assets removed from drafts, deleted mods and proportion " +
-                    "editor previews.\n\n" +
-                    "Your mods, drafts, game backups, the latest and any installed build of each package, and anything changed " +
-                    "in the last hour are not touched. Nothing is kept aside, so this cannot be undone. The full list, with the " +
-                    $"reason for each item, is in:\n{report}",
+                    "These are package builds a newer build has replaced, builds of packages no enabled mod uses, copies of " +
+                    "meshes and images that finished builds no longer read, working files and unpacked mod files that no " +
+                    "mod, draft or kept build uses, and cache entries not used for 30 days. Arkive builds a removed build " +
+                    "again if a mod needs it.\n\n" +
+                    "Your mods, drafts, game backups, every installed build and its install records, the working files of " +
+                    "enabled mods, and anything changed in the last hour are not touched. Nothing is kept aside, so this " +
+                    $"cannot be undone. The full list, with the reason for each item, is in:\n{report}",
                     "Clean up working files", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
             {
                 ModLibraryStatusText.Text = "Nothing was deleted.";

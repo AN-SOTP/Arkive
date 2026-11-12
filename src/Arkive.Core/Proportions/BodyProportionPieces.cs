@@ -73,6 +73,7 @@ public sealed class BodyProportionPieceService(
             try { Directory.Delete(temporary, recursive: true); }
             catch (IOException) { }
         }
+        else Mods.ArkiveCacheCleanup.MarkUsed(directory);
         var profile = BodyProportionEngine.Build(await File.ReadAllBytesAsync(glb, cancellationToken).ConfigureAwait(false), default,
             objectName: export.ObjectName).Profile;
         return new BodyProportionPiece(request, glb, viewerRequest, profile);

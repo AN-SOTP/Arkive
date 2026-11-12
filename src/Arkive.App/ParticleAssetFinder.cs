@@ -96,7 +96,11 @@ public sealed partial class ParticleAssetFinder(
         try
         {
             ParticleEditorTexture? texture = null;
-            if (File.Exists(record)) texture = JsonSerializer.Deserialize<ParticleEditorTexture>(await File.ReadAllTextAsync(record, cancellationToken));
+            if (File.Exists(record))
+            {
+                texture = JsonSerializer.Deserialize<ParticleEditorTexture>(await File.ReadAllTextAsync(record, cancellationToken));
+                Core.Mods.ArkiveCacheCleanup.MarkUsed(folder);
+            }
             var found = texture is null || shaders is not null && !File.Exists(Path.Combine(folder, "shader7.json"))
                 ? await FindObjectAsync(material, "material", package, cancellationToken)
                 : null;
@@ -134,6 +138,7 @@ public sealed partial class ParticleAssetFinder(
             if (File.Exists(record))
             {
                 var cached = (await File.ReadAllTextAsync(record, cancellationToken)).Trim();
+                Core.Mods.ArkiveCacheCleanup.MarkUsed(folder);
                 return cached.Length > 0 && File.Exists(Path.Combine(cacheRoot, cached)) ? cached : null;
             }
             if (await FindObjectAsync(mesh, "staticmesh", package, cancellationToken) is not { } found) return null;

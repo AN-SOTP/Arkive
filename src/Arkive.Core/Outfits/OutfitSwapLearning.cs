@@ -28,7 +28,11 @@ public sealed class OutfitSwapLearning(IOutfitSwapLibrary library, string cacheD
     {
         if (from.AvatarCode == to.AvatarCode) return null;
         var cache = Path.Combine(cacheDirectory, $"v{CacheVersion}-{Safe(gameBuild)}-{from.Profile.Id}--{to.Profile.Id}.bin");
-        if (Read(cache) is { } cached) return cached;
+        if (Read(cache) is { } cached)
+        {
+            Mods.ArkiveCacheCleanup.MarkUsed(cache);
+            return cached;
+        }
 
         var fromPieces = await CostumesAsync(from.AvatarCode, cancellationToken).ConfigureAwait(false);
         var toPieces = await CostumesAsync(to.AvatarCode, cancellationToken).ConfigureAwait(false);

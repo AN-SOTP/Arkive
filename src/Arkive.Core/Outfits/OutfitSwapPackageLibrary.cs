@@ -91,7 +91,11 @@ public sealed class OutfitSwapPackageLibrary(
             $"{package.FullName}|{package.Length}|{package.LastWriteTimeUtc.Ticks}|{objectName}|{SkeletalMeshEditableExportService.CurrentSchemaVersion}")))[..24];
         var directory = Path.Combine(cacheRoot, key);
         var glb = Path.Combine(directory, "piece.glb");
-        if (File.Exists(glb)) return glb;
+        if (File.Exists(glb))
+        {
+            Mods.ArkiveCacheCleanup.MarkUsed(directory);
+            return glb;
+        }
         await _exportGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {

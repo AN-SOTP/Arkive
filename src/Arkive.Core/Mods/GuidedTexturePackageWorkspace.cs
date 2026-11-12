@@ -256,32 +256,49 @@ public sealed class GuidedTexturePackageWorkspace
             ClientBaselineAt = DateTimeOffset.UtcNow,
         };
         await SaveAtomicAsync(entry.ManifestPath, updated, cancellationToken).ConfigureAwait(false);
-        // The build is verified and recorded; drop the package copies nothing reads again.
+        // The build is verified and recorded; drop the package copies and step files nothing reads again.
         try
         {
-            await PackageRevisionTrimmer.TrimAsync(RevisionDirectory(updated, revision), revision, cancellationToken)
-                .ConfigureAwait(false);
+            await PackageRevisionTrimmer.TrimAsync(RevisionDirectory(updated, revision), revision, unneededFiles: true,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         return entry with { Manifest = updated };
     }
 
     /// <summary>Trims every revision of every package project (see <see cref="PackageRevisionTrimmer"/>); returns the bytes freed.</summary>
-    public async Task<long> TrimRevisionsAsync(CancellationToken cancellationToken = default)
+    /// <param name="unneededFiles">
+    /// Also the trimmer's second pass. Startup leaves it out: builds made by this Arkive have it when they are committed,
+    /// and older builds get it once from Clean up working files, which lists it first.
+    /// </param>
+    public async Task<long> TrimRevisionsAsync(bool unneededFiles = false, CancellationToken cancellationToken = default)
     {
         var freed = 0L;
         foreach (var entry in await LoadAsync(cancellationToken).ConfigureAwait(false))
         foreach (var revision in entry.Manifest.Revisions)
-        {
-            try
-            {
-                freed += await PackageRevisionTrimmer.TrimAsync(RevisionDirectory(entry.Manifest, revision), revision, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-        }
+            freed += await TrimRevisionAsync(entry, revision, unneededFiles, cancellationToken).ConfigureAwait(false);
         return freed;
     }
+
+    /// <summary>Trims one build (see <see cref="PackageRevisionTrimmer"/>); failures leave it as it was and free nothing.</summary>
+    public async Task<long> TrimRevisionAsync(
+        GuidedTexturePackageEntry entry, GuidedTexturePackageRevision revision, bool unneededFiles,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await PackageRevisionTrimmer.TrimAsync(RevisionDirectory(entry.Manifest, revision), revision, unneededFiles,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>The folder a build of this package project lives in, under _r.</summary>
+    public string RevisionDirectoryOf(GuidedTexturePackageEntry entry, GuidedTexturePackageRevision revision) =>
+        RevisionDirectory(entry.Manifest, revision);
 
     private string RevisionDirectory(GuidedTexturePackageManifest manifest, GuidedTexturePackageRevision revision) =>
         RequireWithinRoot(Path.GetFullPath(Path.Combine(RootDirectory, "_r", manifest.PackageProjectId[..8], revision.RevisionId)),
@@ -325,53 +342,34 @@ public sealed class GuidedTexturePackageWorkspace
         return entry with { Manifest = updated };
     }
 
-    public async Task<GuidedTexturePackageEntry> PruneRevisionsAsync(
-        string manifestPath,
-        IReadOnlySet<string> retainedRevisionIds,
-        CancellationToken cancellationToken = default)
-    {
-        var entry = await LoadEntryAsync(manifestPath, cancellationToken).ConfigureAwait(false);
-        var latestId = entry.Manifest.LatestRevisionId;
-        var retained = entry.Manifest.Revisions
-            .Where(revision => retainedRevisionIds.Contains(revision.RevisionId) ||
-                               revision.RevisionId.Equals(latestId, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        foreach (var revision in entry.Manifest.Revisions.Except(retained))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var directory = Path.GetFullPath(Path.Combine(
-                RootDirectory, "_r", entry.Manifest.PackageProjectId[..8], revision.RevisionId));
-            _ = RequireWithinRoot(directory, "package revision directory");
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
-        }
-
-        var updated = entry.Manifest with
-        {
-            UpdatedAt = DateTimeOffset.UtcNow,
-            Revisions = retained,
-        };
-        await SaveAtomicAsync(entry.ManifestPath, updated, cancellationToken).ConfigureAwait(false);
-        return entry with { Manifest = updated };
-    }
-
     /// <summary>
-    /// Removes the named builds (never the latest) and their entries in the package project; returns the ids removed.
+    /// Removes the named builds (the latest only with <paramref name="everyBuild"/>) and their entries in the package project; returns the ids removed.
     /// Each build's folder is first renamed, so one that is in use stays whole and keeps its entry. The project's
     /// UpdatedAt is left as it was: dropping old builds is not a change to the package, and lists sorted by it keep
     /// their order.
     /// </summary>
+    /// <param name="everyBuild">
+    /// The latest may go too, but only with every other build, so the project is left as a new one is: no builds and
+    /// no latest build.
+    /// </param>
     public async Task<IReadOnlyList<string>> RemoveRevisionsAsync(
         string manifestPath,
         IReadOnlySet<string> revisionIds,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool everyBuild = false)
     {
         var entry = await LoadEntryAsync(manifestPath, cancellationToken).ConfigureAwait(false);
         var latestId = entry.Manifest.LatestRevisionId ?? entry.Manifest.Revisions.LastOrDefault()?.RevisionId;
+        // Every build named, or none may be the latest.
+        if (everyBuild && entry.Manifest.Revisions.Any(revision => !revisionIds.Contains(revision.RevisionId))) everyBuild = false;
         var moved = new List<(string RevisionId, string Directory)>();
-        foreach (var revision in entry.Manifest.Revisions)
+        // The latest goes last, and only once every other build has been moved aside.
+        foreach (var revision in entry.Manifest.Revisions.OrderBy(revision =>
+                     revision.RevisionId.Equals(latestId, StringComparison.OrdinalIgnoreCase)))
         {
+            var isLatest = revision.RevisionId.Equals(latestId, StringComparison.OrdinalIgnoreCase);
             if (!revisionIds.Contains(revision.RevisionId) ||
-                revision.RevisionId.Equals(latestId, StringComparison.OrdinalIgnoreCase)) continue;
+                isLatest && (!everyBuild || moved.Count != entry.Manifest.Revisions.Count - 1)) continue;
             cancellationToken.ThrowIfCancellationRequested();
             var directory = RevisionDirectory(entry.Manifest, revision);
             var removing = directory + ".removing";
@@ -388,6 +386,7 @@ public sealed class GuidedTexturePackageWorkspace
         var updated = entry.Manifest with
         {
             Revisions = entry.Manifest.Revisions.Where(revision => !ids.Contains(revision.RevisionId)).ToArray(),
+            LatestRevisionId = latestId is not null && ids.Contains(latestId) ? null : entry.Manifest.LatestRevisionId,
         };
         try
         {
