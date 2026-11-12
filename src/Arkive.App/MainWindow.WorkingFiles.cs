@@ -31,6 +31,11 @@ public partial class MainWindow
     private ArkiveWorkingFileCleanup WorkingFileCleanup() =>
         new(_projectRoot, _skeletalMeshEditWorkspaceStore, _skeletalMeshEditableWorkspaceStore);
 
+    /// <summary>Superseded package builds and every kind of unused working file, as one clean-up.</summary>
+    private ArkiveStorageCleanup StorageCleanup() => new(
+        _projectRoot, _arkiveModEdits, _skeletalMeshEditableWorkspaceStore, _guidedTexturePackageWorkspace,
+        _modDeploymentService);
+
     private async void ModLibraryCleanUpWorkingFilesButton_Click(object sender, RoutedEventArgs e)
     {
         if (!ModLibraryIdle || _proportionBusy || _workshopBusy) return;
@@ -38,35 +43,49 @@ public partial class MainWindow
         UpdateModLibraryActionState();
         try
         {
-            ModLibraryStatusText.Text = "Looking for working files that nothing uses…";
-            var cleanup = WorkingFileCleanup();
+            ModLibraryStatusText.Text = "Looking for old package builds and working files that nothing uses…";
+            var cleanup = StorageCleanup();
             var trimmed = await TrimPackageBuildsAsync("clean up working files");
             var plan = await Task.Run(() => cleanup.PlanAsync(WorkingFileMinimumAge));
-            Log($"Working-file cleanup planned: items={plan.Items.Count}, bytes={plan.Bytes}.");
-            if (plan.Items.Count == 0)
+            Log($"Working-file cleanup planned: items={plan.Count}, bytes={plan.Bytes}, " +
+                $"categories={string.Join(", ", plan.Categories.Select(category => $"{category.Name} {category.Count}/{category.Bytes}"))}, " +
+                $"keptBuilds={plan.Builds.Kept.Count}, keptWorkingFiles={plan.WorkingFiles.Kept.Count}.");
+            if (plan.Count == 0)
             {
                 ModLibraryStatusText.Text = (trimmed > 0 ? $"Freed {FormatByteSize(trimmed)} of extra package copies kept by earlier builds. " : "") +
-                                            "No other working files to clean up: every edited mesh belongs to a draft, a mod or a package build.";
+                                            "No other working files to clean up: every package build and working file is still in use.";
                 return;
             }
-            var meshes = plan.Items.Count(item => item.Description.StartsWith("Edited mesh", StringComparison.Ordinal));
+            var report = cleanup.WriteReport(plan, "Clean up working files in the Mods tab", dryRun: false);
+            Log($"Working-file cleanup report written: {report}.");
+            var lines = string.Join("\n", plan.Categories.Select(category =>
+                $"  • {category.Name}: {category.Count:N0} ({FormatByteSize(category.Bytes)})"));
             if (MessageBox.Show(this,
-                    $"Delete {plan.Items.Count:N0} working folder(s) that no draft, mod or package build uses, freeing " +
-                    $"{FormatByteSize(plan.Bytes)}?\n\n" +
-                    $"They are {meshes:N0} edited mesh(es) and {plan.Items.Count - meshes:N0} game-mesh export(s), left behind by " +
-                    "replaced Simple upscale pieces, assets removed from drafts and proportion editor previews.\n\n" +
-                    "Your mods, drafts, package builds and backups are not touched, nor is any exported mesh changed since " +
-                    "Arkive wrote it. This cannot be undone.",
+                    $"Delete {plan.Count:N0} item(s) that nothing uses, freeing {FormatByteSize(plan.Bytes)}?\n\n{lines}\n\n" +
+                    "These are package builds a newer build has replaced, and working files that no mod, draft or kept build uses: " +
+                    "left behind by replaced Simple upscale pieces, assets removed from drafts, deleted mods and proportion " +
+                    "editor previews.\n\n" +
+                    "Your mods, drafts, game backups, the latest and any installed build of each package, and anything changed " +
+                    "in the last hour are not touched. Nothing is kept aside, so this cannot be undone. The full list, with the " +
+                    $"reason for each item, is in:\n{report}",
                     "Clean up working files", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
             {
                 ModLibraryStatusText.Text = "Nothing was deleted.";
                 return;
             }
-            var freed = trimmed + await Task.Run(() => cleanup.DeleteAsync(plan, WorkingFileMinimumAge));
-            ModLibraryStatusText.Text = $"Cleaned up working files: freed {FormatByteSize(freed)}.";
-            Log($"Working files cleaned up: freedBytes={freed}, planned={plan.Items.Count}.");
+            ModLibraryStatusText.Text = "Deleting old package builds and unused working files…";
+            var result = await Task.Run(() => cleanup.RunAsync(plan));
+            ArkiveStorageCleanup.AppendResult(report, result);
+            // The package views list builds and texture projects; they read them again when next opened.
+            if (result.Count > 0) _packageWorkspaceStale = true;
+            var freed = trimmed + result.Bytes;
+            var left = result.Builds.NotRemoved.Count + result.WorkingFiles.NotRemoved.Count;
+            ModLibraryStatusText.Text = $"Cleaned up working files: freed {FormatByteSize(freed)}." +
+                                        (left > 0 ? $" {left:N0} item(s) were kept because they changed or came into use; see {report}." : string.Empty);
+            Log($"Working files cleaned up: freedBytes={freed}, removed={result.Count}, planned={plan.Count}, left={left}, report={report}.");
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+                                              InvalidDataException or System.Text.Json.JsonException or NotSupportedException)
         {
             ModLibraryStatusText.Text = $"Working files were not cleaned up: {exception.Message}";
             Log($"Working-file cleanup failed: {exception}");
@@ -76,6 +95,27 @@ public partial class MainWindow
             _modLibraryBusy = false;
             UpdateModLibraryActionState();
             await RefreshSkeletalMeshEditableWorkspaceAsync("working files cleaned up");
+        }
+    }
+
+    /// <summary>
+    /// After a successful Apply, removes the superseded builds of the packages it rebuilt, with no question asked: each
+    /// is checked with full inspections first and listed in a report. Failures only reach the log.
+    /// </summary>
+    private async Task CleanUpAfterApplyAsync(ArkiveModApplyResult result)
+    {
+        if (!result.Succeeded) return;
+        try
+        {
+            var cleaned = await Task.Run(() => StorageCleanup().AfterApplyAsync(result));
+            if (cleaned is { } done)
+                Log($"Superseded builds removed after Apply: removed={done.Result.Removed.Count}, freedBytes={done.Result.Bytes}, " +
+                    $"left={done.Result.NotRemoved.Count}, report={done.ReportPath}.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+                                              InvalidDataException or System.Text.Json.JsonException or NotSupportedException)
+        {
+            Log($"Superseded builds were not removed after Apply: {exception}");
         }
     }
 

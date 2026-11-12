@@ -129,7 +129,26 @@ public sealed class GuidedTextureModWorkspace
             project.Manifest.Revisions.Select(revision => revision.ModBundleManifestPath),
             cancellationToken).ConfigureAwait(false);
 
+        foreach (var ownedRevisionDirectory in OwnedRevisionDirectories(project))
+        {
+            if (Directory.Exists(ownedRevisionDirectory))
+            {
+                Directory.Delete(ownedRevisionDirectory, recursive: true);
+            }
+        }
+
+        if (Directory.Exists(projectDirectory))
+        {
+            Directory.Delete(projectDirectory, recursive: true);
+        }
+    }
+
+    /// <summary>The build folders under _r that belong to this project alone and are deleted with it.</summary>
+    public IReadOnlyList<string> OwnedRevisionDirectories(GuidedTextureModProjectEntry project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
         var revisionRoot = Path.Combine(RootDirectory, "_r");
+        var owned = new List<string>();
         foreach (var revision in project.Manifest.Revisions)
         {
             var relative = Path.GetRelativePath(revisionRoot, revision.TextureImportCandidateManifestPath);
@@ -143,19 +162,9 @@ public sealed class GuidedTextureModWorkspace
                 continue;
             }
 
-            var ownedRevisionDirectory = Path.GetFullPath(
-                Path.Combine(revisionRoot, parts[0], parts[1]));
-            _ = RequireWithinRoot(ownedRevisionDirectory, "guided revision directory");
-            if (Directory.Exists(ownedRevisionDirectory))
-            {
-                Directory.Delete(ownedRevisionDirectory, recursive: true);
-            }
+            owned.Add(RequireWithinRoot(Path.Combine(revisionRoot, parts[0], parts[1]), "guided revision directory"));
         }
-
-        if (Directory.Exists(projectDirectory))
-        {
-            Directory.Delete(projectDirectory, recursive: true);
-        }
+        return owned.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private readonly ParsedRecordCache<GuidedTextureModProjectEntry> _parsed = new();

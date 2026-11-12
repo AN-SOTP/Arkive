@@ -362,6 +362,9 @@ static int Run(string[] arguments)
             "arkive-apply" => ArkiveApply(
                 target, arguments.Contains("--confirm", StringComparer.OrdinalIgnoreCase), json),
             "arkive-update" => ArkiveUpdate(target, ReadTextOption(arguments, "--mod"), json),
+            "working-files-cleanup" => CleanupCommand.Run(target,
+                arguments.Contains("--dry-run", StringComparer.OrdinalIgnoreCase), ReadTextOption(arguments, "--report"),
+                ReadIntegerOption(arguments, "--min-age-hours"), json),
             "client-update-check-all" => ClientUpdateCheckAll(
                 target, ReadTextOption(arguments, "--out"),
                 ReadTextOption(arguments, "--state-root"), json),
@@ -2936,6 +2939,8 @@ static int ArkiveApply(string projectRoot, bool confirmed, bool json)
             json ? null : new InlineProgress<ArkiveModApplyProgress>(update => Console.Error.WriteLine(
                 $"[{update.Step:N0}/{update.TotalSteps:N0}] {update.Package}: {update.Message}")))
         .GetAwaiter().GetResult();
+    // As in the window: once Apply has succeeded, the builds the packages it rebuilt no longer need are removed.
+    CleanupCommand.AfterApply(projectRoot, result, json);
     if (json) WriteJson(new { result.Succeeded, result.SetUpAssetCount, result.RebuiltPackageCount, result.InstalledPackageCount, result.RestoredPackageCount, result.Packages, result.Timings, result.ErrorDetails });
     else
     {
@@ -4281,6 +4286,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive arkive-migrate <Arkive-project-root> [--author NAME] [--json]");
     Console.WriteLine("  arkive arkive-plan <Arkive-project-root> [--json [FILE]]   (FILE: sorted, path-free dump for comparisons)");
     Console.WriteLine("  arkive working-files-compact <Arkive-project-root> [--dry-run] [--json]");
+    Console.WriteLine("  arkive working-files-cleanup <Arkive-project-root> [--dry-run] [--report FILE] [--min-age-hours N] [--json]");
     Console.WriteLine("  arkive arkive-apply <Arkive-project-root> --confirm [--json]");
     Console.WriteLine("  arkive arkive-update <Arkive-project-root> --mod ID|NAME [--json]");
     Console.WriteLine("  arkive client-update-check-all <Arkive-project-root> [--out DIR] [--state-root DIR] [--json]");

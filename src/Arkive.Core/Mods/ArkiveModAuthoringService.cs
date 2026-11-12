@@ -12,6 +12,15 @@ public sealed record ArkiveModCapturedAsset(
     IReadOnlyList<ArkiveModPackFile> Files,
     ArkiveModLocalEdit Edit);
 
+/// <summary>What deleting a mod removed besides its file: working files, exports, drafts and unpacked contents.</summary>
+/// <param name="KeptEditIds">Working files it was bound to that another mod or a draft still names; they are only unchecked.</param>
+public sealed record ArkiveModRemoval(
+    IReadOnlyList<string> DeletedEditIds,
+    IReadOnlyList<string> KeptEditIds,
+    IReadOnlyList<string> DeletedExports,
+    IReadOnlyList<string> DeletedDraftIds,
+    IReadOnlyList<string> DeletedUnpackedFolders);
+
 public sealed class ArkiveModAuthoringService
 {
     public const string CurrentCreatedWith = "Arkive";
@@ -603,16 +612,133 @@ public sealed class ArkiveModAuthoringService
         }
     }
 
-    public async Task RemoveModAsync(string modId, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Where game-mesh exports are kept. When set, deleting a mod also deletes the exports that only its edited meshes
+    /// were made from.
+    /// </summary>
+    public SkeletalMeshEditableWorkspaceStore? MeshExports { get; init; }
+
+    /// <summary>The authoring drafts; by default the ones in the library's authoring folder.</summary>
+    public ArkiveModAuthoringWorkspace? Drafts { get; init; }
+
+    /// <summary>
+    /// Deletes a mod's .arkive file and library entry, whatever its origin, and the working files it leaves that
+    /// nothing else can use: each working file it was bound to that no other mod's binding or other draft names, the
+    /// game-mesh exports only those edited meshes were made from, its own draft, and its unpacked contents. Callers
+    /// must take the mod out of the game first. A working file that is kept is released (unchecked) as before.
+    /// </summary>
+    public async Task<ArkiveModRemoval> RemoveModAsync(string modId, CancellationToken cancellationToken = default)
     {
         var library = await _library.LoadAsync(cancellationToken).ConfigureAwait(false);
         var mod = library.Find(modId) ??
                   throw new ArkiveModRefusalException("AUT060", $"Mod {modId} is not in the library.");
-        await ArkiveModSelectionService.ReleaseAsync(_edits, mod.Bindings
-                .Select(binding => new ArkiveModReleasedEdit(binding.EditId, mod.Origin == ArkiveModOrigin.Imported))
-                .ToArray(), cancellationToken)
-            .ConfigureAwait(false);
+        var drafts = Drafts ?? new ArkiveModAuthoringWorkspace(Path.Combine(_library.StateDirectory, "authoring"));
+        var allDrafts = await drafts.LoadAsync(cancellationToken).ConfigureAwait(false);
+        var own = allDrafts.Where(draft => mod.ModId.Equals(draft.ModId, StringComparison.OrdinalIgnoreCase)).ToArray();
+        // A draft that cannot be read might name any working file, so then none is deleted.
+        var draftsUnreadable = drafts.LoadIssues.Count > 0;
+        var named = allDrafts.Except(own)
+            .SelectMany(draft => draft.EditIds.Concat(draft.ReferenceEditIds).Concat(draft.SavedBindings.Values))
+            .Concat(library.Mods.Where(other => !other.ModId.Equals(mod.ModId, StringComparison.OrdinalIgnoreCase))
+                .SelectMany(other => other.Bindings.Select(binding => binding.EditId)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var snapshot = await ArkiveModEditSnapshot.LoadAsync(_edits, cancellationToken).ConfigureAwait(false);
+        var released = mod.Bindings
+            .Select(binding => new ArkiveModReleasedEdit(binding.EditId, !draftsUnreadable && !named.Contains(binding.EditId)))
+            .ToArray();
+        await ArkiveModSelectionService.ReleaseAsync(_edits, released, cancellationToken, snapshot).ConfigureAwait(false);
+        var deleted = released.Where(item => item.Delete && snapshot.Find(item.EditId) is { } edit && !File.Exists(edit.ManifestPath))
+            .Select(item => item.EditId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var kept = released.Where(item => snapshot.Find(item.EditId) is not null && !deleted.Contains(item.EditId))
+            .Select(item => item.EditId).ToArray();
+
+        var exports = await DeleteUnusedExportsAsync(snapshot, deleted, cancellationToken).ConfigureAwait(false);
+        foreach (var draft in own) await drafts.DeleteAsync(draft.DraftId, cancellationToken).ConfigureAwait(false);
+        var unpacked = await DeleteUnpackedContentsAsync(mod, library, snapshot, kept, cancellationToken).ConfigureAwait(false);
         await _library.RemoveAsync(modId, deleteFile: true, cancellationToken).ConfigureAwait(false);
+        return new ArkiveModRemoval(deleted.ToArray(), kept, exports, own.Select(draft => draft.DraftId).ToArray(), unpacked);
+    }
+
+    /// <summary>The game-mesh exports that only the deleted edited meshes were made from, unless one was changed by hand.</summary>
+    private async Task<IReadOnlyList<string>> DeleteUnusedExportsAsync(
+        ArkiveModEditSnapshot before, IReadOnlySet<string> deleted, CancellationToken cancellationToken)
+    {
+        if (MeshExports is null || deleted.Count == 0) return [];
+        var root = Path.GetFullPath(MeshExports.RootDirectory);
+        string? ExportOf(SkeletalMeshEditWorkspaceEntry mesh)
+        {
+            var full = Path.GetFullPath(mesh.Manifest.SourceManifestPath);
+            if (!full.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                return null;
+            var parts = Path.GetRelativePath(root, full).Split(Path.DirectorySeparatorChar);
+            return parts.Length >= 3 ? Path.Combine(root, parts[0], parts[1]) : null;
+        }
+        var meshes = await _edits.SkeletalMeshEdits.LoadAsync(cancellationToken).ConfigureAwait(false);
+        // An edited mesh whose record cannot be read may have been made from any export.
+        if (meshes.Issues.Count > 0) return [];
+        var stillUsed = meshes.Entries.Select(ExportOf).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = before.Edits.Where(edit => deleted.Contains(edit.EditId))
+            .Select(edit => edit.Entry).OfType<SkeletalMeshEditWorkspaceEntry>()
+            .Select(ExportOf).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (candidates.Length == 0) return [];
+        var editable = await MeshExports.LoadAsync(cancellationToken).ConfigureAwait(false);
+        var handEdited = editable.Entries
+            .Where(entry => !entry.GlbExists || !entry.GlbLengthMatches ||
+                            File.GetLastWriteTimeUtc(entry.GlbPath) > File.GetLastWriteTimeUtc(entry.ManifestPath).AddSeconds(5))
+            .Select(entry => entry.ManifestPath).Concat(editable.Issues.Select(issue => issue.ManifestPath))
+            .ToArray();
+        var removed = new List<string>();
+        foreach (var export in candidates)
+        {
+            if (stillUsed.Contains(export) || !Directory.Exists(export) ||
+                handEdited.Any(path => path.StartsWith(export + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            try
+            {
+                Directory.Delete(export, recursive: true);
+                var parent = Path.GetDirectoryName(export)!;
+                if (!Directory.EnumerateFileSystemEntries(parent).Any()) Directory.Delete(parent);
+                removed.Add(export);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        return removed;
+    }
+
+    /// <summary>
+    /// The mod's unpacked contents under staging\mod-library\materialized, unless another mod shares the folder or a
+    /// working file kept from it, or any texture project, still names a path inside.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> DeleteUnpackedContentsAsync(
+        ArkiveModLibraryEntry mod, ArkiveModLibraryManifest library, ArkiveModEditSnapshot snapshot,
+        IReadOnlyCollection<string> keptEditIds, CancellationToken cancellationToken)
+    {
+        var prefix = mod.ModId[..Math.Min(8, mod.ModId.Length)];
+        var folder = Path.GetFullPath(Path.Combine(_library.MaterializationRoot, prefix));
+        if (!Directory.Exists(folder) || prefix.Length < 8 ||
+            library.Mods.Any(other => !other.ModId.Equals(mod.ModId, StringComparison.OrdinalIgnoreCase) &&
+                                      other.ModId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            return [];
+        var kept = keptEditIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var records = snapshot.Edits
+            .Where(edit => kept.Contains(edit.EditId) || edit.Kind == UnifiedPackageAssetKind.Texture2D)
+            .Select(edit => edit.ManifestPath).Where(File.Exists);
+        var escaped = folder.Replace(@"\", @"\\");
+        foreach (var record in records)
+        {
+            var text = await File.ReadAllTextAsync(record, cancellationToken).ConfigureAwait(false);
+            if (text.Contains(folder, StringComparison.OrdinalIgnoreCase) || text.Contains(escaped, StringComparison.OrdinalIgnoreCase))
+                return [];
+        }
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+            return [folder];
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
     }
 
     public async Task<ArkiveModLibraryScanResult> ScanAsync(CancellationToken cancellationToken = default)

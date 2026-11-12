@@ -354,6 +354,63 @@ public sealed class GuidedTexturePackageWorkspace
         return entry with { Manifest = updated };
     }
 
+    /// <summary>
+    /// Removes the named builds (never the latest) and their entries in the package project; returns the ids removed.
+    /// Each build's folder is first renamed, so one that is in use stays whole and keeps its entry. The project's
+    /// UpdatedAt is left as it was: dropping old builds is not a change to the package, and lists sorted by it keep
+    /// their order.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> RemoveRevisionsAsync(
+        string manifestPath,
+        IReadOnlySet<string> revisionIds,
+        CancellationToken cancellationToken = default)
+    {
+        var entry = await LoadEntryAsync(manifestPath, cancellationToken).ConfigureAwait(false);
+        var latestId = entry.Manifest.LatestRevisionId ?? entry.Manifest.Revisions.LastOrDefault()?.RevisionId;
+        var moved = new List<(string RevisionId, string Directory)>();
+        foreach (var revision in entry.Manifest.Revisions)
+        {
+            if (!revisionIds.Contains(revision.RevisionId) ||
+                revision.RevisionId.Equals(latestId, StringComparison.OrdinalIgnoreCase)) continue;
+            cancellationToken.ThrowIfCancellationRequested();
+            var directory = RevisionDirectory(entry.Manifest, revision);
+            var removing = directory + ".removing";
+            try
+            {
+                if (Directory.Exists(removing)) Directory.Delete(removing, recursive: true);
+                if (Directory.Exists(directory)) Directory.Move(directory, removing);
+                moved.Add((revision.RevisionId, removing));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        if (moved.Count == 0) return [];
+        var ids = moved.Select(item => item.RevisionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var updated = entry.Manifest with
+        {
+            Revisions = entry.Manifest.Revisions.Where(revision => !ids.Contains(revision.RevisionId)).ToArray(),
+        };
+        try
+        {
+            await SaveAtomicAsync(entry.ManifestPath, updated, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The record still names the builds, so they are put back where it says they are.
+            foreach (var (_, directory) in moved)
+                if (Directory.Exists(directory)) Directory.Move(directory, directory[..^".removing".Length]);
+            throw;
+        }
+        foreach (var (_, directory) in moved)
+        {
+            try
+            {
+                if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        return moved.Select(item => item.RevisionId).ToArray();
+    }
+
     public string CreateRevisionDirectory(GuidedTexturePackageEntry entry)
     {
         var revisionId = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..25];

@@ -930,54 +930,50 @@ public partial class MainWindow : Window
             GuidedPackagesGrid.SelectedItem is not GuidedTexturePackageRow package ||
             package.Entry.Manifest.Revisions.Count <= 1) return;
 
-        var retained = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(package.Entry.Manifest.LatestRevisionId))
+        // The same rule as Clean up working files, for this package only (see ArkiveSupersededBuildCleanup).
+        var cleanup = StorageCleanup();
+        var packageId = package.Entry.Manifest.PackageProjectId;
+        ArkiveBuildCleanupPlan plan;
+        try
         {
-            retained.Add(package.Entry.Manifest.LatestRevisionId);
+            plan = await Task.Run(() => cleanup.Builds.PlanAsync(fullInspection: false, [packageId]));
         }
-        var removable = new List<GuidedTexturePackageRevision>();
-        foreach (var revision in package.Entry.Manifest.Revisions)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
-            if (retained.Contains(revision.RevisionId)) continue;
-            try
-            {
-                var inspection = await _modDeploymentService.InspectForRecoveryAsync(
-                    CreateModDeploymentRequest(revision.ModBundleManifestPath));
-                var safe = inspection.State is ModInstallationState.NotInstalled or ModInstallationState.Restored &&
-                           !inspection.CanRestore &&
-                           inspection.Receipt is not { GameFilesModified: true };
-                if (safe) removable.Add(revision);
-                else retained.Add(revision.RevisionId);
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
-            {
-                retained.Add(revision.RevisionId);
-                Log($"Guided old-build cleanup retained revision after inconclusive deployment inspection: packageId={package.Entry.Manifest.PackageProjectId}, revision={revision.RevisionId}, error={exception.Message}.");
-            }
+            Log($"Guided old-build cleanup could not be planned: package={package.Entry.ManifestPath}, error={exception}");
+            MessageBox.Show(this, exception.Message, "Clean old builds", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
         }
-        if (removable.Count == 0)
+        foreach (var kept in plan.Kept)
+            Log($"Guided old-build cleanup kept revision: packageId={packageId}, revision={kept.RevisionId}, reason={kept.Reason}.");
+        if (plan.Items.Count == 0)
         {
             MessageBox.Show(this, "No old build can be safely removed. Arkive retained the latest build and every revision with active or uncertain restore state.", "Clean old builds", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        var bytes = removable.Sum(revision => GetDirectorySizeSafe(Path.GetDirectoryName(revision.OutputUpkPath)!));
+        var report = cleanup.WriteReport(new ArkiveStorageCleanupPlan(plan, new ArkiveWorkingFileCleanupPlan([]), TimeSpan.Zero),
+            $"Clean old builds for {package.DisplayName}", dryRun: false);
+        var bytes = plan.Bytes;
         if (MessageBox.Show(
                 this,
-                $"Remove {removable.Count:N0} superseded build(s) ({FormatBytes(bytes)})?\n\n" +
-                "The latest build, installed revisions, restore data, editable textures, and game backups are retained.",
+                $"Remove {plan.Items.Count:N0} superseded build(s) ({FormatBytes(bytes)})?\n\n" +
+                "The latest build, installed revisions, restore data, editable textures, and game backups are retained.\n\n" +
+                $"The list of builds is in:\n{report}",
                 "Clean old builds",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question,
                 MessageBoxResult.No) != MessageBoxResult.Yes) return;
         try
         {
-            await _guidedTexturePackageWorkspace.PruneRevisionsAsync(package.Entry.ManifestPath, retained);
-            Log($"Guided old-build cleanup completed: packageId={package.Entry.Manifest.PackageProjectId}, removed={removable.Count}, retained={retained.Count}, estimatedBytes={bytes}.");
+            var result = await Task.Run(() => cleanup.Builds.DeleteAsync(plan));
+            ArkiveStorageCleanup.AppendResult(report,
+                new ArkiveStorageCleanupResult(result, new ArkiveWorkingFileRemoval([], [])));
+            Log($"Guided old-build cleanup completed: packageId={packageId}, removed={result.Removed.Count}, " +
+                $"left={result.NotRemoved.Count}, retained={plan.Kept.Count}, bytes={result.Bytes}, report={report}.");
             await RefreshGuidedTextureModsAsync("old builds cleaned", package.Assets.FirstOrDefault()?.Entry.Manifest.ProjectId);
-            StatusText.Text = $"Removed {removable.Count:N0} old build(s); freed approximately {FormatBytes(bytes)}.";
+            StatusText.Text = $"Removed {result.Removed.Count:N0} old build(s); freed {FormatBytes(result.Bytes)}.";
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException)
         {
             Log($"Guided old-build cleanup failed: package={package.Entry.ManifestPath}, error={exception}");
             MessageBox.Show(this, exception.Message, "Clean old builds", MessageBoxButton.OK, MessageBoxImage.Error);

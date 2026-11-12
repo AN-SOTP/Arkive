@@ -118,13 +118,15 @@ public static class ArkiveModSelectionService
         return new ArkiveModSelectionResult(changes, snapshot.Replace(written));
     }
 
+    /// <param name="snapshot">The working files as just read, when the caller has them; otherwise they are read.</param>
     public static async Task ReleaseAsync(
         ArkiveModEditWorkspaces edits,
         IReadOnlyCollection<ArkiveModReleasedEdit> released,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ArkiveModEditSnapshot? snapshot = null)
     {
         if (released.Count == 0) return;
-        var snapshot = await ArkiveModEditSnapshot.LoadAsync(edits, cancellationToken).ConfigureAwait(false);
+        snapshot ??= await ArkiveModEditSnapshot.LoadAsync(edits, cancellationToken).ConfigureAwait(false);
         foreach (var item in released)
         {
             if (snapshot.Find(item.EditId) is not { } local) continue;
