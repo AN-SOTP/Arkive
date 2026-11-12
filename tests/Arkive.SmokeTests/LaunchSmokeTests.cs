@@ -36,7 +36,9 @@ internal static class LaunchSmokeTests
                edits.ParticleEdits.LoadAsync().GetAwaiter().GetResult().Count == 60,
             "the texture, material or effect store did not read every record");
         var record = new FileInfo(meshes.Entries[0].ManifestPath).Length;
-        var skeleton = JsonSerializer.SerializeToUtf8Bytes(meshes.Entries[0].Manifest.Preflight.SkeletonCompatibility,
+        // Loading leaves the skeleton report out; it is read from the record on demand.
+        var skeleton = JsonSerializer.SerializeToUtf8Bytes(
+            edits.SkeletalMeshEdits.LoadSkeletonCompatibilityAsync(meshes.Entries[0]).GetAwaiter().GetResult(),
             new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }).Length;
         Assert(record is > 400_000 and < 490_000 && skeleton is > 250_000 and < 360_000,
             $"a mesh edit record is {record:N0} bytes with a {skeleton:N0}-byte skeleton report; the owner's are about 443 KB and 300 KB");
