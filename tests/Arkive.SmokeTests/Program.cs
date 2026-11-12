@@ -34,6 +34,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     LanguageSmokeTests.Cases,
     GameDataSmokeTests.Cases,
     UnexpectedErrorSmokeTests.Cases,
+    LaunchSmokeTests.Cases,
 ];
 
 var filter = args.Length > 0 ? args[0] : null;
