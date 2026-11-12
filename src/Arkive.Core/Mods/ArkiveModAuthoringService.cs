@@ -582,10 +582,11 @@ public sealed class ArkiveModAuthoringService
         await PortableContentSha256Async(edit, cancellationToken).ConfigureAwait(false) is { } content &&
         !content.Equals(binding.PackedContentSha256, StringComparison.OrdinalIgnoreCase);
 
-    private static async Task<string?> PortableContentSha256Async(
+    internal static async Task<string?> PortableContentSha256Async(
         ArkiveModLocalEdit edit,
         CancellationToken cancellationToken)
     {
+        if (edit.Entry is ArkiveModIndexedEdit indexed) return indexed.PortableSha256;
         if (edit.Entry is Particles.ParticleEffectEditEntry particle) return particle.Document.ContentSha256;
         if (edit.Entry is Physics.PhysicsAssetEditEntry physics) return physics.Document.ContentSha256;
         if (edit.Entry is not MaterialInstanceEditEntry material)

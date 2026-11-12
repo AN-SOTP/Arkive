@@ -37,11 +37,45 @@ public sealed record ArkiveModLocalEdit(
     bool Included,
     object Entry)
 {
-    /// <summary>The target's path inside its package when its name is not unique there; see ArkiveModObjectPath.</summary>
-    public string? ObjectPath { get; init; } = ArkiveModObjectPath.Read(ManifestPath);
+    private string? _objectPath;
+    private bool _objectPathRead;
+
+    /// <summary>
+    /// The target's path inside its package when its name is not unique there; see ArkiveModObjectPath. Read from the
+    /// note beside the record when first asked for, unless given: an edit made from the working-file index already
+    /// knows it, and looking for the note would open a file for each of thousands of edits at launch.
+    /// </summary>
+    public string? ObjectPath
+    {
+        get
+        {
+            if (!_objectPathRead)
+            {
+                _objectPath = ArkiveModObjectPath.Read(ManifestPath);
+                _objectPathRead = true;
+            }
+            return _objectPath;
+        }
+        init
+        {
+            _objectPath = value;
+            _objectPathRead = true;
+        }
+    }
 
     public ArkiveModTargetKey TargetKey => ArkiveModTargetKey.From(
         Path.GetFileName(SourcePackagePath), Kind, ObjectPath ?? ObjectName);
+
+    // Equal edits stay equal whether or not their object path has been read yet.
+    public bool Equals(ArkiveModLocalEdit? other) =>
+        other is not null && (ReferenceEquals(this, other) ||
+                              Kind == other.Kind && EditId == other.EditId && ManifestPath == other.ManifestPath &&
+                              DisplayName == other.DisplayName && SourcePackagePath == other.SourcePackagePath &&
+                              ObjectName == other.ObjectName && Included == other.Included && Equals(Entry, other.Entry) &&
+                              ObjectPath == other.ObjectPath);
+
+    public override int GetHashCode() =>
+        HashCode.Combine(Kind, EditId, ManifestPath, DisplayName, SourcePackagePath, ObjectName, Included, Entry);
 }
 
 public sealed class ArkiveModEditSnapshot
@@ -56,9 +90,10 @@ public sealed class ArkiveModEditSnapshot
     private readonly Dictionary<string, ArkiveModLocalEdit> _byId;
     private readonly Lazy<ILookup<string, ArkiveModLocalEdit>> _byPackage;
 
-    private ArkiveModEditSnapshot(IReadOnlyList<ArkiveModLocalEdit> edits)
+    private ArkiveModEditSnapshot(IReadOnlyList<ArkiveModLocalEdit> edits, bool fromIndex = false)
     {
         Edits = edits;
+        FromIndex = fromIndex;
         _byId = edits.GroupBy(edit => edit.EditId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         _byPackage = new(() => edits.ToLookup(edit => Path.GetFullPath(edit.SourcePackagePath), StringComparer.OrdinalIgnoreCase));
@@ -66,15 +101,31 @@ public sealed class ArkiveModEditSnapshot
 
     public IReadOnlyList<ArkiveModLocalEdit> Edits { get; }
 
+    /// <summary>
+    /// Some edits come from the working-file index (see <see cref="WorkingFileIndex.SnapshotAsync"/>) instead of their
+    /// records. Such a snapshot only feeds what the Mods list shows; anything that writes reads the records itself.
+    /// </summary>
+    public bool FromIndex { get; }
+
     public ArkiveModLocalEdit? Find(string editId) => _byId.GetValueOrDefault(editId);
+
+    /// <summary>A snapshot of edits made from the working-file index, some of them read again from their records.</summary>
+    internal static ArkiveModEditSnapshot FromIndexedEdits(IReadOnlyList<ArkiveModLocalEdit> edits) => new(edits, fromIndex: true);
 
     /// <summary>This snapshot with the given edits, as just saved, in place of the ones read from the same files.</summary>
     internal ArkiveModEditSnapshot Replace(IReadOnlyCollection<ArkiveModLocalEdit> saved)
     {
         if (saved.Count == 0) return this;
         var byPath = saved.ToDictionary(edit => edit.ManifestPath, StringComparer.OrdinalIgnoreCase);
-        return new ArkiveModEditSnapshot(Edits.Select(edit => byPath.GetValueOrDefault(edit.ManifestPath) ?? edit).ToArray());
+        var edits = Edits.Select(edit => byPath.GetValueOrDefault(edit.ManifestPath) ?? edit).ToArray();
+        return new ArkiveModEditSnapshot(edits, edits.Any(edit => edit.Entry is ArkiveModIndexedEdit));
     }
+
+    /// <summary>
+    /// Told of every full read of the working files (<see cref="LoadAsync"/>): the stores read, the snapshot and when the read
+    /// began, so the window can bring its working-file index up to date. Nothing is told when no one listens.
+    /// </summary>
+    public static event Action<ArkiveModEditWorkspaces, ArkiveModEditSnapshot, DateTime>? FullReadCompleted;
 
     public IReadOnlyList<ArkiveModLocalEdit> ForPackage(string sourcePackagePath) =>
         _byPackage.Value[Path.GetFullPath(sourcePackagePath)].ToArray();
@@ -82,14 +133,22 @@ public sealed class ArkiveModEditSnapshot
     public IReadOnlyList<ArkiveModLocalEdit> DraftsFor(string sourcePackagePath, ArkiveModLibraryManifest library) =>
         ForPackage(sourcePackagePath).Where(edit => edit.Included && library.FindOwner(edit.EditId) is null).ToArray();
 
+    /// <param name="beforeEachStore">
+    /// Runs before each store is read, so a caller reading in the background can wait there while the user is busy.
+    /// </param>
     public static async Task<ArkiveModEditSnapshot> LoadAsync(
         ArkiveModEditWorkspaces workspaces,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<CancellationToken, Task>? beforeEachStore = null)
     {
         ArgumentNullException.ThrowIfNull(workspaces);
+        var readStart = DateTime.UtcNow;
         var edits = new List<ArkiveModLocalEdit>();
+        Task Turn() => beforeEachStore?.Invoke(cancellationToken) ?? Task.CompletedTask;
+        await Turn().ConfigureAwait(false);
         foreach (var texture in await workspaces.Textures.LoadAsync(cancellationToken).ConfigureAwait(false))
             edits.Add(From(texture));
+        await Turn().ConfigureAwait(false);
         foreach (var mesh in (await workspaces.SkeletalMeshEdits.LoadAsync(cancellationToken).ConfigureAwait(false)).Entries)
         {
             try
@@ -101,6 +160,7 @@ public sealed class ArkiveModEditSnapshot
             {
             }
         }
+        await Turn().ConfigureAwait(false);
         foreach (var mesh in await workspaces.StaticMeshEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
         {
             try
@@ -112,16 +172,22 @@ public sealed class ArkiveModEditSnapshot
             {
             }
         }
+        await Turn().ConfigureAwait(false);
         foreach (var material in await workspaces.MaterialEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
             edits.Add(From(material));
+        await Turn().ConfigureAwait(false);
         foreach (var particle in await workspaces.ParticleEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
             edits.Add(From(particle));
+        await Turn().ConfigureAwait(false);
         foreach (var physics in await workspaces.PhysicsEdits.LoadAsync(cancellationToken).ConfigureAwait(false))
             edits.Add(From(physics));
+        await Turn().ConfigureAwait(false);
         if (workspaces.InterfaceMovies is { } movies)
             foreach (var movie in await movies.LoadAsync(cancellationToken).ConfigureAwait(false))
                 edits.Add(From(movie));
-        return new ArkiveModEditSnapshot(edits);
+        var snapshot = new ArkiveModEditSnapshot(edits);
+        FullReadCompleted?.Invoke(workspaces, snapshot, readStart);
+        return snapshot;
     }
 
     /// <summary>
@@ -138,6 +204,26 @@ public sealed class ArkiveModEditSnapshot
         if (!File.Exists(edit.ManifestPath)) return null;
         try
         {
+            // An edit from the working-file index is read from its record by the store of its kind.
+            if (edit.Entry is ArkiveModIndexedEdit)
+                return edit.Kind switch
+                {
+                    UnifiedPackageAssetKind.Texture2D => From(await GuidedTextureModWorkspace.LoadProjectAsync(
+                        edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                    UnifiedPackageAssetKind.SkeletalMesh => await FromAsync(await workspaces.SkeletalMeshEdits.LoadEntryAsync(
+                        edit.ManifestPath, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false),
+                    UnifiedPackageAssetKind.StaticMesh => await FromAsync(await workspaces.StaticMeshEdits.LoadEntryAsync(
+                        edit.ManifestPath, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false),
+                    UnifiedPackageAssetKind.MaterialInstanceConstant => From(await workspaces.MaterialEdits.LoadEntryAsync(
+                        edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                    UnifiedPackageAssetKind.ParticleSystem => From(await workspaces.ParticleEdits.LoadEntryAsync(
+                        edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                    UnifiedPackageAssetKind.PhysicsAsset => From(await workspaces.PhysicsEdits.LoadEntryAsync(
+                        edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                    UnifiedPackageAssetKind.InterfaceMovie when workspaces.InterfaceMovies is not null => From(
+                        await InterfaceMovieEditWorkspaceStore.LoadEntryAsync(edit.ManifestPath, cancellationToken).ConfigureAwait(false)),
+                    _ => null,
+                };
             return edit.Entry switch
             {
                 GuidedTextureModProjectEntry => From(await GuidedTextureModWorkspace.LoadProjectAsync(
@@ -215,6 +301,7 @@ public sealed class ArkiveModEditSnapshot
         ArgumentNullException.ThrowIfNull(edit);
         return edit.Entry switch
         {
+            ArkiveModIndexedEdit indexed => indexed.BuildSha256,
             GuidedTextureModProjectEntry texture => File.Exists(texture.Manifest.EditableImagePath)
                 ? await HashFileCachedAsync(texture.Manifest.EditableImagePath, cancellationToken).ConfigureAwait(false)
                 : null,

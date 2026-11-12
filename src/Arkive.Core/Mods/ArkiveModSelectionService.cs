@@ -96,6 +96,57 @@ public static class ArkiveModSelectionService
         return await WriteAsync(edits, known.Replace(reloaded), pending, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// How many working files <see cref="SynchronizeWithSnapshotAsync"/> would rewrite for <paramref name="library"/>, judged
+    /// from <paramref name="snapshot"/>: a background check uses it to leave the records alone when nothing needs to change.
+    /// </summary>
+    public static int CountPending(ArkiveModLibraryManifest library, ArkiveModEditSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(library);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var resolution = ArkiveModConflictResolver.Resolve(library.Mods);
+        return library.Mods.Sum(mod => mod.Bindings.Count(binding =>
+            snapshot.Find(binding.EditId) is { } local &&
+            local.Included != (resolution.OutcomeFor(mod.ModId, binding.AssetId) == ArkiveModAssetOutcome.Winning)));
+    }
+
+    /// <summary>
+    /// <see cref="SynchronizeWithSnapshotAsync"/> for only the working files in <paramref name="editIds"/> (at launch, the
+    /// ones bound to enabled mods, in a snapshot made from the working-file index). A working file whose check box
+    /// differs from what its mod's selection says is read again from its record, and written only if the record still
+    /// differs, so nothing is written from the index. The others are left to the next full pass.
+    /// </summary>
+    public static async Task<ArkiveModSelectionResult> SynchronizeSomeAsync(
+        ArkiveModLibraryManifest library,
+        ArkiveModEditWorkspaces edits,
+        ArkiveModEditSnapshot snapshot,
+        IReadOnlyCollection<string> editIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(library);
+        ArgumentNullException.ThrowIfNull(edits);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(editIds);
+        var ids = editIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var resolution = ArkiveModConflictResolver.Resolve(library.Mods);
+        var reloaded = new List<ArkiveModLocalEdit>();
+        var pending = new List<(ArkiveModLibraryEntry Mod, ArkiveModLocalEdit Local, bool Include)>();
+        foreach (var mod in library.Mods)
+        {
+            foreach (var binding in mod.Bindings.Where(binding => ids.Contains(binding.EditId)))
+            {
+                if (snapshot.Find(binding.EditId) is not { } local) continue;
+                var include = resolution.OutcomeFor(mod.ModId, binding.AssetId) == ArkiveModAssetOutcome.Winning;
+                if (local.Included == include) continue;
+                if (await ArkiveModEditSnapshot.ReloadAsync(edits, local, cancellationToken).ConfigureAwait(false) is not { } fresh)
+                    continue;
+                reloaded.Add(fresh);
+                if (fresh.Included != include) pending.Add((mod, fresh, include));
+            }
+        }
+        return await WriteAsync(edits, snapshot.Replace(reloaded), pending, cancellationToken).ConfigureAwait(false);
+    }
+
     private static async Task<ArkiveModSelectionResult> WriteAsync(
         ArkiveModEditWorkspaces edits,
         ArkiveModEditSnapshot snapshot,
@@ -126,7 +177,9 @@ public static class ArkiveModSelectionService
         ArkiveModEditSnapshot? snapshot = null)
     {
         if (released.Count == 0) return;
-        snapshot ??= await ArkiveModEditSnapshot.LoadAsync(edits, cancellationToken).ConfigureAwait(false);
+        // Releasing rewrites and deletes records, so it never works from the working-file index.
+        if (snapshot is not { FromIndex: false })
+            snapshot = await ArkiveModEditSnapshot.LoadAsync(edits, cancellationToken).ConfigureAwait(false);
         foreach (var item in released)
         {
             if (snapshot.Find(item.EditId) is not { } local) continue;
