@@ -61,7 +61,8 @@ public partial class MainWindow
             var release = await Task.Run(() => _arkiveModAuthoring.ReleaseWorkingFilesAsync(row.Entry.ModId, _arkiveModContext));
             if (_authoringDraft?.ModId == row.Entry.ModId) _authoringDraft = null;
             // The package views list working files; they read them again when next opened.
-            _packageWorkspaceStale = true;
+            MarkPackageWorkspaceStale();
+            MeshView.MarkStale();
             Log($"Working files released: mod={row.Entry.ModId}, name={row.DisplayName}, deletedWorkingFiles={release.DeletedEditIds.Count}, " +
                 $"keptWorkingFiles={release.KeptEditIds.Count}, deletedExports={release.DeletedExports.Count}, " +
                 $"deletedDrafts={release.DeletedDraftIds.Count}, deletedUnpacked={release.DeletedUnpackedFolders.Count}, plannedBytes={plan.Bytes}.");
