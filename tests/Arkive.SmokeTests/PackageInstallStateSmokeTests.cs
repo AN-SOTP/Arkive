@@ -19,7 +19,7 @@ internal static class PackageInstallStateSmokeTests
         new("Mods list status on the launch fixture is the same without the package view's rows", TestModsListWithoutPackageRows),
     ];
 
-    private sealed record Setup(ArkiveTestEnvironment Environment, string PackagePath, string CleanHash, ArkiveModApplyContext Context)
+    internal sealed record Setup(ArkiveTestEnvironment Environment, string PackagePath, string CleanHash, ArkiveModApplyContext Context)
     {
         public string GameDirectory => Path.GetDirectoryName(PackagePath)!;
 
@@ -33,7 +33,7 @@ internal static class PackageInstallStateSmokeTests
                 Path.GetFileName(project.Manifest.SourcePackagePath) == Path.GetFileName(PackagePath));
     }
 
-    private static Setup NewSetup(string name)
+    internal static Setup NewSetup(string name)
     {
         var root = Path.Combine(fixtureDirectory, "install-state-" + name);
         var packagePath = CreateMaterialClient(root, out var clean);
@@ -42,7 +42,7 @@ internal static class PackageInstallStateSmokeTests
     }
 
     /// <summary>Builds the package from the clean game file with one changed material and commits it as the latest build.</summary>
-    private static GuidedTexturePackageRevision Build(Setup setup, float roughness, string? packagePath = null, string alias = "material_instance")
+    internal static GuidedTexturePackageRevision Build(Setup setup, float roughness, string? packagePath = null, string alias = "material_instance")
     {
         var environment = setup.Environment;
         packagePath ??= setup.PackagePath;

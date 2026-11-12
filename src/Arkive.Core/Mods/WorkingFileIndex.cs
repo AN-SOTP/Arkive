@@ -323,7 +323,7 @@ public static class WorkingFileIndex
         }
     }
 
-    private static WorkingFileStamp Stamp(string path, string dataRoot)
+    internal static WorkingFileStamp Stamp(string path, string dataRoot)
     {
         var info = new FileInfo(path);
         var stored = StoredPath(path, dataRoot);
@@ -332,7 +332,7 @@ public static class WorkingFileIndex
             : new WorkingFileStamp(stored, false, 0, 0);
     }
 
-    private static bool Unchanged(WorkingFileStamp stamp, string dataRoot)
+    internal static bool Unchanged(WorkingFileStamp stamp, string dataRoot)
     {
         var info = new FileInfo(FullPath(stamp.Path, dataRoot));
         return info.Exists == stamp.Exists &&
@@ -345,10 +345,10 @@ public static class WorkingFileIndex
         return path.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? path[root.Length..] : path;
     }
 
-    private static string FullPath(string stored, string dataRoot) =>
+    internal static string FullPath(string stored, string dataRoot) =>
         Path.IsPathRooted(stored) ? stored : Path.Join(Path.GetFullPath(dataRoot).TrimEnd(Path.DirectorySeparatorChar), stored);
 
-    private static bool SameFolder(string? left, string right) =>
+    internal static bool SameFolder(string? left, string right) =>
         left is not null && Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar)
             .Equals(Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
 }

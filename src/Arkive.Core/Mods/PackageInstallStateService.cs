@@ -52,9 +52,31 @@ public sealed class PackageInstallStateService
     /// is that clean original; otherwise the latest build with the check that found it not in the game. Null for a
     /// project with no build.
     /// </summary>
-    public async Task<PackageDeploymentState?> ResolveAsync(
+    public Task<PackageDeploymentState?> ResolveAsync(
+        GuidedTexturePackageEntry package,
+        CancellationToken cancellationToken = default) =>
+        ResolveCoreAsync(package, inconclusive: null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="ResolveAsync"/>, with the files its state was worked out from (see <see cref="DependencyPathsAsync"/>)
+    /// for the launch memo (<see cref="PackageInstallMemo"/>). The files are null when any check was inconclusive or
+    /// they cannot all be named: such a state is shown but never remembered, since a file that could not be read this
+    /// time may read differently next time without its length or write time changing.
+    /// </summary>
+    public async Task<(PackageDeploymentState? State, IReadOnlyList<string>? Files)> ResolveWithFilesAsync(
         GuidedTexturePackageEntry package,
         CancellationToken cancellationToken = default)
+    {
+        var inconclusive = false;
+        var state = await ResolveCoreAsync(package, () => inconclusive = true, cancellationToken).ConfigureAwait(false);
+        if (inconclusive || state?.Error is not null) return (state, null);
+        return (state, await DependencyPathsAsync(package, state, cancellationToken).ConfigureAwait(false));
+    }
+
+    private async Task<PackageDeploymentState?> ResolveCoreAsync(
+        GuidedTexturePackageEntry package,
+        Action? inconclusive,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(package);
         var revisions = package.Manifest.Revisions
@@ -77,6 +99,7 @@ public sealed class PackageInstallStateService
         }
         catch (Exception exception) when (Inconclusive(exception))
         {
+            inconclusive?.Invoke();
             latestState = new PackageDeploymentState(latest, null, exception.Message);
             Log?.Invoke(
                 $"Guided package refresh latest-revision inspection failed: " +
@@ -109,6 +132,7 @@ public sealed class PackageInstallStateService
             }
             catch (Exception exception) when (Inconclusive(exception))
             {
+                inconclusive?.Invoke();
                 Log?.Invoke(
                     $"Guided package earlier-revision inspection was inconclusive: " +
                     $"packageId={package.Manifest.PackageProjectId}, revision={revision.RevisionId}, error={exception.Message}");
@@ -125,6 +149,7 @@ public sealed class PackageInstallStateService
             }
             catch (Exception exception) when (Inconclusive(exception))
             {
+                inconclusive?.Invoke();
                 Log?.Invoke($"Guided package lineage manifest was unreadable: packageId={package.Manifest.PackageProjectId}, " +
                             $"revision={revision.RevisionId}, error={exception.Message}");
             }
@@ -151,6 +176,7 @@ public sealed class PackageInstallStateService
             }
             catch (Exception exception) when (Inconclusive(exception))
             {
+                inconclusive?.Invoke();
                 Log?.Invoke($"Guided package root-revision inspection was inconclusive: " +
                             $"packageId={package.Manifest.PackageProjectId}, revision={root.Revision.RevisionId}, error={exception.Message}");
             }
@@ -185,6 +211,73 @@ public sealed class PackageInstallStateService
     }
 
     /// <summary>
+    /// Every file <paramref name="state"/> (what <see cref="ResolveAsync"/> just gave for <paramref name="package"/>) was
+    /// worked out from, besides the package project record itself: a build file whose presence decides which build is
+    /// the latest, and each checked build's record, readiness record, payload, variable-size approval, receipt, backup
+    /// and game file. When the latest build was found in the game (nearly every installed package) only its files
+    /// count, since the check stopped there; otherwise every build that exists counts, which may be more than the check
+    /// looked at but never fewer. Null when a build or readiness record that exists cannot be read, so the list could
+    /// miss a file.
+    /// </summary>
+    public async Task<IReadOnlyList<string>?> DependencyPathsAsync(
+        GuidedTexturePackageEntry package,
+        PackageDeploymentState? state,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        var manifest = package.Manifest;
+        var files = new List<string>();
+        // The latest is the build the record names while that build exists; otherwise the newest that exists, which
+        // every build's presence decides.
+        var namedLatest = manifest.LatestRevisionId is { } latestId && state is not null &&
+                          state.Revision.RevisionId.Equals(latestId, StringComparison.OrdinalIgnoreCase) &&
+                          manifest.Revisions.Count(revision => revision.RevisionId.Equals(
+                              latestId, StringComparison.OrdinalIgnoreCase)) == 1;
+        if (!namedLatest) files.AddRange(manifest.Revisions.Select(revision => Path.GetFullPath(revision.ModBundleManifestPath)));
+        try
+        {
+            // An active state that is not an earlier build is the latest build's own check, which ended the search.
+            if (namedLatest && state is { IsActive: true, ForDeletionIdentityOnly: false, Inspection: { } inspection })
+            {
+                files.AddRange([inspection.BundleManifestPath, inspection.ReadinessManifestPath, inspection.PayloadPath,
+                    inspection.ReceiptPath, inspection.BackupPath, inspection.TargetPath]);
+                if (GatePath(Path.GetDirectoryName(inspection.BundleManifestPath)!, inspection.Bundle) is { } gate) files.Add(gate);
+                return Distinct(files);
+            }
+            foreach (var revision in manifest.Revisions)
+            {
+                var bundlePath = Path.GetFullPath(revision.ModBundleManifestPath);
+                files.Add(bundlePath);
+                if (!File.Exists(bundlePath)) continue;
+                var bundle = await ArkiveModBundleService.LoadBundleAsync(bundlePath, cancellationToken).ConfigureAwait(false);
+                var directory = Path.GetDirectoryName(bundlePath)!;
+                var readinessPath = Path.GetFullPath(Path.Combine(directory, bundle.DeploymentReadinessRelativePath));
+                files.Add(readinessPath);
+                files.Add(Path.GetFullPath(Path.Combine(directory, bundle.PayloadRelativePath)));
+                if (GatePath(directory, bundle) is { } gate) files.Add(gate);
+                files.Add(Path.GetFullPath(Path.Combine(_stateRoot, bundle.ModId, ArkiveModDeploymentService.ReceiptFileName)));
+                files.Add(Path.GetFullPath(Path.Combine(_backupRoot, bundle.RequiredSourcePackageSha256, bundle.SourcePhysicalPackageName)));
+                if (!File.Exists(readinessPath)) continue;
+                var readiness = await ArkiveModBundleService.LoadReadinessAsync(readinessPath, cancellationToken).ConfigureAwait(false);
+                files.Add(Path.GetFullPath(readiness.InstallTargetPath));
+            }
+            return Distinct(files);
+        }
+        catch (Exception exception) when (Inconclusive(exception))
+        {
+            return null;
+        }
+
+        static string? GatePath(string directory, ArkiveModBundleManifest bundle) =>
+            bundle.VariableSizeMeshCount > 0 && !string.IsNullOrWhiteSpace(bundle.VariableSizeDeploymentGateRelativePath)
+                ? Path.GetFullPath(Path.Combine(directory, bundle.VariableSizeDeploymentGateRelativePath))
+                : null;
+
+        static IReadOnlyList<string> Distinct(IEnumerable<string> paths) =>
+            paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    /// <summary>
     /// The build in the game for each game package, keyed by <see cref="ArkiveModFileService.PhysicalPackageKey"/>, as
     /// the Mods list reads it: for each package the project <see cref="ArkiveModApplyService.FindPackageProject"/> picks
     /// among <paramref name="projects"/> (in their order), its active build or null.
@@ -194,15 +287,29 @@ public sealed class PackageInstallStateService
         string? gameDirectory,
         Func<GuidedTexturePackageEntry, PackageDeploymentState?> stateOf)
     {
-        ArgumentNullException.ThrowIfNull(projects);
         ArgumentNullException.ThrowIfNull(stateOf);
+        return ActiveRevisionsByPhysicalName(projects, gameDirectory,
+            (Func<GuidedTexturePackageEntry, PackageInstallSummary?>)(project => PackageInstallSummary.Of(stateOf(project))));
+    }
+
+    /// <summary>
+    /// <see cref="ActiveRevisionsByPhysicalName(IReadOnlyList{GuidedTexturePackageEntry}, string?, Func{GuidedTexturePackageEntry, PackageDeploymentState?})"/>
+    /// from what the Mods list keeps of each state, which the launch memo can also give.
+    /// </summary>
+    public static IReadOnlyDictionary<string, GuidedTexturePackageRevision?> ActiveRevisionsByPhysicalName(
+        IReadOnlyList<GuidedTexturePackageEntry> projects,
+        string? gameDirectory,
+        Func<GuidedTexturePackageEntry, PackageInstallSummary?> summaryOf)
+    {
+        ArgumentNullException.ThrowIfNull(projects);
+        ArgumentNullException.ThrowIfNull(summaryOf);
         var map = new Dictionary<string, GuidedTexturePackageRevision?>(StringComparer.Ordinal);
         foreach (var project in projects)
         {
             var physical = Path.GetFileName(project.Manifest.SourcePackagePath);
             if (ArkiveModApplyService.FindPackageProject(physical, gameDirectory, projects) != project) continue;
-            var state = stateOf(project);
-            map[ArkiveModFileService.PhysicalPackageKey(physical)] = state?.IsActive == true ? state.Revision : null;
+            var summary = summaryOf(project);
+            map[ArkiveModFileService.PhysicalPackageKey(physical)] = summary?.Active == true ? summary.Revision : null;
         }
         return map;
     }
