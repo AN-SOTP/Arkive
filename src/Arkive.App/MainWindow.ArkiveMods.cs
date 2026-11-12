@@ -1250,6 +1250,11 @@ public partial class MainWindow : Window
                     $"succeeded={package.Succeeded}, revision={package.RevisionId ?? "-"}, message={package.Message}");
             Log($"Mod apply timings: {string.Join(" | ", result.Timings)}");
             foreach (var detail in result.ErrorDetails) Log($"Mod apply error details: {detail}");
+            if (result.Succeeded)
+            {
+                ModLibraryStatusText.Text = "Removing package builds the rebuilt packages no longer need…";
+                await CleanUpAfterApplyAsync(result);
+            }
             var summary = $"Set up {result.SetUpAssetCount:N0} asset(s), rebuilt {result.RebuiltPackageCount:N0}, " +
                           $"installed {result.InstalledPackageCount:N0}, and restored {result.RestoredPackageCount:N0} package(s) " +
                           $"in {result.Duration.TotalSeconds:N1}s.";
