@@ -335,12 +335,15 @@ public partial class MainWindow : Window
         try
         {
             var snapshot = await _skeletalMeshEditWorkspaceStore.LoadAsync();
+            // Only a few of thousands of mesh edits have a standalone bundle; looking for each one held the window.
+            var withBundles = await Task.Run(() => snapshot.Entries
+                .Select(entry => (Entry: entry, BundlePath: Path.Combine(
+                    entry.DirectoryPath, "deployment-bundle", ArkiveModBundleService.BundleManifestFileName)))
+                .Where(item => File.Exists(item.BundlePath))
+                .ToArray());
             var rows = new List<ModifiedMeshUpkRow>();
-            foreach (var entry in snapshot.Entries)
+            foreach (var (entry, bundlePath) in withBundles)
             {
-                var bundlePath = Path.Combine(
-                    entry.DirectoryPath, "deployment-bundle", ArkiveModBundleService.BundleManifestFileName);
-                if (!File.Exists(bundlePath)) continue;
                 ArkiveModBundleManifest? bundle = null;
                 ModDeploymentInspection? inspection = null;
                 string? error = null;

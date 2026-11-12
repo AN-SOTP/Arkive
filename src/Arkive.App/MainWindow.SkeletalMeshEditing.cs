@@ -225,9 +225,10 @@ public partial class MainWindow : Window
                 grid.ScrollIntoView(selected);
             }
             DisplayEditedSkeletalMeshesForSelectedExport(selectEditId);
-            var totalBytes = snapshot.Entries
+            // Thousands of file sizes, read on the thread pool so the window stays responsive.
+            var totalBytes = await Task.Run(() => snapshot.Entries
                 .Where(entry => entry.GlbExists)
-                .Sum(entry => new FileInfo(entry.GlbPath).Length);
+                .Sum(entry => new FileInfo(entry.GlbPath).Length));
             SkeletalMeshEditableWorkspaceSummaryText.Text =
                 $"{snapshot.Entries.Count:N0} saved editable mesh export(s) | " +
                 $"{editedSnapshot.Entries.Count:N0} registered edit(s) | " +
