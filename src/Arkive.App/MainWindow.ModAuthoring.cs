@@ -312,7 +312,7 @@ public partial class MainWindow : Window
     /// </param>
     private async Task RunAuthoringOperationAsync(Func<Task> operation, string? busyTitle = "Working on the mod…")
     {
-        if (_authoringBusy || _modLibraryBusy || _guidedTextureModInProgress || _modSetBusy || _workshopBusy) return;
+        if (_modsChecking || _authoringBusy || _modLibraryBusy || _guidedTextureModInProgress || _modSetBusy || _workshopBusy) return;
         using var busy = busyTitle is null ? null
             : ShowBusy(busyTitle, "Arkive is updating the mod's working files. Please wait until it finishes.");
         _authoringBusy = true;
@@ -343,7 +343,8 @@ public partial class MainWindow : Window
     private void UpdateAuthoringActions()
     {
         if (AuthoringSaveButton is null) return;
-        var idle = !_authoringBusy && !_modLibraryBusy && !_guidedTextureModInProgress && !_workshopBusy;
+        // Launch checks the mods' working files first; until then nothing here can change them.
+        var idle = !_modsChecking && !_authoringBusy && !_modLibraryBusy && !_guidedTextureModInProgress && !_workshopBusy;
         var hasMod = _authoringDraft is not null;
         var selectionCount = AuthoringAssetsGrid.SelectedItems.OfType<AuthoringAssetRow>().Count();
         var selected = selectionCount == 1 ? AuthoringAssetsGrid.SelectedItem as AuthoringAssetRow : null;

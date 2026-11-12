@@ -306,6 +306,7 @@ public partial class MainWindow : Window
 
     private async Task AddCompleteAuthoringKitAsync(LibraryAssetRow row, CancellationToken cancellationToken)
     {
+        await EnsureGameDatabaseAsync("complete kit");
         var libraryRoot = _libraryRootPath;
         var metadata = _gameMetadataIndex;
         var session = await CreateAuthoringAddSessionAsync(cancellationToken);

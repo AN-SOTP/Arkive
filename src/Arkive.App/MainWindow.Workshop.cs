@@ -42,6 +42,7 @@ public partial class MainWindow : Window
 
     private async Task SearchWorkshopAsync(string trigger)
     {
+        await EnsureGameDatabaseAsync("Edit mods search");
         if (_workshopBusy || string.IsNullOrWhiteSpace(_libraryRootPath))
         {
             if (string.IsNullOrWhiteSpace(_libraryRootPath))
@@ -386,6 +387,7 @@ public partial class MainWindow : Window
 
     private async Task<PackageIndexSearchResult> ApplyLibraryFilterAsync(string trigger = "user")
     {
+        await EnsureGameDatabaseAsync("Asset Library search");
         if (LibraryGrid is null ||
             LibrarySearchTextBox is null ||
             LibrarySearchScopeComboBox is null ||
@@ -738,6 +740,7 @@ public partial class MainWindow : Window
 
     private async Task ExploreRelationshipsAsync(PackageIndexMatch seed, string trigger)
     {
+        await EnsureGameDatabaseAsync("relationships explored");
         if (string.IsNullOrEmpty(_libraryRootPath))
         {
             StatusText.Text = "Choose or restore the indexed Packages folder first.";

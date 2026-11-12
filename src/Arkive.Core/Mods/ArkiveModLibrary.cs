@@ -151,6 +151,13 @@ public sealed class ArkiveModLibrary
         return manifest;
     }
 
+    /// <summary>
+    /// The SHA-256 of the library file <paramref name="manifest"/> was read from or saved as, when it is the one this
+    /// library last read or saved; otherwise null. Launch keys what it remembers of the Mods list on it.
+    /// </summary>
+    public string? Sha256Of(ArkiveModLibraryManifest manifest) =>
+        _loaded is { } loaded && ReferenceEquals(loaded.Manifest, manifest) ? Convert.ToHexString(loaded.Sha256) : null;
+
     private sealed record LoadedManifest(byte[] Sha256, ArkiveModLibraryManifest Manifest);
 
     private volatile LoadedManifest? _loaded;

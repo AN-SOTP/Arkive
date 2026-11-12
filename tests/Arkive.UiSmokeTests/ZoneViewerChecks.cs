@@ -63,11 +63,13 @@ internal static class ZoneViewerChecks
         window.Show();
         try
         {
+            // The Asset Library loads the game database, and with it the zone names, when first shown.
+            await ReadyCheckedChecks.UntilCheckedAsync(window);
+            Control<TabControl>(window, "MainTabControl").SelectedItem = Control<TabItem>(window, "LibraryTab");
             await UntilAsync(() => Control<TextBlock>(window, "GameMetadataText").Text.Contains("relationships", StringComparison.Ordinal),
                 () => $"The game database mapping did not load: {Control<TextBlock>(window, "GameMetadataText").Text}");
             var zoneMap = typeof(MainWindow).GetField("_zoneMap", BindingFlags.Instance | BindingFlags.NonPublic)!;
             await UntilAsync(() => zoneMap.GetValue(window) is not null, () => "The saved zone names were not loaded.");
-            Control<TabControl>(window, "MainTabControl").SelectedItem = Control<TabItem>(window, "LibraryTab");
             var panel = Control<Border>(window, "LibraryZonePanel");
             Check(panel.Visibility == Visibility.Collapsed, "The map cards show before any search.");
             Control<TextBox>(window, "LibrarySearchTextBox").Text = "land of order";

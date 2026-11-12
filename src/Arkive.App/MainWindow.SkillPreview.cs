@@ -13,8 +13,13 @@ public partial class MainWindow
         _packageIndexStore, () => _libraryRootPath, () => _gameMetadataIndex, _reader, _protectionProvider,
         ViewerAnimations(), ModelViewerService(), ModelViewerService().Cache.RootDirectory, ParticleAssets(), Log);
 
-    private Task<SkillPreviewOffer?> FindSkillPreviewAsync(Arkive.Core.Viewer.ModelViewerRequest request, CancellationToken cancellationToken) =>
-        _umodelBridge is null ? Task.FromResult<SkillPreviewOffer?>(null) : SkillPreview().OfferAsync(request, cancellationToken);
+    private async Task<SkillPreviewOffer?> FindSkillPreviewAsync(Arkive.Core.Viewer.ModelViewerRequest request, CancellationToken cancellationToken)
+    {
+        if (_umodelBridge is null) return null;
+        // Skills are found through the game database's names.
+        await EnsureGameDatabaseAsync("skill preview");
+        return await SkillPreview().OfferAsync(request, cancellationToken);
+    }
 
     /// <summary>
     /// Adds a model's skill effects (one skill's, or all its skills' and its look's when <paramref name="skillId"/> is
@@ -24,6 +29,7 @@ public partial class MainWindow
     private async Task<string> AddSkillEffectsToModAsync(Arkive.Core.Viewer.ModelViewerRequest request, string classFile, int? skillId)
     {
         if (_authoringDraft is null) return "Open Edit mods and choose or create the mod to add the effects to, then try again.";
+        await EnsureGameDatabaseAsync("skill effects added to a mod");
         if (_gameMetadataIndex is null || string.IsNullOrEmpty(_libraryRootPath))
             return "Load the game DB mapping and the Asset Library first: they find each effect's package.";
         var (own, shared) = await SkillPreview().EffectsForModAsync(request, classFile, skillId, CancellationToken.None);

@@ -45,17 +45,21 @@ public partial class MainWindow : Window
         _startupWindow?.ShowDatabase(_startupDatabase.Text, _startupDatabase.Done);
     }
 
-    /// <summary>Shows the startup window only when loading takes long enough to notice.</summary>
+    /// <summary>
+    /// Shows the startup window only when loading takes long enough to notice, and never once the remembered Mods list
+    /// is on screen.
+    /// </summary>
     private async Task ShowStartupWindowWhenSlowAsync()
     {
         await Task.Delay(TimeSpan.FromSeconds(1.5));
-        if (_startupFinished || !IsVisible || WindowState == WindowState.Minimized) return;
+        if (_startupFinished || _readyFromMemory || !IsVisible || WindowState == WindowState.Minimized) return;
         _startupWindow = new StartupProgressWindow { Owner = this, ShowActivated = false };
         _startupWindow.Closed += (_, _) => _startupWindow = null;
         ReportStartup();
         _startupWindow.Show();
     }
 
+    /// <summary>Logs the end of loading; "Startup loading took" now means the mods have been checked.</summary>
     private void FinishStartup(Stopwatch watch)
     {
         _startupFinished = true;
@@ -65,7 +69,7 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e) => await RunStartupAsync();
 
-    // Work startup leaves running in the background (see RestoredBackgroundWork).
+    // Work loading the game database starts and leaves running (see RestoredBackgroundWork).
     private Task? _restoredLibrarySearch;
     private Task? _restoredZoneNames;
 
@@ -78,23 +82,34 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// The startup loading sequence, run when the window loads and by a measuring run (--measure-startup), each step timed
-    /// through <paramref name="steps"/>. A measuring run (<see cref="StartupMeasurement.Current"/>) runs every loading
-    /// step in the same order but skips what writes user state or only matters on screen: the update offer, the startup
-    /// progress window, the clean-up jobs, settings and cache saves, the package-build trim, the game-update notice and
-    /// importing mod files passed on the command line.
+    /// through <paramref name="steps"/>: Ready (the remembered Mods list shown), then Checked (see
+    /// MainWindow.ReadyChecked). The game database is not loaded here: the pages that use it load it when first shown
+    /// (see MainWindow.Databases). A measuring run (<see cref="StartupMeasurement.Current"/>) runs every loading step in
+    /// the same order but skips what writes user state or only matters on screen: the update offer, the startup
+    /// progress window, the clean-up jobs, settings and cache saves (unless --save-caches), the package-build trim, the
+    /// game-update notice, importing mod files passed on the command line, and the background pass (unless
+    /// --wait-background, which runs and times it).
     /// </summary>
     internal async Task RunStartupAsync(StartupSteps? steps = null)
     {
         var startup = Stopwatch.StartNew();
-        var measuring = StartupMeasurement.Current is not null;
-        // A newer Arkive is offered before anything loads, so installing it does not wait for the mods and database.
+        var measurement = StartupMeasurement.Current;
+        var measuring = measurement is not null;
+        // A newer Arkive is offered before anything loads, so installing it does not wait for the mods.
         if (!measuring && _restoredSettings.CheckForUpdatesOnStartup && await OfferApplicationUpdateAtStartupAsync()) return;
         if (!measuring) _ = ShowStartupWindowWhenSlowAsync();
         steps ??= new StartupSteps(Dispatcher);
         steps.Log = Log;
+        _saveLaunchCaches = measurement is null || measurement.SaveCaches;
+        if (_saveLaunchCaches) ArkiveModEditSnapshot.FullReadCompleted += OnWorkingFilesRead;
         try
         {
             await LoadWorkspaceAsync(steps, startup, measuring);
+            if (measurement is { WaitBackground: true })
+            {
+                await steps.RunAsync("background", () => _backgroundCheck = RunBackgroundCheckAsync(_backgroundCheckCancellation.Token));
+                ReachLaunchMoment("background", steps, startup);
+            }
         }
         finally
         {
@@ -103,13 +118,26 @@ public partial class MainWindow : Window
         if (measuring)
         {
             steps.Skip("package-build-trim", "measuring run: trimming deletes package build files");
-            steps.Skip("cache-save", "measuring run: the hash and outside-change caches are not saved");
+            if (measurement!.SaveCaches)
+            {
+                await steps.RunAsync("cache-save", async () =>
+                {
+                    await WaitForLaunchCachesAsync();
+                    await Task.Run(() =>
+                    {
+                        ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath);
+                        ArkiveModApplyService.SaveOutsideChangeCache(OutsideChangeCachePath);
+                    });
+                });
+            }
+            else steps.Skip("cache-save", "measuring run: the hash, outside-change, working-file index and Mods list caches are not saved");
             steps.Skip("game-update-notice", "measuring run: the notice may open a message");
             steps.Skip("mod-file-import", "measuring run: mod files on the command line are not imported");
             return;
         }
         _ = TrimPackageBuildsAsync("startup");
         StartMeshRecordCompaction();
+        StartBackgroundCheck();
         _ = Task.Run(() =>
         {
             ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath);
@@ -140,56 +168,36 @@ public partial class MainWindow : Window
         // Launch waits only for what the Mods tab shows. The advanced views (exports, baselines, meshes, materials,
         // package projects, mod sets, mesh packages, the game update check, the conflict audit) read theirs when
         // first opened; see MainWindow.ViewLoading.
-        ReportStartup("Reading the mod library…");
-        await steps.RunAsync("library", InitializeArkiveModLibraryAsync);
-        ReportStartup("Checking which mods are in the game…");
-        // With the working files the library step just read, and the drafts Edit mods lists.
-        await steps.RunAsync("mods-list", () => RefreshArkiveModsAsync("workspace restore"));
+        ModLibraryCheckingText.Visibility = Visibility.Visible;
+        try
+        {
+            ReportStartup("Reading the mod library…", database: "Loaded when a page needs it.", databaseDone: true);
+            await steps.RunAsync("library", InitializeArkiveModLibraryAsync);
+            // Ready: the list as Arkive last verified it, while the mods are checked again.
+            _readyFromMemory = await steps.RunAsync("remembered-list", ShowRememberedModListAsync,
+                shown => shown ? "shown" : "none usable");
+            if (_readyFromMemory)
+            {
+                _startupWindow?.Close();
+                ReachLaunchMoment("ready", steps, startup, "remembered list");
+            }
+            ReportStartup("Checking your mods' files…");
+            await steps.RunAsync("mods-list", CheckModsAsync);
+        }
+        finally
+        {
+            FinishModsCheck();
+        }
+        // Without a remembered list the verified one is the first shown.
+        if (!_readyFromMemory) ReachLaunchMoment("ready", steps, startup, "verified list");
+        ReachLaunchMoment("checked", steps, startup);
         ReportStartup($"{_arkiveModLibraryManifest.Mods.Count:N0} mod(s), " +
-                      $"{_arkiveModLibraryManifest.Mods.Count(mod => mod.Enabled):N0} enabled.", modsDone: true,
-            database: "Loading the game database…");
+                      $"{_arkiveModLibraryManifest.Mods.Count(mod => mod.Enabled):N0} enabled.", modsDone: true);
         Log($"Startup mods loaded in {startup.Elapsed.TotalSeconds:N1}s.");
-        var defaultMetadataPath = Path.Combine(
-            _projectRoot,
-            "staging",
-            "lpk",
-            "data2-fixed",
-            "arkive-asset-metadata.json");
-        var metadataPath = !string.IsNullOrWhiteSpace(_restoredSettings.GameMetadataPath) &&
-                           File.Exists(_restoredSettings.GameMetadataPath)
-            ? _restoredSettings.GameMetadataPath
-            : defaultMetadataPath;
-        var loadedMetadata = false;
-        if (File.Exists(metadataPath))
-        {
-            await steps.RunAsync("database", () => LoadGameMetadataAsync(
-                metadataPath,
-                showErrors: false,
-                loadTrigger: "workspace restore"));
-            loadedMetadata = _gameMetadataIndex is not null;
-            // In-game names only show in the package workspace's advanced views; they reload it when opened.
-            if (loadedMetadata) MarkPackageWorkspaceStale();
-            ReportStartup(database: loadedMetadata ? "Loaded." : "Could not be loaded; see Diagnostics.", databaseDone: true);
-        }
-        else
-        {
-            ReportStartup(database: "Not set up yet.", databaseDone: true);
-            Log($"Workspace metadata was not restored because the candidate file is unavailable: {metadataPath}");
-        }
 
         if (!measuring)
             await steps.RunAsync("preview-cache-cleanup", () => CleanupGuidedPreviewCacheAsync(TimeSpan.FromHours(12), interactive: false));
         else steps.Skip("preview-cache-cleanup", "measuring run: clean-up jobs delete files");
-        if (!loadedMetadata &&
-            _libraryRootPath is not null &&
-            (!string.IsNullOrWhiteSpace(LibrarySearchTextBox.Text) ||
-             !string.IsNullOrWhiteSpace(
-                 (LibraryKindComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString()) ||
-             !string.IsNullOrWhiteSpace(
-                 (LibraryArchetypeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString())))
-        {
-            await steps.RunAsync("library-filter", () => ApplyLibraryFilterAsync("workspace restore"));
-        }
 
         FinishStartup(startup);
         Log(
@@ -685,9 +693,13 @@ public partial class MainWindow : Window
             _restoredZoneNames = RefreshZoneNamesAsync(path);
             RefreshEntityBrowserEntities(loadTrigger);
             RefreshOpenPackageMetadata();
-            // At startup the restored Library search runs on its own (minutes when its routing index is rebuilt).
-            if (loadTrigger == "workspace restore") _restoredLibrarySearch = LoadLibraryDocumentsAsync(loadTrigger);
-            else await LoadLibraryDocumentsAsync(loadTrigger);
+            // Loaded on first use, the Asset Library's restored search runs when that tab is first shown (minutes when
+            // its routing index is rebuilt); see ShowGameDatabaseForTabAsync.
+            if (loadTrigger != "on demand")
+            {
+                _restoredLibrarySearchStarted = true;
+                await LoadLibraryDocumentsAsync(loadTrigger);
+            }
             StatusText.Text =
                 $"Loaded {index.AssociationCount:N0} searchable in-game-name relationships.";
             Log(
@@ -778,6 +790,7 @@ public partial class MainWindow : Window
 
     private async void GameAssetLinksButton_Click(object sender, RoutedEventArgs e)
     {
+        await EnsureGameDatabaseAsync("verified asset links");
         if (_databaseBuildCancellation is not null || _assetLinkCancellation is not null) return;
         if (_umodelBridge is null || _gameMetadataIndex is null ||
             string.IsNullOrWhiteSpace(_gameMetadataPath) ||

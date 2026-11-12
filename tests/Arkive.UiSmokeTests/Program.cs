@@ -76,11 +76,23 @@ internal static class Program
         CreateLibraryFixture(root);
         var window = CreateWindow(root);
         window.Show();
-        await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == 3);
+        await ReadyCheckedChecks.UntilCheckedAsync(window);
+        var tabs = Control<TabControl>(window, "MainTabControl");
+        Check(tabs.SelectedItem == Control<TabItem>(window, "ModifiedUpksTab"), "Mods was not the initial destination.");
+        // The game database is not loaded at launch: the Asset Library loads it when first shown, then runs its restored search.
+        Check(ReadyCheckedChecks.GameDatabase(window) is null &&
+              !Control<TextBlock>(window, "GameMetadataText").Text.Contains("relationships", StringComparison.Ordinal),
+            "The game database was loaded at launch.");
+        tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");
+        await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == 3,
+            () => $"The Asset Library did not run its restored search when first shown: {Control<TextBlock>(window, "LibraryCountText").Text}");
         // In-game names come from the game database mapping, which loads after the first search on slow machines.
         await UntilAsync(() => Control<TextBlock>(window, "GameMetadataText").Text.Contains("relationships", StringComparison.Ordinal),
             () => $"The game database mapping did not load: {Control<TextBlock>(window, "GameMetadataText").Text}");
-        var tabs = Control<TabControl>(window, "MainTabControl");
+        Check(ReadyCheckedChecks.GameDatabase(window) is not null, "Showing the Asset Library did not load the game database.");
+        Console.WriteLine("PASS: the game database loads when the Asset Library is first shown, not at launch, and its restored search runs then");
+        tabs.SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
+        window.UpdateLayout();
         Check(tabs.Items.OfType<TabItem>().Where(tab => tab.Visibility == Visibility.Visible)
                 .Select(tab => tab.Header.ToString()).SequenceEqual(["Asset Library", "Create Mod", "Edit Mods", "Simple Upscale", "Outfit Swap", "Sounds", "Login Screen", "Fonts", "Language", "Tweaks", "Mods"]),
             "The main navigation should expose Asset library, Create mod, Edit mods, Simple upscale, Outfit swap, Sounds, Login screen, Fonts, Language, Tweaks, and Mods.");
@@ -222,8 +234,12 @@ internal static class Program
         await UntilAsync(() => !window.IsVisible, () => "The initial test window did not finish closing.");
         window = CreateWindow(root);
         window.Show();
+        await ReadyCheckedChecks.UntilCheckedAsync(window);
+        Control<TabControl>(window, "MainTabControl").SelectedItem = Control<TabItem>(window, "LibraryTab");
         await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == 3,
             () => "The reopened workspace did not finish restoring its asset library.");
+        Control<TabControl>(window, "MainTabControl").SelectedItem = Control<TabItem>(window, "ModifiedUpksTab");
+        window.UpdateLayout();
         await UntilAsync(() => Control<ComboBox>(window, "AuthoringModComboBox") is { Items.Count: > 0, IsEnabled: true },
             () => "The restored draft did not appear after reopening.");
         Control<ComboBox>(window, "AuthoringModComboBox").SelectedIndex = 0;
@@ -252,6 +268,7 @@ internal static class Program
         BannerHeaderChecks.Verify();
         window.Close();
         await UntilAsync(() => !window.IsVisible);
+        await ReadyCheckedChecks.VerifyAsync(root, CreateWindow);
     }
 
     private static void CreateLibraryFixture(string root)

@@ -58,6 +58,8 @@ public partial class MainWindow
 
     private async void OpenParticleEditor(ParticleEditorRequest request, ParticleEffectRecipe recipe, Func<ParticleEffectRecipe, Task<string>>? save)
     {
+        // What an effect draws with is found through the game database's package names.
+        await EnsureGameDatabaseAsync("particle editor opened");
         IReadOnlyDictionary<string, string>? packageFiles = null;
         if (!string.IsNullOrWhiteSpace(_libraryRootPath) && _umodelBridge is not null)
         {
@@ -82,7 +84,10 @@ public partial class MainWindow
         token => ModelViewerService().ShaderIndexAsync(_libraryRootPath, null, token), ParticleTextureRoot, Log);
 
     /// <summary>The textures and meshes an effect's emitters draw with, exported once and kept under cache\particle-textures.</summary>
-    private Task<ParticleEditorAssets> FindParticleAssetsAsync(ParticleEffectModel model, CancellationToken cancellationToken) =>
-        ParticleAssets().FindAsync(model.Emitters, null, cancellationToken);
+    private async Task<ParticleEditorAssets> FindParticleAssetsAsync(ParticleEffectModel model, CancellationToken cancellationToken)
+    {
+        await EnsureGameDatabaseAsync("effect textures");
+        return await ParticleAssets().FindAsync(model.Emitters, null, cancellationToken);
+    }
 
 }

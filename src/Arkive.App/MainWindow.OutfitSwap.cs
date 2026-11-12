@@ -79,6 +79,7 @@ public partial class MainWindow
     private async Task SearchOutfitsAsync(TextBox box, DataGrid grid)
     {
         if (_outfitSwapBusy) return;
+        await EnsureGameDatabaseAsync("Outfit Swap search");
         if (string.IsNullOrWhiteSpace(_libraryRootPath))
         {
             OutfitSwapStatusText.Text = "Choose or restore the indexed Packages folder in Asset library first.";

@@ -29,6 +29,12 @@ public sealed record LaunchStepResult(
     /// <summary>How many times the step walked each store of working files or package projects (see StoreWalks).</summary>
     public IReadOnlyDictionary<string, int>? StoreWalks { get; init; }
 
+    /// <summary>
+    /// Windows' count of the process's I/O operations other than reads and writes during the step: opening a file
+    /// counts about two (open and close), looking at a file's size and time one, listing a folder a few. Cached or not.
+    /// </summary>
+    public long FileOperations { get; init; }
+
     /// <summary>The line normal launches write to the session log for this step.</summary>
     public string LogLine => Skipped
         ? $"Startup step: id={Id}, skipped ({Note})."
@@ -36,7 +42,7 @@ public sealed record LaunchStepResult(
               $"Startup step: id={Id}, seconds={Seconds:0.00}, cpu={CpuSeconds:0.00}, readMB={BytesRead / 1048576d:0.0}, ") +
           FormattableString.Invariant(
               $"writeMB={BytesWritten / 1048576d:0.0}, heapMB={HeapBytes / 1048576d:0}, uiBlocked={UiBlockedSeconds:0.00}, ") +
-          FormattableString.Invariant($"uiLongest={UiLongestBlockSeconds:0.00}") +
+          FormattableString.Invariant($"uiLongest={UiLongestBlockSeconds:0.00}, fileOps={FileOperations}") +
           (StoreWalks is null ? string.Empty : ", walks=" + string.Join(" ", StoreWalks.Select(pair => $"{pair.Key}:{pair.Value}"))) +
           (Note is null ? string.Empty : $", note={Note}") + (Error is null ? string.Empty : $", error={Error}") + ".";
 }
@@ -71,6 +77,9 @@ public sealed record LaunchMeasurementReport(
     /// <summary>The store walks of every step added up: how often the whole run read each store.</summary>
     public IReadOnlyDictionary<string, int>? StoreWalks { get; init; }
 
+    /// <summary>Moments a launch reached (Ready, Checked), with what the process had read by then.</summary>
+    public IReadOnlyList<LaunchMoment>? Moments { get; init; }
+
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -91,6 +100,23 @@ public sealed record LaunchMeasurementReport(
         JsonSerializer.Deserialize<LaunchMeasurementReport>(File.ReadAllText(path), JsonOptions) ??
         throw new InvalidDataException("The measurement file was empty.");
 }
+
+/// <summary>
+/// A moment of a launch: the Mods list shown from what was remembered (ready), or verified (checked). The counts are the
+/// process's totals since it started, so they include everything read before the moment, from any thread.
+/// </summary>
+/// <param name="ProcessSeconds">Since the process started.</param>
+/// <param name="StartupSeconds">Since the startup sequence began (after the window was made).</param>
+/// <param name="FileOperations">Opens, closes, size-and-time looks and folder listings (see LaunchStepResult.FileOperations).</param>
+public sealed record LaunchMoment(
+    string Id,
+    double ProcessSeconds,
+    double StartupSeconds,
+    long BytesRead,
+    long ReadOperations,
+    long FileOperations,
+    long HeapBytes,
+    string? Note);
 
 /// <summary>
 /// Runs steps one after another and records, for each, wall time, process CPU time, bytes read and written, the managed
@@ -175,6 +201,24 @@ public sealed class LaunchStepRecorder
     public void Skip(string id, string reason) =>
         Add(new LaunchStepResult(id, 0, 0, 0, 0, 0, GC.GetTotalMemory(false), 0, 0, true, reason, null));
 
+    private readonly List<LaunchMoment> _moments = [];
+
+    public IReadOnlyList<LaunchMoment> Moments
+    {
+        get { lock (_moments) return _moments.ToArray(); }
+    }
+
+    /// <summary>Records that the launch reached <paramref name="id"/> now, with the process's I/O totals so far.</summary>
+    public LaunchMoment Mark(string id, string? note = null)
+    {
+        var sample = ProcessCounters.Sample();
+        using var process = Process.GetCurrentProcess();
+        var moment = new LaunchMoment(id, (DateTime.Now - process.StartTime).TotalSeconds, _clock.Elapsed.TotalSeconds,
+            sample.ReadBytes, sample.ReadOperations, sample.OtherOperations, GC.GetTotalMemory(false), note);
+        lock (_moments) _moments.Add(moment);
+        return moment;
+    }
+
     public LaunchMeasurementReport Report(string kind, string dataRoot, string? error)
     {
         var steps = Steps;
@@ -197,6 +241,7 @@ public sealed class LaunchStepRecorder
             StoreWalks = steps.Where(step => step.StoreWalks is not null).SelectMany(step => step.StoreWalks!)
                 .GroupBy(pair => pair.Key, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.Sum(pair => pair.Value), StringComparer.Ordinal),
+            Moments = Moments is { Count: > 0 } moments ? moments : null,
         };
     }
 
@@ -230,6 +275,7 @@ public sealed class LaunchStepRecorder
             exception is null ? null : $"{exception.GetType().Name}: {exception.Message}")
         {
             StoreWalks = walks,
+            FileOperations = end.OtherOperations - start.OtherOperations,
         });
     }
 
@@ -240,7 +286,11 @@ public sealed class LaunchStepRecorder
     }
 }
 
-public readonly record struct ProcessSample(long Timestamp, double CpuSeconds, long ReadBytes, long ReadOperations, long WriteBytes);
+public readonly record struct ProcessSample(long Timestamp, double CpuSeconds, long ReadBytes, long ReadOperations, long WriteBytes)
+{
+    /// <summary>I/O operations other than reads and writes: opens, closes, size-and-time looks, folder listings.</summary>
+    public long OtherOperations { get; init; }
+}
 
 public static class ProcessCounters
 {
@@ -251,7 +301,7 @@ public static class ProcessCounters
         IoCounters io = default;
         if (OperatingSystem.IsWindows()) GetProcessIoCounters(GetCurrentProcess(), out io);
         return new ProcessSample(timestamp, cpu, (long)io.ReadTransferCount, (long)io.ReadOperationCount,
-            (long)io.WriteTransferCount);
+            (long)io.WriteTransferCount) { OtherOperations = (long)io.OtherOperationCount };
     }
 
     /// <summary>Arkive's version and the commit it was built from, when the build recorded one.</summary>

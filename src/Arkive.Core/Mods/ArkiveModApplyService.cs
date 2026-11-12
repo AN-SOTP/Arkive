@@ -420,8 +420,10 @@ public sealed class ArkiveModApplyService
             library = library with
             { Mods = library.Mods.Select(mod => mod.ModId == previewModId ? mod with { Enabled = true } : mod).ToArray() };
         }
-        var snapshot = knownSnapshot ??
-                       await ArkiveModEditSnapshot.LoadAsync(_context.Edits, cancellationToken).ConfigureAwait(false);
+        // The plan decides what Apply writes, so it never works from the working-file index.
+        var snapshot = knownSnapshot is { FromIndex: false }
+            ? knownSnapshot
+            : await ArkiveModEditSnapshot.LoadAsync(_context.Edits, cancellationToken).ConfigureAwait(false);
         var packages = await _context.Packages.LoadAsync(cancellationToken).ConfigureAwait(false);
         var resolution = ArkiveModConflictResolver.Resolve(library.Mods);
         var problems = new List<string>();
@@ -1459,9 +1461,14 @@ public sealed class ArkiveModApplyService
         FindOutsideChangesAsync(null, cancellationToken);
 
     /// <param name="knownPackages">The package projects as the caller has just read them, or null to read them here.</param>
+    /// <param name="installedByThisArkive">
+    /// True for a project of <paramref name="knownPackages"/> whose build the caller has just proved in the game with a
+    /// receipt this check accepts (see <see cref="ProvesInstalledByThisArkive"/>), so that build is not inspected again.
+    /// </param>
     public async Task<IReadOnlyList<ArkiveModOutsideChange>> FindOutsideChangesAsync(
         IReadOnlyList<GuidedTexturePackageEntry>? knownPackages,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<GuidedTexturePackageEntry, bool>? installedByThisArkive = null)
     {
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
         if (library.GamePackagesDirectory is not { } gameDirectory || !Directory.Exists(gameDirectory)) return [];
@@ -1481,8 +1488,9 @@ public sealed class ArkiveModApplyService
             if (clean.Contains(hash, StringComparer.OrdinalIgnoreCase)) continue;
             var project = FindPackageProject(group.Key, gameDirectory, packages);
             if (project is not null &&
-                await _context.FindActiveDeploymentAsync(project, cancellationToken, reuseKnownHashes: true)
-                    .ConfigureAwait(false) is not null)
+                (knownPackages is not null && installedByThisArkive?.Invoke(project) == true ||
+                 await _context.FindActiveDeploymentAsync(project, cancellationToken, reuseKnownHashes: true)
+                     .ConfigureAwait(false) is not null))
                 continue;
             var assets = group.DistinctBy(asset => asset.Target.ObjectName, StringComparer.OrdinalIgnoreCase).ToArray();
             // The same changed file is compared object by object on every refresh of the Mods list; the answer only
@@ -1572,6 +1580,15 @@ public sealed class ArkiveModApplyService
         return new ArkiveModOutsideRestoreResult(restored, safety);
     }
 
+    /// <summary>
+    /// Whether an install state proves what <see cref="ArkiveModApplyContext.FindActiveDeploymentAsync"/> would find for
+    /// its project: a build of it in the game (its payload's bytes, which needs a receipt) whose receipt says this
+    /// Arkive changed the game file. That search would accept the same build, so it need not inspect it again.
+    /// </summary>
+    public static bool ProvesInstalledByThisArkive(PackageDeploymentState? state) =>
+        state is { IsActive: true, Inspection.Receipt: { } receipt } &&
+        (receipt.GameFilesModified || receipt.State is ModInstallationState.Installed or ModInstallationState.Prepared);
+
     public static GuidedTexturePackageEntry? FindPackageProject(
         string physicalPackageName,
         string? gameDirectory,
@@ -1590,6 +1607,7 @@ public sealed class ArkiveModApplyService
     /// shoulder pad). There is nothing to write for it, so it is left out of builds instead of failing its package.
     /// </summary>
     internal static bool ChangesNothing(ArkiveModLocalEdit edit) =>
+        edit.Entry is ArkiveModIndexedEdit { ChangesNothing: true } ||
         edit.Entry is SkeletalMeshEditWorkspaceEntry mesh &&
         mesh.Manifest.Preflight?.Readiness == SkeletalMeshEditReadiness.ReadyNoChanges ||
         edit.Entry is InterfaceMovieEditEntry movie && InterfaceMovieEditWorkspaceStore.IsUnchanged(movie) ||

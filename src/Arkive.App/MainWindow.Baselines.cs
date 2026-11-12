@@ -68,6 +68,7 @@ public partial class MainWindow : Window
 
     private async void CreateClientSnapshotButton_Click(object sender, RoutedEventArgs e)
     {
+        await EnsureGameDatabaseAsync("client snapshot");
         if (string.IsNullOrEmpty(_libraryRootPath) || _baselineOperationInProgress)
         {
             StatusText.Text = "Choose or restore the Packages folder before creating a snapshot.";
