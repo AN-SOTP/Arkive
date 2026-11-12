@@ -3044,7 +3044,10 @@
                                                               ToolTip="Put back game files that an Arkive using a different data folder installed mods into, from that folder's verified backups." />
                                                     <MenuItem x:Name="ModLibraryCleanUpWorkingFilesButton" Header="Clean up working files…"
                                                               Click="ModLibraryCleanUpWorkingFilesButton_Click"
-                                                              ToolTip="Delete package builds a newer build has replaced, and working files (edited meshes and textures, effects, materials and other edits) that no mod, draft or kept build uses. Lists everything first." />
+                                                              ToolTip="Delete package builds nothing can need, files finished builds no longer read, working files (edited meshes and textures, effects, materials and other edits) that no mod, draft or kept build uses, and old cache entries. Lists everything first." />
+                                                    <MenuItem x:Name="ModLibraryReleaseWorkingFilesButton" Header="Release working files…"
+                                                              Click="ModLibraryReleaseWorkingFilesButton_Click"
+                                                              ToolTip="Free the space the selected mod's working files take while it is off. Apply sets them up again from its .arkive file when you turn it on." />
                                                     <MenuItem Header="Open mods folder" Click="ModLibraryOpenFolderButton_Click" />
                                                     <MenuItem x:Name="ModLibraryGameFolderButton" Header="Game folder…" Click="ModLibraryGameFolderButton_Click" />
                                                     <MenuItem x:Name="ModLibraryRefreshButton" Header="Refresh" Click="ModLibraryRefreshButton_Click" />
@@ -3145,6 +3148,9 @@
                                                 <MenuItem x:Name="ModLibraryRowRemoveFromPackItem" Header="Remove from pack"
                                                           Click="ModLibraryRowRemoveFromPack_Click" />
                                                 <Separator />
+                                                <MenuItem x:Name="ModLibraryRowReleaseWorkingFilesItem" Header="Release working files…"
+                                                          Click="ModLibraryReleaseWorkingFilesButton_Click"
+                                                          ToolTip="Free the space this mod's working files take while it is off. Apply sets them up again from its .arkive file when you turn it on." />
                                                 <MenuItem x:Name="ModLibraryRowDeleteItem" Header="Delete mod" Click="ModLibraryRemoveButton_Click" />
                                             </ContextMenu>
                                         </DataGrid.ContextMenu>
