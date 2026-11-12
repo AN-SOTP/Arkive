@@ -44,17 +44,15 @@ public sealed class ParticleEffectEditWorkspaceStore(string rootDirectory)
 
     public async Task<IReadOnlyList<ParticleEffectEditEntry>> LoadAsync(CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk and reads held a caller on the window's thread for seconds.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
-        var entries = new List<ParticleEffectEditEntry>();
-        foreach (var path in Directory.EnumerateFiles(RootDirectory, DocumentFileName, SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try { entries.Add(await _parsed.GetAsync(path, LoadEntryAsync, cancellationToken).ConfigureAwait(false)); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
-            {
-                // One damaged working copy must not hide the others.
-            }
-        }
+        var paths = Directory.EnumerateFiles(RootDirectory, DocumentFileName, SearchOption.AllDirectories).ToArray();
+        // One damaged working copy must not hide the others.
+        var entries = await Mods.WorkingRecordReader.ReadAllAsync(paths,
+            (path, token) => _parsed.GetAsync(path, LoadEntryAsync, token),
+            exception => exception is IOException or UnauthorizedAccessException or JsonException or NotSupportedException,
+            cancellationToken).ConfigureAwait(false);
         return entries.OrderByDescending(entry => entry.Document.UpdatedAt).ToArray();
     }
 

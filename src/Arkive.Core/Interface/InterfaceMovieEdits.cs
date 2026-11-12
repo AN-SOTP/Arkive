@@ -56,21 +56,15 @@ public sealed class InterfaceMovieEditWorkspaceStore
 
     public async Task<IReadOnlyList<InterfaceMovieEditEntry>> LoadAsync(CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk and reads held a caller on the window's thread.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
-        var entries = new List<InterfaceMovieEditEntry>();
-        foreach (var path in Directory.EnumerateFiles(RootDirectory, ManifestFileName, SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                entries.Add(await LoadEntryAsync(path, cancellationToken).ConfigureAwait(false));
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or
-                                                  NotSupportedException or InvalidDataException)
-            {
-                // One damaged working copy must not hide the others.
-            }
-        }
+        var paths = Directory.EnumerateFiles(RootDirectory, ManifestFileName, SearchOption.AllDirectories).ToArray();
+        // One damaged working copy must not hide the others.
+        var entries = await Mods.WorkingRecordReader.ReadAllAsync(paths, LoadEntryAsync,
+            exception => exception is IOException or UnauthorizedAccessException or JsonException or
+                NotSupportedException or InvalidDataException,
+            cancellationToken).ConfigureAwait(false);
         return entries.OrderByDescending(entry => entry.Manifest.CreatedAt).ToArray();
     }
 

@@ -163,20 +163,14 @@ public sealed class GuidedTextureModWorkspace
     public async Task<IReadOnlyList<GuidedTextureModProjectEntry>> LoadAsync(
         CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk and reads held a caller on the window's thread for seconds.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
-        var entries = new List<GuidedTextureModProjectEntry>();
-        foreach (var path in ProjectManifestPaths())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                entries.Add(await _parsed.GetAsync(path, LoadProjectAsync, cancellationToken).ConfigureAwait(false));
-            }
-            catch (Exception exception) when (exception is IOException or JsonException or NotSupportedException)
-            {
-                // A partially copied or obsolete project must not hide healthy projects.
-            }
-        }
+        // A partially copied or obsolete project must not hide healthy projects.
+        var entries = await WorkingRecordReader.ReadAllAsync(ProjectManifestPaths().ToArray(),
+            (path, token) => _parsed.GetAsync(path, LoadProjectAsync, token),
+            exception => exception is IOException or JsonException or NotSupportedException,
+            cancellationToken).ConfigureAwait(false);
 
         return entries
             .OrderByDescending(entry => entry.Manifest.UpdatedAt)

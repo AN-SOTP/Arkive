@@ -64,6 +64,8 @@ public sealed class StaticMeshEditWorkspaceStore
     public async Task<IReadOnlyList<StaticMeshEditEntry>> LoadAsync(
         CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk and reads held a caller on the window's thread.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
         var entries = new List<StaticMeshEditEntry>();
         foreach (var path in Directory.EnumerateFiles(RootDirectory, ManifestFileName, SearchOption.AllDirectories))

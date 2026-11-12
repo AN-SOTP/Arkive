@@ -29,22 +29,15 @@ public sealed class MaterialInstanceEditWorkspaceStore
     public async Task<IReadOnlyList<MaterialInstanceEditEntry>> LoadAsync(
         CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk and reads held a caller on the window's thread for seconds.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
-        var entries = new List<MaterialInstanceEditEntry>();
-        foreach (var path in Directory.EnumerateFiles(
-                     RootDirectory, DocumentFileName, SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                entries.Add(await _parsed.GetAsync(path, LoadEntryAsync, cancellationToken).ConfigureAwait(false));
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
-            {
-                // One damaged project must not hide healthy projects.
-            }
-        }
+        var paths = Directory.EnumerateFiles(RootDirectory, DocumentFileName, SearchOption.AllDirectories).ToArray();
+        // One damaged project must not hide healthy projects.
+        var entries = await Mods.WorkingRecordReader.ReadAllAsync(paths,
+            (path, token) => _parsed.GetAsync(path, LoadEntryAsync, token),
+            exception => exception is IOException or UnauthorizedAccessException or JsonException or NotSupportedException,
+            cancellationToken).ConfigureAwait(false);
         return entries.OrderByDescending(entry => entry.Document.UpdatedAt).ToArray();
     }
 

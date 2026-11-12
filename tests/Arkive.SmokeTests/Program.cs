@@ -11,6 +11,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     MaterialReferenceSmokeTests.Cases,
     OutfitLookSmokeTests.Cases,
     WorkingFileSmokeTests.Cases,
+    LaunchLoadSmokeTests.Cases,
     TextureSmokeTests.Cases,
     MaterialSmokeTests.Cases,
     ModWorkflowSmokeTests.Cases,

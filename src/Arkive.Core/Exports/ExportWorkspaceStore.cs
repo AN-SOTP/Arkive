@@ -671,6 +671,8 @@ public sealed class ExportWorkspaceStore
     public async Task<ExportWorkspaceSnapshot> LoadAsync(
         CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk and reads held a caller on the window's thread.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory))
         {
             return new ExportWorkspaceSnapshot(RootDirectory, [], 0, 0);

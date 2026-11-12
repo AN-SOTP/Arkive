@@ -5,6 +5,7 @@ namespace Arkive.Core.Mods;
 /// <summary>
 /// Working-copy records read on every change in the Mods list (thousands with large mods), kept parsed while each
 /// file's size and write time stay the same. Every save replaces the file, which changes its write time.
+/// Safe to use from several threads at once: stores read their records in parallel.
 /// </summary>
 internal sealed class ParsedRecordCache<T> where T : class
 {
@@ -21,6 +22,9 @@ internal sealed class ParsedRecordCache<T> where T : class
         // The file is checked before it is read: a save landing in between is read now and parsed again next time.
         var now = DateTime.UtcNow;
         var info = new FileInfo(path);
+        // FileInfo reads the size and time on first use, which for a record not cached yet came after the parse: a
+        // save in between (records are read on the thread pool while the window saves) was remembered as parsed.
+        info.Refresh();
         if (_parsed.TryGetValue(path, out var parsed) && parsed.Settled && info.Exists &&
             parsed.Length == info.Length && parsed.WriteTimeUtc == info.LastWriteTimeUtc)
             return parsed.Value;

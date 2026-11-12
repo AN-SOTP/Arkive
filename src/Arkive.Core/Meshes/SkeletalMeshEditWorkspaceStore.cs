@@ -126,6 +126,8 @@ public sealed class SkeletalMeshEditWorkspaceStore
     public async Task<SkeletalMeshEditWorkspaceSnapshot> LoadAsync(
         CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk ran before the first await and held a caller on the window's thread.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory))
             return new SkeletalMeshEditWorkspaceSnapshot([], []);
         var paths = Directory.EnumerateFiles(RootDirectory, ManifestFileName, SearchOption.AllDirectories).ToArray();

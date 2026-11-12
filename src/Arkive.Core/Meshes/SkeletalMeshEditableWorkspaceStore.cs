@@ -51,6 +51,8 @@ public sealed class SkeletalMeshEditableWorkspaceStore
     public async Task<SkeletalMeshEditableWorkspaceSnapshot> LoadAsync(
         CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk ran before the first await and held a caller on the window's thread.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory))
             return new SkeletalMeshEditableWorkspaceSnapshot([], []);
 
@@ -67,6 +69,8 @@ public sealed class SkeletalMeshEditableWorkspaceStore
             {
                 var fullManifestPath = EnsureWithinRoot(manifestPath);
                 var info = new FileInfo(fullManifestPath);
+                // Size and time are read now, before the parse, so a save in between is not remembered as parsed.
+                info.Refresh();
                 SkeletalMeshEditableExportManifest manifest;
                 if (_parsed.TryGetValue(fullManifestPath, out var parsed) && parsed.Length == info.Length &&
                     parsed.WriteTimeUtc == info.LastWriteTimeUtc)

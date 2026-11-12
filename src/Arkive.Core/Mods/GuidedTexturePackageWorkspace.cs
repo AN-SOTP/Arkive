@@ -178,20 +178,13 @@ public sealed class GuidedTexturePackageWorkspace
     public async Task<IReadOnlyList<GuidedTexturePackageEntry>> LoadAsync(
         CancellationToken cancellationToken = default)
     {
+        // On the thread pool: the folder walk and reads held a caller on the window's thread for seconds.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (!Directory.Exists(RootDirectory)) return [];
-        var entries = new List<GuidedTexturePackageEntry>();
-        foreach (var path in ProjectManifestPaths())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                entries.Add(await LoadEntryAsync(path, cancellationToken).ConfigureAwait(false));
-            }
-            catch (Exception exception) when (exception is IOException or JsonException or NotSupportedException)
-            {
-                // A damaged package project must not hide healthy package projects.
-            }
-        }
+        // A damaged package project must not hide healthy package projects.
+        var entries = await WorkingRecordReader.ReadAllAsync(ProjectManifestPaths().ToArray(), LoadEntryAsync,
+            exception => exception is IOException or JsonException or NotSupportedException,
+            cancellationToken).ConfigureAwait(false);
 
         return entries.OrderByDescending(entry => entry.Manifest.UpdatedAt).ToArray();
     }
