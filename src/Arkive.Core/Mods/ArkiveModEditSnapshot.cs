@@ -301,8 +301,18 @@ public sealed class ArkiveModEditSnapshot
             1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
         HashCache[full] = (info.Length, info.LastWriteTimeUtc, hash);
+        Interlocked.Increment(ref _filesHashed);
+        Interlocked.Add(ref _bytesHashed, info.Length);
         return hash;
     }
+
+    private static long _filesHashed;
+    private static long _bytesHashed;
+
+    /// <summary>Files <see cref="HashFileCachedAsync"/> had to read in full in this process (a saved hash did not do).</summary>
+    public static long FilesHashed => Interlocked.Read(ref _filesHashed);
+
+    public static long BytesHashed => Interlocked.Read(ref _bytesHashed);
 
     /// <summary>
     /// Records a hash a caller has just computed by reading the whole file, if the file still has the length and write
