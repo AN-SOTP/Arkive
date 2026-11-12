@@ -495,6 +495,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _authoringMetadataTimer.Stop();
+        StopMeshRecordCompaction();
         _applicationUpdateCancellation.Cancel();
         _applicationUpdateCancellation.Dispose();
         TrySaveSettings("window closing");

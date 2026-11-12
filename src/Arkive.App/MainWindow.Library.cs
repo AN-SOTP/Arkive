@@ -144,6 +144,7 @@ public partial class MainWindow : Window
             $"Workspace restoration completed: root={_libraryRootPath ?? "none"}, " +
             $"metadataLoaded={_gameMetadataIndex is not null}, tab={MainTabControl.SelectedIndex}.");
         _ = TrimPackageBuildsAsync("startup");
+        StartMeshRecordCompaction();
         _ = Task.Run(() =>
         {
             ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath);
