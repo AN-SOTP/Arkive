@@ -683,7 +683,7 @@ public partial class MainWindow : Window
         try
         {
             // A refresh has just run this check, reusing the hashes of files whose size and write time are unchanged;
-            // hashing the build, backup and game file again cost about 650 MB of reading at every launch. A row the
+            // hashing the build, backup and game file again at every launch and after every refresh was wasted reading. A row the
             // user picks is checked in full. Install, restore, delete and old-build clean-up each run their own full
             // check before changing anything, so these buttons never act on this state alone.
             var hashesReused = selectedByRefresh && package.InspectionIsSelectionCheck;
