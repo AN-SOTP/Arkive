@@ -259,11 +259,20 @@ public sealed class ArkiveSupersededBuildCleanup
                     Unused = true,
                 }).ToArray(), []);
         }
+        // Why an unused package keeps its latest build after all, for the report.
+        var unusedButKept = !unused ? null : states.Select(state =>
+                ReplacedInGameBy(state) is not null ? "the game holds another build of it"
+                : KeepReason(state, null) is { } why ? why
+                : !Settled(state) ? "it was made or changed within the last " + MinimumAge.TotalHours.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " hour(s)"
+                : null)
+            .FirstOrDefault(why => why is not null);
         foreach (var state in states)
         {
             var revision = state.Revision;
             var holder = ReplacedInGameBy(state);
-            var reason = latestIds.Contains(revision.RevisionId) ? "the latest build" : KeepReason(state, holder);
+            var reason = latestIds.Contains(revision.RevisionId)
+                ? unusedButKept is null ? "the latest build" : $"the latest build; nothing uses its package, but a build of it is kept: {unusedButKept}"
+                : KeepReason(state, holder);
             if (reason is not null) kept[revision.RevisionId] = reason;
             else if (holder is not null) replacedBy[revision.RevisionId] = holder;
         }
