@@ -122,16 +122,23 @@ internal static class ModPackChecks
             "Right-clicking a pack's mod does not offer the pack actions.");
 
         grid.SelectedItem = Rows(grid).First(row => !packIds.Contains(Id(row)));
+        var outsideId = Id(grid.SelectedItem);
         Invoke(window, "ModLibraryEnableButton_Click", null, new RoutedEventArgs());
         await UntilAsync(() => Header(grid) is { } heading && Texts(heading).Any(text => text.StartsWith("⚠ Changes the same assets as", StringComparison.Ordinal)) &&
                                banner.IsVisible,
-            () => "Enabling a mod outside the pack that changes the same asset did not mark the pack and show the warning again.");
+            () => "Enabling a mod outside the pack that changes the same asset did not mark the pack and show the warning again: " +
+                  string.Join(", ", Rows(grid).Select(row => $"{Name(row)} {(Enabled(row) ? "on" : "off")}")) + $", banner={banner.IsVisible}.");
         Check(Control<ItemsControl>(window, "ModOverlapList").Items.Cast<object>().Single() is var merged &&
               Text(merged).StartsWith("UI renamed mod and the UI pack pack both change 1 asset.", StringComparison.Ordinal) &&
               OtherName(merged) == "the UI pack pack",
             "The pack's mods overlapping one outside mod were not summed into one line: " +
             string.Join(" | ", Control<ItemsControl>(window, "ModOverlapList").Items.Cast<object>().Select(Text)));
         await UntilAsync(() => Control<Panel>(window, "BusyOverlay").Visibility != Visibility.Visible);
+        // The Refresh above was still reading when Enable was clicked; when it finished last it put the list back as it
+        // had read it, with the mod off and no warning.
+        Check(Rows(grid).Single(row => Id(row) == outsideId) is var outside && Enabled(outside) && banner.IsVisible,
+            "The Mods list went back to showing the enabled mod as off once Arkive had finished: " +
+            string.Join(", ", Rows(grid).Select(row => $"{Name(row)} {(Enabled(row) ? "on" : "off")}")) + $", banner={banner.IsVisible}.");
         if (screenshotDirectory is not null) Capture(window, screenshotDirectory, "mod-pack-overlap.png");
         var packHeader = (Border)Header(grid)!;
         packHeader.ContextMenu!.PlacementTarget = packHeader; // as opening it by right-click does
