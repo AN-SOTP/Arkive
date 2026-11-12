@@ -18,6 +18,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     MaterialSmokeTests.Cases,
     ModWorkflowSmokeTests.Cases,
     ArkiveModSmokeTests.Cases,
+    PackageInstallStateSmokeTests.Cases,
     ModAuthoringSmokeTests.Cases,
     DiscoverySmokeTests.Cases,
     ZoneSmokeTests.Cases,

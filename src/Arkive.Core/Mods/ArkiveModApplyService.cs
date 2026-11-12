@@ -1455,11 +1455,17 @@ public sealed class ArkiveModApplyService
         }
     }
 
-    public async Task<IReadOnlyList<ArkiveModOutsideChange>> FindOutsideChangesAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<ArkiveModOutsideChange>> FindOutsideChangesAsync(CancellationToken cancellationToken = default) =>
+        FindOutsideChangesAsync(null, cancellationToken);
+
+    /// <param name="knownPackages">The package projects as the caller has just read them, or null to read them here.</param>
+    public async Task<IReadOnlyList<ArkiveModOutsideChange>> FindOutsideChangesAsync(
+        IReadOnlyList<GuidedTexturePackageEntry>? knownPackages,
+        CancellationToken cancellationToken = default)
     {
         var library = await _context.Library.LoadAsync(cancellationToken).ConfigureAwait(false);
         if (library.GamePackagesDirectory is not { } gameDirectory || !Directory.Exists(gameDirectory)) return [];
-        var packages = await _context.Packages.LoadAsync(cancellationToken).ConfigureAwait(false);
+        var packages = knownPackages ?? await _context.Packages.LoadAsync(cancellationToken).ConfigureAwait(false);
         var changes = new List<ArkiveModOutsideChange>();
         foreach (var group in library.Mods.SelectMany(mod => mod.Manifest.Assets)
                      .GroupBy(asset => ArkiveModFileService.NormalizePhysicalPackageName(asset.Target.PhysicalPackageName),

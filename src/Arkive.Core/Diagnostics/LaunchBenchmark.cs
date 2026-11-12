@@ -82,7 +82,7 @@ public static class LaunchBenchmark
             loaded => $"items={loaded.Edits.Count}").ConfigureAwait(false);
         var projects = await steps.RunAsync("package-projects", () => packages.LoadAsync(cancellationToken),
             loaded => $"items={loaded.Count}, builds={loaded.Sum(project => project.Manifest.Revisions.Count)}").ConfigureAwait(false);
-        var active = await steps.RunAsync("install-state", () => ActiveRevisionsAsync(context, manifest, projects, cancellationToken),
+        var active = await steps.RunAsync("install-state", () => ActiveRevisionsAsync(context, manifest, snapshot, projects, cancellationToken),
             found => $"installed={found.Count(pair => pair.Value is not null)}").ConfigureAwait(false);
         var statuses = await steps.RunAsync("status", () => ArkiveModApplyService.DescribeAsync(
                 library, manifest, snapshot, active, cancellationToken),
@@ -109,29 +109,21 @@ public static class LaunchBenchmark
         else steps.Skip("index-status", "no library index in this data folder");
     }
 
-    /// <summary>Which build of each package project is in the game now, as the Mods list asks.</summary>
+    /// <summary>
+    /// Which build of each package project is in the game now, as the Mods list asks (PackageInstallStateService). The
+    /// benchmark only reads, so a working file's package without a project yet is left out instead of given one.
+    /// </summary>
     private static async Task<IReadOnlyDictionary<string, GuidedTexturePackageRevision?>> ActiveRevisionsAsync(
         ArkiveModApplyContext context,
         ArkiveModLibraryManifest library,
+        ArkiveModEditSnapshot snapshot,
         IReadOnlyList<GuidedTexturePackageEntry> projects,
         CancellationToken cancellationToken)
     {
-        var owners = projects.Select(package => Path.GetFileName(package.Manifest.SourcePackagePath))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(physical => (Physical: physical,
-                Project: ArkiveModApplyService.FindPackageProject(physical, library.GamePackagesDirectory, projects)))
-            .Where(item => item.Project is not null)
-            .ToArray();
-        var found = new GuidedTexturePackageRevision?[owners.Length];
-        // The window inspects eight package projects at a time.
-        await Parallel.ForEachAsync(Enumerable.Range(0, owners.Length),
-            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
-            async (index, token) => found[index] = (await context.FindActiveDeploymentAsync(
-                owners[index].Project!, token, reuseKnownHashes: true).ConfigureAwait(false))?.Revision).ConfigureAwait(false);
-        var map = new Dictionary<string, GuidedTexturePackageRevision?>(StringComparer.Ordinal);
-        for (var index = 0; index < owners.Length; index++)
-            map[ArkiveModFileService.PhysicalPackageKey(owners[index].Physical)] = found[index];
-        return map;
+        var listed = PackageInstallStateService.ProjectsForWorkingFiles(projects, snapshot.Edits.Select(edit => edit.SourcePackagePath));
+        var states = await new PackageInstallStateService(context).ResolveAllAsync(listed, cancellationToken).ConfigureAwait(false);
+        return PackageInstallStateService.ActiveRevisionsByPhysicalName(listed, library.GamePackagesDirectory,
+            project => states.GetValueOrDefault(project));
     }
 
     private static string? Count<T>(IReadOnlyCollection<T> items) => $"items={items.Count}";
