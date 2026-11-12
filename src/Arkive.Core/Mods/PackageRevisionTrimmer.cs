@@ -86,16 +86,16 @@ public static partial class PackageRevisionTrimmer
     }
 
     /// <summary>
-    /// What the second pass would delete from this build now, without checking the build's hashes again (for a plan
-    /// shown to the user; the trim itself checks first). Empty when the build has had it, or is not a combined build
-    /// laid out as Arkive lays them out.
+    /// What the second pass would delete from this build now, after the checks the trim makes, so a plan lists only
+    /// what the trim will do (the trim checks again). Empty when the build has had it, is not a combined build laid out
+    /// as Arkive lays them out, or fails a check.
     /// </summary>
-    public static IReadOnlyList<FileInfo> PlanUnneededFiles(string revisionDirectory, GuidedTexturePackageRevision revision)
+    public static async Task<IReadOnlyList<FileInfo>> PlanUnneededFilesAsync(
+        string revisionDirectory, GuidedTexturePackageRevision revision, CancellationToken cancellationToken = default)
     {
         var root = Path.GetFullPath(revisionDirectory);
-        if (!Directory.Exists(root) || MarkerVersion(Path.Combine(root, MarkerFileName)) >= CurrentMarkerVersion ||
-            !LooksComposed(root, revision)) return [];
-        return UnneededFiles(root, revision);
+        if (!Directory.Exists(root) || MarkerVersion(Path.Combine(root, MarkerFileName)) >= CurrentMarkerVersion) return [];
+        return await VerifiedUnneededFilesAsync(root, revision, cancellationToken).ConfigureAwait(false) ?? [];
     }
 
     /// <summary>

@@ -186,42 +186,44 @@ public sealed class ArkiveStorageCleanup
         return new ArkiveStorageCleanupResult(builds, files) { Trimmed = trimmed, Caches = caches };
     }
 
-    /// <summary>The kept builds with step files to trim; a build changed within <paramref name="minimumAge"/> is left alone.</summary>
+    /// <summary>
+    /// The kept builds with step files to trim, each checked as the trim checks it (which reads its final package and
+    /// payload). A build changed within <paramref name="minimumAge"/> is left alone.
+    /// </summary>
     private async Task<IReadOnlyList<ArkiveBuildTrimItem>> PlanTrimsAsync(
         ArkiveBuildCleanupPlan builds, TimeSpan minimumAge, CancellationToken cancellationToken)
     {
         var removed = builds.Items.Select(item => item.RevisionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var items = new List<ArkiveBuildTrimItem>();
-        foreach (var entry in await _packages.LoadAsync(cancellationToken).ConfigureAwait(false))
-        foreach (var revision in entry.Manifest.Revisions.Where(revision => !removed.Contains(revision.RevisionId)))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            IReadOnlyList<FileInfo> files;
-            string directory;
-            try
+        var candidates = (await _packages.LoadAsync(cancellationToken).ConfigureAwait(false))
+            .SelectMany(entry => entry.Manifest.Revisions.Where(revision => !removed.Contains(revision.RevisionId))
+                .Select(revision => (Entry: entry, Revision: revision)))
+            .ToArray();
+        var items = new ArkiveBuildTrimItem?[candidates.Length];
+        // Each check hashes a build's package; a few builds at a time.
+        await Parallel.ForEachAsync(Enumerable.Range(0, candidates.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
+            async (index, token) =>
             {
-                directory = _packages.RevisionDirectoryOf(entry, revision);
-                files = PackageRevisionTrimmer.PlanUnneededFiles(directory, revision);
-                if (files.Count > 0)
+                var (entry, revision) = candidates[index];
+                try
                 {
+                    var directory = _packages.RevisionDirectoryOf(entry, revision);
+                    var files = await PackageRevisionTrimmer.PlanUnneededFilesAsync(directory, revision, token).ConfigureAwait(false);
+                    if (files.Count == 0) return;
                     var info = new DirectoryInfo(directory);
                     var newest = info.EnumerateFileSystemInfos("*", SearchOption.AllDirectories)
                         .Select(item => item.LastWriteTimeUtc).Append(info.LastWriteTimeUtc).Max();
-                    if (DateTime.UtcNow - newest <= minimumAge) continue;
+                    if (DateTime.UtcNow - newest <= minimumAge) return;
+                    var name = string.IsNullOrWhiteSpace(entry.Manifest.DisplayName)
+                        ? entry.Manifest.PackageAlias
+                        : entry.Manifest.DisplayName.Trim();
+                    items[index] = new ArkiveBuildTrimItem(entry.Manifest.PackageProjectId, name, entry.ManifestPath,
+                        revision.RevisionId, directory, files.Count, files.Sum(file => file.Length));
                 }
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-            if (files.Count == 0) continue;
-            var name = string.IsNullOrWhiteSpace(entry.Manifest.DisplayName) ? entry.Manifest.PackageAlias : entry.Manifest.DisplayName.Trim();
-            items.Add(new ArkiveBuildTrimItem(entry.Manifest.PackageProjectId, name, entry.ManifestPath, revision.RevisionId,
-                directory, files.Count, files.Sum(file => file.Length)));
-        }
-        return items;
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+            }).ConfigureAwait(false);
+        return items.OfType<ArkiveBuildTrimItem>().ToArray();
     }
-
     /// <summary>
     /// The packages an enabled mod has an asset in, or a working file selected for a build targets. When the library or
     /// an edited mesh cannot be read, every package counts as used.
