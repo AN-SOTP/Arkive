@@ -39,7 +39,10 @@ public sealed record ArkiveBuildCleanupResult(
 /// <para>
 /// A build other than the latest is removed only when a deployment inspection says its package is not installed (or
 /// was restored), it holds no restore data, and its receipt does not say it changed game files; when its bundle,
-/// receipt or payload cannot be read, or the inspection fails, it is kept. A build a mod set pins is kept.
+/// receipt or payload cannot be read, or the inspection fails, it is kept. A build a mod set pins is kept. While a
+/// newer build is installed, inspection reports every other build as a conflict; such a build is removed too when the
+/// game file is exactly the payload of another build of the package that Arkive installed, and its own receipt, if
+/// any, says it was restored or never installed.
 /// </para>
 /// <para>
 /// The package rows and the Mods list describe a package that is not installed by its "clean lineage root": the newest
