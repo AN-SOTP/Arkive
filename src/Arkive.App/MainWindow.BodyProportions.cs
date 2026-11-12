@@ -60,6 +60,7 @@ public partial class MainWindow
 
     private async Task SearchProportionAssetsAsync()
     {
+        await EnsureGameDatabaseAsync("Simple upscale search");
         if (_proportionBusy) return;
         if (string.IsNullOrWhiteSpace(_libraryRootPath))
         {
@@ -296,6 +297,7 @@ public partial class MainWindow
     /// <summary>Every reshapeable piece of a player body's outfits in the index.</summary>
     private async Task<PackageIndexMatch[]> FindEveryOutfitAsync(BodyProfile profile)
     {
+        await EnsureGameDatabaseAsync("Simple upscale outfits");
         var found = await _packageIndexStore.SearchAsync(_libraryRootPath!, "pc_", "SkeletalMesh", _gameMetadataIndex,
             PackageIndexSearchScope.ObjectName, null, resultLimit: 200_000);
         return found.Matches
@@ -511,6 +513,7 @@ public partial class MainWindow
     /// <summary>The clean game package holding a class's physics asset (the backup when a mod has changed it).</summary>
     private async Task<string?> FindPhysicsPackageAsync(BodyPhysicsTarget target, CancellationToken cancellationToken)
     {
+        await EnsureGameDatabaseAsync("physics package search");
         if (string.IsNullOrWhiteSpace(_libraryRootPath)) return null;
         var found = await _packageIndexStore.SearchAsync(_libraryRootPath, target.ObjectName, AssetTypes.PhysicsAsset.SearchCategory,
             _gameMetadataIndex, PackageIndexSearchScope.ObjectName, null, resultLimit: 50, cancellationToken: cancellationToken);

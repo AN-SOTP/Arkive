@@ -25,16 +25,38 @@ public partial class MainWindow : Window
         new(ArkiveModLibrary.CurrentSchemaVersion, DateTimeOffset.UtcNow, null, []);
     private bool _modLibraryBusy;
 
-    private bool ModLibraryIdle => !_modLibraryBusy && !_guidedTextureModInProgress && !_modSetBusy && !_authoringBusy;
+    /// <summary>
+    /// True from launch until the mods' working files, install state and game files have been checked again (see
+    /// MainWindow.ReadyChecked): until then the Mods list may show what was remembered, and nothing that writes or
+    /// needs verified state can start.
+    /// </summary>
+    private bool _modsChecking = true;
 
+    private bool ModLibraryIdle => !_modsChecking && !_modLibraryBusy && !_guidedTextureModInProgress && !_modSetBusy && !_authoringBusy;
+
+    /// <summary>The library scan launch made, for the check that follows it; null once anything may have changed it.</summary>
+    private ArkiveModLibraryScanResult? _startupScan;
+
+    /// <summary>
+    /// Scans the mods folder and settles the library (migration, game folder). It no longer reads the working files:
+    /// the check that follows reads those of enabled mods, and the background pass the rest (see MainWindow.ReadyChecked).
+    /// </summary>
     private async Task InitializeArkiveModLibraryAsync()
     {
         try
         {
             var scan = await _arkiveModAuthoring.ScanAsync();
-            await EnsureGamePackagesDirectoryAsync();
+            _startupScan = scan;
+            // A known game folder is kept as it is (the library is not read again for it); otherwise it is looked for,
+            // which may change the library.
+            if (scan.Library.GamePackagesDirectory is not { } games || !Directory.Exists(games))
+            {
+                _startupScan = null;
+                await EnsureGamePackagesDirectoryAsync();
+            }
             if (!scan.Library.PackageProjectsMigrated)
             {
+                _startupScan = null;
                 var migration = await new ArkiveModMigrationService(_arkiveModContext)
                     .MigratePackageProjectsAsync(progress: new Progress<string>(message => StatusText.Text = message));
                 foreach (var migrated in migration.Migrated)
@@ -45,19 +67,14 @@ public partial class MainWindow : Window
                     StatusText.Text = $"Saved {migration.Migrated.Count:N0} existing package project(s) as .arkive mods in " +
                                       $"{_arkiveModLibrary.ModsDirectory}.";
             }
-            var synchronized = await ArkiveModSelectionService.SynchronizeWithSnapshotAsync(_arkiveModLibrary, _arkiveModEdits);
-            foreach (var change in synchronized.Changes)
-                Log($"Mod selection synchronized at startup: mod={change.ModName}, object={change.ObjectName}, " +
-                    $"edit={change.EditId}, included={change.Included}.");
-            // The working files as this left them, for the Mods list that follows, so launch reads them once.
-            _selectionOnlyChange = synchronized.Snapshot;
-            var library = await _arkiveModLibrary.LoadAsync();
+            var library = _startupScan?.Library ?? await _arkiveModLibrary.LoadAsync();
             Log($"Mod library ready: mods={library.Mods.Count}, enabled={library.Mods.Count(mod => mod.Enabled)}, " +
                 $"folder={_arkiveModLibrary.ModsDirectory}, state={_arkiveModLibrary.ManifestPath}, " +
                 $"gamePackages={library.GamePackagesDirectory ?? "unknown"}.");
         }
         catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
         {
+            _startupScan = null;
             Log($"Mod library initialization failed: {exception}");
         }
     }
@@ -83,7 +100,10 @@ public partial class MainWindow : Window
     /// <summary>The mod a refresh still running was asked to select (one just imported, say), for a newer one.</summary>
     private string? _modListPendingSelection;
 
-    private async Task RefreshArkiveModsAsync(string trigger, string? selectModId = null)
+    /// <param name="knownScan">A scan of the mods folder made just now (launch's), so the library is not read again.</param>
+    /// <param name="onlyIfRowsChange">Leave the list on screen alone when no row would read differently (a background check).</param>
+    private async Task RefreshArkiveModsAsync(string trigger, string? selectModId = null, ArkiveModLibraryScanResult? knownScan = null,
+        bool onlyIfRowsChange = false)
     {
         if (ModLibraryGrid is null) return;
         var refresh = ++_modListRefreshes;
@@ -101,12 +121,22 @@ public partial class MainWindow : Window
         }
         var clock = Stopwatch.StartNew();
         var stages = new List<string>();
-        void Lap(string stage) { stages.Add($"{stage} {clock.Elapsed.TotalSeconds:N1}s"); clock.Restart(); }
+        // With the files the process opened or looked at in each stage, which decide how long it takes uncached.
+        var io = Arkive.Core.Diagnostics.ProcessCounters.Sample();
+        void Lap(string stage)
+        {
+            var now = Arkive.Core.Diagnostics.ProcessCounters.Sample();
+            stages.Add($"{stage} {clock.Elapsed.TotalSeconds:N1}s/{now.OtherOperations - io.OtherOperations} file ops/" +
+                       $"{(now.ReadBytes - io.ReadBytes) / 1048576d:N0} MB");
+            io = now;
+            clock.Restart();
+        }
         try
         {
             var selectionOnly = _selectionOnlyChange;
             _selectionOnlyChange = null;
-            var scan = await _arkiveModAuthoring.ScanAsync();
+            // Reading and checking happen off the window's thread; only showing the list happens on it.
+            var scan = knownScan ?? await Task.Run(() => _arkiveModAuthoring.ScanAsync());
             released = scan.Released.Count > 0;
             if (Superseded()) return;
             var library = scan.Library;
@@ -117,10 +147,10 @@ public partial class MainWindow : Window
             var snapshot = selectionOnly is not null && scan.RegisteredModIds.Count + scan.RefreshedModIds.Count +
                 scan.Released.Count == 0
                 ? selectionOnly
-                : await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
+                : await Task.Run(() => ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits));
             if (Superseded()) return;
             Lap("working files");
-            var (activeRevisions, packageRecords) = await InstallStatesAsync(snapshot, library.GamePackagesDirectory);
+            var (activeRevisions, packageRecords, installedHere) = await InstallStatesAsync(snapshot, library.GamePackagesDirectory);
             if (Superseded()) return;
             Lap("install state");
             // Choosing which mods are on changes no game file, so the last check of the game folder still holds.
@@ -131,8 +161,10 @@ public partial class MainWindow : Window
                 outside = [];
                 try
                 {
-                    // The package projects just read for the install state, so they are not read twice.
-                    outside = await _arkiveModApply.FindOutsideChangesAsync(packageRecords);
+                    // The package projects just read for the install state, so they are not read twice, and the builds
+                    // it just proved in the game, so they are not inspected twice.
+                    outside = await Task.Run(() => _arkiveModApply.FindOutsideChangesAsync(packageRecords,
+                        installedByThisArkive: installedHere is null ? null : installedHere.Contains));
                     _outsideChangesChecked = true;
                 }
                 catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
@@ -144,81 +176,39 @@ public partial class MainWindow : Window
             }
             if (Superseded()) return;
             Lap("game files");
-            var installedTables = _arkiveModContext.GameDataFor(library)?.Archive.Current();
-            var installedLooks = library.Mods.Any(mod => mod.Manifest.Looks is not null)
-                ? _arkiveModContext.LooksFor(library)?.Archive.Current()
-                : null;
-            var statuses = await ArkiveModApplyService.DescribeAsync(
-                _arkiveModLibrary, library, snapshot, activeRevisions,
-                outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray(),
-                installedGameData: installedTables, installedLooks: installedLooks);
+            var outsideNames = outside.Select(change => change.PhysicalPackageName).ToArray();
+            var statuses = await Task.Run(async () =>
+            {
+                var installedTables = _arkiveModContext.GameDataFor(library)?.Archive.Current();
+                var installedLooks = library.Mods.Any(mod => mod.Manifest.Looks is not null)
+                    ? _arkiveModContext.LooksFor(library)?.Archive.Current()
+                    : null;
+                return await ArkiveModApplyService.DescribeAsync(
+                    _arkiveModLibrary, library, snapshot, activeRevisions,
+                    outsideChangedPackages: outsideNames,
+                    installedGameData: installedTables, installedLooks: installedLooks);
+            });
             if (Superseded()) return;
             Lap("status");
-            var previous = selectModId ?? (ModLibraryGrid.SelectedItem as ModLibraryRow)?.Entry.ModId;
-            // Mods chosen together stay chosen when the list is rebuilt after acting on them.
-            var previousGroup = SelectedModRows().Select(row => row.Entry.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var drafts = (await _modAuthoringWorkspace.LoadAsync()).Where(draft => draft.ModId is not null)
+            var drafts = (await Task.Run(() => _modAuthoringWorkspace.LoadAsync())).Where(draft => draft.ModId is not null)
                 .ToDictionary(draft => draft.ModId!, StringComparer.OrdinalIgnoreCase);
             if (Superseded()) return;
-            // The Tweaks tab installs and removes its own mod; it isn't one to manage here.
-            var rows = statuses
-                .Where(status => !TweakModService.IsTweakMod(status.Mod))
-                .Select(status => new ModLibraryRow(status, _arkiveModLibrary.GetModFilePath(status.Mod))
-                {
-                    AuthoringPending = drafts.TryGetValue(status.Mod.ModId, out var draft) && DraftHasChanges(draft, status.Mod),
-                    NeedsGameUpdate = _modsNeedingGameUpdate.GetValueOrDefault(status.Mod.ModId) == status.Mod.FileSha256,
-                })
-                .OrderByDescending(row => row.Enabled)
-                .ThenByDescending(row => row.Priority)
-                .ThenBy(row => row.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            _modLibraryRows = rows;
-            var view = GroupModRows(rows, ArkiveModConflictResolver.Resolve(library.Mods));
-            ModLibraryGrid.ItemsSource = view;
-            // A mod just imported, created or renamed is shown even when the search would hide it.
-            if (selectModId is not null && rows.FirstOrDefault(row => row.Entry.ModId.Equals(
-                    selectModId, StringComparison.OrdinalIgnoreCase)) is { } wanted && !ShowsInModSearch(wanted))
-                ModLibrarySearchTextBox.Clear();
-            ShowModOverlapWarning();
-            ShowModSearchCount(view.Count);
-            // Only mods the search box shows can be chosen.
-            var shown = view.Cast<ModLibraryRow>().ToArray();
-            var selected = shown.FirstOrDefault(row => row.Entry.ModId.Equals(
-                               previous, StringComparison.OrdinalIgnoreCase)) ?? shown.FirstOrDefault();
-            ModLibraryGrid.SelectedItem = selected;
-            if (previousGroup.Count > 1 && selected is not null && previousGroup.Contains(selected.Entry.ModId))
-                foreach (var row in shown.Where(row => row != selected && previousGroup.Contains(row.Entry.ModId)))
-                    ModLibraryGrid.SelectedItems.Add(row);
-            if (selected is not null) ModLibraryGrid.ScrollIntoView(selected);
-            ApplySelectedModLibraryRow();
+            var authoringPending = statuses
+                .Where(status => drafts.TryGetValue(status.Mod.ModId, out var draft) && DraftHasChanges(draft, status.Mod))
+                .Select(status => status.Mod.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var rows = ShowModList(library, statuses, authoringPending, outside.Count, scan.Issues.Count, selectModId,
+                onlyIfRowsChange);
             _modListPendingSelection = null;
-
-            var enabled = rows.Count(row => row.Enabled);
-            var inGame = rows.Count(row => row.Status.InGame);
-            var ties = rows.Count(row => row.Status.TiedCount > 0);
-            var pending = rows.Count(row => row.Enabled && !row.Status.InGame &&
-                                            row.Status.WinningCount > 0 && row.Status.TiedCount == 0);
-            var disabledActive = rows.Count(row => !row.Enabled && row.HasActiveAssets);
-            var unsaved = rows.Count(row => row.Enabled && (row.Status.ModifiedLocally || row.AuthoringPending));
-            ModLibraryPendingText.Text = rows.Length == 0 ? string.Empty : outside.Count > 0
-                ? $"{outside.Count:N0} game file(s) were changed outside this Arkive (another Arkive data folder, another tool or a game patch). " +
-                  "Restore them with More actions → Restore from another Arkive folder… or Steam's Verify integrity before applying."
-                : ties > 0
-                ? $"{ties:N0} conflict(s) need a choice before applying. Select a mod and review Conflicts."
-                : pending + disabledActive + unsaved > 0
-                    ? "Changes pending · Apply changes will save edits, review the plan, and update the game."
-                    : "Applied selection is up to date.";
-            ModLibraryStatusText.Text = rows.Length == 0
-                ? "No mods yet. Choose New mod to create one, or Import to add a shared .arkive file."
-                : $"{rows.Length:N0} mod(s), {enabled:N0} enabled, {inGame:N0} fully in game. " +
-                  (ties > 0 ? $"{ties:N0} mod(s) have tied priorities. " : string.Empty) +
-                  (pending + disabledActive > 0 ? "Apply changes to update the game. " : "The game matches the enabled mods. ") +
-                  (scan.Issues.Count > 0 ? $"{scan.Issues.Count:N0} file(s) in the mods folder are not valid .arkive mods (see Diagnostics)." : string.Empty);
             foreach (var issue in scan.Issues)
                 Log($"Mod library file ignored: path={issue.Path}, reason={issue.Message}");
-            Log($"Mod library refreshed: trigger={trigger}, mods={rows.Length}, enabled={enabled}, " +
-                $"inGame={inGame}, ties={ties}, registered={scan.RegisteredModIds.Count}, " +
-                $"refreshed={scan.RefreshedModIds.Count}, released={scan.Released.Count}.");
+            Log($"Mod library refreshed: trigger={trigger}, mods={rows.Length}, enabled={rows.Count(row => row.Enabled)}, " +
+                $"inGame={rows.Count(row => row.Status.InGame)}, ties={rows.Count(row => row.Status.TiedCount > 0)}, " +
+                $"registered={scan.RegisteredModIds.Count}, " +
+                $"refreshed={scan.RefreshedModIds.Count}, released={scan.Released.Count}, " +
+                $"workingFiles={(snapshot.FromIndex ? "index" : "read")}.");
+            // What every row shows is kept for the next launch to show at once, when it was verified in full.
+            if (!snapshot.FromIndex && scan.Released.Count == 0)
+                RememberModList(library, statuses, authoringPending, outside.Count);
             // Bug reports carry the session log, so record which mods and packages are in game whenever that changes.
             var state = string.Join(Environment.NewLine, rows.Select(row =>
                 $"Mod: {row.Entry.Manifest.Name} {row.Entry.Manifest.Version}, enabled={row.Enabled}, " +
@@ -237,7 +227,8 @@ public partial class MainWindow : Window
                 if (Superseded()) return;
             }
             _lastEditSnapshot = scan.Released.Count > 0 ? null : snapshot;
-            await RefreshModAuthoringAsync(snapshot: scan.Released.Count > 0 ? null : snapshot);
+            // Edit mods works with the records themselves, so it is never handed edits made from the index.
+            await RefreshModAuthoringAsync(snapshot: scan.Released.Count > 0 || snapshot.FromIndex ? null : snapshot);
             Lap("edit mods");
             Log($"Mod library refresh took: {string.Join(", ", stages)}.");
         }
@@ -280,20 +271,33 @@ public partial class MainWindow : Window
     /// <summary>
     /// The install state the Mods list shows, and the package project records when this read them (null when the last
     /// one still holds). Reading creates the package project of any game package a working file changes that has none,
-    /// as the package view does, so the same project is found for each package.
+    /// as the package view does, so the same project is found for each package. With the records, the projects whose
+    /// build this read proved in the game with a receipt of this Arkive (ArkiveModApplyService.ProvesInstalledByThisArkive).
     /// </summary>
     private async Task<(IReadOnlyDictionary<string, GuidedTexturePackageRevision?> Active,
-        IReadOnlyList<GuidedTexturePackageEntry>? Records)> InstallStatesAsync(ArkiveModEditSnapshot snapshot, string? gameDirectory)
+        IReadOnlyList<GuidedTexturePackageEntry>? Records, IReadOnlySet<GuidedTexturePackageEntry>? InstalledHere)>
+        InstallStatesAsync(ArkiveModEditSnapshot snapshot, string? gameDirectory)
     {
-        if (_installStates is { } known) return (known, null);
+        if (_installStates is { } known) return (known, null, null);
         var generation = _installStateGeneration;
-        var read = await _guidedTexturePackageWorkspace.LoadAsync();
-        var records = await PackageInstallStateService.EnsureProjectsAsync(_guidedTexturePackageWorkspace, read, snapshot);
-        var projects = PackageInstallStateService.ProjectsForWorkingFiles(records,
-            snapshot.Edits.Select(edit => edit.SourcePackagePath));
-        var states = await PackageInstallStates.ResolveAllAsync(projects);
-        var active = PackageInstallStateService.ActiveRevisionsByPhysicalName(projects, gameDirectory,
-            project => states.GetValueOrDefault(project));
+        var service = PackageInstallStates;
+        // Off the window's thread: hundreds of packages, each with its builds, receipts and game file looked at.
+        var (read, records, projects, active, installedHere) = await Task.Run(async () =>
+        {
+            var read = await _guidedTexturePackageWorkspace.LoadAsync();
+            // Edits made from the working-file index cannot create a project (that needs their records); a package
+            // without one is created by the next full read.
+            var records = await PackageInstallStateService.EnsureProjectsAsync(_guidedTexturePackageWorkspace, read, snapshot);
+            var projects = PackageInstallStateService.ProjectsForWorkingFiles(records,
+                snapshot.Edits.Select(edit => edit.SourcePackagePath));
+            var states = await service.ResolveAllAsync(projects);
+            var active = PackageInstallStateService.ActiveRevisionsByPhysicalName(projects, gameDirectory,
+                project => states.GetValueOrDefault(project));
+            IReadOnlySet<GuidedTexturePackageEntry> installedHere = states
+                .Where(pair => ArkiveModApplyService.ProvesInstalledByThisArkive(pair.Value))
+                .Select(pair => pair.Key).ToHashSet<GuidedTexturePackageEntry>(ReferenceEqualityComparer.Instance);
+            return (read, records, projects, active, installedHere);
+        });
         Log($"Mods list install state read: packages={projects.Count}, installed={active.Count(pair => pair.Value is not null)}.");
         if (generation == _installStateGeneration)
         {
@@ -301,7 +305,7 @@ public partial class MainWindow : Window
             _installStateProjects = projects;
         }
         // Projects created just now sort among the others when read from disk; the outside-change check reads them so.
-        return (active, ReferenceEquals(records, read) ? read : null);
+        return ReferenceEquals(records, read) ? (active, read, installedHere) : (active, null, null);
     }
 
     private void ApplySelectedModLibraryRow()
@@ -486,8 +490,14 @@ public partial class MainWindow : Window
 
     private async void ModLibraryEnabledCheckBox_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is CheckBox { DataContext: ModLibraryRow row })
-            await SetModEnabledAsync(row, !row.Enabled);
+        if (sender is not CheckBox { DataContext: ModLibraryRow row } box) return;
+        // While launch checks the mods (or another change runs) the click does nothing, so the box shows the mod as it is.
+        if (!ModLibraryIdle)
+        {
+            box.IsChecked = row.Enabled;
+            return;
+        }
+        await SetModEnabledAsync(row, !row.Enabled);
     }
 
     private ModLibraryRow[] SelectedModRows() => ModLibraryGrid.SelectedItems.OfType<ModLibraryRow>().ToArray();

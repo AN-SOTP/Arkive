@@ -29,6 +29,7 @@ public partial class MainWindow
     /// </summary>
     private async Task RecolourAuthoringAssetsAsync(IReadOnlyList<ArkiveModLocalEdit> edits, TextureRecolour? start, string? subject)
     {
+        await EnsureGameDatabaseAsync("recolour opened");
         if (_authoringDraft is null || edits.Count == 0) return;
         await RunAuthoringOperationAsync(async () =>
         {

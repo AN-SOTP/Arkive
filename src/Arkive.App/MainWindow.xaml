@@ -3089,6 +3089,10 @@
                                             </StackPanel>
                                         </DockPanel>
                                     </Border>
+                                    <TextBlock x:Name="ModLibraryCheckingText" Foreground="{DynamicResource InfoTextBrush}"
+                                               TextWrapping="Wrap" Margin="0,0,0,5" Visibility="Collapsed"
+                                               AutomationProperties.Name="Checking your mods' files"
+                                               Text="Checking your mods' files… You can look through your mods now; changing them is possible once the check has finished." />
                                     <TextBlock x:Name="ModLibraryPendingText" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"
                                                TextWrapping="Wrap" Margin="0,0,0,5" />
                                     <TextBlock x:Name="ModLibraryStatusText" TextWrapping="Wrap"

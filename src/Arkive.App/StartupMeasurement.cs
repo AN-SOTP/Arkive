@@ -17,6 +17,19 @@ internal sealed record StartupMeasurementOptions(string OutputPath, bool ForcedG
     /// <summary>After loading, write what the Mods tab holds to this file (see MainWindow.DumpModsList).</summary>
     public string? DumpModsListPath { get; init; }
 
+    /// <summary>
+    /// When to write the Mods tab: "ready" (the remembered list shown), "checked" (verified; the default) or "background"
+    /// (after the background pass, which needs --wait-background).
+    /// </summary>
+    public string DumpAt { get; init; } = "checked";
+
+    /// <summary>
+    /// Save the hash, outside-change, working-file index and remembered Mods list caches as a normal launch does, so
+    /// repeated runs on a copy of a data folder measure what a user's second launch does. Off by default: a measuring
+    /// run writes nothing to the data folder but its log.
+    /// </summary>
+    public bool SaveCaches { get; init; }
+
     /// <summary>Views to open after loading, in this order, each timed as a step with its grids' row counts.</summary>
     public IReadOnlyList<string> OpenViews { get; init; } = [];
 
@@ -32,6 +45,13 @@ internal sealed record StartupMeasurementOptions(string OutputPath, bool ForcedG
         var dump = Find(arguments, "--dump-mods-list") is var dumpIndex and >= 0
             ? Value(arguments, dumpIndex) ?? throw new ArgumentException("--dump-mods-list needs the file to write.")
             : null;
+        var dumpAt = Find(arguments, "--dump-at") is var atIndex and >= 0
+            ? Value(arguments, atIndex)?.ToLowerInvariant() ?? throw new ArgumentException("--dump-at needs ready, checked or background.")
+            : "checked";
+        if (dumpAt is not ("ready" or "checked" or "background"))
+            throw new ArgumentException("--dump-at needs ready, checked or background.");
+        if (dumpAt == "background" && Find(arguments, "--wait-background") < 0)
+            throw new ArgumentException("--dump-at background needs --wait-background.");
         var views = new List<string>();
         for (var at = 0; at < arguments.Count; at++)
         {
@@ -45,6 +65,8 @@ internal sealed record StartupMeasurementOptions(string OutputPath, bool ForcedG
             Find(arguments, "--wait-background") >= 0, dataRoot is null ? null : Path.GetFullPath(dataRoot))
         {
             DumpModsListPath = dump is null ? null : Path.GetFullPath(dump),
+            DumpAt = dumpAt,
+            SaveCaches = Find(arguments, "--save-caches") >= 0,
             OpenViews = views,
         };
     }
@@ -106,9 +128,9 @@ internal static class StartupMeasurement
         try
         {
             steps.Run("window", () => window = new MainWindow());
+            // Writes the Mods tab dump at the moment --dump-at names, and with --wait-background runs and times the
+            // background pass as the step "background".
             await window!.RunStartupAsync(steps);
-            if (options.WaitBackground) await steps.RunAsync("library-search", window.RestoredBackgroundWork);
-            if (options.DumpModsListPath is { } dumpPath) window.WriteModsListDump(dumpPath, root);
             foreach (var view in options.OpenViews)
                 await steps.RunAsync("open-view:" + view, () => window.OpenViewForMeasurementAsync(view), counts => counts);
         }

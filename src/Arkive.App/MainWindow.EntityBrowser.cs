@@ -170,6 +170,7 @@ public partial class MainWindow : Window
         IReadOnlyList<string>? customizationCandidates,
         string trigger)
     {
+        await EnsureGameDatabaseAsync("character assets");
         if (_gameMetadataIndex is null || string.IsNullOrWhiteSpace(_libraryRootPath))
         {
             EntityBrowserAssetsGrid.ItemsSource = Array.Empty<EntityBrowserAssetRow>();

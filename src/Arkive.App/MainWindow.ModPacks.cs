@@ -178,7 +178,14 @@ public partial class MainWindow : Window
 
     private async void ModPackSwitch_Click(object sender, RoutedEventArgs e)
     {
-        if (PackGroupOf(sender) is { } group) await SetPackEnabledAsync(group, group.OnState != true);
+        if (PackGroupOf(sender) is not { } group) return;
+        // While launch checks the mods (or another change runs) the click does nothing, so the switch shows the pack as it is.
+        if (!ModLibraryIdle)
+        {
+            if (sender is CheckBox box) box.IsChecked = group.OnState;
+            return;
+        }
+        await SetPackEnabledAsync(group, group.OnState != true);
     }
 
     private async void ModPackTurnOnItem_Click(object sender, RoutedEventArgs e)

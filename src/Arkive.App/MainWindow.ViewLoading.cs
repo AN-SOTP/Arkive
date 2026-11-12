@@ -153,6 +153,8 @@ public partial class MainWindow
         if (views.Length == 0) return;
         try
         {
+            // Every advanced view lists package projects with in-game names, so the game database comes first.
+            await EnsureGameDatabaseAsync(trigger);
             await EnsureViewsAsync(trigger, views);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or

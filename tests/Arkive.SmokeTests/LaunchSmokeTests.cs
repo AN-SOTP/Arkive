@@ -11,6 +11,8 @@ internal static class LaunchSmokeTests
         new("runs the launch benchmark on a fixture, reporting every step and writing nothing", TestBenchmark),
         new("dumps the Mods list and the Apply plan byte for byte the same each time and in another copy, only reading", TestDumps),
         new("measures startup with no visible window, writing only its results and measure-logs", TestMeasuringMode, AppPrerequisite),
+        new("shows the remembered Mods list at the next launch, the same as the checked one, and reads changes again", TestRememberedLaunch,
+            AppPrerequisite),
     ];
 
     private static void TestFixtureLoads()
@@ -171,12 +173,16 @@ internal static class LaunchSmokeTests
         Assert(File.Exists(output), $"the measuring run (exit code {run.ExitCode}) wrote no results");
         var report = LaunchMeasurementReport.Read(output);
         Assert(run.ExitCode == 0 && report.Error is null, $"the measuring run failed (exit code {run.ExitCode}): {report.Error}");
-        // Launch waits only for what the Mods tab shows; the advanced views read theirs when opened.
-        string[] loading = ["window", "hash-cache", "outside-change-cache", "library", "mods-list", "library-search"];
+        // Launch waits only for what the Mods tab shows; the advanced views and the game database load when first needed.
+        // Ready shows the remembered list (none here), Checked the verified one, then the background pass reads the rest.
+        string[] loading = ["window", "hash-cache", "outside-change-cache", "library", "remembered-list", "mods-list", "background"];
         var ran = report.Steps.Where(step => !step.Skipped).Select(step => step.Id).ToArray();
         Assert(ran.SequenceEqual(loading), "the measuring run's loading steps were " + string.Join(", ", ran));
+        Assert(report.Moments?.Select(moment => moment.Id).SequenceEqual(["ready", "checked", "background"]) == true &&
+               report.Moments.All(moment => moment.BytesRead > 0 && moment.FileOperations > 0 && moment.ProcessSeconds > 0),
+            "the measuring run did not record the ready, checked and background moments with what was read by then");
         // Each store of working files and package projects is read once while launch waits.
-        var walks = report.Steps.Where(step => step.Id != "library-search" && step.StoreWalks is not null)
+        var walks = report.Steps.Where(step => step.Id != "background" && step.StoreWalks is not null)
             .SelectMany(step => step.StoreWalks!).GroupBy(pair => pair.Key)
             .ToDictionary(group => group.Key, group => group.Sum(pair => pair.Value));
         Assert(walks.Values.All(count => count == 1) &&
@@ -201,6 +207,72 @@ internal static class LaunchSmokeTests
         foreach (var step in report.Steps.Where(step => !step.Skipped))
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"  {step.Id,-20} {step.Seconds,7:0.000} s  blocked {step.UiBlockedSeconds,6:0.00} s  heap {step.HeapBytes / 1048576d,6:0} MB"));
+        Directory.Delete(root, recursive: true);
+    }
+
+    private static void TestRememberedLaunch()
+    {
+        var root = Path.Combine(fixtureDirectory, "launch-remembered");
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        LaunchFixture.CreateAsync(root, new LaunchFixtureOptions(MeshEdits: 24, Textures: 16, Effects: 20, Materials: 12,
+            Packages: 8, BuildsPerPackage: 1, Mods: 8, EnabledShare: 0.5)).GetAwaiter().GetResult();
+        LaunchMeasurementReport Run(string name, string options)
+        {
+            var output = Path.Combine(fixtureDirectory, $"launch-remembered-{name}.json");
+            var run = HiddenDesktop.Run(AppExecutable()!, $"--measure-startup \"{output}\" --data-root \"{root}\" --save-caches {options}",
+                TimeSpan.FromMinutes(5));
+            Assert(!run.TimedOut && run.VisibleWindows.Count == 0 && run.ExitCode == 0, $"measuring run {name} failed (exit code {run.ExitCode})");
+            var report = LaunchMeasurementReport.Read(output);
+            Assert(report.Error is null, $"measuring run {name} failed: {report.Error}");
+            return report;
+        }
+        string Dump(string name) => Path.Combine(fixtureDirectory, $"launch-remembered-{name}-mods.json");
+        static string? Note(LaunchMeasurementReport report, string step) => report.Steps.Single(item => item.Id == step).Note;
+
+        // The first launch has nothing remembered: it reads every working file and keeps the index and the list.
+        var first = Run("first", $"--wait-background --dump-mods-list \"{Dump("first")}\"");
+        Assert(Note(first, "remembered-list") == "none usable", "the first launch found a remembered Mods list");
+        Assert(File.Exists(WorkingFileIndex.PathFor(root)) && File.Exists(ArkiveModListMemory.PathFor(root)),
+            "the first launch did not keep the working-file index and the Mods list");
+
+        // The next launch shows the remembered list before checking, the same list the check then shows.
+        var second = Run("second", $"--dump-mods-list \"{Dump("second")}\" --dump-at ready");
+        Assert(Note(second, "remembered-list") == "shown", "the second launch did not show the remembered Mods list");
+        var ready = second.Moments!.Single(moment => moment.Id == "ready");
+        var checkedMoment = second.Moments!.Single(moment => moment.Id == "checked");
+        Assert(ready.StartupSeconds <= checkedMoment.StartupSeconds && ready.BytesRead <= checkedMoment.BytesRead,
+            "Ready was not reached before Checked");
+        Assert(File.ReadAllText(Dump("second")) == File.ReadAllText(Dump("first")),
+            "the remembered Mods list differs from the checked one:\n" + FirstDifference(File.ReadAllText(Dump("first")), File.ReadAllText(Dump("second"))));
+        var log = Directory.EnumerateFiles(Path.Combine(root, StartupLogs)).OrderBy(File.GetLastWriteTimeUtc).Last();
+        Assert(File.ReadAllText(log).Contains("Working files checked for launch: source=index", StringComparison.Ordinal),
+            "the second launch did not check the working files from the index");
+
+        // Working meshes of an enabled and of a disabled mod change while Arkive is closed.
+        var environment = ArkiveModTestFixture.CreateEnvironment(root);
+        var library = environment.Library.LoadAsync().GetAwaiter().GetResult();
+        var snapshot = ArkiveModEditSnapshot.LoadAsync(environment.Edits).GetAwaiter().GetResult();
+        string MeshOf(bool enabled) => library.Mods.Where(mod => mod.Enabled == enabled).SelectMany(mod => mod.Bindings)
+            .Select(binding => snapshot.Find(binding.EditId)).First(edit => edit?.Entry is SkeletalMeshEditWorkspaceEntry)!.EditId;
+        var enabledMesh = MeshOf(true);
+        var disabledMesh = MeshOf(false);
+        foreach (var id in new[] { enabledMesh, disabledMesh })
+            File.AppendAllText(((SkeletalMeshEditWorkspaceEntry)snapshot.Find(id)!.Entry).EditedGlbPath, "changed in Blender");
+        bool? Modified(string dump, string editId)
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(dump));
+            foreach (var row in document.RootElement.GetProperty("rows").EnumerateArray())
+            foreach (var asset in row.GetProperty("assets").EnumerateArray())
+                if (asset.GetProperty("editId").GetString() == editId) return asset.GetProperty("modifiedLocally").GetBoolean();
+            return null;
+        }
+        Run("changed", $"--wait-background --dump-mods-list \"{Dump("changed")}\"");
+        Assert(Modified(Dump("changed"), enabledMesh) == true, "Checked did not show the enabled mod's changed working mesh");
+        Console.WriteLine($"  at Checked the disabled mod's changed mesh shows modified={Modified(Dump("changed"), disabledMesh)} (the background pass decides)");
+        // The background pass of that launch read it and remembered the list, so the next launch shows it at once.
+        Run("after", $"--dump-mods-list \"{Dump("after")}\" --dump-at ready");
+        Assert(Modified(Dump("after"), disabledMesh) == true && Modified(Dump("after"), enabledMesh) == true,
+            "the background pass did not bring the disabled mod's changed working mesh into the remembered list");
         Directory.Delete(root, recursive: true);
     }
 

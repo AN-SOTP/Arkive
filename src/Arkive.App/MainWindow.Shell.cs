@@ -59,6 +59,8 @@ public partial class MainWindow : Window
         UpdateBannerContext();
         // The advanced views read their data when first shown, and again when enabling mods left it behind.
         if (MainTabControl.SelectedItem is TabItem tab) _ = ShowViewsAsync("advanced view opened", ViewsFor(tab));
+        // Pages that show or search by in-game names load the game database the first time one is shown.
+        if (MainTabControl.SelectedItem is TabItem shown && UsesGameDatabase(shown)) _ = ShowGameDatabaseForTabAsync(shown);
         if (_indexHealthStale && MainTabControl.SelectedItem == IndexStatusTab) _ = RefreshIndexHealthAsync();
     }
 
@@ -408,7 +410,8 @@ public partial class MainWindow : Window
             {
                 LibraryRootPath = _libraryRootPath,
                 LibraryScratchPath = _libraryScratchPath,
-                GameMetadataPath = _gameMetadataPath,
+                // The game database loads when first needed, so a session that never needed it keeps the saved one.
+                GameMetadataPath = _gameMetadataPath ?? _restoredSettings.GameMetadataPath,
                 LibraryWorkers = workers,
                 LibrarySearchText = LibrarySearchTextBox.Text,
                 LibrarySearchScope =
@@ -488,6 +491,7 @@ public partial class MainWindow : Window
     {
         _authoringMetadataTimer.Stop();
         StopMeshRecordCompaction();
+        StopBackgroundCheck();
         _applicationUpdateCancellation.Cancel();
         _applicationUpdateCancellation.Dispose();
         TrySaveSettings("window closing");

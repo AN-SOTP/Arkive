@@ -17,6 +17,7 @@ public partial class MainWindow
     /// </summary>
     private async Task<string> RecolourModelAsync(Arkive.Core.Viewer.ModelViewerRequest request, string classFile)
     {
+        await EnsureGameDatabaseAsync("model recolour");
         if (_gameMetadataIndex is null || string.IsNullOrEmpty(_libraryRootPath))
             return "Load the game DB mapping and the Asset Library first: they find the model's packages and effects.";
         var offer = await SkillPreview().OfferAsync(request, CancellationToken.None);

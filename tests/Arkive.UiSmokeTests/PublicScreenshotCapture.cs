@@ -57,9 +57,11 @@ internal static class PublicScreenshotCapture
         var window = new MainWindow(root)
         { Width = 1600, Height = 1000, Left = -5000, Top = -5000, WindowStartupLocation = WindowStartupLocation.Manual, ShowActivated = false };
         window.Show();
-        await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == assets.Length);
+        // The Asset Library loads the game database and runs its restored search when first shown.
         var tabs = Control<TabControl>(window, "MainTabControl");
+        await ReadyCheckedChecks.UntilCheckedAsync(window);
         tabs.SelectedItem = Control<TabItem>(window, "LibraryTab");
+        await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == assets.Length);
         Control<TextBox>(window, "LibraryRootTextBox").Text = @"E:\Games\Lost Ark\EFGame\ReleasePC\Packages";
         DemoStatus(window);
         ResizeColumns(window, "LibraryGrid", [190, 170, 95, 180, 210, 220, 115, 190, 85]);

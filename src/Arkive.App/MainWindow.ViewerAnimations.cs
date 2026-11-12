@@ -125,6 +125,7 @@ public partial class MainWindow
     /// <summary>Null when the mesh has no animations Arkive can find.</summary>
     private async Task<ModelViewerAnimationOffer?> FindViewerAnimationsAsync(ModelViewerRequest request, CancellationToken cancellationToken)
     {
+        await EnsureGameDatabaseAsync("viewer animations");
         if (_umodelBridge is null || !request.ClassName.Equals("SkeletalMesh", StringComparison.OrdinalIgnoreCase)) return null;
         var profile = BodyProfiles.ForObjectName(request.ObjectName);
         string? package = null;
