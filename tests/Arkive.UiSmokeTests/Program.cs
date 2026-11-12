@@ -239,6 +239,7 @@ internal static class Program
         await ModLibraryRowChecks.VerifyAsync(window, root);
         await ModPackChecks.VerifyAsync(window, root, screenshotDirectory);
         await ModSearchDropChecks.VerifyAsync(window, root, screenshotDirectory);
+        await RefreshOrderChecks.VerifyAsync(window, root);
         await ZoneViewerChecks.VerifyAsync(root, screenshotDirectory);
         await FontChecks.VerifyAsync(root, screenshotDirectory);
         if (screenshotDirectory is not null)

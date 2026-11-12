@@ -48,7 +48,52 @@ public partial class MainWindow : Window
         _ => null,
     };
 
+    // A refresh asked for while one runs: the one running reads the drafts again when it ends, with these.
+    private Task? _authoringRefresh;
+    private bool _authoringRefreshAgain;
+    private string? _authoringRefreshSelection;
+    private ArkiveModEditSnapshot? _authoringRefreshSnapshot;
+
+    /// <summary>
+    /// Lists the drafts and mods in Edit mods. A call while a refresh runs (the Mods list's, say, read before a save)
+    /// does not return at once, leaving that older list on screen: the running refresh reads everything again when it
+    /// ends, with the newest call's working files and the selection any call asked for, and every caller waits for that.
+    /// </summary>
     private async Task RefreshModAuthoringAsync(string? selectId = null, ArkiveModEditSnapshot? snapshot = null)
+    {
+        if (AuthoringModComboBox is null || _authoringBusy) return;
+        if (_authoringRefresh is { } running)
+        {
+            _authoringRefreshAgain = true;
+            _authoringRefreshSelection = selectId ?? _authoringRefreshSelection;
+            _authoringRefreshSnapshot = snapshot;
+            await running;
+            return;
+        }
+        var refresh = RunModAuthoringRefreshesAsync(selectId, snapshot);
+        _authoringRefresh = refresh;
+        try { await refresh; }
+        finally { if (ReferenceEquals(_authoringRefresh, refresh)) _authoringRefresh = null; }
+    }
+
+    private async Task RunModAuthoringRefreshesAsync(string? selectId, ArkiveModEditSnapshot? snapshot)
+    {
+        while (true)
+        {
+            await RefreshModAuthoringOnceAsync(selectId, snapshot);
+            if (!_authoringRefreshAgain || _authoringBusy) break;
+            _authoringRefreshAgain = false;
+            selectId = _authoringRefreshSelection;
+            snapshot = _authoringRefreshSnapshot;
+            _authoringRefreshSelection = null;
+            _authoringRefreshSnapshot = null;
+        }
+        _authoringRefreshAgain = false;
+        _authoringRefreshSelection = null;
+        _authoringRefreshSnapshot = null;
+    }
+
+    private async Task RefreshModAuthoringOnceAsync(string? selectId, ArkiveModEditSnapshot? snapshot)
     {
         if (AuthoringModComboBox is null || _authoringBusy || _authoringLoading) return;
         _authoringLoading = true;
