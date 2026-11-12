@@ -3044,7 +3044,7 @@
                                                               ToolTip="Put back game files that an Arkive using a different data folder installed mods into, from that folder's verified backups." />
                                                     <MenuItem x:Name="ModLibraryCleanUpWorkingFilesButton" Header="Clean up working files…"
                                                               Click="ModLibraryCleanUpWorkingFilesButton_Click"
-                                                              ToolTip="Delete edited meshes and game-mesh exports that no draft, mod or package build uses, such as replaced Simple upscale pieces." />
+                                                              ToolTip="Delete package builds a newer build has replaced, and working files (edited meshes and textures, effects, materials and other edits) that no mod, draft or kept build uses. Lists everything first." />
                                                     <MenuItem Header="Open mods folder" Click="ModLibraryOpenFolderButton_Click" />
                                                     <MenuItem x:Name="ModLibraryGameFolderButton" Header="Game folder…" Click="ModLibraryGameFolderButton_Click" />
                                                     <MenuItem x:Name="ModLibraryRefreshButton" Header="Refresh" Click="ModLibraryRefreshButton_Click" />

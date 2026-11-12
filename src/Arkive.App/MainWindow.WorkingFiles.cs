@@ -47,16 +47,17 @@ public partial class MainWindow
             var cleanup = StorageCleanup();
             var trimmed = await TrimPackageBuildsAsync("clean up working files");
             var plan = await Task.Run(() => cleanup.PlanAsync(WorkingFileMinimumAge));
-            var report = cleanup.WriteReport(plan, "Clean up working files in the Mods tab", dryRun: false);
             Log($"Working-file cleanup planned: items={plan.Count}, bytes={plan.Bytes}, " +
                 $"categories={string.Join(", ", plan.Categories.Select(category => $"{category.Name} {category.Count}/{category.Bytes}"))}, " +
-                $"keptBuilds={plan.Builds.Kept.Count}, keptWorkingFiles={plan.WorkingFiles.Kept.Count}, report={report}.");
+                $"keptBuilds={plan.Builds.Kept.Count}, keptWorkingFiles={plan.WorkingFiles.Kept.Count}.");
             if (plan.Count == 0)
             {
                 ModLibraryStatusText.Text = (trimmed > 0 ? $"Freed {FormatByteSize(trimmed)} of extra package copies kept by earlier builds. " : "") +
-                                            "Nothing else to clean up: every package build and working file is still in use.";
+                                            "No other working files to clean up: every package build and working file is still in use.";
                 return;
             }
+            var report = cleanup.WriteReport(plan, "Clean up working files in the Mods tab", dryRun: false);
+            Log($"Working-file cleanup report written: {report}.");
             var lines = string.Join("\n", plan.Categories.Select(category =>
                 $"  • {category.Name}: {category.Count:N0} ({FormatByteSize(category.Bytes)})"));
             if (MessageBox.Show(this,
