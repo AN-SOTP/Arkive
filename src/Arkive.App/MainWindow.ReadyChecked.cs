@@ -220,7 +220,8 @@ public partial class MainWindow
         }
         // A scan that changed the library is made again, as the refresh after a change always did.
         var unchanged = scan is { RegisteredModIds.Count: 0, RefreshedModIds.Count: 0, Released.Count: 0 } ? scan : null;
-        await RefreshArkiveModsAsync("workspace restore", knownScan: unchanged);
+        // Install states the memo still holds are shown; the background pass checks every package again.
+        await RefreshArkiveModsAsync("workspace restore", knownScan: unchanged, installRead: InstallStateRead.LaunchMemo);
     }
 
     /// <summary>Ends the checking state: the note goes and every action is available again.</summary>
@@ -298,7 +299,10 @@ public partial class MainWindow
                 }
                 if (refreshes != _modListRefreshes) continue;
                 _selectionOnlyChange = snapshot;
-                await RefreshArkiveModsAsync("background check", onlyIfRowsChange: true);
+                // Install states launch took from the memo are checked again with the install-state service, and the
+                // list corrected where they differ.
+                await RefreshArkiveModsAsync("background check", onlyIfRowsChange: true,
+                    installRead: _launchInstallStates is null ? InstallStateRead.Usual : InstallStateRead.Recheck);
                 if (refreshes + 1 != _modListRefreshes)
                 {
                     Log($"Background check of the working files overtaken by a change; reading again (attempt {attempt}).");
@@ -421,16 +425,17 @@ public partial class MainWindow
             }, TaskScheduler.Default);
     }
 
-    /// <summary>Waits for the index and remembered list being written (a measuring run exits right after).</summary>
+    /// <summary>Waits for the index, remembered list and install-state memo being written (a measuring run exits right after).</summary>
     private async Task WaitForLaunchCachesAsync()
     {
-        Task index, remember;
+        Task index, remember, memo;
         lock (_launchCacheLock)
         {
             index = _indexUpdate;
             remember = _rememberSave;
+            memo = _installMemoSave;
         }
-        await Task.WhenAll(index, remember);
+        await Task.WhenAll(index, remember, memo);
         lock (_launchCacheLock)
             if (_pendingIndexRead is not null || !_indexUpdate.IsCompleted) index = _indexUpdate;
         await index;

@@ -17,10 +17,10 @@ session log goes to `measure-logs` in the data folder. `--data-root` sets `ARKIV
 usual data folder is measured. `--forced-gc` collects fully after each step, so the heap column is what Arkive keeps
 (and steps take a little longer). `--wait-background` also runs and times the background pass that a normal launch
 starts after Checked (step `background`, moment `background`). `--save-caches` saves the hash, outside-change,
-working-file index and remembered Mods list caches as a normal launch does (step `cache-save`), so repeated runs on a
-copy of a data folder measure what a user's next launch does; use it only with `--data-root` on a copy. Without it the
-run writes nothing to the data folder but its log, so every run reads every working file at Checked, as a first launch
-after an upgrade does.
+working-file index, remembered Mods list and install-state memo caches as a normal launch does (step `cache-save`), so
+repeated runs on a copy of a data folder measure what a user's next launch does; use it only with `--data-root` on a
+copy. Without it the run writes nothing to the data folder but its log, so every run reads every working file and checks
+every package project's install state at Checked, as a first launch after an upgrade does.
 
 Launch has two moments, recorded under `moments` with what the whole process had read by then (`processSeconds` since
 the process started, `startupSeconds` since the startup sequence began, `bytesRead`, `readOperations`,
@@ -29,10 +29,16 @@ the process started, `startupSeconds` since the startup sequence began, `bytesRe
 - `ready`: the Mods list is on screen, from the remembered list when there is a usable one (step `remembered-list`,
   note `shown`), otherwise the checked list.
 - `checked`: the working files of enabled mods (from the working-file index, each checked unchanged or read again),
-  the install state and the outside-change check are done and the verified list is shown (step `mods-list`).
+  the install state (from the install-state memo `cache\package-install-state.json` for each package project whose
+  files are all unchanged, checked again for the rest) and the outside-change check are done and the verified list is
+  shown (step `mods-list`). When some install states came from the memo, the background pass checks every package
+  project again and corrects the list.
 
 The session log has `Startup ready in N s`, `Startup checked in N s`, `Startup mods loaded in N s` and
-`Startup loading took N s` (now Checked), and `Working files checked for launch: source=index|full read, ...`.
+`Startup loading took N s` (now Checked), `Working files checked for launch: source=index|full read, ...` and
+`Mods list install state read: ..., remembered=N, checkedNow=N, notRemembered=N, memoFileChecks=N.`; a state the
+background pass found different from what launch showed is logged as `Install state shown at launch corrected by the
+background check: ...`.
 
 Two more options look at the window after loading:
 
@@ -100,6 +106,7 @@ Startup waits for `window`, the two caches, `library` (the mods folder scan and 
 state from the package project records, the outside-change check, the Mods list and Edit mods' drafts). The game database
 loads when a page that shows in-game names is first shown, and the advanced views read their data when first opened
 (`--open-view` times that). The background pass (`--wait-background`) reads every working file once and refreshes the
-index and the remembered list. The benchmark's `install-state` step uses
+index and the remembered list; after a launch that showed install states from the memo it also checks every package
+project's install state again and refreshes the memo. The benchmark's `install-state` step uses
 the same install-state service as the Mods list and the package view. `filesHashed` and `bytesHashed` count files hashed in full
 because no saved hash matched.

@@ -102,8 +102,9 @@ public partial class MainWindow : Window
 
     /// <param name="knownScan">A scan of the mods folder made just now (launch's), so the library is not read again.</param>
     /// <param name="onlyIfRowsChange">Leave the list on screen alone when no row would read differently (a background check).</param>
+    /// <param name="installRead">How the install state is read: only launch and the background pass after it differ.</param>
     private async Task RefreshArkiveModsAsync(string trigger, string? selectModId = null, ArkiveModLibraryScanResult? knownScan = null,
-        bool onlyIfRowsChange = false)
+        bool onlyIfRowsChange = false, InstallStateRead installRead = InstallStateRead.Usual)
     {
         if (ModLibraryGrid is null) return;
         var refresh = ++_modListRefreshes;
@@ -150,13 +151,15 @@ public partial class MainWindow : Window
                 : await Task.Run(() => ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits));
             if (Superseded()) return;
             Lap("working files");
-            var (activeRevisions, packageRecords, installedHere) = await InstallStatesAsync(snapshot, library.GamePackagesDirectory);
+            var (activeRevisions, packageRecords, installedHere, installFromMemo, installCorrected) =
+                await InstallStatesAsync(snapshot, library.GamePackagesDirectory, installRead);
             if (Superseded()) return;
             Lap("install state");
             // Choosing which mods are on changes no game file, so the last check of the game folder still holds.
-            // Applying, restoring and Refresh check again, and every install verifies the game files itself.
+            // Applying, restoring and Refresh check again, and every install verifies the game files itself. A launch
+            // install state the background pass corrected may have hidden an outside change, so it is checked again.
             var outside = _outsideChanges;
-            if (selectionOnly is null || !_outsideChangesChecked)
+            if (selectionOnly is null || !_outsideChangesChecked || installCorrected)
             {
                 outside = [];
                 try
@@ -206,8 +209,9 @@ public partial class MainWindow : Window
                 $"registered={scan.RegisteredModIds.Count}, " +
                 $"refreshed={scan.RefreshedModIds.Count}, released={scan.Released.Count}, " +
                 $"workingFiles={(snapshot.FromIndex ? "index" : "read")}.");
-            // What every row shows is kept for the next launch to show at once, when it was verified in full.
-            if (!snapshot.FromIndex && scan.Released.Count == 0)
+            // What every row shows is kept for the next launch to show at once, when it was verified in full (not with
+            // install states remembered from the last launch).
+            if (!snapshot.FromIndex && scan.Released.Count == 0 && !installFromMemo && _launchInstallStates is null)
                 RememberModList(library, statuses, authoringPending, outside.Count);
             // Bug reports carry the session log, so record which mods and packages are in game whenever that changes.
             var state = string.Join(Environment.NewLine, rows.Select(row =>
@@ -268,21 +272,54 @@ public partial class MainWindow : Window
         _installStateGeneration++;
     }
 
+    /// <summary>How a Mods list refresh reads the install state.</summary>
+    private enum InstallStateRead
+    {
+        /// <summary>What the last read found while it still holds, otherwise the install-state service's checks.</summary>
+        Usual,
+
+        /// <summary>
+        /// Launch's Checked step: each package's entry in the memo (PackageInstallMemo) while every file it was worked
+        /// out from is unchanged, the service's checks for the rest.
+        /// </summary>
+        LaunchMemo,
+
+        /// <summary>The background pass after a launch that showed remembered states: every package checked again.</summary>
+        Recheck,
+    }
+
+    /// <summary>
+    /// What launch showed of each package's install state, by package project record, when some of it came from the
+    /// memo; the background pass checks every package again and corrects the list. Null otherwise.
+    /// </summary>
+    private Dictionary<string, PackageInstallSummary?>? _launchInstallStates;
+
+    // _installStateGeneration when launch read _launchInstallStates.
+    private int _launchInstallGeneration;
+
+    // The memo being written, if any (in the background, one after another).
+    private Task _installMemoSave = Task.CompletedTask;
+
     /// <summary>
     /// The install state the Mods list shows, and the package project records when this read them (null when the last
     /// one still holds). Reading creates the package project of any game package a working file changes that has none,
     /// as the package view does, so the same project is found for each package. With the records, the projects whose
     /// build this read proved in the game with a receipt of this Arkive (ArkiveModApplyService.ProvesInstalledByThisArkive).
+    /// FromMemo says some states were remembered rather than checked now (they are only shown, see InstallStateRead);
+    /// Corrected that a check again found a package other than launch showed it.
     /// </summary>
     private async Task<(IReadOnlyDictionary<string, GuidedTexturePackageRevision?> Active,
-        IReadOnlyList<GuidedTexturePackageEntry>? Records, IReadOnlySet<GuidedTexturePackageEntry>? InstalledHere)>
-        InstallStatesAsync(ArkiveModEditSnapshot snapshot, string? gameDirectory)
+        IReadOnlyList<GuidedTexturePackageEntry>? Records, IReadOnlySet<GuidedTexturePackageEntry>? InstalledHere,
+        bool FromMemo, bool Corrected)>
+        InstallStatesAsync(ArkiveModEditSnapshot snapshot, string? gameDirectory, InstallStateRead how = InstallStateRead.Usual)
     {
-        if (_installStates is { } known) return (known, null, null);
+        if (how == InstallStateRead.Usual && _installStates is { } known) return (known, null, null, false, false);
         var generation = _installStateGeneration;
         var service = PackageInstallStates;
+        var root = _projectRoot;
+        var version = LaunchCacheVersion;
         // Off the window's thread: hundreds of packages, each with its builds, receipts and game file looked at.
-        var (read, records, projects, active, installedHere) = await Task.Run(async () =>
+        var (read, records, projects, summaries, checks) = await Task.Run(async () =>
         {
             var read = await _guidedTexturePackageWorkspace.LoadAsync();
             // Edits made from the working-file index cannot create a project (that needs their records); a package
@@ -290,22 +327,87 @@ public partial class MainWindow : Window
             var records = await PackageInstallStateService.EnsureProjectsAsync(_guidedTexturePackageWorkspace, read, snapshot);
             var projects = PackageInstallStateService.ProjectsForWorkingFiles(records,
                 snapshot.Edits.Select(edit => edit.SourcePackagePath));
-            var states = await service.ResolveAllAsync(projects);
-            var active = PackageInstallStateService.ActiveRevisionsByPhysicalName(projects, gameDirectory,
-                project => states.GetValueOrDefault(project));
-            IReadOnlySet<GuidedTexturePackageEntry> installedHere = states
-                .Where(pair => ArkiveModApplyService.ProvesInstalledByThisArkive(pair.Value))
-                .Select(pair => pair.Key).ToHashSet<GuidedTexturePackageEntry>(ReferenceEqualityComparer.Instance);
-            return (read, records, projects, active, installedHere);
+            var summaries = new Dictionary<GuidedTexturePackageEntry, PackageInstallSummary?>(ReferenceEqualityComparer.Instance);
+            PackageInstallChecks? checks = null;
+            if (how == InstallStateRead.Usual)
+            {
+                foreach (var (project, state) in await service.ResolveAllAsync(projects))
+                    summaries[project] = PackageInstallSummary.Of(state);
+            }
+            else
+            {
+                // The background pass checks every package at half the launch's pace; the memo only helps it notice a
+                // file that changed while its package was checked.
+                checks = await PackageInstallMemo.CheckAllAsync(service, projects,
+                    PackageInstallMemo.Load(root, version, gameDirectory), root, useMemo: how == InstallStateRead.LaunchMemo,
+                    how == InstallStateRead.Recheck ? PackageInstallStateService.Parallelism / 2 : PackageInstallStateService.Parallelism);
+                foreach (var check in checks.Packages) summaries[check.Package] = check.Summary;
+            }
+            return (read, records, projects, summaries, checks);
         });
-        Log($"Mods list install state read: packages={projects.Count}, installed={active.Count(pair => pair.Value is not null)}.");
+        var active = PackageInstallStateService.ActiveRevisionsByPhysicalName(projects, gameDirectory,
+            project => summaries.GetValueOrDefault(project));
+        IReadOnlySet<GuidedTexturePackageEntry> installedHere = summaries
+            .Where(pair => pair.Value?.InstalledByThisArkive == true)
+            .Select(pair => pair.Key).ToHashSet<GuidedTexturePackageEntry>(ReferenceEqualityComparer.Instance);
+        Log($"Mods list install state read: packages={projects.Count}, installed={active.Count(pair => pair.Value is not null)}" +
+            (checks is null ? "." : $", remembered={checks.FromMemo}, checkedNow={checks.Inspected}, " +
+                                    $"notRemembered={checks.NotRemembered}, memoFileChecks={checks.FileChecks}."));
+        var corrected = false;
+        if (how == InstallStateRead.Recheck && _launchInstallStates is { } shown)
+        {
+            // Every state on screen is now one checked again, so nothing remembered is shown any more. When something
+            // (an install, Apply) let launch's states go since, they are no longer on screen to correct.
+            _launchInstallStates = null;
+            foreach (var project in _launchInstallGeneration == generation ? projects : [])
+            {
+                if (!shown.TryGetValue(Path.GetFullPath(project.ManifestPath), out var then)) continue;
+                var now = summaries.GetValueOrDefault(project);
+                if (PackageInstallSummary.Same(then, now)) continue;
+                corrected = true;
+                Log($"Install state shown at launch corrected by the background check: package={project.Manifest.PackageAlias}, " +
+                    $"record={project.ManifestPath}, shown: {PackageInstallSummary.Describe(then)}; " +
+                    $"checked: {PackageInstallSummary.Describe(now)}.");
+            }
+        }
+        if (how == InstallStateRead.LaunchMemo && checks is { FromMemo: > 0 })
+        {
+            _launchInstallStates = projects.ToDictionary(project => Path.GetFullPath(project.ManifestPath),
+                project => summaries.GetValueOrDefault(project), StringComparer.OrdinalIgnoreCase);
+            _launchInstallGeneration = generation;
+        }
         if (generation == _installStateGeneration)
         {
             _installStates = active;
             _installStateProjects = projects;
+            // Kept only from checks nothing overtook: no install, Apply or other operation began meanwhile.
+            if (checks is not null && (how == InstallStateRead.LaunchMemo ? checks.Inspected > 0 : !BackgroundCheckShouldWait))
+                SaveInstallMemo(PackageInstallMemo.Document(checks, root, version, gameDirectory));
         }
         // Projects created just now sort among the others when read from disk; the outside-change check reads them so.
-        return ReferenceEquals(records, read) ? (active, read, installedHere) : (active, null, null);
+        var fromMemo = checks is { FromMemo: > 0 };
+        return ReferenceEquals(records, read)
+            ? (active, read, installedHere, fromMemo, corrected)
+            : (active, null, null, fromMemo, corrected);
+    }
+
+    /// <summary>Writes the install-state memo in the background (not in a measuring run without --save-caches).</summary>
+    private void SaveInstallMemo(PackageInstallMemoDocument document)
+    {
+        if (!_saveLaunchCaches) return;
+        var root = _projectRoot;
+        lock (_launchCacheLock)
+            _installMemoSave = _installMemoSave.ContinueWith(_ =>
+            {
+                try
+                {
+                    PackageInstallMemo.Save(root, document);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    Log($"Install-state memo not saved: {exception.Message}");
+                }
+            }, TaskScheduler.Default);
     }
 
     private void ApplySelectedModLibraryRow()
@@ -1048,6 +1150,30 @@ public partial class MainWindow : Window
     {
         var rows = SelectedModRows();
         if (rows.Length == 0) return;
+        // Whether a mod is still in the game decides below whether it may be deleted, and until the background pass
+        // has checked them the rows may show install states remembered from the last launch: they are checked now.
+        if (_launchInstallStates is not null)
+        {
+            var chosen = rows.Select(row => row.Entry.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _modLibraryBusy = true;
+            UpdateModLibraryActionState();
+            try
+            {
+                await RefreshArkiveModsAsync("install state checked before deleting", installRead: InstallStateRead.Recheck);
+            }
+            finally
+            {
+                _modLibraryBusy = false;
+                UpdateModLibraryActionState();
+            }
+            rows = _modLibraryRows.Where(row => chosen.Contains(row.Entry.ModId)).ToArray();
+            if (_launchInstallStates is not null || rows.Length == 0)
+            {
+                MessageBox.Show(this, "Arkive is still checking which mods are in the game. Try again in a moment.",
+                    "Delete mod", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+        }
         // Deleting a mod does not take it out of the game, so one still installed would be left there with no mod
         // to restore it by: it is disabled and applied first.
         var inGame = rows.Where(row => row.HasActiveAssets).ToArray();
