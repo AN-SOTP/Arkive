@@ -96,13 +96,23 @@ public sealed class TweakSignalFolder : IDisposable
         private RegisteredWaitHandle? _wait;
         private Timer? _retry;
 
+        // A read (on a pool thread) or a retry can be arming the file while the watch is disposed. Without this they
+        // could take a new lock after Dispose, on an OVERLAPPED already freed, and that lock would then hold up every
+        // later open of the file.
+        private readonly Lock _gate = new();
+        private bool _closed;
+
         public void Arm() => TryArm(retryLater: true);
 
         /// <summary>Opens the file and asks for the lock; false when the lock isn't granted yet.</summary>
         private bool TryArm(bool retryLater)
         {
-            if (owner.Disposed)
-                return true;
+            lock (_gate)
+                return _closed || owner.Disposed || TryArmOpen(retryLater);
+        }
+
+        private bool TryArmOpen(bool retryLater)
+        {
             _broken.Reset();
             for (var at = 0; at < OverlappedSize; at++)
                 Marshal.WriteByte(_overlapped, at, 0);
@@ -132,8 +142,11 @@ public sealed class TweakSignalFolder : IDisposable
             if (owner.Disposed)
                 return;
             owner._read(symbol, path);
-            _handle?.Dispose();
-            _handle = null;
+            lock (_gate)
+            {
+                _handle?.Dispose();
+                _handle = null;
+            }
             // The reader's open goes ahead now; the lock is granted again once its handle closes, normally well under a
             // millisecond later. Ask again straight away (yielding, since Sleep(1) can take 15 ms) for a short while,
             // then fall back to the slower retry.
@@ -159,16 +172,23 @@ public sealed class TweakSignalFolder : IDisposable
 
         public void Dispose()
         {
-            _retry?.Dispose();
-            _wait?.Unregister(null);
-            if (_handle is { } handle)
+            lock (_gate)
             {
-                // Closing the handle completes the pending lock request; wait for that before freeing its OVERLAPPED.
-                handle.Dispose();
-                _broken.WaitOne(TimeSpan.FromSeconds(1));
+                if (_closed)
+                    return;
+                _closed = true;
+                _retry?.Dispose();
+                _wait?.Unregister(null);
+                if (_handle is { } handle)
+                {
+                    // Closing the handle completes the pending lock request; wait for that before freeing its OVERLAPPED.
+                    handle.Dispose();
+                    _handle = null;
+                    _broken.WaitOne(TimeSpan.FromSeconds(1));
+                }
+                Marshal.FreeHGlobal(_overlapped);
+                _broken.Dispose();
             }
-            Marshal.FreeHGlobal(_overlapped);
-            _broken.Dispose();
         }
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]

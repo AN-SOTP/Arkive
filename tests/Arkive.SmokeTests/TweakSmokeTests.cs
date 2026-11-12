@@ -23,6 +23,7 @@ internal static class TweakSmokeTests
         new("reads a game crash dump: the exception, where, the names on the stack and the tweak code it points into", TestGameCrash),
         new("turns Auto Pull Up's Data Bus reports into log lines and ignores unreadable ones", TestAutoPullUpReports),
         new("writes Spotify's state for the Spotify Player and reads its buttons, volume and moves", TestSpotifyPlayer),
+        new("a Data Bus folder let go of while files are being read holds none of them and notes no more reads", TestSignalFolderDispose),
         new("keeps the HUD layout Edit UI sends, piece by piece, and clears it on Restore defaults", TestEditUiLayout),
         new("reads skills' stagger per hit, stagger tripods and the grade labels from the game's data2.lpk", TestSkillStagger, GameData2),
     ];
@@ -89,6 +90,51 @@ internal static class TweakSmokeTests
             $"the Spotify Player's volume message didn't come through the bus ({got})");
         Assert(TweakCatalog.Find(SpotifyPlayer.Tweak) is { Available: true, RestartOnly: false, Hooks.Count: 2 },
             "the Spotify Player isn't in the tweak catalog with its two minimap hooks");
+    }
+
+    // A window that closed while still holding its bus files made the next window on the same data folder fight it for
+    // each one (every open waits for the holder to let go), which stalled that window for minutes.
+    private static void TestSignalFolderDispose()
+    {
+        var folder = Path.Combine(fixtureDirectory, "signal-dispose");
+        if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        var reads = 0;
+        var first = new TweakSignalFolder(folder, (_, _) => Interlocked.Increment(ref reads));
+        first.Start();
+        var files = TweakSignalFolder.Sets.SelectMany(set => TweakSignalFolder.Symbols
+            .Select(symbol => Path.Combine(folder, TweakSignalFolder.FileName(set, symbol)))).ToArray();
+        static void Open(string path)
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            stream.ReadByte();
+        }
+        Open(files[0]);
+        Assert(Volatile.Read(ref reads) == 1, $"a read of a bus file was not noted ({reads})");
+
+        // Files keep being read (as the game does) while the folder is let go of.
+        using var stop = new CancellationTokenSource();
+        var reader = Task.Run(() =>
+        {
+            for (var at = 0; !stop.IsCancellationRequested; at++) Open(files[at % files.Length]);
+        });
+        Thread.Sleep(100);
+        first.Dispose();
+        stop.Cancel();
+        Assert(reader.Wait(TimeSpan.FromSeconds(10)), "reading the bus files stalled while the folder was let go of");
+        var noted = Volatile.Read(ref reads);
+        var reopen = Task.Run(() => { foreach (var file in files) Open(file); });
+        Assert(reopen.Wait(TimeSpan.FromSeconds(10)), "a bus file was still held after the folder was let go of");
+        Thread.Sleep(100);
+        Assert(Volatile.Read(ref reads) == noted, $"reads were noted after the folder was let go of ({noted} → {reads})");
+
+        // The next watcher of the same folder takes every file and notes its reads.
+        var again = 0;
+        using var second = new TweakSignalFolder(folder, (_, _) => Interlocked.Increment(ref again));
+        var start = Task.Run(second.Start);
+        Assert(start.Wait(TimeSpan.FromSeconds(10)), "watching the bus files again stalled");
+        Open(files[^1]);
+        Assert(Volatile.Read(ref again) == 1 && Volatile.Read(ref reads) == noted,
+            $"after the folder was let go of, a read reached the wrong watcher (new {again}, old {reads - noted})");
     }
 
     private static void TestEditUiLayout()
