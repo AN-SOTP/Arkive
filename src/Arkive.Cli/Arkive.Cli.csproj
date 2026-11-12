@@ -8,6 +8,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Arkive.Core/Arkive.Core.csproj" />
+    <!-- launch-fixture shares the smoke tests' generator, so the CLI and the tests build the same data folders. -->
+    <Compile Include="../../tests/Arkive.SmokeTests/LaunchFixture.cs" Link="LaunchFixture.cs" />
     <None Include="../Arkive.Core/runtimes/win-x64/native/Arkive.Crunch.Native.dll"
           Link="Arkive.Crunch.Native.dll"
           CopyToOutputDirectory="PreserveNewest"

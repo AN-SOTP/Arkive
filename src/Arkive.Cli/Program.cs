@@ -329,7 +329,7 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--state-root"),
                 arguments.Contains("--confirm", StringComparer.OrdinalIgnoreCase), json),
             "arkive-inspect" => ArkiveInspect(target, json),
-            "arkive-list" => ArkiveList(target, json),
+            "arkive-list" => ArkiveList(target, json, ReadDumpPath(arguments)),
             "arkive-import" => ArkiveImport(
                 target, ReadTextOption(arguments, "--root"),
                 arguments.Contains("--enable", StringComparer.OrdinalIgnoreCase),
@@ -342,7 +342,7 @@ static int Run(string[] arguments)
                 ReadIntegerOption(arguments, "--priority"), json),
             "arkive-conflicts" => ArkiveConflicts(target, json),
             "arkive-migrate" => ArkiveMigrate(target, ReadTextOption(arguments, "--author"), json),
-            "arkive-plan" => ArkivePlan(target, json),
+            "arkive-plan" => ArkivePlan(target, json, ReadDumpPath(arguments)),
             "arkive-particle-tint" => ArkiveParticleTint(
                 target,
                 ReadTextOptions(arguments, "--package"),
@@ -428,6 +428,9 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--out"),
                 json),
             "scan" => Scan(target, ReadLimit(arguments), json),
+            "launch-fixture" => PerformanceCommands.LaunchFixture(target, arguments),
+            "launch-benchmark" => PerformanceCommands.LaunchBenchmark(
+                target, ReadDumpPath(arguments), arguments.Contains("--forced-gc", StringComparer.OrdinalIgnoreCase)),
             _ => UnknownCommand(command),
         };
     }
@@ -2607,9 +2610,17 @@ static int ArkiveInspect(string arkivePath, bool json)
     return 0;
 }
 
-static int ArkiveList(string projectRoot, bool json)
+static int ArkiveList(string projectRoot, bool json, string? dumpPath)
 {
     var environment = CreateModEnvironment(projectRoot);
+    if (dumpPath is not null)
+    {
+        // The dump only reads, so the mods folder is not scanned (a scan registers new files in the library).
+        LoadSavedHashes(projectRoot);
+        WriteDump(dumpPath, Arkive.Core.Diagnostics.ArkiveModParityDumps.ListAsync(
+            environment.Context, environment.Apply, projectRoot).GetAwaiter().GetResult());
+        return 0;
+    }
     var scan = environment.Authoring.ScanAsync().GetAwaiter().GetResult();
     var snapshot = ArkiveModEditSnapshot.LoadAsync(environment.Context.Edits).GetAwaiter().GetResult();
     var active = new Dictionary<string, GuidedTexturePackageRevision?>(StringComparer.Ordinal);
@@ -2890,9 +2901,16 @@ static int SkillActions(string archivePath, string? className, int? skillId, boo
     return 0;
 }
 
-static int ArkivePlan(string projectRoot, bool json)
+static int ArkivePlan(string projectRoot, bool json, string? dumpPath)
 {
     var environment = CreateModEnvironment(projectRoot);
+    if (dumpPath is not null)
+    {
+        LoadSavedHashes(projectRoot);
+        WriteDump(dumpPath, Arkive.Core.Diagnostics.ArkiveModParityDumps.PlanAsync(
+            environment.Apply, environment.Context.Library, projectRoot).GetAwaiter().GetResult());
+        return 0;
+    }
     environment.Authoring.ScanAsync().GetAwaiter().GetResult();
     var plan = environment.Apply.PlanAsync().GetAwaiter().GetResult();
     if (json) WriteJson(PlanJson(plan));
@@ -4226,12 +4244,12 @@ static void PrintUsage()
     Console.WriteLine("  arkive mod-set-install <arkive-mod-set.json> --confirm [--backup-root DIR] [--state-root DIR] [--json]");
     Console.WriteLine("  arkive mod-set-restore <arkive-mod-set.json> --confirm [--backup-root DIR] [--state-root DIR] [--json]");
     Console.WriteLine("  arkive arkive-inspect <mod.arkive> [--json]");
-    Console.WriteLine("  arkive arkive-list <Arkive-project-root> [--json]");
+    Console.WriteLine("  arkive arkive-list <Arkive-project-root> [--json [FILE]]   (FILE: sorted, path-free dump for comparisons)");
     Console.WriteLine("  arkive arkive-import <mod.arkive> [--root Arkive-project-root] [--enable] [--priority N] [--replace] [--json]");
     Console.WriteLine("  arkive arkive-set <Arkive-project-root> --mod ID|NAME [--enable|--disable] [--priority N] [--json]");
     Console.WriteLine("  arkive arkive-conflicts <Arkive-project-root> [--json]");
     Console.WriteLine("  arkive arkive-migrate <Arkive-project-root> [--author NAME] [--json]");
-    Console.WriteLine("  arkive arkive-plan <Arkive-project-root> [--json]");
+    Console.WriteLine("  arkive arkive-plan <Arkive-project-root> [--json [FILE]]   (FILE: sorted, path-free dump for comparisons)");
     Console.WriteLine("  arkive arkive-apply <Arkive-project-root> --confirm [--json]");
     Console.WriteLine("  arkive arkive-update <Arkive-project-root> --mod ID|NAME [--json]");
     Console.WriteLine("  arkive client-update-check-all <Arkive-project-root> [--out DIR] [--state-root DIR] [--json]");
@@ -4259,6 +4277,9 @@ static void PrintUsage()
     Console.WriteLine(
         "  arkive umodel-export <package.upk> --object NAME [--class CLASS] [--out DIR] [--json]");
     Console.WriteLine("  arkive scan <Packages-directory> [--limit N] [--json]");
+    Console.WriteLine("  arkive launch-fixture <new-folder> [--mesh-edits N] [--textures N] [--effects N] [--materials N] [--packages N] " +
+                      "[--builds-per-package N] [--mods N] [--enabled-share 0.3] [--bound-share 0.52] [--seed N]");
+    Console.WriteLine("  arkive launch-benchmark <Arkive-data-root> [--json FILE] [--forced-gc]");
     Console.WriteLine();
     Console.WriteLine(
         $"Protected catalogues use Arkive's built-in {ChunkProtectionProviderFactory.WesternGlobalProfileId} profile.");
@@ -4270,6 +4291,30 @@ static string SafeFileName(string value)
     return new string(value.Select(character => invalid.Contains(character) ? '_' : character).ToArray());
 }
 
+
+/// <summary>The FILE of --json FILE, or null when --json stands alone (print JSON) or is absent.</summary>
+static string? ReadDumpPath(string[] arguments)
+{
+    var index = Array.FindIndex(arguments, 2, argument => argument.Equals("--json", StringComparison.OrdinalIgnoreCase));
+    return index >= 0 && index + 1 < arguments.Length && !arguments[index + 1].StartsWith("--", StringComparison.Ordinal)
+        ? arguments[index + 1]
+        : null;
+}
+
+/// <summary>Reads the hashes Arkive saved, so a dump does not hash every game package again; nothing is written.</summary>
+static void LoadSavedHashes(string projectRoot)
+{
+    ArkiveModEditSnapshot.LoadHashCache(Path.Combine(projectRoot, "cache", "file-hashes.json"));
+    ArkiveModApplyService.LoadOutsideChangeCache(Path.Combine(projectRoot, "cache", "outside-changes.json"));
+}
+
+static void WriteDump(string path, string text)
+{
+    var full = Path.GetFullPath(path);
+    Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+    File.WriteAllText(full, text, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    Console.WriteLine($"Wrote {full}");
+}
 
 static void WriteJson<T>(T value)
 {

@@ -392,6 +392,8 @@ public partial class MainWindow : Window
 
     private void TrySaveSettings(string reason = "state change")
     {
+        // A measuring run (--measure-startup) leaves the user's settings as they were.
+        if (StartupMeasurement.Current is not null) return;
         try
         {
             var bounds = WindowState == WindowState.Normal
@@ -498,8 +500,11 @@ public partial class MainWindow : Window
         _applicationUpdateCancellation.Cancel();
         _applicationUpdateCancellation.Dispose();
         TrySaveSettings("window closing");
-        ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath);
-        ArkiveModApplyService.SaveOutsideChangeCache(OutsideChangeCachePath);
+        if (StartupMeasurement.Current is null)
+        {
+            ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath);
+            ArkiveModApplyService.SaveOutsideChangeCache(OutsideChangeCachePath);
+        }
         _libraryIndexCancellation?.Cancel();
         _libraryIndexCancellation?.Dispose();
         _librarySearchCancellation?.Cancel();

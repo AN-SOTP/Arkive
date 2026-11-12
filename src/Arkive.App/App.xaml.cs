@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -12,8 +13,23 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         _installationMutex = new Mutex(false, "Arkive.Application.Update");
-        if (StartupUri is not null) StartupModFiles = ModFileArguments(e.Args);
+        // Arkive's own launch opens the main window here (StartupUri would always show it); a host that builds the App
+        // itself, such as the UI smoke tests, opens its own windows.
+        var arkiveLaunch = Assembly.GetEntryAssembly() == typeof(App).Assembly;
+        StartupMeasurementOptions? measuring = null;
+        try
+        {
+            if (arkiveLaunch) measuring = StartupMeasurementOptions.Parse(e.Args);
+        }
+        catch (ArgumentException)
+        {
+            // A measuring run with incomplete options; it must not open any window, an error message included.
+            Environment.Exit(2);
+        }
+        if (arkiveLaunch && measuring is null) StartupModFiles = ModFileArguments(e.Args);
         base.OnStartup(e);
+        if (measuring is not null) StartupMeasurement.Start(this, measuring);
+        else if (arkiveLaunch) new MainWindow().Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
