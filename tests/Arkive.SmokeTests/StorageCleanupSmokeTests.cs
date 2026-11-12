@@ -71,16 +71,18 @@ internal static class StorageCleanupSmokeTests
         var cleanup = new ArkiveWorkingFileCleanup(root, env.Edits, exports);
         var plan = cleanup.PlanAsync(TimeSpan.FromHours(1)).GetAwaiter().GetResult();
         var planned = plan.Items.Select(item => item.DirectoryPath).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        // The unused built edit's candidate goes with it.
+        var builtCandidate = Path.GetFullPath(Path.GetDirectoryName(built.Document.LatestCandidateManifestPath)!);
         string[] expected =
         [
             unusedEffect, unusedPhysics, chainedPhysics, unusedMovie, unusedStatic, unusedTexture,
-            Path.GetFullPath(material.DirectoryPath), Path.GetFullPath(built.DirectoryPath),
+            Path.GetFullPath(material.DirectoryPath), Path.GetFullPath(built.DirectoryPath), builtCandidate,
         ];
         Assert(planned.SequenceEqual(expected.Select(Path.GetFullPath).Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase),
             "the clean-up did not pick exactly the unused working files of each kind: " + string.Join(", ", planned.Select(Path.GetFileName)) +
             "; kept: " + string.Join(" | ", plan.Kept.Where(item => expected.Contains(item.DirectoryPath, StringComparer.OrdinalIgnoreCase))
                 .Select(item => $"{Path.GetFileName(item.DirectoryPath)}: {item.Reason}")));
-        Assert(plan.Items.Select(item => item.Kind).Distinct().Count() == 6, "the plan did not name each item's kind");
+        Assert(plan.Items.Select(item => item.Kind).Distinct().Count() == 7, "the plan did not name each item's kind");
         string[] kept = [selectedEffect, boundEffect, recentEffect, namedByBroken, keptByEffect, draftedMovie, handEdited, defaultTexture];
         foreach (var folder in kept)
             Assert(plan.Kept.Any(item => item.DirectoryPath.Equals(Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase) &&
@@ -369,11 +371,11 @@ internal static class StorageCleanupSmokeTests
     }
 
     /// <summary>A material mod applied, then a second mod applied in its place: the first build is superseded.</summary>
-    private static (ArkiveTestEnvironment Env, ArkiveModApplyService Service, string Package,
+    internal static (ArkiveTestEnvironment Env, ArkiveModApplyService Service, string Package,
         GuidedTexturePackageRevision First, GuidedTexturePackageRevision Second) TwoBuilds(string root) =>
         TwoBuilds(root, out _);
 
-    private static (ArkiveTestEnvironment Env, ArkiveModApplyService Service, string Package,
+    internal static (ArkiveTestEnvironment Env, ArkiveModApplyService Service, string Package,
         GuidedTexturePackageRevision First, GuidedTexturePackageRevision Second) TwoBuilds(string root, out ArkiveModApplyResult secondApply)
     {
         var packagePath = CreateMaterialClient(root, out _);
@@ -397,14 +399,14 @@ internal static class StorageCleanupSmokeTests
         return (env, service, packagePath, revisions[0], revisions[1]);
     }
 
-    private static ArkiveSupersededBuildCleanup Builds(ArkiveTestEnvironment env, string root) =>
+    internal static ArkiveSupersededBuildCleanup Builds(ArkiveTestEnvironment env, string root) =>
         new(env.Packages, env.Deployment, env.Backups, env.State, env.Root);
 
     private static string? KeptReason(ArkiveSupersededBuildCleanup builds, GuidedTexturePackageRevision revision) =>
         builds.PlanAsync(fullInspection: true).GetAwaiter().GetResult().Kept
             .FirstOrDefault(item => item.RevisionId == revision.RevisionId)?.Reason;
 
-    private static string Describe(ArkiveTestEnvironment env)
+    internal static string Describe(ArkiveTestEnvironment env)
     {
         var library = env.Library.LoadAsync().GetAwaiter().GetResult();
         var statuses = ArkiveModApplyService.DescribeAsync(env.Library, library,

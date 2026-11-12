@@ -362,6 +362,9 @@ static int Run(string[] arguments)
             "arkive-apply" => ArkiveApply(
                 target, arguments.Contains("--confirm", StringComparer.OrdinalIgnoreCase), json),
             "arkive-update" => ArkiveUpdate(target, ReadTextOption(arguments, "--mod"), json),
+            "arkive-release" => ReleaseCommand.Run(target, CreateModEnvironment(target).Context,
+                ReadTextOption(arguments, "--mod"), ResolveModReference,
+                arguments.Contains("--dry-run", StringComparer.OrdinalIgnoreCase), json),
             "working-files-cleanup" => CleanupCommand.Run(target,
                 arguments.Contains("--dry-run", StringComparer.OrdinalIgnoreCase), ReadTextOption(arguments, "--report"),
                 ReadIntegerOption(arguments, "--min-age-hours"), json),
@@ -4287,6 +4290,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive arkive-plan <Arkive-project-root> [--json [FILE]]   (FILE: sorted, path-free dump for comparisons)");
     Console.WriteLine("  arkive working-files-compact <Arkive-project-root> [--dry-run] [--json]");
     Console.WriteLine("  arkive working-files-cleanup <Arkive-project-root> [--dry-run] [--report FILE] [--min-age-hours N] [--json]");
+    Console.WriteLine("  arkive arkive-release <Arkive-project-root> --mod ID|NAME [--dry-run] [--json]   (delete a disabled mod's working files)");
     Console.WriteLine("  arkive arkive-apply <Arkive-project-root> --confirm [--json]");
     Console.WriteLine("  arkive arkive-update <Arkive-project-root> --mod ID|NAME [--json]");
     Console.WriteLine("  arkive client-update-check-all <Arkive-project-root> [--out DIR] [--state-root DIR] [--json]");

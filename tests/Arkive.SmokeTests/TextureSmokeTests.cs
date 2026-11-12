@@ -1819,10 +1819,12 @@ internal static class TextureSmokeTests
         packageProject = packageWorkspace.CommitRevisionAsync(
                 packageProject.ManifestPath, replacementPackageRevision)
             .GetAwaiter().GetResult();
-        packageProject = packageWorkspace.PruneRevisionsAsync(
+        packageWorkspace.RemoveRevisionsAsync(
                 packageProject.ManifestPath,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { replacementPackageRevisionId })
+                packageProject.Manifest.Revisions.Select(revision => revision.RevisionId)
+                    .Where(id => id != replacementPackageRevisionId).ToHashSet(StringComparer.OrdinalIgnoreCase))
             .GetAwaiter().GetResult();
+        packageProject = packageWorkspace.LoadManifestAsync(packageProject.ManifestPath).GetAwaiter().GetResult();
         Assert(packageProject.Manifest.Revisions.Count == 1 &&
                packageProject.Manifest.LatestRevisionId == replacementPackageRevisionId &&
                !Directory.Exists(packageRevisionDirectory) &&

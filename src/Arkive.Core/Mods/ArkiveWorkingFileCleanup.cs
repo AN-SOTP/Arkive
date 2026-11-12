@@ -15,6 +15,12 @@ public enum ArkiveWorkingFileKind
     PhysicsEdit,
     InterfaceMovieEdit,
     StaticMeshEdit,
+
+    /// <summary>A folder under staging\mod-library\materialized that a mod's assets were unpacked into.</summary>
+    UnpackedModFiles,
+
+    /// <summary>A folder under staging\material-candidates: the export a material edit was last built into.</summary>
+    MaterialCandidate,
 }
 
 public sealed record ArkiveWorkingFileItem(string Description, string DirectoryPath, long Bytes)
@@ -58,6 +64,13 @@ public sealed record ArkiveWorkingFileRemoval(
 /// working files that are themselves kept. Records inside an unused working file's own folder do not keep anything,
 /// so a chain of unused files goes in one clean-up. Callers must not run it while Arkive is creating working files.
 /// </para>
+/// <para>
+/// Built with every workspace, it also looks at two kinds of leftover by the same rules. A mod's unpacked files under
+/// staging\mod-library\materialized are needed only while a record names them (a texture project's native texture, read
+/// on every build); folders nothing names are leftovers of set-ups, checks and deleted mods. A material candidate under
+/// staging\material-candidates is the export its material edit was built into; one goes when its edit no longer exists
+/// (or goes in the same clean-up) and nothing else names it. A candidate never keeps its edit.
+/// </para>
 /// </summary>
 public sealed class ArkiveWorkingFileCleanup
 {
@@ -78,6 +91,37 @@ public sealed class ArkiveWorkingFileCleanup
         _meshExports = meshExports;
         _editRoot = Path.GetFullPath(meshEdits.RootDirectory);
         _exportRoot = Path.GetFullPath(meshExports.RootDirectory);
+        _materializedRoot = Path.Combine(_dataRoot, "staging", "mod-library", "materialized");
+        _materialCandidateRoot = Path.Combine(_dataRoot, "staging", "material-candidates");
+    }
+
+    private readonly string _materializedRoot;
+    private readonly string _materialCandidateRoot;
+
+    /// <summary>The folders two levels below <paramref name="root"/>, where unpacked mod files and material candidates sit.</summary>
+    private static IEnumerable<string> Subfolders(string root) =>
+        Directory.Exists(root)
+            ? Directory.EnumerateDirectories(root).SelectMany(Directory.EnumerateDirectories).Select(Path.GetFullPath).ToArray()
+            : [];
+
+    /// <summary>The edit document a material candidate's record names; null when the record cannot be read.</summary>
+    private static string? MaterialCandidateEdit(string folder)
+    {
+        try
+        {
+            var record = Path.Combine(folder, "arkive-material-candidate.json");
+            if (!File.Exists(record)) return null;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(record));
+            return document.RootElement.EnumerateObject()
+                .FirstOrDefault(property => property.Name.Equals("editDocumentPath", StringComparison.OrdinalIgnoreCase))
+                .Value is { ValueKind: JsonValueKind.String } path && path.GetString() is { Length: > 0 } value
+                ? value
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>A clean-up of every kind of working file in <paramref name="edits"/>.</summary>
@@ -189,9 +233,13 @@ public sealed class ArkiveWorkingFileCleanup
                 candidate.Folders.Where(Directory.Exists).Sum(Size))
             {
                 Kind = candidate.Kind,
-                Reason = candidate.Kind == ArkiveWorkingFileKind.MeshExport
-                    ? "no kept edited mesh was made from it and no record names it"
-                    : "not selected for a package build, and no mod, draft, kept build or other record names it",
+                Reason = candidate.Kind switch
+                {
+                    ArkiveWorkingFileKind.MeshExport => "no kept edited mesh was made from it and no record names it",
+                    ArkiveWorkingFileKind.UnpackedModFiles => "no working file, mod, draft, build or other record names it",
+                    ArkiveWorkingFileKind.MaterialCandidate => "its material edit no longer exists or goes too, and no record names it",
+                    _ => "not selected for a package build, and no mod, draft, kept build or other record names it",
+                },
                 OwnedDirectories = candidate.Folders.Skip(1).ToArray(),
             })
             .ToArray();
@@ -219,6 +267,9 @@ public sealed class ArkiveWorkingFileCleanup
 
         /// <summary>The working files this one's records name, kept with it when it is kept.</summary>
         public HashSet<Candidate> Names { get; } = [];
+
+        /// <summary>A material candidate's edit document, as its record names it.</summary>
+        public string? EditDocument { get; init; }
 
         public bool Removable => KeepReason is null;
     }
@@ -332,6 +383,19 @@ public sealed class ArkiveWorkingFileCleanup
                     candidates.Add(Edit(ArkiveWorkingFileKind.InterfaceMovieEdit, movies.RootDirectory,
                         Path.GetDirectoryName(movie.ManifestPath)!, $"Interface movie edit {movie.Manifest.ObjectName}",
                         movie.Manifest.EditId, movie.Manifest.CreatedAt, movie.Manifest.IncludedInPackageBuild, movie));
+            foreach (var folder in Subfolders(_materializedRoot))
+                candidates.Add(new Candidate(ArkiveWorkingFileKind.UnpackedModFiles, _materializedRoot, folder,
+                    $"Unpacked mod files {Path.GetRelativePath(_materializedRoot, folder)}"));
+            foreach (var folder in Subfolders(_materialCandidateRoot))
+            {
+                var editDocument = MaterialCandidateEdit(folder);
+                candidates.Add(new Candidate(ArkiveWorkingFileKind.MaterialCandidate, _materialCandidateRoot, folder,
+                    $"Material candidate {Path.GetFileName(folder)}")
+                {
+                    EditDocument = editDocument,
+                    KeepReason = editDocument is null ? "its record cannot be read" : null,
+                });
+            }
         }
 
         // Each working file must sit alone in its own folder inside its workspace; anything else is left alone.
@@ -380,6 +444,19 @@ public sealed class ArkiveWorkingFileCleanup
                 named.KeepReason = $"used by {kept.Description}, which is kept";
                 queue.Enqueue(named);
             }
+        }
+
+        // A material candidate goes only with its edit: while the edit stays (wherever its record now is), so does it.
+        var roots = candidates.Select(candidate => candidate.Root).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(root => (Root: root, Key: Key(root))).ToArray();
+        foreach (var candidate in candidates.Where(candidate =>
+                     candidate is { Kind: ArkiveWorkingFileKind.MaterialCandidate, Removable: true }))
+        {
+            var edits = Resolve(candidate.EditDocument!, new Dictionary<string, Candidate>(), roots, byFolder)
+                .Where(named => named.Kind == ArkiveWorkingFileKind.MaterialEdit).ToArray();
+            if (edits.Any(edit => !edit.Removable) ||
+                edits.Length == 0 && File.Exists(candidate.EditDocument))
+                candidate.KeepReason = "its material edit still exists";
         }
         return (candidates, records);
 
@@ -441,12 +518,14 @@ public sealed class ArkiveWorkingFileCleanup
             var names = values.SelectMany(value => Resolve(value, byId, roots, byFolder))
                 .Where(named => !ReferenceEquals(named, owner)).ToHashSet();
             // A material candidate is built from one material edit and names it; that is the edit's own output, not a
-            // use of it, so it keeps the edit only while the edit is kept for some other reason.
-            if (owner is null && IsWithin(materialCandidates, file) &&
-                names.Count(named => named.Kind == ArkiveWorkingFileKind.MaterialEdit) == 1)
+            // use of it, so it keeps the edit only while the edit is kept for some other reason. The candidate itself
+            // keeps nothing: whatever else its record names is kept as if named from outside, or with the edit.
+            if (owner is null or { Kind: ArkiveWorkingFileKind.MaterialCandidate } && IsWithin(materialCandidates, file))
             {
-                owner = names.Single(named => named.Kind == ArkiveWorkingFileKind.MaterialEdit);
-                names.Remove(owner);
+                owner = names.Count(named => named.Kind == ArkiveWorkingFileKind.MaterialEdit) == 1
+                    ? names.Single(named => named.Kind == ArkiveWorkingFileKind.MaterialEdit)
+                    : null;
+                if (owner is not null) names.Remove(owner);
             }
             foreach (var named in names)
             {

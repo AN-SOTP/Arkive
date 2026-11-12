@@ -9,8 +9,9 @@ using Arkive.Core.Packages;
 using Arkive.Core.StaticMeshes;
 
 /// <summary>
-/// working-files-cleanup: the window's Clean up working files, for a data folder. Superseded package builds go
-/// first, then working files nothing uses; the full list is written to a report before anything is removed.
+/// working-files-cleanup: the window's Clean up working files, for a data folder. Package builds nothing can need go
+/// first, then build files, working files and leftovers nothing uses, then old cache entries; the full list is written
+/// to a report before anything is removed.
 /// </summary>
 internal static class CleanupCommand
 {
@@ -32,7 +33,8 @@ internal static class CleanupCommand
         return new ArkiveStorageCleanup(root, edits,
             new SkeletalMeshEditableWorkspaceStore(Path.Combine(staging, "skeletal-mesh-reconnaissance")),
             new GuidedTexturePackageWorkspace(Path.Combine(staging, "texture-mods", "_packages")),
-            new ArkiveModDeploymentService(reader));
+            new ArkiveModDeploymentService(reader),
+            new ArkiveModLibrary(Path.Combine(root, "mods"), Path.Combine(staging, "mod-library")));
     }
 
     public static int Run(string dataRoot, bool dryRun, string? reportPath, int? minimumAgeHours, bool json)

@@ -381,6 +381,7 @@ public partial class MainWindow : Window
         ModLibraryGoToPackageButton.IsEnabled = idle && row is not null;
         ModLibraryRemoveButton.IsEnabled = idle && row is not null;
         ModLibraryRemoveButton.Content = chosen.Length > 1 ? $"Delete {chosen.Length:N0} mods" : "Delete mod";
+        UpdateReleaseWorkingFilesItems(row, idle, chosen.Length);
         ModLibraryRemoveAssetButton.IsEnabled = idle && hasRow && assetCount > 0;
         ModLibraryRemoveAssetButton.Content = assetCount > 0 ? $"Remove selected ({assetCount:N0})" : "Remove selected assets";
         ModDetailsSaveButton.IsEnabled = idle && hasRow;
@@ -614,6 +615,7 @@ public partial class MainWindow : Window
         ModLibraryRowRenameItem.IsEnabled = ModLibraryRowAuthorItem.IsEnabled = enabled && !row!.Status.FileMissing;
         ModLibraryRowDeleteItem.IsEnabled = enabled;
         ModLibraryRowDeleteItem.Header = several ? $"Delete {rows.Length:N0} mods" : "Delete mod";
+        UpdateReleaseWorkingFilesItems(row, ModLibraryIdle, rows.Length);
         // Priority, name and author belong to one mod; with several chosen only what applies to all of them shows.
         var single = several ? Visibility.Collapsed : Visibility.Visible;
         ModLibraryRowPriorityUpItem.Visibility = ModLibraryRowPriorityDownItem.Visibility =
