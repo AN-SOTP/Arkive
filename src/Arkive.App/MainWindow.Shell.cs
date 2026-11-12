@@ -492,6 +492,7 @@ public partial class MainWindow : Window
         _authoringMetadataTimer.Stop();
         StopMeshRecordCompaction();
         StopBackgroundCheck();
+        StopTweakBus();
         _applicationUpdateCancellation.Cancel();
         _applicationUpdateCancellation.Dispose();
         TrySaveSettings("window closing");

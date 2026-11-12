@@ -230,11 +230,13 @@ internal static class Program
             "An empty draft became a portable mod.");
         Console.WriteLine("PASS: incomplete authoring produces an inline actionable message");
         if (screenshotDirectory is not null) Capture(window, screenshotDirectory, "authoring.png");
+        var firstLog = TweakBusChecks.SessionLogPath(window);
         window.Close();
         await UntilAsync(() => !window.IsVisible, () => "The initial test window did not finish closing.");
         window = CreateWindow(root);
         window.Show();
         await ReadyCheckedChecks.UntilCheckedAsync(window);
+        await TweakBusChecks.VerifyAsync(window, root, firstLog);
         Control<TabControl>(window, "MainTabControl").SelectedItem = Control<TabItem>(window, "LibraryTab");
         await UntilAsync(() => Control<DataGrid>(window, "LibraryGrid").Items.Count == 3,
             () => "The reopened workspace did not finish restoring its asset library.");

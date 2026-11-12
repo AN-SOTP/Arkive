@@ -57,6 +57,18 @@ public partial class MainWindow
             : $"Edit UI: {change}."));
     }
 
+    /// <summary>
+    /// Called as the window closes: lets go of the bus files. Each one is held under a lock that any other open of the
+    /// file has to wait for until the holder answers, so a closed window still holding them made the next window on the
+    /// same data folder (as the window tests open) fight it for every file: its opening stalled for up to minutes and the
+    /// thread pool filled with waiting threads, which held everything else back.
+    /// </summary>
+    private void StopTweakBus()
+    {
+        _tweakBus?.Dispose();
+        _tweakBus = null;
+    }
+
     private void StartTweakBus()
     {
         try
