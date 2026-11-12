@@ -68,9 +68,32 @@ public partial class MainWindow : Window
             Log($"Mod library game package folder: {directory}");
     }
 
+    /// <summary>
+    /// Counts Mods list refreshes started. Refreshes can overlap (Refresh, then Enable before it has finished, or a
+    /// pack change), and one started earlier read the files before the later change; if it finished last it would
+    /// show the list as it was, with the enabled mod off and its warning gone. Only the newest refresh shows its list.
+    /// </summary>
+    private int _modListRefreshes;
+
+    /// <summary>The mod a refresh still running was asked to select (one just imported, say), for a newer one.</summary>
+    private string? _modListPendingSelection;
+
     private async Task RefreshArkiveModsAsync(string trigger, string? selectModId = null)
     {
         if (ModLibraryGrid is null) return;
+        var refresh = ++_modListRefreshes;
+        selectModId ??= _modListPendingSelection;
+        _modListPendingSelection = selectModId;
+        var released = false;
+        bool Superseded()
+        {
+            if (refresh == _modListRefreshes) return false;
+            // The newer refresh may have scanned after these were released and found nothing; reload the package
+            // workspace when a view that shows it is opened or mods are applied, as after a deferred change.
+            if (released) _packageWorkspaceStale = true;
+            Log($"Mod library refresh left to a newer one: trigger={trigger}.");
+            return true;
+        }
         var clock = Stopwatch.StartNew();
         var stages = new List<string>();
         void Lap(string stage) { stages.Add($"{stage} {clock.Elapsed.TotalSeconds:N1}s"); clock.Restart(); }
@@ -79,6 +102,8 @@ public partial class MainWindow : Window
             var selectionOnly = _selectionOnlyChange;
             _selectionOnlyChange = null;
             var scan = await _arkiveModAuthoring.ScanAsync();
+            released = scan.Released.Count > 0;
+            if (Superseded()) return;
             var library = scan.Library;
             _arkiveModLibraryManifest = library;
             Lap("scan");
@@ -88,6 +113,7 @@ public partial class MainWindow : Window
                 scan.Released.Count == 0
                 ? selectionOnly
                 : await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
+            if (Superseded()) return;
             Lap("working files");
             // Choosing which mods are on changes no game file, so the last check of the game folder still holds.
             // Applying, restoring and Refresh check again, and every install verifies the game files itself.
@@ -107,6 +133,7 @@ public partial class MainWindow : Window
                         $"sha256={change.GameSha256}, changed objects={string.Join(", ", change.ChangedObjects)}.");
                 _outsideChanges = outside;
             }
+            if (Superseded()) return;
             Lap("game files");
             var installedTables = _arkiveModContext.GameDataFor(library)?.Archive.Current();
             var installedLooks = library.Mods.Any(mod => mod.Manifest.Looks is not null)
@@ -116,12 +143,14 @@ public partial class MainWindow : Window
                 _arkiveModLibrary, library, snapshot, ActiveRevisionsByPhysicalName(),
                 outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray(),
                 installedGameData: installedTables, installedLooks: installedLooks);
-            Lap("status"); 
+            if (Superseded()) return;
+            Lap("status");
             var previous = selectModId ?? (ModLibraryGrid.SelectedItem as ModLibraryRow)?.Entry.ModId;
             // Mods chosen together stay chosen when the list is rebuilt after acting on them.
             var previousGroup = SelectedModRows().Select(row => row.Entry.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var drafts = (await _modAuthoringWorkspace.LoadAsync()).Where(draft => draft.ModId is not null)
                 .ToDictionary(draft => draft.ModId!, StringComparer.OrdinalIgnoreCase);
+            if (Superseded()) return;
             // The Tweaks tab installs and removes its own mod; it isn't one to manage here.
             var rows = statuses
                 .Where(status => !TweakModService.IsTweakMod(status.Mod))
@@ -153,6 +182,7 @@ public partial class MainWindow : Window
                     ModLibraryGrid.SelectedItems.Add(row);
             if (selected is not null) ModLibraryGrid.ScrollIntoView(selected);
             ApplySelectedModLibraryRow();
+            _modListPendingSelection = null;
 
             var enabled = rows.Count(row => row.Enabled);
             var inGame = rows.Count(row => row.Status.InGame);
@@ -190,7 +220,13 @@ public partial class MainWindow : Window
                 _loggedModLibraryState = state;
                 foreach (var line in state.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)) Log(line);
             }
-            if (scan.Released.Count > 0) await RefreshGuidedTextureModsAsync("mod file updated");
+            if (scan.Released.Count > 0)
+            {
+                await RefreshGuidedTextureModsAsync("mod file updated");
+                // Done (it refreshes this list again itself unless the library is busy), so nothing is left to hand on.
+                released = false;
+                if (Superseded()) return;
+            }
             _lastEditSnapshot = scan.Released.Count > 0 ? null : snapshot;
             await RefreshModAuthoringAsync(snapshot: scan.Released.Count > 0 ? null : snapshot);
             Lap("edit mods");
@@ -203,6 +239,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            if (refresh == _modListRefreshes) _modListPendingSelection = null;
             UpdateModLibraryActionState();
         }
     }
