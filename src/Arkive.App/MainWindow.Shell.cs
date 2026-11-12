@@ -57,19 +57,9 @@ public partial class MainWindow : Window
         // The Mods tab opens on the mod list; the advanced menu picks its other pages after this.
         if (MainTabControl.SelectedItem == ModifiedUpksTab) ModifiedUpksInnerTabControl.SelectedItem = ModLibraryTab;
         UpdateBannerContext();
-        // The advanced views list the package workspace, which enabling mods leaves to be reloaded when needed.
-        if (_packageWorkspaceStale && MainTabControl.SelectedItem is TabItem tab &&
-            tab != LibraryTab && tab != CreateModTab && tab != WorkshopTab && tab != ModifiedUpksTab && tab != BodyProportionsTab &&
-            tab != SoundsTab && tab != LoginScreenTab && tab != FontsTab && tab != LanguageTab && tab != OutfitSwapTab &&
-            tab != TweaksTab)
-            _ = RefreshStalePackageWorkspaceWithNoticeAsync();
+        // The advanced views read their data when first shown, and again when enabling mods left it behind.
+        if (MainTabControl.SelectedItem is TabItem tab) _ = ShowViewsAsync("advanced view opened", ViewsFor(tab));
         if (_indexHealthStale && MainTabControl.SelectedItem == IndexStatusTab) _ = RefreshIndexHealthAsync();
-    }
-
-    private async Task RefreshStalePackageWorkspaceWithNoticeAsync()
-    {
-        using var busy = ShowBusy("Loading the package workspace…", "Arkive is reading the mods' working files. Please wait until it finishes.");
-        await RefreshStalePackageWorkspaceAsync("advanced view opened");
     }
 
     private void UpdateBannerContext()
@@ -177,8 +167,8 @@ public partial class MainWindow : Window
             MainTabControl.SelectedItem = ModifiedUpksTab;
             ModifiedUpksInnerTabControl.SelectedItem = modDestination;
             StatusText.Text = $"Advanced section opened: {modDestination.Header}.";
-            if (_packageWorkspaceStale && modDestination != ModConflictDependencyTab)
-                _ = RefreshStalePackageWorkspaceWithNoticeAsync();
+            // Also when the page was already chosen, so its selection did not change.
+            _ = ShowViewsAsync("advanced view opened", ViewsForModsPage(modDestination));
             if (modDestination == ModConflictDependencyTab && _modConflictDependencyReport is null)
                 _ = RefreshModConflictDependencyAsync("view opened");
             return;

@@ -590,14 +590,6 @@ public partial class MainWindow : Window
             $" — {Match.PackageAlias}.{Match.ObjectName} ({Match.Kind})";
     }
 
-    /// <param name="ForDeletionIdentityOnly">The inspection proved an earlier revision active without its install
-    /// checks, so it is not the check selecting the row runs.</param>
-    private sealed record GuidedDeploymentRevisionState(
-        GuidedTexturePackageRevision Revision,
-        ModDeploymentInspection? Inspection,
-        string? Error,
-        bool ForDeletionIdentityOnly = false);
-
     private sealed class GuidedTexturePackageRow
     {
         public GuidedTexturePackageRow(

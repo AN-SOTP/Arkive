@@ -82,6 +82,8 @@ public partial class MainWindow : Window
 
     private async Task RefreshClientUpdateAuditAsync(string trigger)
     {
+        // Not read yet: Game Update Safety reads it when shown. A check run meanwhile shows its own result.
+        if (UpdateAuditView.Stale) return;
         try
         {
             _latestClientUpdateAudit = await _clientUpdateAuditWorkspace.LoadLatestAsync();
@@ -394,9 +396,10 @@ public partial class MainWindow : Window
     private void ClientUpdatePackagesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
         ApplySelectedClientUpdatePackage(ClientUpdatePackagesGrid.SelectedItem as ClientUpdatePackageAuditRow);
 
-    private void ClientUpdateGoToPackageButton_Click(object sender, RoutedEventArgs e)
+    private async void ClientUpdateGoToPackageButton_Click(object sender, RoutedEventArgs e)
     {
         if (ClientUpdatePackagesGrid.SelectedItem is not ClientUpdatePackageAuditRow selected) return;
+        await EnsurePackageWorkspaceAsync("package view opened");
         var package = _guidedPackageRows.FirstOrDefault(row =>
             row.Entry.Manifest.PackageProjectId.Equals(
                 selected.Report.PackageProjectId, StringComparison.OrdinalIgnoreCase));

@@ -45,9 +45,12 @@ public partial class MainWindow : Window
                     StatusText.Text = $"Saved {migration.Migrated.Count:N0} existing package project(s) as .arkive mods in " +
                                       $"{_arkiveModLibrary.ModsDirectory}.";
             }
-            foreach (var change in await ArkiveModSelectionService.SynchronizeAsync(_arkiveModLibrary, _arkiveModEdits))
+            var synchronized = await ArkiveModSelectionService.SynchronizeWithSnapshotAsync(_arkiveModLibrary, _arkiveModEdits);
+            foreach (var change in synchronized.Changes)
                 Log($"Mod selection synchronized at startup: mod={change.ModName}, object={change.ObjectName}, " +
                     $"edit={change.EditId}, included={change.Included}.");
+            // The working files as this left them, for the Mods list that follows, so launch reads them once.
+            _selectionOnlyChange = synchronized.Snapshot;
             var library = await _arkiveModLibrary.LoadAsync();
             Log($"Mod library ready: mods={library.Mods.Count}, enabled={library.Mods.Count(mod => mod.Enabled)}, " +
                 $"folder={_arkiveModLibrary.ModsDirectory}, state={_arkiveModLibrary.ManifestPath}, " +
@@ -61,8 +64,10 @@ public partial class MainWindow : Window
 
     private async Task EnsureGamePackagesDirectoryAsync()
     {
-        var candidates = _guidedPackageRows
-            .Select(package => (string?)package.Entry.Manifest.SourcePackagePath)
+        // The package view's projects when it has been read, otherwise the same projects as the Mods list last read them.
+        var projects = _guidedPackageRows.Count > 0 ? _guidedPackageRows.Select(row => row.Entry) : _installStateProjects;
+        var candidates = projects
+            .Select(package => (string?)package.Manifest.SourcePackagePath)
             .Prepend(_libraryRootPath);
         if (await _arkiveModLibrary.InferGamePackagesDirectoryAsync(candidates) is { } directory)
             Log($"Mod library game package folder: {directory}");
@@ -90,7 +95,7 @@ public partial class MainWindow : Window
             if (refresh == _modListRefreshes) return false;
             // The newer refresh may have scanned after these were released and found nothing; reload the package
             // workspace when a view that shows it is opened or mods are applied, as after a deferred change.
-            if (released) _packageWorkspaceStale = true;
+            if (released) MarkPackageWorkspaceStale();
             Log($"Mod library refresh left to a newer one: trigger={trigger}.");
             return true;
         }
@@ -115,6 +120,9 @@ public partial class MainWindow : Window
                 : await ArkiveModEditSnapshot.LoadAsync(_arkiveModEdits);
             if (Superseded()) return;
             Lap("working files");
+            var (activeRevisions, packageRecords) = await InstallStatesAsync(snapshot, library.GamePackagesDirectory);
+            if (Superseded()) return;
+            Lap("install state");
             // Choosing which mods are on changes no game file, so the last check of the game folder still holds.
             // Applying, restoring and Refresh check again, and every install verifies the game files itself.
             var outside = _outsideChanges;
@@ -123,7 +131,8 @@ public partial class MainWindow : Window
                 outside = [];
                 try
                 {
-                    outside = await _arkiveModApply.FindOutsideChangesAsync();
+                    // The package projects just read for the install state, so they are not read twice.
+                    outside = await _arkiveModApply.FindOutsideChangesAsync(packageRecords);
                     _outsideChangesChecked = true;
                 }
                 catch (Exception exception) when (ArkiveModApplyService.IsOperational(exception))
@@ -140,7 +149,7 @@ public partial class MainWindow : Window
                 ? _arkiveModContext.LooksFor(library)?.Archive.Current()
                 : null;
             var statuses = await ArkiveModApplyService.DescribeAsync(
-                _arkiveModLibrary, library, snapshot, ActiveRevisionsByPhysicalName(),
+                _arkiveModLibrary, library, snapshot, activeRevisions,
                 outsideChangedPackages: outside.Select(change => change.PhysicalPackageName).ToArray(),
                 installedGameData: installedTables, installedLooks: installedLooks);
             if (Superseded()) return;
@@ -244,19 +253,55 @@ public partial class MainWindow : Window
         }
     }
 
-    private IReadOnlyDictionary<string, GuidedTexturePackageRevision?> ActiveRevisionsByPhysicalName()
+    /// <summary>
+    /// Which build of each game package is in the game, as the Mods list shows it: the package view's own when it has
+    /// read the package workspace since, otherwise read again here. Null until read, and again after anything that can
+    /// change it (a refresh of the package workspace asked for while it was not read: an install, Apply, a save).
+    /// </summary>
+    private IReadOnlyDictionary<string, GuidedTexturePackageRevision?>? _installStates;
+
+    // Counts the times _installStates was let go, so a read that began before is not kept.
+    private int _installStateGeneration;
+
+    /// <summary>The package projects the Mods list last read the install state of (also the game folder's candidates).</summary>
+    private IReadOnlyList<GuidedTexturePackageEntry> _installStateProjects = [];
+
+    private PackageInstallStateService? _packageInstallStateService;
+
+    private PackageInstallStateService PackageInstallStates => _packageInstallStateService ??=
+        new PackageInstallStateService(_arkiveModContext) { Log = Log };
+
+    private void ForgetInstallStates()
     {
-        var gameDirectory = _arkiveModLibraryManifest.GamePackagesDirectory;
-        var projects = _guidedPackageRows.Select(row => row.Entry).ToArray();
-        var map = new Dictionary<string, GuidedTexturePackageRevision?>(StringComparer.Ordinal);
-        foreach (var row in _guidedPackageRows)
+        _installStates = null;
+        _installStateGeneration++;
+    }
+
+    /// <summary>
+    /// The install state the Mods list shows, and the package project records when this read them (null when the last
+    /// one still holds). Reading creates the package project of any game package a working file changes that has none,
+    /// as the package view does, so the same project is found for each package.
+    /// </summary>
+    private async Task<(IReadOnlyDictionary<string, GuidedTexturePackageRevision?> Active,
+        IReadOnlyList<GuidedTexturePackageEntry>? Records)> InstallStatesAsync(ArkiveModEditSnapshot snapshot, string? gameDirectory)
+    {
+        if (_installStates is { } known) return (known, null);
+        var generation = _installStateGeneration;
+        var read = await _guidedTexturePackageWorkspace.LoadAsync();
+        var records = await PackageInstallStateService.EnsureProjectsAsync(_guidedTexturePackageWorkspace, read, snapshot);
+        var projects = PackageInstallStateService.ProjectsForWorkingFiles(records,
+            snapshot.Edits.Select(edit => edit.SourcePackagePath));
+        var states = await PackageInstallStates.ResolveAllAsync(projects);
+        var active = PackageInstallStateService.ActiveRevisionsByPhysicalName(projects, gameDirectory,
+            project => states.GetValueOrDefault(project));
+        Log($"Mods list install state read: packages={projects.Count}, installed={active.Count(pair => pair.Value is not null)}.");
+        if (generation == _installStateGeneration)
         {
-            var physical = Path.GetFileName(row.Entry.Manifest.SourcePackagePath);
-            if (ArkiveModApplyService.FindPackageProject(physical, gameDirectory, projects) != row.Entry) continue;
-            map[ArkiveModFileService.PhysicalPackageKey(physical)] =
-                HasActiveGuidedDeployment(row) ? row.DeploymentRevision : null;
+            _installStates = active;
+            _installStateProjects = projects;
         }
-        return map;
+        // Projects created just now sort among the others when read from disk; the outside-change check reads them so.
+        return (active, ReferenceEquals(records, read) ? read : null);
     }
 
     private void ApplySelectedModLibraryRow()
@@ -398,15 +443,13 @@ public partial class MainWindow : Window
         if (onlyIfChanged && changes.Count == 0) return;
         if (deferWorkspace)
         {
-            _packageWorkspaceStale = true;
+            MarkPackageWorkspaceStale();
             return;
         }
-        _packageWorkspaceStale = false;
+        // Each is read again now if its view has been read, and otherwise left until a view shows it.
         await RefreshGuidedTextureModsAsync(trigger);
         await RefreshMaterialProjectsAsync(trigger);
     }
-
-    private bool _packageWorkspaceStale;
 
     /// <summary>
     /// Set when the last Mods-list operation only changed which mods are on or their priorities (see
@@ -416,15 +459,6 @@ public partial class MainWindow : Window
 
     /// <summary>The working files as the last Mods list refresh saw them; a toggle re-reads only those it can change.</summary>
     private ArkiveModEditSnapshot? _lastEditSnapshot;
-
-    /// <summary>Reloads the package workspace if a deferred change left it behind (see SynchronizeModSelectionsAsync).</summary>
-    private async Task RefreshStalePackageWorkspaceAsync(string trigger)
-    {
-        if (!_packageWorkspaceStale) return;
-        _packageWorkspaceStale = false;
-        await RefreshGuidedTextureModsAsync(trigger);
-        await RefreshMaterialProjectsAsync(trigger);
-    }
 
     private static string BusyTitle(string operation) => operation switch
     {
@@ -946,11 +980,7 @@ public partial class MainWindow : Window
     private async void ModLibraryGoToPackageButton_Click(object sender, RoutedEventArgs e)
     {
         if (ModLibraryGrid.SelectedItem is not ModLibraryRow row) return;
-        if (_packageWorkspaceStale)
-        {
-            using var busy = ShowBusy("Loading the package workspace…", "Arkive is reading the mods' working files. Please wait until it finishes.");
-            await RefreshStalePackageWorkspaceAsync("package view opened");
-        }
+        await EnsurePackageWorkspaceAsync("package view opened");
         var physical = (ModLibraryAssetsGrid.SelectedItem as ModAssetRow)?.Status.Asset.Target.PhysicalPackageName ??
                        row.Entry.Manifest.Assets[0].Target.PhysicalPackageName;
         var package = _guidedPackageRows.FirstOrDefault(item => Path.GetFileName(item.Entry.Manifest.SourcePackagePath)
@@ -1127,6 +1157,8 @@ public partial class MainWindow : Window
 
     private async void ModLibraryRestoreAllButton_Click(object sender, RoutedEventArgs e)
     {
+        // Restoring every active package works from the package view's rows, which launch no longer reads.
+        await EnsurePackageWorkspaceAsync("restore all requested");
         var tables = _arkiveModContext.GameDataFor(_arkiveModLibraryManifest);
         var tableCells = tables is null ? 0 : await Task.Run(() => tables.Archive.Current().Edits.Count);
         var looks = _arkiveModContext.LooksFor(_arkiveModLibraryManifest);
@@ -1211,6 +1243,9 @@ public partial class MainWindow : Window
             // the library, working files and package projects itself, and the workspace is reloaded after applying.
             // Before Apply it cost 30-50 s, with the working files no longer in memory.
             await EnsureGamePackagesDirectoryAsync();
+            // What reading the package workspace at launch used to settle first (older exports taken in, one working
+            // copy per asset outside mods included, a project for every package), now done when it is first needed.
+            await PreparePackageWorkspaceOnceAsync();
             // Without a save in between, the plan reuses the working files read to look for unsaved changes.
             var unsavedChecked = previewOnly ? null : await SaveEnabledModChangesAsync();
             var modsSaved = !previewOnly && unsavedChecked is null;
@@ -1324,7 +1359,8 @@ public partial class MainWindow : Window
             UpdateGuidedTextureModActionState();
             if (changedGame)
             {
-                _packageWorkspaceStale = false;
+                // Read again now where their views have been read; otherwise the install state is read again for the
+                // Mods list and the views when shown.
                 await RefreshGuidedTextureModsAsync("mods applied");
                 await RefreshMaterialProjectsAsync("mods applied");
                 await RefreshModSetsAsync("mods applied");

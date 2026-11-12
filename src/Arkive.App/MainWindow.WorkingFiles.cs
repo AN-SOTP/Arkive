@@ -77,7 +77,7 @@ public partial class MainWindow
             var result = await Task.Run(() => cleanup.RunAsync(plan));
             ArkiveStorageCleanup.AppendResult(report, result);
             // The package views list builds and texture projects; they read them again when next opened.
-            if (result.Count > 0) _packageWorkspaceStale = true;
+            if (result.Count > 0) MarkPackageWorkspaceStale();
             var freed = trimmed + result.Bytes;
             var left = result.Builds.NotRemoved.Count + result.WorkingFiles.NotRemoved.Count;
             ModLibraryStatusText.Text = $"Cleaned up working files: freed {FormatByteSize(freed)}." +

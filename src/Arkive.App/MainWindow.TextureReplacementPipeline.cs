@@ -126,7 +126,8 @@ public partial class MainWindow : Window
             LogTextureImportInspection("original", result.OriginalInspection);
             LogTextureImportInspection("edited", result.EditedInspection);
             LogTextureImportInspection("candidate", result.CandidateInspection);
-            await RefreshExportWorkspaceAsync("texture import candidate completed");
+            await ReadOrRefreshAsync(ExportsView, "texture import candidate completed",
+                () => RefreshExportWorkspaceAsync("texture import candidate completed"));
             if (ExportWorkspaceGrid.ItemsSource is IEnumerable<ExportWorkspaceRow> rows)
             {
                 var createdRow = rows.FirstOrDefault(row =>
@@ -1090,7 +1091,7 @@ public partial class MainWindow : Window
 
     private async Task RefreshAndSelectExportAsync(string trigger, string exportId)
     {
-        await RefreshExportWorkspaceAsync(trigger);
+        await ReadOrRefreshAsync(ExportsView, trigger, () => RefreshExportWorkspaceAsync(trigger));
         if (ExportWorkspaceGrid.ItemsSource is not IEnumerable<ExportWorkspaceRow> rows) return;
         var created = rows.FirstOrDefault(row =>
             row.Entry.Manifest.ExportId.Equals(exportId, StringComparison.OrdinalIgnoreCase));

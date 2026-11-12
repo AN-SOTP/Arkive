@@ -35,6 +35,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+        // Not read yet: the Baselines view reads it when shown.
+        if (BaselinesView.Stale) return;
 
         try
         {
@@ -91,7 +93,8 @@ public partial class MainWindow : Window
                 _gameMetadataPath,
                 cancellationToken: cancellation.Token);
             watch.Stop();
-            await RefreshBaselineWorkspaceAsync("client snapshot created");
+            await ReadOrRefreshAsync(BaselinesView, "client snapshot created",
+                () => RefreshBaselineWorkspaceAsync("client snapshot created"));
             ClientSnapshotsGrid.SelectedItem =
                 (ClientSnapshotsGrid.ItemsSource as IEnumerable<ClientSnapshotRow>)?
                 .FirstOrDefault(row => row.Entry.ManifestPath.Equals(
@@ -323,7 +326,8 @@ public partial class MainWindow : Window
                 request,
                 _protectionProvider,
                 cancellation.Token);
-            await RefreshBaselineWorkspaceAsync("asset baseline created");
+            await ReadOrRefreshAsync(BaselinesView, "asset baseline created",
+                () => RefreshBaselineWorkspaceAsync("asset baseline created"));
             AssetBaselinesGrid.SelectedItem =
                 (AssetBaselinesGrid.ItemsSource as IEnumerable<AssetBaselineRow>)?
                 .FirstOrDefault(row => row.Entry.ManifestPath.Equals(

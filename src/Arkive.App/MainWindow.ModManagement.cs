@@ -127,10 +127,11 @@ public partial class MainWindow : Window
             : null;
     }
 
-    private void ModGraphGoToPackageButton_Click(object sender, RoutedEventArgs e)
+    private async void ModGraphGoToPackageButton_Click(object sender, RoutedEventArgs e)
     {
         var packageId = SelectedModGraphPackageId();
         if (packageId is null) return;
+        await EnsurePackageWorkspaceAsync("package view opened");
         var package = _guidedPackageRows.FirstOrDefault(item =>
             item.Entry.Manifest.PackageProjectId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
         if (package is null)
@@ -163,9 +164,20 @@ public partial class MainWindow : Window
             "mod conflict and dependency report");
     }
 
+    /// <summary>The mod set a refresh asked to select before the Mod Sets view was read.</summary>
+    private string? _modSetPendingSelection;
+
     private async Task RefreshModSetsAsync(string trigger, string? selectSetId = null)
     {
         if (ModSetsGrid is null) return;
+        if (ModSetsView.Stale)
+        {
+            // Not read yet: the Mod Sets view reads it when shown, and selects what this asked for.
+            if (selectSetId is not null) _modSetPendingSelection = selectSetId;
+            return;
+        }
+        selectSetId ??= _modSetPendingSelection;
+        _modSetPendingSelection = null;
         var priorId = selectSetId ?? (ModSetsGrid.SelectedItem as ModSetRow)?.Entry.Manifest.ModSetId;
         var rows = new List<ModSetRow>();
         foreach (var entry in await _modSetWorkspace.LoadAsync())
@@ -326,9 +338,20 @@ public partial class MainWindow : Window
         finally { _modSetBusy = false; UpdateModSetActionState(); }
     }
 
+    /// <summary>The mesh package a refresh asked to select before its view was read.</summary>
+    private string? _modifiedMeshPendingSelection;
+
     private async Task RefreshModifiedMeshUpksAsync(string trigger, string? selectEditId = null)
     {
         if (ModifiedMeshUpksGrid is null) return;
+        if (ModifiedMeshesView.Stale)
+        {
+            // Not read yet: the Legacy Single-Mesh Bundles view reads it when shown, and selects what this asked for.
+            if (selectEditId is not null) _modifiedMeshPendingSelection = selectEditId;
+            return;
+        }
+        selectEditId ??= _modifiedMeshPendingSelection;
+        _modifiedMeshPendingSelection = null;
         var priorId = selectEditId ??
                       (ModifiedMeshUpksGrid.SelectedItem as ModifiedMeshUpkRow)
                       ?.Entry.Manifest.EditId;
@@ -431,9 +454,10 @@ public partial class MainWindow : Window
             OpenFolder(Path.GetDirectoryName(row.BundleManifestPath)!, "SkeletalMesh mod bundle");
     }
 
-    private void ModifiedMeshGoToEditButton_Click(object sender, RoutedEventArgs e)
+    private async void ModifiedMeshGoToEditButton_Click(object sender, RoutedEventArgs e)
     {
         if (ModifiedMeshUpksGrid.SelectedItem is not ModifiedMeshUpkRow row) return;
+        await EnsureViewsAsync("mesh edit opened", MeshView);
         var source = _skeletalMeshEditableExports.FirstOrDefault(item =>
             item.Entry.Manifest.ExportId.Equals(
                 row.Entry.Manifest.SourceExportId, StringComparison.OrdinalIgnoreCase));

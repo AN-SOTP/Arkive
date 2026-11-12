@@ -158,21 +158,35 @@ internal static class LaunchSmokeTests
     private static void TestMeasuringMode()
     {
         var root = Path.Combine(fixtureDirectory, "launch-measure");
-        LaunchFixture.CreateAsync(root, new LaunchFixtureOptions(MeshEdits: 30, Textures: 20, Effects: 40, Materials: 20,
+        var summary = LaunchFixture.CreateAsync(root, new LaunchFixtureOptions(MeshEdits: 30, Textures: 20, Effects: 40, Materials: 20,
             Packages: 10, BuildsPerPackage: 2, Mods: 8)).GetAwaiter().GetResult();
         var before = Listing(root);
         var output = Path.Combine(fixtureDirectory, "launch-measure.json");
-        var run = HiddenDesktop.Run(AppExecutable()!, $"--measure-startup \"{output}\" --data-root \"{root}\" --forced-gc --wait-background",
+        var dump = Path.Combine(fixtureDirectory, "launch-measure-mods.json");
+        var run = HiddenDesktop.Run(AppExecutable()!,
+            $"--measure-startup \"{output}\" --data-root \"{root}\" --forced-gc --wait-background --dump-mods-list \"{dump}\"",
             TimeSpan.FromMinutes(5));
         Assert(!run.TimedOut, "the measuring run did not finish within five minutes");
         Assert(run.VisibleWindows.Count == 0, "the measuring run showed a window: " + string.Join(", ", run.VisibleWindows));
         Assert(File.Exists(output), $"the measuring run (exit code {run.ExitCode}) wrote no results");
         var report = LaunchMeasurementReport.Read(output);
         Assert(run.ExitCode == 0 && report.Error is null, $"the measuring run failed (exit code {run.ExitCode}): {report.Error}");
-        string[] loading = ["window", "hash-cache", "outside-change-cache", "exports", "baselines", "mesh", "static-mesh", "materials",
-            "library", "packages", "drafts", "update-audit", "mod-sets", "modified-meshes", "library-search"];
+        // Launch waits only for what the Mods tab shows; the advanced views read theirs when opened.
+        string[] loading = ["window", "hash-cache", "outside-change-cache", "library", "mods-list", "library-search"];
         var ran = report.Steps.Where(step => !step.Skipped).Select(step => step.Id).ToArray();
         Assert(ran.SequenceEqual(loading), "the measuring run's loading steps were " + string.Join(", ", ran));
+        // Each store of working files and package projects is read once while launch waits.
+        var walks = report.Steps.Where(step => step.Id != "library-search" && step.StoreWalks is not null)
+            .SelectMany(step => step.StoreWalks!).GroupBy(pair => pair.Key)
+            .ToDictionary(group => group.Key, group => group.Sum(pair => pair.Value));
+        Assert(walks.Values.All(count => count == 1) &&
+               new[] { StoreWalks.Textures, StoreWalks.SkeletalMeshEdits, StoreWalks.MaterialEdits, StoreWalks.ParticleEdits,
+                   StoreWalks.PackageProjects }.All(walks.ContainsKey),
+            "launch did not read each store exactly once: " + string.Join(", ", walks.Select(pair => $"{pair.Key}={pair.Value}")));
+        using (var modsList = JsonDocument.Parse(File.ReadAllBytes(dump)))
+            Assert(modsList.RootElement.GetProperty("rowCount").GetInt32() == summary.Mods &&
+                   modsList.RootElement.GetProperty("statusText").GetString()!.StartsWith($"{summary.Mods} mod(s)", StringComparison.Ordinal),
+                "the Mods list dump does not hold the fixture's mods: " + modsList.RootElement.GetProperty("statusText").GetString());
         Assert(report.Steps.Where(step => step.Skipped).Select(step => step.Id).Order(StringComparer.Ordinal).SequenceEqual(
                 ["cache-save", "download-and-viewer-cleanup", "game-update-notice", "mod-file-import", "package-build-trim", "preview-cache-cleanup"]),
             "the measuring run did not skip exactly the steps that write user state");

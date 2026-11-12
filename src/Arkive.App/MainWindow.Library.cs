@@ -137,21 +137,14 @@ public partial class MainWindow : Window
             $"scope={(LibrarySearchScopeComboBox.SelectedItem as ComboBoxItem)?.Tag ?? "InGameName"}, " +
             $"category={(LibraryKindComboBox.SelectedItem as ComboBoxItem)?.Tag ?? "all"}, " +
             $"archetype={(LibraryArchetypeComboBox.SelectedItem as ComboBoxItem)?.Tag ?? "all"}.");
-        await steps.RunAsync("exports", () => RefreshExportWorkspaceAsync("workspace restore"));
-        await steps.RunAsync("baselines", () => RefreshBaselineWorkspaceAsync("workspace restore"));
-        await steps.RunAsync("mesh", () => RefreshSkeletalMeshEditableWorkspaceAsync("workspace restore"));
-        await steps.RunAsync("static-mesh", () => RefreshStaticMeshWorkspaceAsync("workspace restore"));
-        await steps.RunAsync("materials", () => RefreshMaterialProjectsAsync("workspace restore"));
+        // Launch waits only for what the Mods tab shows. The advanced views (exports, baselines, meshes, materials,
+        // package projects, mod sets, mesh packages, the game update check, the conflict audit) read theirs when
+        // first opened; see MainWindow.ViewLoading.
         ReportStartup("Reading the mod library…");
         await steps.RunAsync("library", InitializeArkiveModLibraryAsync);
         ReportStartup("Checking which mods are in the game…");
-        await steps.RunAsync("packages", () => RefreshGuidedTextureModsAsync("workspace restore"));
-        ReportStartup("Loading drafts and mod sets…");
-        await steps.RunAsync("drafts", () => RefreshModAuthoringAsync());
-        // The conflict audit is only shown in its advanced view, which runs it when opened.
-        await steps.RunAsync("update-audit", () => RefreshClientUpdateAuditAsync("workspace restore"));
-        await steps.RunAsync("mod-sets", () => RefreshModSetsAsync("workspace restore"));
-        await steps.RunAsync("modified-meshes", () => RefreshModifiedMeshUpksAsync("workspace restore"));
+        // With the working files the library step just read, and the drafts Edit mods lists.
+        await steps.RunAsync("mods-list", () => RefreshArkiveModsAsync("workspace restore"));
         ReportStartup($"{_arkiveModLibraryManifest.Mods.Count:N0} mod(s), " +
                       $"{_arkiveModLibraryManifest.Mods.Count(mod => mod.Enabled):N0} enabled.", modsDone: true,
             database: "Loading the game database…");
@@ -175,7 +168,7 @@ public partial class MainWindow : Window
                 loadTrigger: "workspace restore"));
             loadedMetadata = _gameMetadataIndex is not null;
             // In-game names only show in the package workspace's advanced views; they reload it when opened.
-            if (loadedMetadata) _packageWorkspaceStale = true;
+            if (loadedMetadata) MarkPackageWorkspaceStale();
             ReportStartup(database: loadedMetadata ? "Loaded." : "Could not be loaded; see Diagnostics.", databaseDone: true);
         }
         else

@@ -26,9 +26,132 @@ namespace Arkive.App;
 
 public partial class MainWindow : Window
 {
+    /// <summary>
+    /// Counts package workspace reads started. They can overlap (a save, then Apply before it has finished), and the
+    /// install state each one read goes to the Mods list, so only the newest one shows its rows.
+    /// </summary>
+    private int _packageRefreshes;
+
+    /// <summary>The package or asset a read left to a newer one was asked to select.</summary>
+    private string? _packagePendingSelection;
+
+    /// <summary>Set once PreparePackageWorkspaceAsync has run in this session.</summary>
+    private bool _packageWorkspacePrepared;
+
+    /// <summary>The working files and package projects one read of the package workspace works from.</summary>
+    private sealed record PackageWorkspaceFiles(
+        IReadOnlyList<GuidedTextureModProjectEntry> Textures,
+        List<MaterialInstanceEditEntry> Materials,
+        List<SkeletalMeshEditWorkspaceEntry> Meshes,
+        IReadOnlyDictionary<string, SkeletalMeshEditableWorkspaceEntry> MeshSources,
+        List<StaticMeshEditEntry> StaticMeshes,
+        IReadOnlyDictionary<string, StaticMeshEditableExportManifest> StaticMeshSources,
+        IReadOnlyDictionary<string, string> Owners,
+        IReadOnlyDictionary<string, GuidedTexturePackageEntry> Packages);
+
+    /// <summary>
+    /// Reads the package workspace when its view has been read; otherwise leaves it until a view shows it, and lets the
+    /// Mods list read again which build of each package is in the game (something that asked for this refresh may have
+    /// installed, restored or built one).
+    /// </summary>
     private async Task RefreshGuidedTextureModsAsync(string trigger, string? selectProjectId = null)
     {
+        if (PackagesView.Stale)
+        {
+            if (selectProjectId is not null) _packagePendingSelection = selectProjectId;
+            ForgetInstallStates();
+            Log($"Guided texture-mod workspace left to be read when shown: trigger={trigger}.");
+            if (!_modLibraryBusy) await RefreshArkiveModsAsync(trigger);
+            return;
+        }
+        var refresh = ++_packageRefreshes;
+        selectProjectId ??= _packagePendingSelection;
+        _packagePendingSelection = selectProjectId;
+        bool Superseded()
+        {
+            if (refresh == _packageRefreshes) return false;
+            Log($"Guided texture-mod workspace refresh left to a newer one: trigger={trigger}.");
+            return true;
+        }
         try
+        {
+            var files = await PreparePackageWorkspaceAsync();
+            var (entries, materialEntries, meshEntries, meshSourcesByExportId, staticMeshEntries, staticMeshSources,
+                modOwnedEditIds, packageEntries) = files;
+            var packageRows = new List<GuidedTexturePackageRow>(packageEntries.Count);
+            // Each package's install state reads its builds, receipts and game file, a few packages at a time.
+            var deployments = await PackageInstallStates.ResolveAllAsync(packageEntries.Values);
+            if (Superseded()) return;
+            // Each kind is grouped by package once: filtering every entry for each package took seconds with large mods.
+            var texturesByPackage = SourcePackageGrouping.BySourcePackage(
+                entries, entry => entry.Manifest.SourcePackagePath);
+            var meshesByPackage = SourcePackageGrouping.BySourcePackage(meshEntries,
+                entry => meshSourcesByExportId[entry.Manifest.SourceExportId].Manifest.SourcePackagePath);
+            var materialsByPackage = SourcePackageGrouping.BySourcePackage(
+                materialEntries, entry => entry.Document.SourcePackagePath);
+            var staticMeshesByPackage = SourcePackageGrouping.BySourcePackage(staticMeshEntries,
+                entry => staticMeshSources[entry.Manifest.EditId].SourcePackagePath);
+            foreach (var package in packageEntries.Values)
+            {
+                var key = SourcePackageGrouping.Key(package.Manifest.SourcePackagePath);
+                packageRows.Add(await CreateGuidedPackageRowAsync(
+                    package, deployments[package], texturesByPackage[key].ToArray(),
+                    meshesByPackage[key].ToArray(), staticMeshesByPackage[key].ToArray(),
+                    staticMeshSources, materialsByPackage[key].ToArray(), modOwnedEditIds));
+            }
+            if (Superseded()) return;
+            _packagePendingSelection = null;
+            var orderedPackageRows = packageRows
+                .OrderByDescending(row => row.Entry.Manifest.IsFavorite)
+                .ThenByDescending(row => row.Entry.Manifest.UpdatedAt)
+                .ThenBy(row => row.PackageAlias, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            _guidedPackageRows = orderedPackageRows;
+            GuidedPackagesGrid.ItemsSource = orderedPackageRows;
+            // The Mods list shows the install state just read, from the same service it reads its own with.
+            var listed = orderedPackageRows.Select(row => row.Entry).ToArray();
+            ForgetInstallStates();
+            _installStates = PackageInstallStateService.ActiveRevisionsByPhysicalName(
+                listed, _arkiveModLibraryManifest.GamePackagesDirectory, project => deployments.GetValueOrDefault(project));
+            _installStateProjects = listed;
+            FinishGuidedPackageRefresh(selectProjectId, orderedPackageRows);
+            if (!_modLibraryBusy) await RefreshArkiveModsAsync(trigger);
+            Log(
+                $"Guided texture-mod workspace refreshed: trigger={trigger}, " +
+                $"packages={orderedPackageRows.Length}, textureProjects={entries.Count}, " +
+                $"materialProjects={materialEntries.Count}, skeletalMeshProjects={meshEntries.Count}, staticMeshProjects={staticMeshEntries.Count}, selectedAssets={orderedPackageRows.Sum(row => row.IncludedAssetCount)}, " +
+                $"root={_guidedTextureModWorkspace.RootDirectory}.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log($"Guided texture-mod workspace refresh failed: trigger={trigger}, error={exception}");
+        }
+    }
+
+    /// <summary>
+    /// <see cref="PreparePackageWorkspaceAsync"/> before mods are planned or applied, unless it ran in this session already
+    /// (reading the package workspace runs it each time). Launch used to run it by reading the package workspace.
+    /// </summary>
+    private async Task PreparePackageWorkspaceOnceAsync()
+    {
+        if (_packageWorkspacePrepared) return;
+        try
+        {
+            await PreparePackageWorkspaceAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log($"Package workspace preparation failed: error={exception}");
+        }
+    }
+
+    /// <summary>
+    /// What reading the package workspace settles before it lists anything: takes older advanced exports into the
+    /// texture projects, leaves only the newest of several working copies of one asset outside mods included, and
+    /// creates the package project of every package a working file changes. Returns what it read.
+    /// </summary>
+    private async Task<PackageWorkspaceFiles> PreparePackageWorkspaceAsync()
+    {
         {
             await ImportExistingModifiedUpksAsync();
             try
@@ -185,119 +308,82 @@ public partial class MainWindow : Window
                 var package = await PackageFor(source.Alias, source.Physical, source.Source);
                 packageEntries[Path.GetFullPath(package.Manifest.SourcePackagePath)] = package;
             }
-            var packageRows = new List<GuidedTexturePackageRow>(packageEntries.Count);
-            // Each package's install state reads its builds, receipts and game file; hundreds of packages took 5-20 s
-            // one after another, so they are read a few at a time.
-            var deploymentGate = new SemaphoreSlim(8);
-            var deployments = packageEntries.Values.ToDictionary(package => package, async package =>
-            {
-                await deploymentGate.WaitAsync();
-                try { return await ResolveGuidedDeploymentStateAsync(package); }
-                finally { deploymentGate.Release(); }
-            });
-            // Each kind is grouped by package once: filtering every entry for each package took seconds with large mods.
-            var texturesByPackage = SourcePackageGrouping.BySourcePackage(
-                entries, entry => entry.Manifest.SourcePackagePath);
-            var meshesByPackage = SourcePackageGrouping.BySourcePackage(meshEntries,
-                entry => meshSourcesByExportId[entry.Manifest.SourceExportId].Manifest.SourcePackagePath);
-            var materialsByPackage = SourcePackageGrouping.BySourcePackage(
-                materialEntries, entry => entry.Document.SourcePackagePath);
-            var staticMeshesByPackage = SourcePackageGrouping.BySourcePackage(staticMeshEntries,
-                entry => staticMeshSources[entry.Manifest.EditId].SourcePackagePath);
-            foreach (var package in packageEntries.Values)
-            {
-                var key = SourcePackageGrouping.Key(package.Manifest.SourcePackagePath);
-                packageRows.Add(await CreateGuidedPackageRowAsync(
-                    package, await deployments[package], texturesByPackage[key].ToArray(),
-                    meshesByPackage[key].ToArray(), staticMeshesByPackage[key].ToArray(),
-                    staticMeshSources, materialsByPackage[key].ToArray(), modOwnedEditIds));
-            }
-            var orderedPackageRows = packageRows
-                .OrderByDescending(row => row.Entry.Manifest.IsFavorite)
-                .ThenByDescending(row => row.Entry.Manifest.UpdatedAt)
-                .ThenBy(row => row.PackageAlias, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            _guidedPackageRows = orderedPackageRows;
-            GuidedPackagesGrid.ItemsSource = orderedPackageRows;
+            _packageWorkspacePrepared = true;
+            return new PackageWorkspaceFiles(entries, materialEntries, meshEntries, meshSourcesByExportId, staticMeshEntries,
+                staticMeshSources, modOwnedEditIds, packageEntries);
+        }
+    }
 
-            var selectedPackage = !string.IsNullOrWhiteSpace(selectProjectId)
-                ? orderedPackageRows.FirstOrDefault(row =>
-                    row.Assets.Any(asset => asset.Entry.Manifest.ProjectId.Equals(
-                        selectProjectId, StringComparison.OrdinalIgnoreCase)) ||
-                    row.MeshAssets.Any(asset => asset.Entry.Manifest.EditId.Equals(
-                        selectProjectId, StringComparison.OrdinalIgnoreCase)) ||
-                    row.StaticMeshAssets.Any(asset => asset.Entry.Manifest.EditId.Equals(
-                        selectProjectId, StringComparison.OrdinalIgnoreCase)) ||
-                    row.MaterialAssets.Any(asset => asset.Entry.Document.EditId.Equals(
-                        selectProjectId, StringComparison.OrdinalIgnoreCase)))
-                : GuidedPackagesGrid.SelectedItem is GuidedTexturePackageRow previous
-                    ? orderedPackageRows.FirstOrDefault(row => row.Entry.Manifest.PackageProjectId.Equals(
-                        previous.Entry.Manifest.PackageProjectId, StringComparison.OrdinalIgnoreCase))
-                    : orderedPackageRows.FirstOrDefault();
-            if (selectedPackage is not null)
-            {
-                _guidedPackageSelectedByRefresh = true;
-                try { GuidedPackagesGrid.SelectedItem = selectedPackage; }
-                finally { _guidedPackageSelectedByRefresh = false; }
-                GuidedPackagesGrid.ScrollIntoView(selectedPackage);
-                ApplyGuidedProjectFilter(selectedPackage);
-                var selectedAsset = !string.IsNullOrWhiteSpace(selectProjectId)
-                    ? selectedPackage.Assets.FirstOrDefault(asset => asset.Entry.Manifest.ProjectId.Equals(
-                        selectProjectId, StringComparison.OrdinalIgnoreCase))
-                    : selectedPackage.Assets.FirstOrDefault();
-                GuidedTextureModsGrid.SelectedItem = selectedAsset;
-                if (selectedAsset is not null) GuidedTextureModsGrid.ScrollIntoView(selectedAsset);
-                var selectedMesh = !string.IsNullOrWhiteSpace(selectProjectId)
-                    ? selectedPackage.MeshAssets.FirstOrDefault(asset => asset.Entry.Manifest.EditId.Equals(
-                        selectProjectId, StringComparison.OrdinalIgnoreCase))
-                    : selectedPackage.MeshAssets.FirstOrDefault();
-                GuidedMeshModsGrid.SelectedItem = selectedMesh;
-                if (selectedMesh is not null) GuidedMeshModsGrid.ScrollIntoView(selectedMesh);
-                var selectedMaterial = !string.IsNullOrWhiteSpace(selectProjectId)
-                    ? selectedPackage.MaterialAssets.FirstOrDefault(asset => asset.Entry.Document.EditId.Equals(
-                        selectProjectId, StringComparison.OrdinalIgnoreCase))
-                    : selectedPackage.MaterialAssets.FirstOrDefault();
-                GuidedMaterialModsGrid.SelectedItem = selectedMaterial;
-                if (selectedMaterial is not null) GuidedMaterialModsGrid.ScrollIntoView(selectedMaterial);
-                var selectedStaticMesh = !string.IsNullOrWhiteSpace(selectProjectId)
-                    ? selectedPackage.StaticMeshAssets.FirstOrDefault(asset => asset.Entry.Manifest.EditId.Equals(
-                        selectProjectId, StringComparison.OrdinalIgnoreCase))
-                    : selectedPackage.StaticMeshAssets.FirstOrDefault();
-                GuidedStaticMeshModsGrid.SelectedItem = selectedStaticMesh;
-                if (selectedStaticMesh is not null) GuidedStaticMeshModsGrid.ScrollIntoView(selectedStaticMesh);
-            }
-            else
-            {
-                _guidedVisibleAssets = [];
-                _guidedVisibleMeshes = [];
-                _guidedVisibleStaticMeshes = [];
-                _guidedVisibleMaterials = [];
-                GuidedTextureModsGrid.ItemsSource = null;
-                GuidedMeshModsGrid.ItemsSource = null;
-                GuidedStaticMeshModsGrid.ItemsSource = null;
-                GuidedMaterialModsGrid.ItemsSource = null;
-            }
-            UpdateGuidedTextureModActionState();
-            UpdateClientUpdateActionState();
-            if (ModSetsGrid?.SelectedItem is ModSetRow selectedSet)
-                ApplySelectedModSet(selectedSet);
-            RefreshWorkshopViews(selectProjectId);
-            if (!_modLibraryBusy) await RefreshArkiveModsAsync(trigger);
-            Log(
-                $"Guided texture-mod workspace refreshed: trigger={trigger}, " +
-                $"packages={orderedPackageRows.Length}, textureProjects={entries.Count}, " +
-                $"materialProjects={materialEntries.Count}, skeletalMeshProjects={meshEntries.Count}, staticMeshProjects={staticMeshEntries.Count}, selectedAssets={orderedPackageRows.Sum(row => row.IncludedAssetCount)}, " +
-                $"root={_guidedTextureModWorkspace.RootDirectory}.");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+    /// <summary>Selects what a package workspace read was asked to, and brings the views that follow its rows up to date.</summary>
+    private void FinishGuidedPackageRefresh(string? selectProjectId, IReadOnlyList<GuidedTexturePackageRow> orderedPackageRows)
+    {
+        var selectedPackage = !string.IsNullOrWhiteSpace(selectProjectId)
+            ? orderedPackageRows.FirstOrDefault(row =>
+                row.Assets.Any(asset => asset.Entry.Manifest.ProjectId.Equals(
+                    selectProjectId, StringComparison.OrdinalIgnoreCase)) ||
+                row.MeshAssets.Any(asset => asset.Entry.Manifest.EditId.Equals(
+                    selectProjectId, StringComparison.OrdinalIgnoreCase)) ||
+                row.StaticMeshAssets.Any(asset => asset.Entry.Manifest.EditId.Equals(
+                    selectProjectId, StringComparison.OrdinalIgnoreCase)) ||
+                row.MaterialAssets.Any(asset => asset.Entry.Document.EditId.Equals(
+                    selectProjectId, StringComparison.OrdinalIgnoreCase)))
+            : GuidedPackagesGrid.SelectedItem is GuidedTexturePackageRow previous
+                ? orderedPackageRows.FirstOrDefault(row => row.Entry.Manifest.PackageProjectId.Equals(
+                    previous.Entry.Manifest.PackageProjectId, StringComparison.OrdinalIgnoreCase))
+                : orderedPackageRows.FirstOrDefault();
+        if (selectedPackage is not null)
         {
-            Log($"Guided texture-mod workspace refresh failed: trigger={trigger}, error={exception}");
+            _guidedPackageSelectedByRefresh = true;
+            try { GuidedPackagesGrid.SelectedItem = selectedPackage; }
+            finally { _guidedPackageSelectedByRefresh = false; }
+            GuidedPackagesGrid.ScrollIntoView(selectedPackage);
+            ApplyGuidedProjectFilter(selectedPackage);
+            var selectedAsset = !string.IsNullOrWhiteSpace(selectProjectId)
+                ? selectedPackage.Assets.FirstOrDefault(asset => asset.Entry.Manifest.ProjectId.Equals(
+                    selectProjectId, StringComparison.OrdinalIgnoreCase))
+                : selectedPackage.Assets.FirstOrDefault();
+            GuidedTextureModsGrid.SelectedItem = selectedAsset;
+            if (selectedAsset is not null) GuidedTextureModsGrid.ScrollIntoView(selectedAsset);
+            var selectedMesh = !string.IsNullOrWhiteSpace(selectProjectId)
+                ? selectedPackage.MeshAssets.FirstOrDefault(asset => asset.Entry.Manifest.EditId.Equals(
+                    selectProjectId, StringComparison.OrdinalIgnoreCase))
+                : selectedPackage.MeshAssets.FirstOrDefault();
+            GuidedMeshModsGrid.SelectedItem = selectedMesh;
+            if (selectedMesh is not null) GuidedMeshModsGrid.ScrollIntoView(selectedMesh);
+            var selectedMaterial = !string.IsNullOrWhiteSpace(selectProjectId)
+                ? selectedPackage.MaterialAssets.FirstOrDefault(asset => asset.Entry.Document.EditId.Equals(
+                    selectProjectId, StringComparison.OrdinalIgnoreCase))
+                : selectedPackage.MaterialAssets.FirstOrDefault();
+            GuidedMaterialModsGrid.SelectedItem = selectedMaterial;
+            if (selectedMaterial is not null) GuidedMaterialModsGrid.ScrollIntoView(selectedMaterial);
+            var selectedStaticMesh = !string.IsNullOrWhiteSpace(selectProjectId)
+                ? selectedPackage.StaticMeshAssets.FirstOrDefault(asset => asset.Entry.Manifest.EditId.Equals(
+                    selectProjectId, StringComparison.OrdinalIgnoreCase))
+                : selectedPackage.StaticMeshAssets.FirstOrDefault();
+            GuidedStaticMeshModsGrid.SelectedItem = selectedStaticMesh;
+            if (selectedStaticMesh is not null) GuidedStaticMeshModsGrid.ScrollIntoView(selectedStaticMesh);
         }
+        else
+        {
+            _guidedVisibleAssets = [];
+            _guidedVisibleMeshes = [];
+            _guidedVisibleStaticMeshes = [];
+            _guidedVisibleMaterials = [];
+            GuidedTextureModsGrid.ItemsSource = null;
+            GuidedMeshModsGrid.ItemsSource = null;
+            GuidedStaticMeshModsGrid.ItemsSource = null;
+            GuidedMaterialModsGrid.ItemsSource = null;
+        }
+        UpdateGuidedTextureModActionState();
+        UpdateClientUpdateActionState();
+        if (ModSetsGrid?.SelectedItem is ModSetRow selectedSet)
+            ApplySelectedModSet(selectedSet);
+        RefreshWorkshopViews(selectProjectId);
     }
 
     private async Task<GuidedTexturePackageRow> CreateGuidedPackageRowAsync(
         GuidedTexturePackageEntry package,
-        GuidedDeploymentRevisionState? deployment,
+        PackageDeploymentState? deployment,
         IReadOnlyList<GuidedTextureModProjectEntry> projects,
         IReadOnlyList<SkeletalMeshEditWorkspaceEntry> meshProjects,
         IReadOnlyList<StaticMeshEditEntry> staticMeshProjects,
@@ -391,115 +477,6 @@ public partial class MainWindow : Window
         {
             InspectionIsSelectionCheck = deployment is { Inspection: not null, ForDeletionIdentityOnly: false },
         };
-    }
-
-    private async Task<GuidedDeploymentRevisionState?> ResolveGuidedDeploymentStateAsync(
-        GuidedTexturePackageEntry package)
-    {
-        var revisions = package.Manifest.Revisions
-            .Where(revision => File.Exists(revision.ModBundleManifestPath))
-            .OrderByDescending(revision => revision.CreatedAt)
-            .ToArray();
-        if (revisions.Length == 0) return null;
-
-        var latest = package.Manifest.LatestRevisionId is null
-            ? revisions[0]
-            : revisions.FirstOrDefault(revision => revision.RevisionId.Equals(
-                package.Manifest.LatestRevisionId, StringComparison.OrdinalIgnoreCase)) ?? revisions[0];
-        GuidedDeploymentRevisionState? latestState = null;
-        try
-        {
-            var inspection = await _modDeploymentService.InspectForRecoveryAsync(
-                CreateModDeploymentRequest(latest.ModBundleManifestPath) with { ReuseKnownHashes = true });
-            latestState = new GuidedDeploymentRevisionState(latest, inspection, null);
-            if (HasActiveDeployment(inspection)) return latestState;
-        }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
-        {
-            latestState = new GuidedDeploymentRevisionState(latest, null, exception.Message);
-            Log(
-                $"Guided package refresh latest-revision inspection failed: " +
-                $"packageId={package.Manifest.PackageProjectId}, revision={latest.RevisionId}, error={exception}");
-        }
-
-        foreach (var revision in revisions.Where(revision => !revision.RevisionId.Equals(
-                     latest.RevisionId, StringComparison.OrdinalIgnoreCase)))
-        {
-            try
-            {
-                var bundle = await ArkiveModBundleService.LoadBundleAsync(revision.ModBundleManifestPath);
-                var receiptPath = Path.Combine(
-                    _projectRoot, "backups", "installations", bundle.ModId,
-                    ArkiveModDeploymentService.ReceiptFileName);
-                if (!File.Exists(receiptPath)) continue;
-                var receipt = await ArkiveModDeploymentService.LoadReceiptAsync(receiptPath);
-                if (!receipt.GameFilesModified && receipt.State is not (
-                        ModInstallationState.Installed or ModInstallationState.Prepared)) continue;
-
-                var inspection = await _modDeploymentService.InspectForDeletionIdentityAsync(
-                    CreateModDeploymentRequest(revision.ModBundleManifestPath) with { ReuseKnownHashes = true });
-                if (!HasActiveDeployment(inspection)) continue;
-                Log(
-                    $"Guided package active earlier revision resolved: " +
-                    $"packageId={package.Manifest.PackageProjectId}, revision={revision.RevisionId}, " +
-                    $"latestRevision={latest.RevisionId}, state={inspection.State}, " +
-                    $"targetSha={inspection.CurrentTargetSha256}.");
-                return new GuidedDeploymentRevisionState(revision, inspection, null, ForDeletionIdentityOnly: true);
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
-            {
-                Log(
-                    $"Guided package earlier-revision inspection was inconclusive: " +
-                    $"packageId={package.Manifest.PackageProjectId}, revision={revision.RevisionId}, error={exception.Message}");
-            }
-        }
-
-        var lineage = new List<(GuidedTexturePackageRevision Revision, ArkiveModBundleManifest Bundle)>();
-        foreach (var revision in revisions)
-        {
-            try
-            {
-                lineage.Add((revision,
-                    await ArkiveModBundleService.LoadBundleAsync(revision.ModBundleManifestPath)));
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
-            {
-                Log($"Guided package lineage manifest was unreadable: packageId={package.Manifest.PackageProjectId}, " +
-                    $"revision={revision.RevisionId}, error={exception.Message}");
-            }
-        }
-        var payloadHashes = lineage.Select(item => item.Bundle.PayloadSha256)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var root in lineage.Where(item =>
-                     !payloadHashes.Contains(item.Bundle.RequiredSourcePackageSha256)))
-        {
-            try
-            {
-                var inspection = await _modDeploymentService.InspectForRecoveryAsync(
-                    CreateModDeploymentRequest(root.Revision.ModBundleManifestPath) with { ReuseKnownHashes = true });
-                if (inspection.State is not (
-                        ModInstallationState.NotInstalled or ModInstallationState.Restored) ||
-                    !inspection.CurrentTargetSha256!.Equals(
-                        root.Bundle.RequiredSourcePackageSha256,
-                        StringComparison.OrdinalIgnoreCase)) continue;
-                Log(
-                    $"Guided package clean lineage root resolved: packageId={package.Manifest.PackageProjectId}, " +
-                    $"revision={root.Revision.RevisionId}, rootSha={root.Bundle.RequiredSourcePackageSha256}, " +
-                    $"latestRevision={latest.RevisionId}.");
-                return new GuidedDeploymentRevisionState(root.Revision, inspection, null);
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
-            {
-                Log($"Guided package root-revision inspection was inconclusive: " +
-                    $"packageId={package.Manifest.PackageProjectId}, revision={root.Revision.RevisionId}, error={exception.Message}");
-            }
-        }
-
-        return latestState;
     }
 
     private static bool HasActiveDeployment(ModDeploymentInspection inspection) =>
@@ -879,9 +856,10 @@ public partial class MainWindow : Window
                 $"Impact: global on this client — every object using StaticMesh {row.ObjectName} will use this edit. {row.Collision}.";
     }
 
-    private void GuidedGoToMeshEditButton_Click(object sender, RoutedEventArgs e)
+    private async void GuidedGoToMeshEditButton_Click(object sender, RoutedEventArgs e)
     {
         if (GuidedMeshModsGrid.SelectedItem is not GuidedMeshModRow selected) return;
+        await EnsureViewsAsync("mesh edit opened", MeshView);
         var source = _skeletalMeshEditableExports.FirstOrDefault(row =>
             row.Entry.Manifest.ExportId.Equals(
                 selected.Entry.Manifest.SourceExportId, StringComparison.OrdinalIgnoreCase));
@@ -900,9 +878,10 @@ public partial class MainWindow : Window
         StatusText.Text = $"Selected the {selected.ObjectName} mesh edit.";
     }
 
-    private void GuidedGoToMaterialEditButton_Click(object sender, RoutedEventArgs e)
+    private async void GuidedGoToMaterialEditButton_Click(object sender, RoutedEventArgs e)
     {
         if (GuidedMaterialModsGrid.SelectedItem is not GuidedMaterialModRow selected) return;
+        await EnsureViewsAsync("material project opened", MaterialsView);
         MaterialEditorTab.IsSelected = true;
         var row = _materialProjectRows.FirstOrDefault(candidate => candidate.Entry.Document.EditId.Equals(
             selected.Entry.Document.EditId, StringComparison.OrdinalIgnoreCase));

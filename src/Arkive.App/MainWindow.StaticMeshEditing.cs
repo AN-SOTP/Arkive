@@ -140,8 +140,19 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>The export or edit a refresh asked to select before Static meshes had been read.</summary>
+    private string? _staticMeshPendingSelection;
+
     private async Task RefreshStaticMeshWorkspaceAsync(string trigger, string? selectId = null)
     {
+        if (StaticMeshView.Stale)
+        {
+            // Not read yet: Static meshes reads it when shown, and selects what this asked for.
+            if (selectId is not null) _staticMeshPendingSelection = selectId;
+            return;
+        }
+        selectId ??= _staticMeshPendingSelection;
+        _staticMeshPendingSelection = null;
         try
         {
             var exports = new List<StaticMeshEditableExportRow>();

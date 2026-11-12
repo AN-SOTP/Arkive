@@ -73,6 +73,11 @@ mirrors compare equal. Read-only: unlike plain `arkive-list`, the dump does not 
 | `heapBytes` | Managed heap after the step (with `--forced-gc`, after a full collection). |
 | `uiBlockedSeconds`, `uiLongestBlockSeconds` | How long the window's thread could not answer (waits over 0.1 s), in total and the longest. |
 | `skipped`, `note`, `error` | Not run in this mode and why; item counts; the step's exception. |
+| `storeWalks` | How many times the step walked each store of working files or package projects (listed its folders and read or checked every record). |
 
-Totals add the steps up; `seconds` there is the whole run. `filesHashed` and `bytesHashed` count files hashed in full
+Totals add the steps up; `seconds` there is the whole run, and the report's `storeWalks` adds up every step's walks.
+Startup waits for `window`, the two caches, `library` (the mod library and one read of every working file),
+`mods-list` (install state from the package project records, the Mods list and Edit mods' drafts) and `database`; the
+advanced views read their data when first opened (`--open-view` times that). The benchmark's `install-state` step uses
+the same install-state service as the Mods list and the package view. `filesHashed` and `bytesHashed` count files hashed in full
 because no saved hash matched.

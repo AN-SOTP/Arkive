@@ -57,7 +57,7 @@ public partial class MainWindow
             try
             {
                 // The check reads the package projects, which the plan above does not reload.
-                await RefreshStalePackageWorkspaceAsync("check after game update");
+                await EnsurePackageWorkspaceAsync("check after game update");
                 audit = await RunClientUpdateAuditAsync("check after game update", showResult: false, (done, total, _) =>
                 {
                     ModLibraryProgressBar.Maximum = Math.Max(1, total);
@@ -278,6 +278,8 @@ public partial class MainWindow
         var advanced = page is not null && page != ModLibraryTab;
         ModsAdvancedBar.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
         if (advanced) ModsAdvancedBarText.Text = $"Advanced: {page!.Header}";
+        // An advanced page reads its data when first shown, however it was reached (a Go to package button, say).
+        if (advanced) _ = ShowViewsAsync("advanced view opened", ViewsForModsPage(page!));
     }
 
     private void ModsAdvancedBackButton_Click(object sender, RoutedEventArgs e) =>

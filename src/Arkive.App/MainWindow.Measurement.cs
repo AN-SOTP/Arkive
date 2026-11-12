@@ -150,7 +150,4 @@ public partial class MainWindow
             quiet = _busyDepth == 0 && !_modGraphBusy && !_skeletalMeshEditableWorkspaceBusy && !ViewsLoading ? quiet + 1 : 0;
         }
     }
-
-    /// <summary>True while a view loads on demand.</summary>
-    private bool ViewsLoading => false;
 }

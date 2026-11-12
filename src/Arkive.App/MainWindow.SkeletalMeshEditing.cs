@@ -194,12 +194,24 @@ public partial class MainWindow : Window
     private async void RefreshSkeletalMeshEditableExportsButton_Click(object sender, RoutedEventArgs e) =>
         await RefreshSkeletalMeshEditableWorkspaceAsync("refresh button");
 
+    /// <summary>The export and edit a refresh asked to select before Mesh recon had been read.</summary>
+    private (string? ExportId, string? EditId)? _meshPendingSelection;
+
     private async Task RefreshSkeletalMeshEditableWorkspaceAsync(
         string trigger,
         string? selectExportId = null,
         string? selectEditId = null)
     {
+        if (MeshView.Stale)
+        {
+            // Not read yet: Mesh recon reads it when shown, and selects what this asked for.
+            if (selectExportId is not null || selectEditId is not null) _meshPendingSelection = (selectExportId, selectEditId);
+            return;
+        }
         if (_skeletalMeshEditableWorkspaceBusy || SkeletalMeshEditableExportsGrid is not { } grid) return;
+        if (_meshPendingSelection is { } pending && selectExportId is null && selectEditId is null)
+            (selectExportId, selectEditId) = pending;
+        _meshPendingSelection = null;
         _skeletalMeshEditableWorkspaceBusy = true;
         UpdateSkeletalMeshEditableWorkspaceActionState();
         try

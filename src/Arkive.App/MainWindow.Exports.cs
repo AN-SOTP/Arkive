@@ -35,6 +35,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+        // Not read yet: the Exports view reads it when shown.
+        if (ExportsView.Stale) return;
 
         ExportWorkspaceSummaryText.Text = "Reading export workspace...";
         ExportWorkspacePathText.Text = $"Workspace: {_exportWorkspaceStore.RootDirectory}";

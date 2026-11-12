@@ -161,9 +161,33 @@ public partial class MainWindow : Window
             reference, resolved, identity), options)];
     }
 
+    /// <summary>
+    /// Counts material list refreshes started. Two can overlap (a save, then a toggle), and the one started first read
+    /// the projects before the later change; only the newest one shows its list.
+    /// </summary>
+    private int _materialRefreshes;
+
+    /// <summary>The material project a refresh left to a newer one, or asked for before the view was read, should select.</summary>
+    private string? _materialPendingSelection;
+
     private async Task RefreshMaterialProjectsAsync(string trigger, string? selectEditId = null)
     {
+        if (MaterialsView.Stale)
+        {
+            // Not read yet: the Materials view and the package views read it when shown, and select what this asked for.
+            if (selectEditId is not null) _materialPendingSelection = selectEditId;
+            return;
+        }
+        var refresh = ++_materialRefreshes;
+        selectEditId ??= _materialPendingSelection;
+        _materialPendingSelection = selectEditId;
         var entries = await _materialEditWorkspaceStore.LoadAsync();
+        if (refresh != _materialRefreshes)
+        {
+            Log($"Material project workspace refresh left to a newer one: trigger={trigger}.");
+            return;
+        }
+        _materialPendingSelection = null;
         _materialProjectRows = entries.Select(entry => new MaterialProjectRow(entry)).ToArray();
         MaterialProjectsGrid.ItemsSource = _materialProjectRows;
         var selected = _materialProjectRows.FirstOrDefault(row => row.Entry.Document.EditId.Equals(
