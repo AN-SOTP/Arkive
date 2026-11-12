@@ -279,7 +279,8 @@ public sealed class SkeletalMeshEditWorkspaceStore
 
     /// <summary>
     /// Compacts every record of the store in turn (see <see cref="CompactAsync"/>). <paramref name="beforeEachRecord"/>
-    /// runs before each one, so a caller can wait there while the user is busy. Cancelling stops between steps, leaves
+    /// runs before each record that still holds a report, so a caller can wait there while the user is busy; records
+    /// already compact are only looked at, so a run over a compacted store is quick. Cancelling stops between steps, leaves
     /// the record being worked on as it was, and returns what was done so far.
     /// </summary>
     public async Task<SkeletalMeshEditCompactionSummary> CompactAllAsync(
@@ -299,6 +300,12 @@ public sealed class SkeletalMeshEditWorkspaceStore
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!await MayHoldSkeletonReportAsync(path, cancellationToken).ConfigureAwait(false))
+                {
+                    slim++;
+                    continue;
+                }
                 if (beforeEachRecord is not null) await beforeEachRecord(cancellationToken).ConfigureAwait(false);
                 var result = await CompactAsync(path, dryRun, null, cancellationToken).ConfigureAwait(false);
                 switch (result.Outcome)
@@ -349,6 +356,7 @@ public sealed class SkeletalMeshEditWorkspaceStore
         var siblingExisted = File.Exists(siblingPath);
         var siblingPlaced = false;
         var replaced = false;
+        DateTime? directoryWriteTime = null;
         long bytesBefore = 0;
         try
         {
@@ -389,7 +397,10 @@ public sealed class SkeletalMeshEditWorkspaceStore
                     slimBytes.LongLength + buffer.Length, null);
             }
 
+            // The folder and the new file keep the record's age: working-file clean-up judges folders by it.
+            directoryWriteTime = Directory.GetLastWriteTimeUtc(directory);
             SkeletalMeshSkeletonCompatibilityFile.WriteTo(siblingTemporary, full.Preflight);
+            File.SetLastWriteTimeUtc(siblingTemporary, writeTime);
             afterStep?.Invoke(SkeletalMeshEditCompactionStep.ReportWritten);
             var readBack = await SkeletalMeshSkeletonCompatibilityFile.ReadFromAsync(
                     siblingTemporary, full.Preflight.CreatedAt, full.Preflight.CandidateGlbSha256, cancellationToken)
@@ -429,8 +440,14 @@ public sealed class SkeletalMeshEditWorkspaceStore
             afterStep?.Invoke(SkeletalMeshEditCompactionStep.ReportPlaced);
             File.Move(recordTemporary, manifestPath, true);
             replaced = true;
-            if (File.GetLastWriteTimeUtc(manifestPath) != writeTime) File.SetLastWriteTimeUtc(manifestPath, writeTime);
-            File.SetCreationTimeUtc(manifestPath, creationTime);
+            try
+            {
+                if (File.GetLastWriteTimeUtc(manifestPath) != writeTime) File.SetLastWriteTimeUtc(manifestPath, writeTime);
+                File.SetCreationTimeUtc(manifestPath, creationTime);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
             return Result(SkeletalMeshEditCompactionOutcome.Compacted, bytesBefore,
                 slimBytes.LongLength + new FileInfo(siblingPath).Length, null);
         }
@@ -448,6 +465,7 @@ public sealed class SkeletalMeshEditWorkspaceStore
                 if (File.Exists(recordTemporary)) File.Delete(recordTemporary);
                 // The original record still holds its report; a report beside it that this step added goes again.
                 if (siblingPlaced && !replaced && !siblingExisted && File.Exists(siblingPath)) File.Delete(siblingPath);
+                if (directoryWriteTime is { } folderTime) Directory.SetLastWriteTimeUtc(directory, folderTime);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -458,6 +476,26 @@ public sealed class SkeletalMeshEditWorkspaceStore
         SkeletalMeshEditCompactionResult Result(
             SkeletalMeshEditCompactionOutcome outcome, long before, long after, string? problem) =>
             new(manifestPath, outcome, before, after, problem);
+    }
+
+    // A quick look for a report object in the record's text; when in doubt the record is handed to CompactAsync, which
+    // decides on the parsed record.
+    private static async Task<bool> MayHoldSkeletonReportAsync(string path, CancellationToken token)
+    {
+        byte[] bytes;
+        try { bytes = await File.ReadAllBytesAsync(path, token).ConfigureAwait(false); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return true; }
+        ReadOnlySpan<byte> text = bytes;
+        var marker = "\"skeletonCompatibility\""u8;
+        var whitespace = " \t\r\n"u8;
+        for (var at = text.IndexOf(marker); at >= 0; at = text.IndexOf(marker))
+        {
+            text = text[(at + marker.Length)..].TrimStart(whitespace);
+            if (text.IsEmpty || text[0] != (byte)':') continue;
+            text = text[1..].TrimStart(whitespace);
+            if (!text.IsEmpty && text[0] == (byte)'{') return true;
+        }
+        return false;
     }
 
     private static SkeletalMeshEditRegistrationManifest Deserialize(byte[] bytes, JsonSerializerOptions options) =>

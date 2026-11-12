@@ -142,6 +142,7 @@ internal static class MeshRecordSmokeTests
             var (path, _) = WriteFatRecord(root, "step-" + step);
             var directory = Path.GetDirectoryName(path)!;
             var before = Listing(directory);
+            var folderTime = Directory.GetLastWriteTimeUtc(directory);
             var result = store.CompactAsync(path, afterStep: reached =>
             {
                 if (reached == step) throw new IOException($"Simulated failure after {step}.");
@@ -149,7 +150,7 @@ internal static class MeshRecordSmokeTests
             Assert(result.Outcome == SkeletalMeshEditCompactionOutcome.Failed &&
                    result.Problem?.Contains(step.ToString(), StringComparison.Ordinal) == true,
                 $"a failure after {step} was not reported: {result.Outcome} {result.Problem}");
-            Assert(Listing(directory) == before,
+            Assert(Listing(directory) == before && Directory.GetLastWriteTimeUtc(directory) == folderTime,
                 $"a failure after {step} left the record changed or a file behind");
         }
 
@@ -163,6 +164,7 @@ internal static class MeshRecordSmokeTests
 
         // Exact: every value but the report is unchanged, in the file as written, and the write time is kept.
         var writeTime = File.GetLastWriteTimeUtc(dryPath);
+        var dryFolderTime = Directory.GetLastWriteTimeUtc(dryDirectory);
         var fatNode = JsonNode.Parse(File.ReadAllText(dryPath))!;
         var real = store.CompactAsync(dryPath).GetAwaiter().GetResult();
         var slimNode = JsonNode.Parse(File.ReadAllText(dryPath))!;
@@ -170,7 +172,9 @@ internal static class MeshRecordSmokeTests
         slimNode["preflight"]!.AsObject().Remove("skeletonCompatibilitySummary");
         Assert(real.Outcome == SkeletalMeshEditCompactionOutcome.Compacted && JsonNode.DeepEquals(fatNode, slimNode),
             "compaction changed a value besides the skeleton report");
-        Assert(File.GetLastWriteTimeUtc(dryPath) == writeTime, "compaction changed the record's write time");
+        Assert(File.GetLastWriteTimeUtc(dryPath) == writeTime && Directory.GetLastWriteTimeUtc(dryDirectory) == dryFolderTime &&
+               File.GetLastWriteTimeUtc(SkeletalMeshSkeletonCompatibilityFile.PathIn(dryDirectory)) == writeTime,
+            "compaction made the record or its folder look recently changed");
         Assert(Math.Abs(real.BytesAfter - dry.BytesAfter) < 4096 && real.BytesBefore == dry.BytesBefore,
             $"the dry run predicted {dry.BytesAfter:N0} bytes after; the real run left {real.BytesAfter:N0}");
         Assert(Directory.GetFiles(dryDirectory).Select(file => Path.GetFileName(file)).Order(StringComparer.Ordinal)
@@ -178,8 +182,14 @@ internal static class MeshRecordSmokeTests
                        SkeletalMeshSkeletonCompatibilityFile.FileName }.Order(StringComparer.Ordinal), StringComparer.Ordinal),
             "compaction left a temporary file behind");
 
-        var summary = store.CompactAllAsync(dryRun: false).GetAwaiter().GetResult();
-        Assert(summary is { Compacted: 5, AlreadySlim: 1, Failed: 0, Stopped: false } && summary.BytesSaved > 0,
+        var turns = 0;
+        var summary = store.CompactAllAsync(dryRun: false, _ =>
+        {
+            turns++;
+            return Task.CompletedTask;
+        }).GetAwaiter().GetResult();
+        Assert(summary is { Records: 6, Compacted: 5, AlreadySlim: 1, Failed: 0, Stopped: false } && summary.BytesSaved > 0 &&
+               turns == 5,
             "compacting the whole store did not compact the records left: " + JsonSerializer.Serialize(summary));
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
