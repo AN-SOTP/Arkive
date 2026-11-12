@@ -10,10 +10,13 @@ internal sealed class SessionLog
 
     public static SessionLog? Current { get; private set; }
 
+    /// <summary>The data-folder subfolder logs go to; a measuring run uses its own so real session logs stay clean.</summary>
+    public static string FolderName { get; set; } = "logs";
+
     public SessionLog()
     {
         var root = ArkiveRuntimePaths.ResolveDataRoot();
-        var directory = Path.Combine(root, "logs");
+        var directory = Path.Combine(root, FolderName);
         Directory.CreateDirectory(directory);
         FilePath = Path.Combine(directory, $"arkive-{DateTime.Now:yyyyMMdd-HHmmss}.log");
         File.WriteAllText(FilePath, string.Empty, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -46,7 +49,7 @@ internal sealed class SessionLog
             }
 
             var root = ArkiveRuntimePaths.ResolveDataRoot();
-            var directory = Path.Combine(root, "logs");
+            var directory = Path.Combine(root, FolderName);
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, $"arkive-crash-{DateTime.Now:yyyyMMdd-HHmmssfff}.log");
             File.WriteAllText(
