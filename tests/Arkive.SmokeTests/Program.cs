@@ -5,6 +5,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
 [
     PackageArchiveSmokeTests.Cases,
     MeshSmokeTests.Cases,
+    MeshRecordSmokeTests.Cases,
     ViewerSmokeTests.Cases,
     ProportionSmokeTests.Cases,
     OutfitSwapSmokeTests.Cases,
