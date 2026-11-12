@@ -195,26 +195,22 @@ public partial class MainWindow : Window
                 try { return await ResolveGuidedDeploymentStateAsync(package); }
                 finally { deploymentGate.Release(); }
             });
+            // Each kind is grouped by package once: filtering every entry for each package took seconds with large mods.
+            var texturesByPackage = SourcePackageGrouping.BySourcePackage(
+                entries, entry => entry.Manifest.SourcePackagePath);
+            var meshesByPackage = SourcePackageGrouping.BySourcePackage(meshEntries,
+                entry => meshSourcesByExportId[entry.Manifest.SourceExportId].Manifest.SourcePackagePath);
+            var materialsByPackage = SourcePackageGrouping.BySourcePackage(
+                materialEntries, entry => entry.Document.SourcePackagePath);
+            var staticMeshesByPackage = SourcePackageGrouping.BySourcePackage(staticMeshEntries,
+                entry => staticMeshSources[entry.Manifest.EditId].SourcePackagePath);
             foreach (var package in packageEntries.Values)
             {
-                var projectEntries = entries.Where(entry => Path.GetFullPath(entry.Manifest.SourcePackagePath)
-                        .Equals(Path.GetFullPath(package.Manifest.SourcePackagePath),
-                            StringComparison.OrdinalIgnoreCase))
-                    .ToArray();
-                var packageMeshEntries = meshEntries.Where(entry => SamePath(
-                        meshSourcesByExportId[entry.Manifest.SourceExportId].Manifest.SourcePackagePath,
-                        package.Manifest.SourcePackagePath))
-                    .ToArray();
-                var packageMaterialEntries = materialEntries.Where(entry => SamePath(
-                        entry.Document.SourcePackagePath, package.Manifest.SourcePackagePath))
-                    .ToArray();
-                var packageStaticMeshEntries = staticMeshEntries.Where(entry => SamePath(
-                        staticMeshSources[entry.Manifest.EditId].SourcePackagePath,
-                        package.Manifest.SourcePackagePath))
-                    .ToArray();
+                var key = SourcePackageGrouping.Key(package.Manifest.SourcePackagePath);
                 packageRows.Add(await CreateGuidedPackageRowAsync(
-                    package, await deployments[package], projectEntries, packageMeshEntries, packageStaticMeshEntries,
-                    staticMeshSources, packageMaterialEntries));
+                    package, await deployments[package], texturesByPackage[key].ToArray(),
+                    meshesByPackage[key].ToArray(), staticMeshesByPackage[key].ToArray(),
+                    staticMeshSources, materialsByPackage[key].ToArray(), modOwnedEditIds));
             }
             var orderedPackageRows = packageRows
                 .OrderByDescending(row => row.Entry.Manifest.IsFavorite)
@@ -304,7 +300,8 @@ public partial class MainWindow : Window
         IReadOnlyList<SkeletalMeshEditWorkspaceEntry> meshProjects,
         IReadOnlyList<StaticMeshEditEntry> staticMeshProjects,
         IReadOnlyDictionary<string, StaticMeshEditableExportManifest> staticMeshSources,
-        IReadOnlyList<MaterialInstanceEditEntry> materialProjects)
+        IReadOnlyList<MaterialInstanceEditEntry> materialProjects,
+        IReadOnlyDictionary<string, string> owners)
     {
         var latest = package.Manifest.LatestRevisionId is null
             ? package.Manifest.Revisions.LastOrDefault()
@@ -369,7 +366,6 @@ public partial class MainWindow : Window
                 mesh, staticMeshSources[mesh.Manifest.EditId], latest, editedHash, inspection));
         }
 
-        var owners = ModOwnersByEditId();
         foreach (var row in rows.Concat<GuidedAssetRow>(meshRows).Concat(materialRows).Concat(staticMeshRows))
             row.OwnerModName = owners.GetValueOrDefault(row.EditId);
         return new GuidedTexturePackageRow(
