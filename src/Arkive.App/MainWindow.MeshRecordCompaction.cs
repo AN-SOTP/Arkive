@@ -1,4 +1,3 @@
-using System.IO;
 using System.Windows.Threading;
 using Arkive.Core.Meshes;
 using Arkive.Core.Mods;
