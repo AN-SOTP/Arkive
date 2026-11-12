@@ -199,6 +199,7 @@ public partial class MainWindow : Window
             var authoringPending = statuses
                 .Where(status => drafts.TryGetValue(status.Mod.ModId, out var draft) && DraftHasChanges(draft, status.Mod))
                 .Select(status => status.Mod.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _rowsShowRememberedInstallStates = installFromMemo || _launchInstallStates is not null;
             var rows = ShowModList(library, statuses, authoringPending, outside.Count, scan.Issues.Count, selectModId,
                 onlyIfRowsChange);
             _modListPendingSelection = null;
@@ -293,6 +294,9 @@ public partial class MainWindow : Window
     /// memo; the background pass checks every package again and corrects the list. Null otherwise.
     /// </summary>
     private Dictionary<string, PackageInstallSummary?>? _launchInstallStates;
+
+    /// <summary>The Mods list's rows were made with install states remembered from the last launch.</summary>
+    private bool _rowsShowRememberedInstallStates;
 
     // _installStateGeneration when launch read _launchInstallStates.
     private int _launchInstallGeneration;
@@ -1152,9 +1156,10 @@ public partial class MainWindow : Window
         if (rows.Length == 0) return;
         // Whether a mod is still in the game decides below whether it may be deleted, and until the background pass
         // has checked them the rows may show install states remembered from the last launch: they are checked now.
-        if (_launchInstallStates is not null)
+        if (_rowsShowRememberedInstallStates)
         {
             var chosen = rows.Select(row => row.Entry.ModId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var refreshes = _modListRefreshes;
             _modLibraryBusy = true;
             UpdateModLibraryActionState();
             try
@@ -1167,7 +1172,8 @@ public partial class MainWindow : Window
                 UpdateModLibraryActionState();
             }
             rows = _modLibraryRows.Where(row => chosen.Contains(row.Entry.ModId)).ToArray();
-            if (_launchInstallStates is not null || rows.Length == 0)
+            // Another refresh begun meanwhile may have left the rows from before the check.
+            if (_rowsShowRememberedInstallStates || refreshes + 1 != _modListRefreshes || rows.Length == 0)
             {
                 MessageBox.Show(this, "Arkive is still checking which mods are in the game. Try again in a moment.",
                     "Delete mod", MessageBoxButton.OK, MessageBoxImage.Information);
