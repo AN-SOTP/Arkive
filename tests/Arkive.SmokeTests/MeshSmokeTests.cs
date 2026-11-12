@@ -565,6 +565,18 @@ internal static class MeshSmokeTests
                registeredSnapshot.Entries is [{ Manifest.DisplayName: "Synthetic position edit" }] &&
                registeredSnapshot.Issues.Count == 0,
             "edited SkeletalMesh derivative was not registered durably");
+        MeshRecordSmokeTests.AssertSlimWithReportBeside(
+            registered.Entry.ManifestPath, registered.Preflight, "a newly registered edit");
+        Assert(registered.Preflight.SkeletonCompatibility is not null &&
+               registeredSnapshot.Entries[0].Manifest.Preflight is
+               {
+                   SkeletonCompatibility: null,
+                   SkeletonCompatibilitySummary.Compatibility: SkeletalMeshSkeletonCompatibilityKind.ExactTargetSkeleton,
+               } &&
+               MeshRecordSmokeTests.SameJson(
+                   editedWorkspace.LoadSkeletonCompatibilityAsync(registeredSnapshot.Entries[0]).GetAwaiter().GetResult(),
+                   registered.Preflight.SkeletonCompatibility),
+            "a newly registered edit did not load without its skeleton report, or did not read it back on demand");
         var topologyWorkspace = new SkeletalMeshEditWorkspaceStore(
             Path.Combine(fixtureDirectory, "skeletal-mesh-topology-edits"));
         var registeredTopology = topologyWorkspace.RegisterAsync(
@@ -605,6 +617,8 @@ internal static class MeshSmokeTests
                File.Exists(topologyCompilation.DecodedProofGlbPath),
             "topology compiler did not produce and independently decode a variable-size native LOD: " +
             JsonSerializer.Serialize(topologyCompilation.Manifest));
+        MeshRecordSmokeTests.AssertSlimWithReportBeside(
+            topologyCompilation.ManifestPath, topologyCompilation.Manifest.Preflight, "a topology compilation manifest");
         var blenderStyleCompilation = new SkeletalMeshTopologyCompilerService()
             .CompileAsync(new SkeletalMeshTopologyCompilationRequest(
                 topologyWorkspace.RegisterAsync(editableSnapshot.Entries[0], blenderStyleEdit, "Blender-style topology")
@@ -678,6 +692,8 @@ internal static class MeshSmokeTests
                File.Exists(encoded.EncodedExportPath) && File.Exists(encoded.DecodedProofGlbPath) &&
                new FileInfo(encoded.EncodedExportPath).Length == range.SerialSize,
             "native SkeletalMesh position encoding did not preserve locked bytes and decode back");
+        MeshRecordSmokeTests.AssertSlimWithReportBeside(
+            encoded.ManifestPath, encoded.Manifest.Preflight, "a native encoding manifest");
         var sourcePackageHashBeforeStaging = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
         var staged = new SkeletalMeshStagedUpkService()
             .BuildAsync(new SkeletalMeshStagedUpkRequest(

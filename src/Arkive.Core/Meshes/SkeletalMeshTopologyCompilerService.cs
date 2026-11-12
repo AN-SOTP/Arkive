@@ -288,7 +288,9 @@ public sealed class SkeletalMeshTopologyCompilerService
                         prefix.Materials[layout.MaterialReferenceCount + index], true)))
                     .OrderBy(slot => slot.Slot).ToArray(),
             };
-            WriteJsonAtomic(manifestPath, manifest);
+            // The full skeleton report (most of the manifest's size) goes beside it; the result keeps it in memory.
+            SkeletalMeshSkeletonCompatibilityFile.Write(outputDirectory, preflight);
+            WriteJsonAtomic(manifestPath, manifest with { Preflight = SkeletalMeshSkeletonCompatibilityFile.Slim(preflight) });
             return new SkeletalMeshTopologyCompilationResult(
                 outputDirectory, compiledPath, proofPath, manifestPath, manifest, watch.Elapsed);
         }

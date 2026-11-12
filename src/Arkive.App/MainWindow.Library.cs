@@ -109,6 +109,7 @@ public partial class MainWindow : Window
             return;
         }
         _ = TrimPackageBuildsAsync("startup");
+        StartMeshRecordCompaction();
         _ = Task.Run(() =>
         {
             ArkiveModEditSnapshot.SaveHashCache(FileHashCachePath);

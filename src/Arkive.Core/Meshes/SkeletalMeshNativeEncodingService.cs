@@ -357,7 +357,9 @@ public sealed class SkeletalMeshNativeEncodingService
             Path.GetFileName(proofGlbPath), boundsUpdated, allowlisted.LongCount(value => value),
             actualChanged, changedLocked, lockedSourceHash, lockedEncodedHash, true, true,
             lodEvidence, preflight, watch.Elapsed.TotalSeconds);
-        WriteJsonAtomic(manifestPath, manifest);
+        // The full skeleton report (most of the manifest's size) goes beside it; the result keeps it in memory.
+        SkeletalMeshSkeletonCompatibilityFile.Write(outputDirectory, preflight);
+        WriteJsonAtomic(manifestPath, manifest with { Preflight = SkeletalMeshSkeletonCompatibilityFile.Slim(preflight) });
         return new SkeletalMeshNativeEncodingResult(
             outputDirectory, outputPath, proofGlbPath, manifestPath, manifest, watch.Elapsed);
     }

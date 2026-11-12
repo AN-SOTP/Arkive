@@ -372,6 +372,8 @@ static int Run(string[] arguments)
             "zone-names" => ZoneNames(target, ReadTextOption(arguments, "--metadata"),
                 ReadTextOption(arguments, "--filter"), json),
             "game-crashes" => GameCrashes(target, ReadPositiveIntOption(arguments, "--last") ?? 3, json),
+            "working-files-compact" => WorkingFilesCompact(
+                target, arguments.Contains("--dry-run", StringComparer.OrdinalIgnoreCase), json),
             "astrogem-odds" => AstrogemOdds(target, ReadTextOption(arguments, "--target"), ReadTextOption(arguments, "--out"), json),
             "box-odds" => BoxOdds(target, ReadTextOption(arguments, "--out"), ReadTextOption(arguments, "--filter")),
             "tweaks-install" => TweaksInstall(target, arguments.Contains("--saved", StringComparer.OrdinalIgnoreCase),
@@ -3299,6 +3301,34 @@ static int ZoneNames(string packagesRoot, string? metadataPath, string? filter, 
     return 0;
 }
 
+/// <summary>
+/// Moves the full skeleton report out of every edited-mesh record into the compressed file beside it, as Arkive does in
+/// the background after startup. Records changed in the last hour are left alone; package builds are not touched.
+/// </summary>
+static int WorkingFilesCompact(string projectRoot, bool dryRun, bool json)
+{
+    var root = Path.GetFullPath(projectRoot);
+    if (!Directory.Exists(root)) throw new DirectoryNotFoundException($"Arkive project root was not found: {root}");
+    var store = new SkeletalMeshEditWorkspaceStore(Path.Combine(root, "staging", "skeletal-mesh-edits"));
+    var summary = store.CompactAllAsync(dryRun).GetAwaiter().GetResult();
+    if (json) WriteJson(summary);
+    else
+    {
+        Console.WriteLine(dryRun ? "Edited-mesh records (dry run, nothing changed):" : "Edited-mesh records:");
+        Console.WriteLine($"  Records:           {summary.Records:N0}");
+        Console.WriteLine($"  {(dryRun ? "Would compact:" : "Compacted:    ")}     {summary.Compacted:N0}");
+        Console.WriteLine($"  Already compact:   {summary.AlreadySlim:N0}");
+        Console.WriteLine($"  Changed recently:  {summary.RecentlyChanged:N0}");
+        Console.WriteLine($"  Failed:            {summary.Failed:N0}");
+        Console.WriteLine($"  Bytes before:      {summary.BytesBefore:N0}");
+        Console.WriteLine($"  Bytes after:       {summary.BytesAfter:N0}");
+        Console.WriteLine($"  {(dryRun ? "Would save:" : "Saved:     ")}        {summary.BytesSaved:N0}");
+        foreach (var problem in summary.Problems)
+            Console.WriteLine($"    {problem.ManifestPath}: {problem.Problem}");
+    }
+    return summary.Failed == 0 ? 0 : 1;
+}
+
 // Makes a Game Data mod from a LostArkPatcher-style .sql patch, or lists the table changes of one mod or of data2.lpk.
 /// <summary>
 /// What the game's own crash dumps (EFGame\Logs\*.dmp, newest first) say: the exception, where, and the names on the
@@ -4250,6 +4280,7 @@ static void PrintUsage()
     Console.WriteLine("  arkive arkive-conflicts <Arkive-project-root> [--json]");
     Console.WriteLine("  arkive arkive-migrate <Arkive-project-root> [--author NAME] [--json]");
     Console.WriteLine("  arkive arkive-plan <Arkive-project-root> [--json [FILE]]   (FILE: sorted, path-free dump for comparisons)");
+    Console.WriteLine("  arkive working-files-compact <Arkive-project-root> [--dry-run] [--json]");
     Console.WriteLine("  arkive arkive-apply <Arkive-project-root> --confirm [--json]");
     Console.WriteLine("  arkive arkive-update <Arkive-project-root> --mod ID|NAME [--json]");
     Console.WriteLine("  arkive client-update-check-all <Arkive-project-root> [--out DIR] [--state-root DIR] [--json]");

@@ -163,9 +163,38 @@ public sealed record SkeletalMeshEditPreflightReport(
 
     public SkeletalMeshAnimationPreflight? AnimationValidation { get; init; }
 
+    /// <summary>
+    /// The full skeleton report (about 300 KB per mesh). Edit records and build manifests no longer store it: it is
+    /// written beside them (<see cref="SkeletalMeshSkeletonCompatibilityFile"/>) and loaded only when asked for, so
+    /// after a load this is null. Nothing allows or refuses a build or an install on it.
+    /// </summary>
     public SkeletalMeshSkeletonCompatibilityReport? SkeletonCompatibility { get; init; }
 
+    /// <summary>
+    /// The few skeleton values the edited-mesh list shows on every row, kept in the record so the list needs no
+    /// per-row read of the full report. Arkive 0.7.5 does not know it and ignores it.
+    /// </summary>
+    public SkeletalMeshSkeletonCompatibilitySummary? SkeletonCompatibilitySummary { get; init; }
+
     public SkeletalMeshDeformationDependencyReport? DeformationDependencies { get; init; }
+}
+
+/// <summary>
+/// The skeleton verdict without its bone lists. Its property names match the full report's, so the same values can
+/// be read straight out of an older record's full report.
+/// </summary>
+public sealed record SkeletalMeshSkeletonCompatibilitySummary(
+    SkeletalMeshSkeletonCompatibilityKind Compatibility,
+    bool ExactSkeletonIdentity,
+    double MappedSourceWeightPercent,
+    string Summary)
+{
+    public static SkeletalMeshSkeletonCompatibilitySummary From(SkeletalMeshSkeletonCompatibilityReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        return new SkeletalMeshSkeletonCompatibilitySummary(
+            report.Compatibility, report.ExactSkeletonIdentity, report.MappedSourceWeightPercent, report.Summary);
+    }
 }
 
 public sealed record SkeletalMeshEditRegistrationManifest(

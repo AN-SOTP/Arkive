@@ -377,8 +377,10 @@ public partial class MainWindow : Window
                     : $"Passed — {animation.PoseCount:N0} stress poses"
                 : "Refused — animation risk"
             : "Not checked — revalidate";
-        public string SkeletonCompatibility => Entry.Manifest.Preflight.SkeletonCompatibility is { } skeleton
-            ? skeleton.Compatibility switch
+        // Loaded records keep only the summary; a check made in this session still has its full report.
+        public string SkeletonCompatibility => (Entry.Manifest.Preflight.SkeletonCompatibility?.Compatibility ??
+                                                Entry.Manifest.Preflight.SkeletonCompatibilitySummary?.Compatibility) is { } skeleton
+            ? skeleton switch
             {
                 SkeletalMeshSkeletonCompatibilityKind.ExactTargetSkeleton => "Exact target skeleton",
                 SkeletalMeshSkeletonCompatibilityKind.SameNamedHierarchyAlteredBindPose => "Altered bind pose — refused",
