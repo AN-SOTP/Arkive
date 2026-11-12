@@ -63,6 +63,7 @@ public partial class MainWindow : Window
             tab != SoundsTab && tab != LoginScreenTab && tab != FontsTab && tab != LanguageTab && tab != OutfitSwapTab &&
             tab != TweaksTab)
             _ = RefreshStalePackageWorkspaceWithNoticeAsync();
+        if (_indexHealthStale && MainTabControl.SelectedItem == IndexStatusTab) _ = RefreshIndexHealthAsync();
     }
 
     private async Task RefreshStalePackageWorkspaceWithNoticeAsync()

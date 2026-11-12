@@ -102,7 +102,7 @@ public partial class MainWindow : Window
             LibraryCancelButton.IsEnabled = false;
             LibraryWorkersComboBox.IsEnabled = true;
             await LoadLibraryDocumentsAsync("index build/update completion");
-            await RefreshIndexHealthAsync();
+            await RefreshIndexHealthIfShownAsync();
             TrySaveSettings("index build/update finished");
         }
     }
@@ -137,6 +137,19 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// True while the Index Status tab shows nothing or out-of-date figures. Reading them stats every cache file
+    /// (tens of thousands, 4 to 13 s), so they are read when the tab is opened, not at startup.
+    /// </summary>
+    private bool _indexHealthStale = true;
+
+    /// <summary>Refreshes the index status if its tab is showing; otherwise it is read when the tab is next opened.</summary>
+    private async Task RefreshIndexHealthIfShownAsync()
+    {
+        if (MainTabControl.SelectedItem == IndexStatusTab) await RefreshIndexHealthAsync();
+        else _indexHealthStale = true;
+    }
+
     private async Task RefreshIndexHealthAsync()
     {
         if (IndexHealthSummaryText is null)
@@ -144,12 +157,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        _indexHealthStale = false;
         IndexHealthSummaryText.Text = "Reading index status...";
         try
         {
-            var health = await _packageIndexStore.GetHealthAsync(
-                _libraryRootPath,
-                _umodelBridge);
+            var rootPath = _libraryRootPath;
+            var bridge = _umodelBridge;
+            var health = await Task.Run(() => _packageIndexStore.GetHealthAsync(rootPath, bridge));
             IndexHealthSummaryText.Text =
                 $"{health.CachedDocumentCount:N0} cached packages | " +
                 $"{health.IndexedAssetCount:N0} objects | {FormatByteSize(health.CacheBytes)} | " +

@@ -127,7 +127,6 @@ public partial class MainWindow : Window
             Log($"Workspace metadata was not restored because the candidate file is unavailable: {metadataPath}");
         }
 
-        await RefreshIndexHealthAsync();
         await CleanupGuidedPreviewCacheAsync(TimeSpan.FromHours(12), interactive: false);
         if (!loadedMetadata &&
             _libraryRootPath is not null &&
@@ -505,7 +504,7 @@ public partial class MainWindow : Window
 
         ConfigureLibraryRoot(dialog.FolderName, logSelection: true);
         TrySaveSettings("library root changed");
-        await RefreshIndexHealthAsync();
+        await RefreshIndexHealthIfShownAsync();
     }
 
     private void ChooseLibraryScratchButton_Click(object sender, RoutedEventArgs e)
