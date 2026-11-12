@@ -12,6 +12,15 @@ internal static class HiddenDesktop
 {
     internal sealed record Result(int ExitCode, bool TimedOut, IReadOnlyList<string> VisibleWindows);
 
+    /// <summary>Whether this session may create a desktop (a service without a window station may not).</summary>
+    public static bool IsAvailable()
+    {
+        var desktop = CreateDesktop("ArkiveSmoke-" + Guid.NewGuid().ToString("N"), IntPtr.Zero, IntPtr.Zero, 0, GenericAll, IntPtr.Zero);
+        if (desktop == IntPtr.Zero) return false;
+        CloseDesktop(desktop);
+        return true;
+    }
+
     public static Result Run(string executable, string arguments, TimeSpan timeout)
     {
         var name = "ArkiveSmoke-" + Guid.NewGuid().ToString("N");

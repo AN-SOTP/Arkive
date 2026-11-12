@@ -190,9 +190,10 @@ internal static class LaunchSmokeTests
 
     private const string StartupLogs = "measure-logs";
 
-    private static SmokeTestPrerequisiteResult AppPrerequisite() => AppExecutable() is not null
-        ? SmokeTestPrerequisiteResult.Available
-        : new(false, "Arkive.App.exe of this configuration is not built");
+    private static SmokeTestPrerequisiteResult AppPrerequisite() =>
+        AppExecutable() is null ? new(false, "Arkive.App.exe of this configuration is not built")
+        : !HiddenDesktop.IsAvailable() ? new(false, "this session cannot create a hidden desktop to run the app on")
+        : SmokeTestPrerequisiteResult.Available;
 
     /// <summary>The app built beside these tests (same configuration), or null.</summary>
     private static string? AppExecutable()
