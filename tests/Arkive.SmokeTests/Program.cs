@@ -23,6 +23,7 @@ IReadOnlyList<IReadOnlyList<SmokeTestCase>> groups =
     PackageInstallMemoSmokeTests.Cases,
     ModAuthoringSmokeTests.Cases,
     DiscoverySmokeTests.Cases,
+    GameLookSmokeTests.Cases,
     ZoneSmokeTests.Cases,
     AssetTypeSmokeTests.Cases,
     ParticleSmokeTests.Cases,

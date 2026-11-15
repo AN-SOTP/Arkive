@@ -33,6 +33,9 @@ internal sealed record StartupMeasurementOptions(string OutputPath, bool ForcedG
     /// <summary>Views to open after loading, in this order, each timed as a step with its grids' row counts.</summary>
     public IReadOnlyList<string> OpenViews { get; init; } = [];
 
+    /// <summary>What the asset-library view searches for by in-game name when opened (--library-search); null leaves the saved search.</summary>
+    public string? LibrarySearch { get; init; }
+
     /// <summary>The options of a measuring run, or null for a normal launch.</summary>
     public static StartupMeasurementOptions? Parse(IReadOnlyList<string> arguments)
     {
@@ -68,6 +71,9 @@ internal sealed record StartupMeasurementOptions(string OutputPath, bool ForcedG
             DumpAt = dumpAt,
             SaveCaches = Find(arguments, "--save-caches") >= 0,
             OpenViews = views,
+            LibrarySearch = Find(arguments, "--library-search") is var searchIndex and >= 0
+                ? Value(arguments, searchIndex) ?? throw new ArgumentException("--library-search needs the text to search for.")
+                : null,
         };
     }
 

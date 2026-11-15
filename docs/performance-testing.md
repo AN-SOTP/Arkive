@@ -50,7 +50,21 @@ Two more options look at the window after loading:
   (the first one also loads the game database, which launch no longer loads)
   and records a step `open-view:NAME` whose note gives the number of rows in each of the view's grids. Names: `exports`,
   `baselines`, `mesh`, `static-mesh`, `materials`, `packages`, `mod-sets`, `modified-meshes`, `update-audit`,
-  `mod-dependencies`.
+  `mod-dependencies`, `asset-library`.
+- `--open-view asset-library` shows the Asset Library tab: it loads the game database, runs the search and notes the
+  rows found, the database's size (`associations`, `lookReferences`) and how the index stands against the game folder
+  (`indexNew`, `indexChanged`, `indexRemoved`). `--library-search TEXT` searches for that in-game name instead of the
+  saved search. With `--save-caches` the game-name database and the looks are read again from the game when they are
+  out of date, as a normal launch does; without it nothing is written. The index is never updated by a measuring run.
+
+## Search coverage
+
+`arkive index-coverage PACKAGES --cache INDEX --metadata arkive-asset-metadata.json [--out FILE]` checks which named
+game entries (items, NPCs, props, vehicles...) an in-game-name search can find: an entry counts as found when one of
+its references leads to an asset in the index, by the rules the search itself uses. It prints entries and distinct
+names found and missed for each kind, how the index stands against the game folder, and with `--out` lists every
+missed entry with the references the game's tables give it. Read-only apart from the search routing index, which it
+builds if missing. Run it after a game update, or after changing how names are tied to assets.
 
 Normal launches write the same records to the session log as `Startup step: id=..., seconds=..., ...` lines.
 

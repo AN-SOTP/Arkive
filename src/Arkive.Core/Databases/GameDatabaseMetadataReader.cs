@@ -10,7 +10,10 @@ internal static class GameDatabaseMetadataReader
     private sealed record Table(string Name, params string[] Fields);
     private static readonly Table[] Tables =
     [
-        new("PC", "LookInfo"), new("Npc", "Model", "Icon", "MapIcon"),
+        new("PC", "LookInfo", "IdentityPartsLookInfo"),
+        // An NPC dressed as a player wears item looks, one column a piece.
+        new("Npc", "Model", "Icon", "MapIcon", "PC_HeadLookInfo", "PC_UpperLookInfo", "PC_PantsLookInfo", "PC_HandLookInfo",
+            "PC_ShoulderLookInfo", "PC_FaceLookInfo", "PC_HairLookInfo", "PC_WeaponLookInfo"),
         new("Item", "Model", "InstrumentModel", "Icon"), new("Vehicle", "Model", "RealmTemporaryModel", "Icon"),
         new("Polymorph", "Model"), new("Prop", "Model"), new("Tower", "Model"), new("TownBuilding", "Model"),
         new("TownNpcDress", "Model", "IconName"), new("Transit", "Model"), new("Trap", "Model"),
@@ -18,8 +21,22 @@ internal static class GameDatabaseMetadataReader
         new("Money", "DropModel", "Icon"), new("Emoticon", "IconPath", "ResourcePath"), new("Pet", "Icon"),
         new("Skill", "Icon"), new("SkillBuff", "Icon"), new("Ability", "Icon"), new("QuestItem", "Icon"),
     ];
+    // A chest piece's look is not in the item table: LookInfoSet lists the looks it puts on the chest, shoulders, arms
+    // and (for a one-piece outfit) legs, by the item's id.
+    private static readonly (string Column, string Field)[] LookSetFields =
+    [
+        ("Model_Upper", "LookSet.Upper"), ("Model_Shoulder", "LookSet.Shoulder"),
+        ("Model_Arm", "LookSet.Arm"), ("Model_Lower", "LookSet.Lower"),
+    ];
+
+    /// <summary>
+    /// Goes up whenever the reader learns another table or column, so a database an older Arkive built is read again.
+    /// 1: chest pieces' look sets, the outfit pieces NPCs wear, class identity parts.
+    /// </summary>
+    public const int ContentVersion = 1;
+
     internal static readonly HashSet<string> RequiredFiles = Tables.Select(table => $"EFTable_{table.Name}.db")
-        .Append("EFTable_GameMsg.db").Append("EFTable_CharacterCustomizing.db")
+        .Append("EFTable_GameMsg.db").Append("EFTable_CharacterCustomizing.db").Append("EFTable_LookInfoSet.db")
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
     private static readonly Regex Markup = new("<[^>]+>|\\$\\([^)]*\\)|\\{[^}]*\\}",
         RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -38,6 +55,7 @@ internal static class GameDatabaseMetadataReader
                 if (key.Length > 0 && value.Length > 0) messages[key] = value;
             }, required: true);
         var associations = new List<GameAssetAssociation>();
+        var itemNames = new Dictionary<long, (string Key, string DisplayName)>();
         for (var index = 0; index < Tables.Length; index++)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -54,21 +72,22 @@ internal static class GameDatabaseMetadataReader
                 if (table.Name == "PC")
                     displayName = messages.GetValueOrDefault("tip.name.enum_playerclass_" + nameKey.ToLowerInvariant(), displayName);
                 if (nameKey.Length == 0 || displayName.Length == 0) return;
+                if (table.Name == "Item") itemNames.TryAdd(Number(reader, "PrimaryKey"), (nameKey, displayName));
                 foreach (var field in fields)
-                {
-                    var reference = Text(reader, field).Trim();
-                    var wrapped = WrappedReference.Match(reference);
-                    if (wrapped.Success) reference = wrapped.Groups["value"].Value;
-                    reference = reference.Replace('\\', '/').Split('/')[^1];
-                    var separator = reference.LastIndexOf('.');
-                    var package = separator < 0 ? "" : reference[..separator];
-                    var objectName = separator < 0 ? reference : reference[(separator + 1)..];
-                    if (objectName.Length == 0 || objectName.Where(value => value != '_').All(char.IsDigit)) continue;
-                    associations.Add(new(displayName, nameKey, table.Name, Number(reader, "PrimaryKey"),
-                        field, reference, package, objectName));
-                }
+                    if (Reference(Text(reader, field)) is { } reference)
+                        associations.Add(new(displayName, nameKey, table.Name, Number(reader, "PrimaryKey"),
+                            field, reference.Text, reference.Package, reference.Object));
             });
         }
+        VisitRows(Path.Combine(root, "EFTable_LookInfoSet.db"), "LookInfoSet",
+            ["PrimaryKey", .. LookSetFields.Select(field => field.Column)], cancellation, reader =>
+            {
+                var id = Number(reader, "PrimaryKey");
+                if (!itemNames.TryGetValue(id, out var item)) return;
+                foreach (var (column, field) in LookSetFields)
+                    if (Reference(Text(reader, column)) is { } reference)
+                        associations.Add(new(item.DisplayName, item.Key, "Item", id, field, reference.Text, reference.Package, reference.Object));
+            });
         var objectCounts = associations.Where(item => item.PackageName.Length == 0)
             .GroupBy(item => item.ObjectName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
@@ -86,6 +105,22 @@ internal static class GameDatabaseMetadataReader
         progress?.Report(new("Building customization mapping", Tables.Length + 1, Tables.Length + 2, "CharacterCustomizing"));
         var customizations = ReadCustomizations(root, cancellation);
         return new(2, language, source, DateTimeOffset.UtcNow, filtered, entities, customizations);
+    }
+
+    // A table's reference to an asset or look (EFDLItem_PC_MG_LF_00-5_Helmet.PC_MG_LF_00-5_Helmet, or an icon's name):
+    // the text, its package (empty for a bare name) and its object. Null for an empty or number-only value.
+    private static (string Text, string Package, string Object)? Reference(string value)
+    {
+        var reference = value.Trim();
+        var wrapped = WrappedReference.Match(reference);
+        if (wrapped.Success) reference = wrapped.Groups["value"].Value;
+        reference = reference.Replace('\\', '/').Split('/')[^1];
+        var separator = reference.LastIndexOf('.');
+        var package = separator < 0 ? "" : reference[..separator];
+        var objectName = separator < 0 ? reference : reference[(separator + 1)..];
+        return objectName.Length == 0 || objectName.Where(character => character != '_').All(char.IsDigit)
+            ? null
+            : (reference, package, objectName);
     }
 
     /// <summary>Every skill's name and the class that learns it (0 for none), from EFTable_Skill and GameMsg.</summary>

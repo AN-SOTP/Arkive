@@ -26,14 +26,64 @@ namespace Arkive.App;
 
 public partial class MainWindow : Window
 {
-    private async void LibraryBuildButton_Click(object sender, RoutedEventArgs e)
+    private async void LibraryBuildButton_Click(object sender, RoutedEventArgs e) =>
+        await UpdateLibraryIndexAsync("Build/update index");
+
+    // The last index state shown to the user, so opening the Asset Library again does not repeat the same check.
+    private bool _libraryIndexCheckRunning;
+
+    /// <summary>
+    /// When the Asset Library is shown: compares the game's package folder with the index (a folder listing, no package
+    /// is read) and, when a game update or applied mods left packages the index has not listed, lists just those in the
+    /// background, then runs the search again. Until then a search misses new packages and shows old contents for changed
+    /// ones. While Lost Ark is running nothing is started; the status line says how to update the index by hand.
+    /// </summary>
+    private async Task UpdateLibraryIndexIfStaleAsync(string trigger)
     {
-        if (_umodelBridge is null || string.IsNullOrEmpty(_libraryRootPath))
+        if (_libraryIndexCheckRunning || _libraryIndexCancellation is not null || StartupMeasurement.Current is not null ||
+            _umodelBridge is null || _libraryRootPath is not { } root || !Directory.Exists(root)) return;
+        _libraryIndexCheckRunning = true;
+        try
+        {
+            // An index that was never built stays the user's choice: listing the whole game takes many minutes.
+            if (await _packageIndexStore.GetManifestAsync() is null) return;
+            var freshness = await Task.Run(() => _packageIndexStore.GetFreshness(root));
+            if (!freshness.NeedsUpdate) return;
+            Log($"Library index is behind the game folder: trigger={trigger}, packages={freshness.PackageCount}, " +
+                $"new={freshness.NewPackages}, changed={freshness.ChangedPackages}, removed={freshness.RemovedPackages}.");
+            var behind = freshness.NewPackages + freshness.ChangedPackages;
+            // Most of the game listed again (another game folder, a moved game) is a long job, left for the user to start.
+            if (behind > freshness.PackageCount / 2)
+            {
+                LibraryCountText.Text = $"The index does not cover {behind:N0} of the game's {freshness.PackageCount:N0} packages; choose Build/update index (many minutes)";
+                return;
+            }
+            if (await Task.Run(() => new LostArkProcessGuard().FindBlockingProcesses().Count > 0))
+            {
+                LibraryCountText.Text = $"{behind:N0} game package(s) changed since the index was built; choose Build/update index (not started while Lost Ark is running)";
+                return;
+            }
+            if (_libraryIndexCancellation is not null) return;
+            await UpdateLibraryIndexAsync($"{trigger}: {behind:N0} new or changed package(s)");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log($"The library index could not be compared with the game folder: {exception.Message}");
+        }
+        finally
+        {
+            _libraryIndexCheckRunning = false;
+        }
+    }
+
+    /// <summary>Lists every package the index has not listed as it is now (all of them the first time), with progress and Stop.</summary>
+    private async Task UpdateLibraryIndexAsync(string trigger)
+    {
+        if (_umodelBridge is null || string.IsNullOrEmpty(_libraryRootPath) || _libraryIndexCancellation is not null)
         {
             return;
         }
 
-        _libraryIndexCancellation?.Dispose();
         _libraryIndexCancellation = new CancellationTokenSource();
         var workers = int.TryParse(
             (LibraryWorkersComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString(),
@@ -47,7 +97,7 @@ public partial class MainWindow : Window
         StatusText.Text = "Discovering packages for the library index...";
         Log(
             $"Library index build started with {workers} workers: {_libraryRootPath}; " +
-            $"fastScratch={_libraryScratchPath ?? "disabled"}");
+            $"fastScratch={_libraryScratchPath ?? "disabled"}; trigger={trigger}");
 
         var progress = new Progress<PackageIndexProgress>(value =>
         {
@@ -98,6 +148,9 @@ public partial class MainWindow : Window
         }
         finally
         {
+            // Cleared, so the rest of Arkive (installing an update, the next index check) sees no index work running.
+            _libraryIndexCancellation?.Dispose();
+            _libraryIndexCancellation = null;
             LibraryBuildButton.IsEnabled = _umodelBridge is not null;
             LibraryCancelButton.IsEnabled = false;
             LibraryWorkersComboBox.IsEnabled = true;

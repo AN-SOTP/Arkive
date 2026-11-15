@@ -166,6 +166,7 @@ public sealed partial class PackageIndexStore
             cached,
             failed,
             string.Empty));
+        RemoveDocumentsOfMissingPackages(fullRoot, packages);
         await SaveManifestAsync(
             new PackageIndexManifest(
                 CurrentSchemaVersion,

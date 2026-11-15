@@ -110,6 +110,16 @@ public sealed class GameDataArchive
     }
 
     /// <summary>
+    /// The size and date of the game's own data2.lpk (not Arkive's change to it): the same until a game update replaces
+    /// the file, whatever language or table mods Arkive writes into it meanwhile.
+    /// </summary>
+    public (long Length, long WriteUtcTicks) GameStamp()
+    {
+        var (length, written) = LoadState() is { } state ? (state.OriginalLength, state.OriginalWriteTimeUtc) : Stamp(ArchivePath);
+        return (length, written.Ticks);
+    }
+
+    /// <summary>
     /// The game's own copy of <paramref name="database"/> (EFTable_Item.db), from Arkive's backup when Arkive has changed
     /// it. The copy is kept in Arkive's cache until the game's file changes, so treat it as read-only.
     /// </summary>

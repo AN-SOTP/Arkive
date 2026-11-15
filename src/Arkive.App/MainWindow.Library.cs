@@ -677,6 +677,7 @@ public partial class MainWindow : Window
         GameMetadataText.Text = "Game DB mapping: loading...";
         try
         {
+            await RefreshLookNamesAsync(path);
             await RefreshInterfaceNamesAsync(path);
             await RefreshSkillEffectNamesAsync(path);
             var index = await Task.Run(() => GameAssetMetadataIndex.Load(path));
@@ -686,6 +687,7 @@ public partial class MainWindow : Window
             FillOutfitSwapClasses();
             GameMetadataText.Text =
                 $"Game DB mapping: {index.AssociationCount:N0} relationships | " +
+                $"{index.LookReferenceCount:N0} from the game's looks | " +
                 $"verified {index.VerifiedDependencyCount:N0} | " +
                 $"{index.Archetypes.Count:N0} class types | {index.EntityCount:N0} entities | " +
                 $"{index.CustomizationOptionCount:N0} customization options";
@@ -704,7 +706,7 @@ public partial class MainWindow : Window
                 $"Loaded {index.AssociationCount:N0} searchable in-game-name relationships.";
             Log(
                 $"Game DB mapping loaded: path={index.SourcePath}, language={index.Language}, " +
-                $"associations={index.AssociationCount}, entities={index.EntityCount}, " +
+                $"associations={index.AssociationCount}, lookReferences={index.LookReferenceCount}, entities={index.EntityCount}, " +
                 $"deterministicItems={index.DeterministicItemCount}, " +
                 $"archetypes={index.Archetypes.Count}, " +
                 $"verifiedDependencies={index.VerifiedDependencyCount}, " +

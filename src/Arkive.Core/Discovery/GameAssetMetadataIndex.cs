@@ -40,6 +40,9 @@ public static class GameAssetAssociationRelation
     public const string DeterministicModelAsset = "DeterministicModelAsset";
     public const string VerifiedSerializedDependency = "VerifiedSerializedDependency";
     public const string NamingFamilyInference = "NamingFamilyInference";
+
+    /// <summary>A mesh, material, effect or texture named by the look file a database reference points at.</summary>
+    public const string LookFileReference = "LookFileReference";
 }
 
 public sealed record GameAssetMetadataDocument(
@@ -67,6 +70,8 @@ public sealed class GameAssetMetadataIndex
     private readonly Dictionary<string, IReadOnlyList<GameAssetAssociation>> _objectReferences;
     private readonly Dictionary<string, IReadOnlyList<GameAssetAssociation>> _entityReferences;
     private readonly IReadOnlyList<GameAssetAssociation> _associations;
+    // What the game's looks draw for the references above; made into references only where they are shown.
+    private readonly GameLookReferences _looks;
     private readonly IReadOnlyList<GameEntityRecord> _entities;
     private readonly IReadOnlyDictionary<long, IReadOnlyList<CharacterCustomizationDefinition>>
         _customizations;
@@ -81,8 +86,10 @@ public sealed class GameAssetMetadataIndex
         Dictionary<string, IReadOnlyList<GameAssetAssociation>> objectReferences,
         Dictionary<string, IReadOnlyList<GameAssetAssociation>> entityReferences,
         IReadOnlyList<GameEntityRecord> entities,
-        IReadOnlyDictionary<long, IReadOnlyList<CharacterCustomizationDefinition>> customizations)
+        IReadOnlyDictionary<long, IReadOnlyList<CharacterCustomizationDefinition>> customizations,
+        GameLookReferences looks)
     {
+        _looks = looks;
         SourcePath = sourcePath;
         var source = new FileInfo(sourcePath);
         DependencySidecarPath = GameAssetDependencySidecar.GetDefaultPath(sourcePath);
@@ -301,8 +308,25 @@ public sealed class GameAssetMetadataIndex
             objects.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<GameAssetAssociation>)pair.Value),
             entities.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<GameAssetAssociation>)pair.Value),
             entityRecords,
-            customizations);
+            customizations,
+            GameLookReferences.Load(fullPath, associations));
     }
+
+    /// <summary>
+    /// Every reference: <see cref="Associations"/>, each followed by the references its look adds (see
+    /// <see cref="GameLookReferences"/>). Those are made as they are read, so read this once, not per asset.
+    /// </summary>
+    public IEnumerable<GameAssetAssociation> AllReferences()
+    {
+        foreach (var association in _associations)
+        {
+            yield return association;
+            foreach (var reference in _looks.For(association)) yield return reference;
+        }
+    }
+
+    /// <summary>How many references the game's looks add to <see cref="AssociationCount"/> (meshes, materials, effects).</summary>
+    public long LookReferenceCount => _looks.ReferenceCount;
 
     public IReadOnlyList<CharacterCustomizationOption> FindCustomizationOptions(
         GameEntityRecord entity)
@@ -474,10 +498,13 @@ public sealed class GameAssetMetadataIndex
     /// </summary>
     public IReadOnlyList<GameAssetAssociation> FindEntityAssociations(
         string entityType,
-        long entityId) =>
-        _entityReferences.TryGetValue(EntityKey(entityType, entityId), out var matches)
-            ? matches
-            : [];
+        long entityId)
+    {
+        if (!_entityReferences.TryGetValue(EntityKey(entityType, entityId), out var matches)) return [];
+        // With what the entity's looks draw: the meshes, materials and effects behind its model references.
+        var drawn = matches.SelectMany(_looks.For).ToArray();
+        return drawn.Length == 0 ? matches : [.. matches, .. drawn];
+    }
 
     public IReadOnlyList<GameAssetAssociation> ExpandEntities(
         IReadOnlyList<GameAssetAssociation> seeds)
@@ -516,11 +543,11 @@ public sealed class GameAssetMetadataIndex
 
         var matches = new List<GameAssetAssociation>();
         var alias = NormalizePackageName(packageAlias);
-        AddPackageMatches(matches, alias, normalizedObject);
+        AddPackageAndLookMatches(matches, alias, normalizedObject);
         var physical = NormalizePackageName(physicalPackageName);
         if (!physical.Equals(alias, StringComparison.Ordinal))
         {
-            AddPackageMatches(matches, physical, normalizedObject);
+            AddPackageAndLookMatches(matches, physical, normalizedObject);
         }
 
         AddMatches(matches, _objectReferences, normalizedObject);
@@ -591,6 +618,26 @@ public sealed class GameAssetMetadataIndex
 
         var packages = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var objects = new HashSet<string>(StringComparer.Ordinal);
+
+        // Whether a reference with these searchable values passes every term of the query.
+        bool Passes(GameAssociationText text) =>
+            terms.All(term => term.Excluded != text.Any(displayNamesOnly, field =>
+                !string.IsNullOrEmpty(field) &&
+                (displayNamesOnly
+                    ? AssetSearch.ContainsAtTokenStart(field, term.Value)
+                    : field.Contains(term.Value, StringComparison.OrdinalIgnoreCase))));
+
+        void AddPackageObject(string packageName, string objectName)
+        {
+            if (!packages.TryGetValue(packageName, out var packageObjects))
+            {
+                packageObjects = new HashSet<string>(StringComparer.Ordinal);
+                packages.Add(packageName, packageObjects);
+            }
+
+            packageObjects.Add(objectName);
+        }
+
         foreach (var association in _associations)
         {
             if (!string.IsNullOrWhiteSpace(archetype) && !MatchesArchetype(association.Archetype, archetype))
@@ -598,23 +645,26 @@ public sealed class GameAssetMetadataIndex
                 continue;
             }
 
-            var searchableFields = displayNamesOnly
-                ? new[] { association.DisplayName }
-                : new[]
+            var id = displayNamesOnly
+                ? string.Empty
+                : association.EntityId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            // What the association's look draws is found by the same name, each under its own field and reference.
+            var drawn = _looks.TargetsOf(association);
+            if (drawn.Count > 0)
+            {
+                // A name search passes or fails all of them at once: they share the display name.
+                var named = displayNamesOnly && Passes(new GameAssociationText(association, id, association.Field, association.AssetReference));
+                foreach (var target in drawn)
                 {
-                    association.DisplayName,
-                    association.NameKey,
-                    association.EntityType,
-                    association.EntityId.ToString(
-                        System.Globalization.CultureInfo.InvariantCulture),
-                    association.Field,
-                    association.AssetReference,
-                };
-            if (!terms.All(term => term.Excluded != searchableFields.Any(field =>
-                    !string.IsNullOrEmpty(field) &&
-                    (displayNamesOnly
-                        ? AssetSearch.ContainsAtTokenStart(field, term.Value)
-                        : field.Contains(term.Value, StringComparison.OrdinalIgnoreCase)))))
+                    if (displayNamesOnly ? named : Passes(new GameAssociationText(
+                            association, id, _looks.FieldName(association, target), target.Reference)))
+                    {
+                        AddPackageObject(target.Package, target.Family);
+                    }
+                }
+            }
+
+            if (!Passes(new GameAssociationText(association, id, association.Field, association.AssetReference)))
             {
                 continue;
             }
@@ -633,13 +683,7 @@ public sealed class GameAssetMetadataIndex
 
             foreach (var packageName in PackageNameVariants(association.PackageName))
             {
-                if (!packages.TryGetValue(packageName, out var packageObjects))
-                {
-                    packageObjects = new HashSet<string>(StringComparer.Ordinal);
-                    packages.Add(packageName, packageObjects);
-                }
-
-                packageObjects.Add(objectName);
+                AddPackageObject(packageName, objectName);
             }
         }
 
@@ -649,6 +693,16 @@ public sealed class GameAssetMetadataIndex
                 pair => (IReadOnlySet<string>)pair.Value,
                 StringComparer.Ordinal),
             objects);
+    }
+
+    // The values of a reference a query is matched against, without making the reference.
+    private readonly record struct GameAssociationText(GameAssetAssociation Association, string EntityId, string Field, string AssetReference)
+    {
+        public bool Any(bool displayNamesOnly, Func<string, bool> matches) =>
+            matches(Association.DisplayName) ||
+            (!displayNamesOnly &&
+             (matches(Association.NameKey) || matches(Association.EntityType) || matches(EntityId) ||
+              matches(Field) || matches(AssetReference)));
     }
 
     private static void Add(
@@ -689,6 +743,16 @@ public sealed class GameAssetMetadataIndex
 
         destination.AddRange(packageAssociations.Where(association =>
             IsAssetFamilyMember(objectName, NormalizeObjectName(association.ObjectName))));
+    }
+
+    // The references in the package itself, then the ones the game's looks lead there.
+    private void AddPackageAndLookMatches(
+        List<GameAssetAssociation> destination,
+        string packageName,
+        string objectName)
+    {
+        AddPackageMatches(destination, packageName, objectName);
+        _looks.AddMatches(destination, packageName, objectName);
     }
 
     internal static bool IsAssetFamilyMember(string candidate, string reference) =>

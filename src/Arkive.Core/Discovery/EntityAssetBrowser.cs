@@ -46,9 +46,10 @@ public sealed partial class PackageIndexStore
             routingProgress,
             cancellationToken).ConfigureAwait(false);
 
-        var directAssociations = entity.Associations.Count > 0
-            ? entity.Associations
-            : metadata.FindEntityAssociations(entity.EntityType, entity.EntityId);
+        // The index's own list comes with what the entity's looks draw (a boss's separate parts, an NPC's outfit).
+        var directAssociations = metadata.FindEntityAssociations(entity.EntityType, entity.EntityId) is { Count: > 0 } found
+            ? found
+            : entity.Associations;
         var associations = entity.BaseEntityId is { } baseId
             ? metadata.FindEntityAssociations(entity.EntityType, baseId)
                 .Concat(directAssociations)

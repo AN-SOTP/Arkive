@@ -17,7 +17,7 @@ public partial class MainWindow
     internal static readonly IReadOnlyList<string> MeasurableViews =
     [
         "exports", "baselines", "mesh", "static-mesh", "materials", "packages", "mod-sets", "modified-meshes",
-        "update-audit", "mod-dependencies",
+        "update-audit", "mod-dependencies", "asset-library",
     ];
 
     // Lets the tab hooks run in a measuring run, whose window is never shown and so never counts as loaded.
@@ -110,6 +110,7 @@ public partial class MainWindow
     /// </summary>
     internal async Task<string> OpenViewForMeasurementAsync(string view)
     {
+        if (view == "asset-library") return await OpenAssetLibraryForMeasurementAsync();
         var (tag, grids) = view switch
         {
             "exports" => ("Exports", new DataGrid[] { ExportWorkspaceGrid, ExportArtifactFilesGrid }),
@@ -138,6 +139,39 @@ public partial class MainWindow
             _measuringViews = false;
         }
         return string.Join(", ", grids.Select(grid => $"{grid.Name}={grid.Items.Count}"));
+    }
+
+    /// <summary>
+    /// Shows the Asset Library as choosing its tab does: the game database is loaded (and, in a run that saves caches,
+    /// read again from the game when it is out of date), then the search runs: --library-search by in-game name, else
+    /// the saved one. Returns the rows found, the database's size and how the index stands against the game folder.
+    /// The index itself is never updated by a measuring run.
+    /// </summary>
+    private async Task<string> OpenAssetLibraryForMeasurementAsync()
+    {
+        _measuringViews = true;
+        try
+        {
+            if (StartupMeasurement.Current?.LibrarySearch is { } query)
+            {
+                LibrarySearchTextBox.Text = query;
+                SelectComboBoxTag(LibrarySearchScopeComboBox, "InGameName");
+            }
+            MainTabControl.SelectedItem = LibraryTab;
+            await EnsureGameDatabaseAsync("measuring run");
+            await WaitUntilIdleAsync();
+            await RestoredBackgroundWork();
+            await ApplyLibraryFilterAsync("measuring run");
+            await WaitUntilIdleAsync();
+        }
+        finally
+        {
+            _measuringViews = false;
+        }
+        var freshness = _libraryRootPath is { } root ? await Task.Run(() => _packageIndexStore.GetFreshness(root)) : null;
+        return $"LibraryGrid={LibraryGrid.Items.Count}, associations={_gameMetadataIndex?.AssociationCount ?? 0}, " +
+               $"lookReferences={_gameMetadataIndex?.LookReferenceCount ?? 0}, " +
+               $"indexNew={freshness?.NewPackages ?? 0}, indexChanged={freshness?.ChangedPackages ?? 0}, indexRemoved={freshness?.RemovedPackages ?? 0}";
     }
 
     /// <summary>Waits until no busy card is up and no view is loading, three checks in a row 50 ms apart.</summary>

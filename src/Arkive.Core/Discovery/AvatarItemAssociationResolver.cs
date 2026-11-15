@@ -25,9 +25,22 @@ internal static partial class AvatarItemAssociationResolver
             ["PC_DDM"] = "PC_DMN",
         };
 
+    /// <summary>
+    /// The class type an item made for <paramref name="classCode"/> (PC_WR_F, PC_DDM) belongs to, from the playable
+    /// classes' own looks (<paramref name="archetypes"/>, by code) or the base bodies; null for a code that is neither.
+    /// </summary>
+    internal static string? ArchetypeOf(string classCode, IReadOnlyDictionary<string, string> archetypes)
+    {
+        var code = ItemClassCodes.GetValueOrDefault(classCode.ToUpperInvariant(), classCode.ToUpperInvariant());
+        return archetypes.TryGetValue(code, out var label) ? label
+            : KnownBaseArchetypes.TryGetValue(code, out var known) ? known
+            : null;
+    }
+
     public static IReadOnlyList<GameAssetAssociation> AttachArchetypes(
-        IReadOnlyList<GameAssetAssociation> associations) =>
-        associations.Select(item =>
+        IReadOnlyList<GameAssetAssociation> associations)
+    {
+        var classes = associations.Select(item =>
         {
             if (!item.EntityType.Equals("PC", StringComparison.OrdinalIgnoreCase) ||
                 !item.Field.Equals("LookInfo", StringComparison.OrdinalIgnoreCase))
@@ -41,6 +54,25 @@ internal static partial class AvatarItemAssociationResolver
                 : FormatArchetype(item.DisplayName);
             return item with { Archetype = archetype };
         }).ToArray();
+
+        // An item whose look is made for one body (EFDLItem_PC_WR_F_...) belongs to that body's class type, whatever
+        // family the look is from (outfits, crafted outfits, armour), so the class filter covers it.
+        var archetypes = classes
+            .Where(item => item.Archetype is not null)
+            .GroupBy(item => GameAssetMetadataIndex.NormalizeObjectName(item.ObjectName), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().Archetype!, StringComparer.Ordinal);
+        var labels = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < classes.Length; index++)
+        {
+            var item = classes[index];
+            if (item.Archetype is not null || !item.EntityType.Equals("Item", StringComparison.OrdinalIgnoreCase) ||
+                ItemLookClassRegex().Match(item.PackageName) is not { Success: true } match) continue;
+            var code = match.Groups["class"].Value;
+            if (!labels.TryGetValue(code, out var label)) labels[code] = label = ArchetypeOf(code, archetypes);
+            if (label is not null) classes[index] = item with { Archetype = label };
+        }
+        return classes;
+    }
 
     public static GameAssetAssociation NormalizeArchetype(GameAssetAssociation association)
     {
@@ -205,4 +237,10 @@ internal static partial class AvatarItemAssociationResolver
         @"\s+\([^)]+\)$",
         RegexOptions.CultureInvariant)]
     private static partial Regex TrailingArchetypeRegex();
+
+    // EFDLItem_PC_WR_F_AV_137-1_Upper -> PC_WR_F: the body an item's look is made for.
+    [GeneratedRegex(
+        @"^EFDLITEM_(?<class>PC_[A-Z]+(?:_[FM])?)_",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ItemLookClassRegex();
 }

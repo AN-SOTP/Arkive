@@ -429,6 +429,12 @@ static int Run(string[] arguments)
                 ReadTextOption(arguments, "--archetype"),
                 ReadPositiveIntOption(arguments, "--limit"),
                 json),
+            "index-coverage" => IndexCoverage(
+                target,
+                ReadTextOption(arguments, "--cache"),
+                ReadTextOption(arguments, "--metadata"),
+                ReadTextOption(arguments, "--out"),
+                json),
             "umodel-export" => UmodelExport(
                 target,
                 ReadTextOption(arguments, "--object"),
@@ -463,8 +469,13 @@ static int DatabaseBuild(string archive, string? output, string? language, bool 
         var result = new GameDatabaseBuilder().BuildAsync(archive,
             output ?? Path.Combine(ArkiveRuntimePaths.ResolveDataRoot(), "staging", "lpk", "data2-fixed", "arkive-asset-metadata.json"),
             language ?? "English", progress, cancellation.Token).GetAwaiter().GetResult();
-        if (json) WriteJson(result);
-        else Console.WriteLine($"Built {result.AssociationCount:N0} asset references, {result.EntityCount:N0} entities and {result.CustomizationCount:N0} customization options: {result.OutputPath}");
+        // What each look draws, from data4.lpk beside data2.lpk: it is what ties most item names to their assets.
+        var looksArchive = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(archive))!, "data4.lpk");
+        var looks = File.Exists(looksArchive)
+            ? GameLookSidecar.BuildAsync(result.OutputPath, looksArchive, cancellation.Token).GetAwaiter().GetResult().Looks.Count
+            : 0;
+        if (json) WriteJson(new { result.OutputPath, result.Language, result.DatabaseCount, result.AssociationCount, result.EntityCount, result.CustomizationCount, Looks = looks });
+        else Console.WriteLine($"Built {result.AssociationCount:N0} asset references, {result.EntityCount:N0} entities, {result.CustomizationCount:N0} customization options and {looks:N0} looks: {result.OutputPath}");
         return 0;
     }
     catch (OperationCanceledException)
@@ -3863,6 +3874,35 @@ static int IndexSearch(
     return 0;
 }
 
+// Which named game entries (items, NPCs, props...) an in-game-name search finds at least one asset for.
+static int IndexCoverage(string packageRoot, string? cacheDirectory, string? metadataPath, string? outputPath, bool json)
+{
+    if (string.IsNullOrWhiteSpace(cacheDirectory)) throw new ArgumentException("index-coverage requires --cache DIR.");
+    if (string.IsNullOrWhiteSpace(metadataPath)) throw new ArgumentException("index-coverage requires --metadata FILE.");
+    var store = new PackageIndexStore(cacheDirectory);
+    var freshness = store.GetFreshness(packageRoot);
+    var report = store.AuditSearchCoverageAsync(packageRoot, GameAssetMetadataIndex.Load(metadataPath)).GetAwaiter().GetResult();
+    if (!string.IsNullOrWhiteSpace(outputPath))
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        File.WriteAllText(outputPath, JsonSerializer.Serialize(new { freshness, report }));
+    }
+    if (json)
+    {
+        WriteJson(new { freshness, report.Associations, report.PackagesRead, report.Groups, Misses = report.Misses.Count });
+        return 0;
+    }
+    Console.WriteLine($"Index: {freshness.PackageCount:N0} game packages; {freshness.NewPackages:N0} not listed yet, " +
+                      $"{freshness.ChangedPackages:N0} changed since listed, {freshness.RemovedPackages:N0} listed but gone.");
+    Console.WriteLine($"Names: {report.Associations:N0} references checked against {report.PackagesRead:N0} packages.");
+    Console.WriteLine("  Kind                 Entries    Found   Missed |    Names    Found   Missed");
+    foreach (var group in report.Groups)
+        Console.WriteLine($"  {group.EntityType + " " + group.Kind,-18} {group.Entities,9:N0} {group.Reachable,8:N0} {group.Entities - group.Reachable,8:N0} | " +
+                          $"{group.Names,8:N0} {group.ReachableNames,8:N0} {group.Names - group.ReachableNames,8:N0}");
+    if (!string.IsNullOrWhiteSpace(outputPath)) Console.WriteLine($"Every missed entry is listed in {Path.GetFullPath(outputPath)}");
+    return 0;
+}
+
 static int MetadataBuildDependencies(
     string metadataPath,
     string? indexDirectory,
@@ -4315,6 +4355,8 @@ static void PrintUsage()
         "  arkive index-build <Packages-directory> [--workers N] [--cache DIR] [--scratch DIR] [--json]");
     Console.WriteLine(
         "  arkive index-search <Packages-directory> --cache DIR --metadata FILE --query TEXT [--category KIND] [--scope InGameName|ObjectName|ObjectAndInGameName] [--archetype NAME] [--limit N] [--json]");
+    Console.WriteLine(
+        "  arkive index-coverage <Packages-directory> --cache DIR --metadata FILE [--out FILE] [--json]");
     Console.WriteLine(
         "  arkive umodel-export <package.upk> --object NAME [--class CLASS] [--out DIR] [--json]");
     Console.WriteLine("  arkive scan <Packages-directory> [--limit N] [--json]");
