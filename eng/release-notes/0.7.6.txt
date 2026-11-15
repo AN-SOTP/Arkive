@@ -1,0 +1,11 @@
+Much faster startup using far less memory and disk space, and an Asset Library that finds nearly every item and NPC by its in-game name.
+
+The first start after updating takes longer, once. The first time you open the Asset Library, Arkive reads the game's names again and brings its index up to date in the background.
+
+- Startup: Arkive opens on the Mods list as it last verified it and checks your mods again in the background; you can look through the list at once and make changes when the check has finished. The other pages load when first opened. On a large library, start-up time is greatly reduced and memory usage dropped significantly as well.
+- Disk space: Clean up working files (Mods, More actions) now also removes package builds that newer builds replaced and files that finished builds no longer need, listing everything first. The new Release working files frees the space a mod's working files take while it is off; Apply changes sets them up again when you turn it on. Deleting a mod deletes its working files too, and edited-mesh records are stored more efficiently.
+- Asset Library: in-game names now find crafted (Skin Crafting) outfits, armour, chest pieces, weapons, vehicles and boss parts. Arkive reads which mesh, materials and effects the game draws for each item, so nearly every named item and NPC can be found, compared to prior which listed far fewer assets.
+- Asset Library: the in-game names are read from the game without pressing Build game DB, and the names and the index keep themselves up to date after game updates and applied mods.
+- Fixes: Install update was refused after an index update until Arkive was restarted, a mod turned on while the list was refreshing could switch itself off again, and a second Arkive window on the same data folder could stall.
+
+Known issues: Mods made with Match physics use a newer .arkive format that Arkive 0.7.0 and older can't read.

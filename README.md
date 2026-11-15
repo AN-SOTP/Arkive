@@ -146,7 +146,11 @@ The main tabs are **Asset Library** (find assets), **Create Mod**, **Edit Mods**
 
 ### Asset Library
 
-Search **All names and filenames** by package filename, object, class or in-game name; the index includes assets whose class is not moddable. Filter by asset type and class: a base body's class filter also finds the classes built on it, so Female Warrior shows Slayer and Valkyrie skins too. From a result you can inspect it in UModel, browse its package, export it, copy its identity or follow its relationships, each labelled as a database link, a verified dependency or a candidate. The index is resumable; refresh it when the client changes.
+Search **All names and filenames** by package filename, object, class or in-game name; the index includes assets whose class is not moddable. Filter by asset type and class: a base body's class filter also finds the classes built on it, so Female Warrior shows Slayer and Valkyrie skins too. From a result you can inspect it in UModel, browse its package, export it, copy its identity or follow its relationships, each labelled as a database link, a verified dependency or a candidate.
+
+An in-game name leads to what the game really draws for that item, NPC or prop: its mesh and the textures named after it, its materials and its effects, read from the game's own look files. So crafted (Skin Crafting) outfits, armour and chest pieces, weapons, vehicles and a boss's separate parts are found by name as well as shop outfits, including pieces whose mesh is shared between colours or whose materials belong to another class.
+
+The index is resumable and keeps itself up to date: each time the Asset Library is opened, Arkive lists again the packages a game update or applied mods changed, and forgets packages the game removed. It waits while Lost Ark is running, and leaves a first or near-complete listing (many minutes) for **Build/update index**.
 
 **Preview** (or double-click a mesh) opens the Arkive Asset Viewer:
 
@@ -261,11 +265,19 @@ There is no separate restore button for a mod: the **On** ticks say which mods s
 - **Delete mod** (a Mods button, or on right-click) deletes the chosen mods from the library. It refuses mods whose files are still in the game and names them: disable them, choose **Apply changes**, then delete.
 - **Game file changed outside Arkive** in the Status column means a file your mods target was changed by something else: another Arkive data folder, another tool or a game patch. Apply is held back so the changed bytes are never built on. If an older Arkive installed mods, choose **More actions → Restore from another Arkive folder…** and pick its data folder (the one holding its `backups` folder); each original is checked by its SHA-256, the replaced file is kept under `backups\replaced-outside-arkive`, and Lost Ark must be closed. Otherwise use Steam's Verify integrity of game files, or after a game patch see [Game updates and recovery](#game-updates-and-recovery).
 
+#### Starting up and disk space
+
+- Arkive opens on the Mods list as it last verified it, then checks your mods' files again. You can look through the list at once; changing it is possible when the check has finished, and a note above the list says so meanwhile. The first start after an Arkive update takes longer, once.
+- The other pages read their data when first opened, and the in-game names load the first time a page needs them.
+- **More actions → Clean up working files…** lists, then deletes, what nothing can need any more: package builds that newer builds replaced, files finished builds no longer read, working files (edited meshes and textures, effects, materials and other edits) that no mod, draft or kept build uses, and old cache entries.
+- **More actions → Release working files…** (also on right-click) frees the space a mod's working files take while it is off. **Apply changes** sets them up again from its `.arkive` file when you turn it on.
+- Deleting a mod deletes its working files too.
+
 **Advanced → Package projects** keeps per-package rebuild, inspection, bulk install and restore, and cleanup. Prefer the named-mod workflow for normal use.
 
 ## Game names and metadata
 
-No game database is distributed. Both the installed GUI and CLI build the in-game-name mapping directly from your client's `EFGame\data2.lpk`. In **Asset library → Library setup**, choose the language and **Build game DB**. Progress shows archive decoding and mapping stages; **Cancel DB build** stops the operation. The resulting mapping loads automatically and is remembered for the next launch.
+No game database is distributed. Both the installed GUI and CLI build the in-game-name mapping directly from your client's `EFGame\data2.lpk`, together with what each look draws from `EFGame\data4.lpk`. The GUI does this by itself: the first time a page needs in-game names, and again after a game update, it reads them from the game (a few seconds, shown on the wait card). The names are always the game's own, even while a language or Game Data mod is in the game. To build in another language, choose it in **Asset library → Library setup** and **Build game DB**. Progress shows archive decoding and mapping stages; **Cancel DB build** stops the operation. The resulting mapping loads automatically and is remembered for the next launch.
 
 ```powershell
 $cli = "$env:LOCALAPPDATA\Programs\Arkive\Arkive.Cli.exe"
@@ -274,7 +286,13 @@ $cli = "$env:LOCALAPPDATA\Programs\Arkive\Arkive.Cli.exe"
 & $cli database-build 'E:\Games\Lost Ark\EFGame\data2.lpk' --out 'E:\ArkiveData\staging\lpk\arkive-asset-metadata.json' --language English --json
 ```
 
-The default output is `staging\lpk\data2-fixed\arkive-asset-metadata.json` under Arkive's data root. **Load mapping** accepts an existing JSON. Rebuild after client updates when mappings change; then refresh verified asset links as needed. Database building does not itself scan every UPK or generate those dependency links.
+The default output is `staging\lpk\data2-fixed\arkive-asset-metadata.json` under Arkive's data root, with the looks beside it (`arkive-asset-metadata.looks.json.gz`). **Load mapping** accepts an existing JSON; a mapping loaded from elsewhere is used as it is and not rebuilt. After a client update the CLI's mapping is rebuilt with `database-build`; refresh verified asset links as needed. Database building does not itself scan every UPK or generate those dependency links.
+
+`index-coverage` checks the result: it counts, for items, NPCs, props and the rest, how many in-game names a search can find at least one asset for, and lists the ones it cannot.
+
+```powershell
+& $cli index-coverage $packages --cache "$data\cache\library-index" --metadata "$data\staging\lpk\data2-fixed\arkive-asset-metadata.json" --out coverage.json
+```
 
 The builder reads the supported tables read-only; decrypted tables are temporary and only the mapping is kept, and a failed or cancelled build leaves the previous mapping in place. Unsupported protection or schema changes are refused. All outputs stay local; do not redistribute game databases or generated mappings.
 
@@ -425,7 +443,7 @@ Enabled winners targeting one UPK are composed from a verified clean package, va
 1. **Before updating/reinstalling Lost Ark**, choose **Restore all game files** in the Mods tab while backups and receipts match. Your enabled mods stay ticked.
 2. Update the client, close its processes and choose **Check after game update** in the Mods tab. When Arkive starts after Steam has updated Lost Ark it offers this check itself, and names any fonts, language or login screen the update put back. The check changes no game file: it shows in the Apply Plan which mods are ready, and checks that Arkive can still read and change the updated game files.
 3. If the check finds mods whose assets the update changed, **Rebase mods** appears next to it. Rebasing sets those mods up against the updated game files, keeping each change only if it passes every native check, and moves working files the check proved unchanged onto the new files. Changed skeleton/layout/material contracts that fail need reauthoring. **Advanced → Game update safety** keeps the per-package evidence.
-4. Refresh index/metadata as needed, then choose **Apply changes**. A newer Arkive is offered when Arkive starts, before anything loads; install it first if the game update needs it.
+4. Choose **Apply changes**. The in-game names and the Asset Library index bring themselves up to date with the updated game the next time the Asset Library is opened. A newer Arkive is offered when Arkive starts, before anything loads; install it first if the game update needs it.
 
 Steam reinstall changes game bytes but does not clear Arkive's library. If a mod remains marked installed/outdated, inspect current hashes and receipts; do not delete recovery evidence to silence a warning. Unknown bytes require verified restore or client repair. Keep backups until clean state is confirmed. Steam repair restores stock files, not edit contracts.
 
